@@ -3091,3 +3091,11 @@ fn each_spelling_of_a_name_is_matched_by_its_own_words() {
         }
     }
 }
+
+#[test]
+fn canon_gives_a_canonical_path_without_the_verbatim_prefix() {
+    // on Windows `fs::canonicalize` gives `\\?\C:\...`; the tests compare against what scrutate prints
+    let c = canon(std::env::temp_dir());
+    assert!(c.is_absolute() && c.is_dir(), "{}", c.display());
+    assert!(!c.to_string_lossy().starts_with(r"\\?\"), "verbatim: {}", c.display());
+}

@@ -12,8 +12,14 @@ pub fn plain(path: &str) -> Cow<'_, str> {
 
 /// `plain` for a path.
 pub fn plain_path(path: &Path) -> Cow<'_, Path> {
-    match path.to_str().map(plain) {
-        Some(Cow::Owned(p)) => Cow::Owned(PathBuf::from(p)),
+    plain_path_on(path, cfg!(windows))
+}
+
+/// `plain_path` as it is on Windows (`windows`) or elsewhere.
+pub(crate) fn plain_path_on(path: &Path, windows: bool) -> Cow<'_, Path> {
+    match path.to_str().map(|s| (s, plain_on(s, windows))) {
+        // a drive path comes back borrowed (a slice of `s`), a share owned: compare the text
+        Some((s, p)) if p != s => Cow::Owned(PathBuf::from(p.into_owned())),
         _ => Cow::Borrowed(path),
     }
 }
@@ -44,6 +50,15 @@ mod tests {
         assert_eq!(plain_on(r"\\?\GLOBALROOT\Device\x", true), r"\\?\GLOBALROOT\Device\x", "no plain form: kept");
         assert_eq!(plain_on(r"C:\work", true), r"C:\work");
         assert_eq!(plain_on(r"\\?\C:\work", false), r"\\?\C:\work", "only Windows has the prefix");
+    }
+
+    #[test]
+    fn a_verbatim_path_buf_is_made_plain_too() {
+        // a drive path comes back from `plain_on` as a slice of its input, a share as a new string
+        for (given, want) in [(r"\\?\C:\work\repo", r"C:\work\repo"), (r"\\?\UNC\host\share\repo", r"\\host\share\repo"), (r"C:\work", r"C:\work")] {
+            assert_eq!(plain_path_on(Path::new(given), true), Path::new(want), "{given}");
+        }
+        assert_eq!(plain_path_on(Path::new(r"\\?\C:\work"), false), Path::new(r"\\?\C:\work"));
     }
 
     /// The `.rs` files under `dir` of this crate, by path relative to the crate.
