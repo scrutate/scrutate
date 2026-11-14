@@ -994,13 +994,8 @@ fn inside(root: &std::path::Path, path: &str) -> bool {
 /// and the prefix parts of two paths compare by kind, so the two are compared as text.
 fn under(path: &str, root: &str) -> bool {
     fn plain(p: &str) -> String {
-        let s = p.replace('\\', "/");
-        let s = match s.strip_prefix("//?/") {
-            Some(rest) if rest.get(..4).is_some_and(|h| h.eq_ignore_ascii_case("UNC/")) => format!("//{}", &rest[4..]),
-            Some(rest) => rest.to_string(),
-            None => s,
-        };
-        s.to_lowercase()
+        // `\\` first, so a verbatim path written with `/` is seen too
+        crate::paths::plain_on(&p.replace('/', "\\"), true).replace('\\', "/").to_lowercase()
     }
     let (path, root) = (plain(path), plain(root));
     path.strip_prefix(root.trim_end_matches('/')).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))

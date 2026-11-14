@@ -31,8 +31,8 @@ pub(crate) fn plain_on(path: &str, windows: bool) -> Cow<'_, str> {
             if rest.as_bytes().get(1) == Some(&b':') {
                 return rest.into();
             }
-            if let Some(share) = rest.strip_prefix(r"UNC\") {
-                return format!(r"\\{share}").into();
+            if rest.get(..4).is_some_and(|h| h.eq_ignore_ascii_case(r"UNC\")) {
+                return format!(r"\\{}", &rest[4..]).into();
             }
         }
     }
@@ -47,6 +47,7 @@ mod tests {
     fn a_verbatim_path_is_shown_plain_a_share_included() {
         assert_eq!(plain_on(r"\\?\C:\work\repo", true), r"C:\work\repo");
         assert_eq!(plain_on(r"\\?\UNC\host\share\repo", true), r"\\host\share\repo", "not UNC\\host\\share");
+        assert_eq!(plain_on(r"\\?\unc\host\share\repo", true), r"\\host\share\repo", "UNC in any case");
         assert_eq!(plain_on(r"\\?\GLOBALROOT\Device\x", true), r"\\?\GLOBALROOT\Device\x", "no plain form: kept");
         assert_eq!(plain_on(r"C:\work", true), r"C:\work");
         assert_eq!(plain_on(r"\\?\C:\work", false), r"\\?\C:\work", "only Windows has the prefix");
@@ -82,11 +83,13 @@ mod tests {
     #[test]
     fn verbatim_paths_are_made_plain_in_one_place() {
         // split so these lines do not match themselves
-        let (prefix, call) = (["r\"\\\\", "?\\\""].concat(), ["canonical", "ize("].concat());
+        // the verbatim prefix as a raw string, an escaped one and with forward slashes
+        let prefixes = [["r\"\\\\", "?\\\""].concat(), ["\"\\\\\\\\", "?\\\\\""].concat(), ["\"//", "?/"].concat()];
+        let call = ["canonical", "ize("].concat();
         let mut found = Vec::new();
         for (rel, text) in rust_files("src") {
             for (i, line) in text.lines().enumerate() {
-                let hand = line.contains(&prefix) && (line.contains("trim_start_matches(") || line.contains("strip_prefix("));
+                let hand = prefixes.iter().any(|p| line.contains(p.as_str())) && (line.contains("trim_start_matches(") || line.contains("strip_prefix("));
                 if hand && rel != "src/paths.rs" {
                     found.push(format!("{rel}:{}", i + 1));
                 }
