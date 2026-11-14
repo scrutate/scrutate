@@ -362,7 +362,9 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
      ended, a closure or lambda, an `if let` or `match` arm, or the declaration's own value. A
      Python function is one scope; a JavaScript `var` belongs to its whole function.
 
-   A variable set from a call takes the function's declared return type (through `?` and holders
+   An element of a container whose element type is written (Go `xs []T` and `m map[K]T`, Python
+   `list[T]` and `dict[K, T]`) has that type, and a Go call of a variable of a function type
+   (`f func() T`) has its result type. A variable set from a call takes the function's declared return type (through `?` and holders
    such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes field `x`'s
    declared type, and a module-level or static variable its declared or built type. A Go method
    is found by its receiver type in any file of the package, or through an embedded field

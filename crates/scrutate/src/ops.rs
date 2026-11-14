@@ -570,11 +570,12 @@ pub enum Answer {
         stopped: Option<Stop>,
     },
     /// `undecided`: callers kept although the resolver could not tell whether they call this
-    /// definition or another of the same name.
+    /// definition or another of the same name; `rivals`: whether another of that name exists.
     Callers {
         hits: Vec<Hit>,
         undecided: usize,
         stopped: Option<Stop>,
+        rivals: bool,
     },
     /// `from`: the files of the definitions whose calls these are.
     Callees {
@@ -699,13 +700,14 @@ fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
-            let (hits, mut undecided) = Names::new(s)?.callers(name, limit.saturating_add(1))?;
+            let mut names = Names::new(s)?;
+            let (hits, mut undecided) = names.callers(name, limit.saturating_add(1))?;
             let (hits, stopped) = cut(hits, *limit, RAISE_LIMIT);
             // the undecided ones come last, so the one cut off was one of them
             if stopped.is_some() {
                 undecided = undecided.saturating_sub(1);
             }
-            Answer::Callers { hits, undecided, stopped }
+            Answer::Callers { hits, undecided, stopped, rivals: names.rivals }
         }
         Op::Callees { name, limit } => {
             let (resolved, external, from) = Names::new(s)?.callees(name, limit.saturating_add(1))?;
@@ -1657,12 +1659,17 @@ impl Answer {
                 ..Parts::default()
             },
             Answer::Callers { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
-            Answer::Callers { hits, undecided, stopped } => Parts {
+            Answer::Callers { hits, undecided, stopped, rivals } => Parts {
                 brief: hits_brief(hits),
                 items: hit_blocks(hits, &[], false, false),
                 tail: joined(
                     match *undecided {
                         0 => String::new(),
+                        // no other definition has the name: only the name ties the calls to this one
+                        n if !rivals && n == hits.len() => {
+                            "(the resolver could not tell whether any of these calls this definition: only the name ties them)".to_string()
+                        }
+                        n if !rivals => format!("({n} of these call this definition by name only: the resolver could not place them)"),
                         n if n == hits.len() => {
                             "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string()
                         }

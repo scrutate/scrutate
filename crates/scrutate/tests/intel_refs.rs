@@ -2084,6 +2084,28 @@ fn php_new_self_static_and_parent_are_calls_of_the_class() {
 }
 
 #[test]
+fn a_call_on_an_element_or_a_returned_value_follows_the_declared_type() {
+    let go_store = "package main\n\ntype Store struct{}\n\nfunc (s Store) Save() int {\n\treturn 1\n}\n";
+    let go_use = "package main\n\nfunc run(f func() Store) int {\n\treturn f().Save()\n}\n\nfunc run2(m map[string]Store) int {\n\treturn m[\"a\"].Save()\n}\n\nfunc run3(xs []Store) int {\n\treturn xs[0].Save()\n}\n";
+    let r = Repo::new("elem_go", &[("go.mod", "module ex\n\ngo 1.22\n"), ("a.go", go_store), ("b.go", go_use)]);
+    assert_eq!(split_callers(&r, "Save"), (strs(&["run", "run2", "run3"]), strs(&[])));
+    let py_store = "class Store:\n    def save(self):\n        return 1\n";
+    let py_use = "from store import Store\n\ndef run(xs: list[Store]):\n    return xs[0].save()\n\ndef run3(d: dict[str, Store]):\n    return d['a'].save()\n";
+    let r = Repo::new("elem_py", &[("store.py", py_store), ("svc.py", py_use)]);
+    assert_eq!(split_callers(&r, "save"), (strs(&["run", "run3"]), strs(&[])));
+}
+
+#[test]
+fn the_undecided_note_names_no_other_definition_when_there_is_none() {
+    let store = "class Store:\n    def save(self):\n        return 1\n";
+    let svc = "def run(x):\n    return x.save()\n";
+    let r = Repo::new("note_no_rival", &[("store.py", store), ("svc.py", svc)]);
+    let (code, out) = r.run(&["callers", "save"]);
+    assert!(code == 0 && out.contains("svc.py"), "{out}");
+    assert!(!out.contains("another"), "no other definition of save exists: {out}");
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";

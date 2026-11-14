@@ -38,6 +38,8 @@ pub struct Names<'a> {
     callee_cases: Option<HashMap<String, Vec<String>>>,
     /// the language of each file asked about, as the parser takes it
     langs: Langs<'a>,
+    /// `callers` met another definition of a name it asked for
+    pub(crate) rivals: bool,
     _reading: Reading,
 }
 
@@ -52,6 +54,7 @@ impl<'a> Names<'a> {
             stored: None,
             callee_cases: None,
             langs: Langs { root: &s.ix.root, seen: Default::default() },
+            rivals: false,
             _reading: reading,
         })
     }
@@ -287,6 +290,7 @@ impl<'a> Names<'a> {
             let rows: Vec<Symbol> = s.ix.named(n)?.into_iter().filter(|r| r.kind != "window").collect();
             // with another definition of the name about, the likeliest call sites are asked first
             let rivals = rows.iter().any(|r| !ids.contains(&r.id) && fits(&r.path));
+            self.rivals |= rivals;
             let mut sites = s.ix.callers_of(n)?;
             // a call in a language that ignores case may spell the name in another case
             if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind)) {

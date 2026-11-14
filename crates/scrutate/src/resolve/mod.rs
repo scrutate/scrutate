@@ -1325,8 +1325,27 @@ impl<'a> Resolver<'a> {
                         }
                     }
                     Err("external") => rules!(lang, R => R::outside_call(self, path, fi, lang, e, f)),
+                    // a call of a variable of a function type (Go `f func() Store`) gives what it returns
+                    Err(_) if f.kind() == "identifier" => match self.type_of(path, fi, lang, f)? {
+                        Ty::Foreign(n, args) if n == "function_type" => args.into_iter().next().flatten(),
+                        _ => None,
+                    },
                     Err(_) => None,
                 }
+            }
+            // an element of a container whose element type is written (`xs []Store`, `list[Store]`,
+            // `map[string]Store`, `dict[str, Store]`)
+            "index_expression" | "subscript" => {
+                let base = e.child_by_field_name("operand").or_else(|| e.child_by_field_name("value"))?;
+                let Ty::Foreign(n, args) = self.type_of(path, fi, lang, base)? else { return None };
+                let at = if CONTAINER_MAPS.contains(&n.as_str()) {
+                    1
+                } else if CONTAINER_SEQUENCES.contains(&n.as_str()) {
+                    0
+                } else {
+                    return None;
+                };
+                args.into_iter().nth(at).flatten()
             }
             _ => {
                 let (obj, field) = member_parts(e)?;
@@ -1570,6 +1589,20 @@ impl<'a> Resolver<'a> {
             "type" | "type_annotation" | "parenthesized_type" | "pointer_type" | "readonly_type" => self.ty_of_type(path, fi, lang, t.named_child(0)?),
             "primitive_type" | "predefined_type" | "integral_type" | "floating_point_type" | "boolean_type" => {
                 Some(Ty::Foreign(text(t, src).to_string(), Vec::new()))
+            }
+            // a Go container keeps what it holds, a function type what it returns
+            "array_type" | "slice_type" if lang == Lang::Go => {
+                let element = t.child_by_field_name("element").and_then(|e| self.ty_of_type(path, fi, lang, e));
+                Some(Ty::Foreign(t.kind().to_string(), vec![element]))
+            }
+            "map_type" if lang == Lang::Go => {
+                let key = t.child_by_field_name("key").and_then(|k| self.ty_of_type(path, fi, lang, k));
+                let value = t.child_by_field_name("value").and_then(|v| self.ty_of_type(path, fi, lang, v));
+                Some(Ty::Foreign(t.kind().to_string(), vec![key, value]))
+            }
+            "function_type" if lang == Lang::Go => {
+                let result = t.child_by_field_name("result").and_then(|r| self.ty_of_type(path, fi, lang, r));
+                Some(Ty::Foreign(t.kind().to_string(), vec![result]))
             }
             "array_type" | "slice_type" | "map_type" | "string_type" => Some(Ty::Foreign(t.kind().to_string(), Vec::new())),
             "generic_type" | "subscript" => {
@@ -2298,6 +2331,11 @@ fn python_class_binds(body: Node, name: &str, src: &str, use_: Node) -> bool {
     }
     false
 }
+
+/// Types whose element is their first type argument (`[]T`, `list[T]`), and those whose element
+/// is their second, a map's value (`map[K]V`, `dict[K, V]`).
+const CONTAINER_SEQUENCES: &[&str] = &["slice_type", "array_type", "list", "List", "Sequence", "MutableSequence"];
+const CONTAINER_MAPS: &[&str] = &["map_type", "dict", "Dict", "Mapping", "MutableMapping", "OrderedDict", "defaultdict"];
 
 /// The innermost function around `node`.
 fn enclosing_function(node: Node) -> Option<Node> {

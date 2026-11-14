@@ -188,6 +188,11 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers` and `refs` follow an element and a returned value to its declared type: Go
+  `xs[0].Save()`, `m["a"].Save()` and `f().Save()` for `xs []Store`, `m map[string]Store`,
+  `f func() Store`, and Python `xs[0].save()` and `d['a'].save()` for `list[Store]` and
+  `dict[str, Store]` are calls of `Store.save`, where they were undecided; the undecided note no
+  longer speaks of another definition of the name when there is none ([CLI](docs/CLI.md#engine-b)).
 - `impact` and `review` run from a subdirectory read a relative `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` from that directory, as git does: they started git at
   the root with the value unchanged, which found no repository or another one.
