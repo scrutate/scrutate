@@ -316,6 +316,9 @@ pub fn is_vendored_path(path: &str) -> bool {
     SET.is_match(&path.replace('\\', "/"))
 }
 
+/// The root manifests that can declare a directory the repository's own package.
+const MANIFESTS: [&str; 4] = ["Cargo.toml", "go.mod", "package.json", "pnpm-workspace.yaml"];
+
 /// Which paths of one repository are vendored code: search ranks them lower than the project's
 /// own. A path under a directory the repository's root manifests build as its own package is not.
 pub struct Vendored {
@@ -323,21 +326,22 @@ pub struct Vendored {
 }
 
 impl Vendored {
-    /// The test for the repository at `root`, its manifests read once per root in this process.
+    /// The test for the repository at `root`. Its manifests are read again when one of them
+    /// changed since the last read in this process (a workspace member added while `serve` runs).
     pub fn of(root: &std::path::Path) -> Vendored {
-        static OWN: LazyLock<std::sync::Mutex<HashMap<std::path::PathBuf, std::sync::Arc<Vec<String>>>>> = LazyLock::new(Default::default);
+        type Stamps = Vec<Option<(std::time::SystemTime, u64)>>;
+        type Known = HashMap<std::path::PathBuf, (Stamps, std::sync::Arc<Vec<String>>)>;
+        static OWN: LazyLock<std::sync::Mutex<Known>> = LazyLock::new(Default::default);
         let key = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let stamps: Stamps = MANIFESTS.iter().map(|m| std::fs::metadata(key.join(m)).ok().and_then(|md| Some((md.modified().ok()?, md.len())))).collect();
         let mut known = OWN.lock().unwrap_or_else(|e| e.into_inner());
-        let own = known
-            .entry(key)
-            .or_insert_with(|| {
-                let dirs = ["Cargo.toml", "go.mod", "package.json", "pnpm-workspace.yaml"]
-                    .iter()
-                    .flat_map(|m| crate::resolve::repo_text(root, m).map(|t| own_package_dirs(m, &t)).unwrap_or_default())
-                    .collect();
-                std::sync::Arc::new(dirs)
-            })
-            .clone();
+        if let Some((_, own)) = known.get(&key).filter(|(seen, _)| *seen == stamps) {
+            return Vendored { own: own.clone() };
+        }
+        let dirs: Vec<String> =
+            MANIFESTS.iter().flat_map(|m| crate::resolve::repo_text(&key, m).map(|t| own_package_dirs(m, &t)).unwrap_or_default()).collect();
+        let own = std::sync::Arc::new(dirs);
+        known.insert(key, (stamps, own.clone()));
         Vendored { own }
     }
 
@@ -554,6 +558,20 @@ pub fn query_words(q: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_manifest_changed_since_the_last_read_is_read_again() {
+        let root = std::env::temp_dir().join(format!("scrutate_vendored_reread_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        assert!(Vendored::of(&root).is("vendor/own/a.rs"));
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"vendor/own\"]\n").unwrap();
+        assert!(!Vendored::of(&root).is("vendor/own/a.rs"));
+        std::fs::remove_file(root.join("Cargo.toml")).unwrap();
+        assert!(Vendored::of(&root).is("vendor/own/a.rs"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_root_manifest_names_the_directories_the_repository_builds_as_its_own() {
