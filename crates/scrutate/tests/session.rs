@@ -250,6 +250,9 @@ fn a_long_socket_path_leaves_relative_arguments_to_the_callers_directory() {
     let run = |args: &[&str], env: &[(&str, &str)]| {
         let mut c = Command::new(BIN);
         c.arg("--root").arg(&rel).args(args).current_dir(&base).env_remove("SCRUTATE_ROOT").env("SCRUTATE_SESSION_DEBUG", "1").stdin(Stdio::null());
+        // a loaded machine can take more than the 20 ms greeting wait, and the call then does the
+        // work itself: what is tested is where it runs relative paths from
+        c.env("SCRUTATE_SESSION_WAIT_MS", "5000");
         for (k, v) in env {
             c.env(k, v);
         }
