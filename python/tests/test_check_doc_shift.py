@@ -49,3 +49,8 @@ def test_an_edited_documented_item_with_a_new_item_after_it_passes():
     # the documented `A` edited in place, then `B` added after a blank line: A keeps its doc
     edit_then_add = doc_diff(" /// The limit.", "-const A: u8 = 1;", "+const A: u8 = 2;", " ", "+const B: u8 = 3;", " fn main() {}")
     assert C.shifted(edit_then_add) == []
+
+
+def test_an_attribute_over_several_lines_does_not_hide_the_doc_above_it():
+    d = doc_diff(" /// What `kept` does.", " #[cfg(any(", "     unix,", "     windows,", " ))]", "+fn added() {}", " fn kept() {}")
+    assert C.shifted(d) == ["x.rs:6: fn added() {}"]

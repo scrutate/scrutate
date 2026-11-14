@@ -5,7 +5,7 @@ documented, so the doc comment silently moves onto the new item.
 usage: check_doc_shift.py [REV | A..B | --diff FILE]   (default HEAD: the diff of REV^..REV)
 
 A change block (added and removed lines between context lines) that follows unchanged `///`
-lines (attribute and blank lines between them aside) and adds an item (fn, struct, enum, type,
+lines (attributes, over one line or several, and blank lines between them aside) and adds an item (fn, struct, enum, type,
 const, static, impl, mod, trait, union, macro_rules!) is reported, unless it also removes the
 documented item and does not add it back below another (an edit, a rename or a replacement in
 place). The fix is to insert the new item above the doc block.
@@ -30,6 +30,19 @@ def item(line: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
+def code_lines(lines: list[str]) -> list[str]:
+    """`lines` without attributes, one spread over several lines (`#[cfg(any(` to `))]`) included."""
+    out, depth = [], 0
+    for line in lines:
+        if depth == 0 and line.strip().startswith("#["):
+            depth = line.count("[") - line.count("]")
+        elif depth > 0:
+            depth += line.count("[") - line.count("]")
+        else:
+            out.append(line)
+    return out
+
+
 def shifted(diff: str) -> list[str]:
     """`path:line: text` of each added item that takes over the doc block above it."""
     found, path, new_line, ctx, block = [], None, 0, [], []
@@ -40,7 +53,7 @@ def shifted(diff: str) -> list[str]:
             return
         # what the new file holds above the next block: this block's added lines count too
         before, ctx = ctx, (ctx + [t for kind, _, t in block if kind == "+"])[-20:]
-        above = [c for c in before if c.strip() and not c.strip().startswith("#[")]
+        above = [c for c in code_lines(before) if c.strip()]
         if not above or not above[-1].lstrip().startswith("///"):
             return
         added = [(n, t, item(t)) for kind, n, t in block if kind == "+" and item(t)]
