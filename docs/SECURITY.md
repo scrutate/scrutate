@@ -82,6 +82,10 @@ become git's `--output` and write a file. It goes as one argument, `REV^{commit}
 `git rev-parse --verify`, and later calls get the commit id that prints. Each side of `A...B` is
 checked the same way.
 
+Of the environment, only a relative `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or
+`GIT_COMMON_DIR` changes: it is made absolute against the command's working directory, where git
+itself reads it, so starting git at the root does not point it at another repository.
+
 What remains is git's trust in its own configuration: a clean filter the user's git configuration
 defines (Git LFS, for example) runs on a working tree file `.gitattributes` assigns to it, as in
 `git diff`. A repository can select such a filter but not define one: a clone carries no

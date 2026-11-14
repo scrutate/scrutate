@@ -759,8 +759,10 @@ rev-parse` and `git merge-base` for the base commit, and one `git cat-file --bat
 copies (and, with `--staged`, the staged copies). Every call passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
 helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
-a commit id, which every later call uses. Git sees this process's environment, or, built with
-`Git::with_env`, a caller's own values of the six variables that say where a repository's files
+a commit id, which every later call uses. Git sees this process's environment, a relative
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` made absolute against
+its working directory, where git reads such a value (`git::own_env`; a table in `git.rs` says
+where git reads each of the six); or, built with `Git::with_env`, a caller's own values of the six variables that say where a repository's files
 are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
 process, its configuration and programs included; any other name is refused before git runs. Each hunk's new lines map onto the index's definitions

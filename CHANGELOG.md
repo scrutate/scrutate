@@ -181,6 +181,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `impact` and `review` run from a subdirectory read a relative `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` from that directory, as git does: they started git at
+  the root with the value unchanged, which found no repository or another one.
 - `tsquery --rewrite --write` on Windows reads and writes through the root it opened and each
   directory opened from it, refusing a junction or link at every name: a directory swapped for a
   junction after the plan, the root included, sent the write outside `--root`

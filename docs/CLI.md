@@ -591,7 +591,11 @@ as the other answers. No change is exit code 1. Errors (exit 2): a directory out
 repository, git missing, a revision git does not know, two revisions with no merge base, a file
 with unmerged changes. A revision that starts with `-` is refused before git runs, so it can
 never be read as an option. The command line does not send `impact` to a running `serve`: git
-runs in the command's own environment. The MCP tool `impact` takes `base`, `staged` and `depth`
+runs in the command's own environment. Git runs at the root, and a relative `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` is read from the directory the command
+runs in, as git reads it; `GIT_INDEX_FILE` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are read at the
+work tree's top, as git reads them. With `GIT_DIR` and no `GIT_WORK_TREE`, git takes the directory
+it starts in, the root, as the work tree's top. The MCP tool `impact` takes `base`, `staged` and `depth`
 and gives the same answer.
 
 ### `review`

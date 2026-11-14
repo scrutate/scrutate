@@ -387,3 +387,23 @@ fn the_impact_tool_parses_with_its_own_repository_s_languages() {
     // read with b's table the old copy of x.twl holds no definition, and alpha would be "added"
     assert!(!c.is_error && c.text.contains("alpha  (edited)"), "{}", c.text);
 }
+
+#[test]
+fn a_relative_git_dir_set_in_a_subdirectory_is_read_from_there() {
+    let t = chain("relative_git_dir");
+    t.write("lib/core.py", "def deepest(x):\n    return x + 2\n\n\ndef spare(x):\n    return x\n");
+    let sub = t.root.join("lib");
+    let out = Command::new(BIN)
+        .args(["--root", t.root.to_str().unwrap(), "impact"])
+        .current_dir(&sub)
+        .envs(GIT_ENV)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("GIT_DIR", "../.git")
+        .env("GIT_WORK_TREE", "..")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let (text, err) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "{text}{err}");
+    assert!(text.contains("lib/core.py:1-2  [function] deepest  (edited)"), "{text}");
+}

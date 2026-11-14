@@ -38,18 +38,66 @@ pub(crate) struct Entry {
 /// passed, so it never reaches git as an option.
 pub(crate) struct Git {
     dir: PathBuf,
-    /// the `PASSED_ENV` variables git gets in place of every GIT_* variable of this process; None:
-    /// this process's own
-    env: Option<Vec<(String, String)>>,
+    env: Env,
+}
+
+/// What git gets of the environment.
+enum Env {
+    /// this process's own, these of `PASSED_ENV` set over it
+    Own(Vec<(String, String)>),
+    /// these of `PASSED_ENV`, and no GIT_* variable of this process
+    Given(Vec<(String, String)>),
 }
 
 /// The variables that say where a repository's files are: the only ones another process may hand to git.
 pub(crate) const PASSED_ENV: [&str; 6] =
     ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR"];
 
+/// How git 2.53 and 2.54 read a relative value of each of `PASSED_ENV`, probed from a subdirectory:
+///
+/// | variable | read against | in git's source |
+/// |---|---|---|
+/// | GIT_DIR | the directory git starts in | setup.c `update_relative_gitdir` moves it with git's chdir |
+/// | GIT_WORK_TREE | the directory git starts in | setup.c makes it absolute during setup |
+/// | GIT_OBJECT_DIRECTORY | checked there, used at the work tree's top | setup.c `is_git_directory` (access), odb.c after the chdir |
+/// | GIT_COMMON_DIR | checked there, used at the work tree's top | setup.c `get_common_dir`, repository.c `repo_set_commondir` |
+/// | GIT_INDEX_FILE | the work tree's top | repository.c `expand_base_dir` keeps it as given |
+/// | GIT_ALTERNATE_OBJECT_DIRECTORIES | the work tree's top | odb.c resolves alternates when it reads them |
+///
+/// These four are made absolute against the user's directory, so they hold wherever git starts; a
+/// relative one of the middle two works in git itself only from the top. The other two stay as
+/// given: git reaches the same top from the index root as from the user's directory.
+const FROM_START: [&str; 4] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR"];
+
+/// The `PASSED_ENV` variables `vars` holds, a relative value of those of `FROM_START` made absolute
+/// against `cwd`, the directory the user set them in.
+pub(crate) fn absolute_env(cwd: &Path, vars: impl IntoIterator<Item = (String, String)>) -> Vec<(String, String)> {
+    // Windows reads names in any case
+    let named = |n: &str| PASSED_ENV.into_iter().find(|p| if cfg!(windows) { p.eq_ignore_ascii_case(n) } else { *p == n });
+    vars.into_iter()
+        .filter_map(|(name, value)| {
+            let name = named(&name)?;
+            let relative = !value.is_empty() && Path::new(&value).is_relative();
+            let value = if relative && FROM_START.contains(&name) { cwd.join(&value).to_string_lossy().into_owned() } else { value };
+            Some((name.to_string(), value))
+        })
+        .collect()
+}
+
+/// `absolute_env` of this process's variables, against its working directory.
+pub(crate) fn own_env() -> Vec<(String, String)> {
+    let vars = std::env::vars_os().filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+    absolute_env(&std::env::current_dir().unwrap_or_default(), vars)
+}
+
 impl Git {
+    /// git in this process's environment, a relative value of `FROM_START` read where it was set.
     pub(crate) fn new(root: &Path) -> Result<Git> {
-        Git::checked(Git { dir: plain_dir(root), env: None }, root)
+        Git::overriding(root, own_env())
+    }
+
+    fn overriding(root: &Path, set: Vec<(String, String)>) -> Result<Git> {
+        Git::checked(Git { dir: plain_dir(root), env: Env::Own(set) }, root)
     }
 
     /// As `new`, with git given these of `PASSED_ENV` and no GIT_* variable of this process; any
@@ -59,7 +107,7 @@ impl Git {
         if let Some((name, _)) = env.iter().find(|(name, _)| !PASSED_ENV.contains(&name.as_str())) {
             bail!("{} cannot be handed to git: only {} can", echo(name), PASSED_ENV.join(", "));
         }
-        Git::checked(Git { dir: plain_dir(root), env: Some(env.to_vec()) }, root)
+        Git::checked(Git { dir: plain_dir(root), env: Env::Given(env.to_vec()) }, root)
     }
 
     fn checked(git: Git, root: &Path) -> Result<Git> {
@@ -77,17 +125,22 @@ impl Git {
     fn command(&self, args: &[&str]) -> Command {
         let mut c = Command::new("git");
         c.current_dir(&self.dir).args(["--no-optional-locks", "-c", "core.fsmonitor=false"]).args(args).stdin(Stdio::null());
-        if let Some(env) = &self.env {
-            // git reads its configuration, programs and paths from GIT_* names: none of this process's reach it
-            for (name, _) in std::env::vars_os() {
-                if name.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+        match &self.env {
+            Env::Own(set) => {
+                c.envs(set.iter().map(|(name, value)| (name, value)));
+            }
+            Env::Given(env) => {
+                // git reads its configuration, programs and paths from GIT_* names: none of this process's reach it
+                for (name, _) in std::env::vars_os() {
+                    if name.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+                        c.env_remove(name);
+                    }
+                }
+                for name in PASSED_ENV {
                     c.env_remove(name);
                 }
+                c.envs(env.iter().map(|(name, value)| (name, value)));
             }
-            for name in PASSED_ENV {
-                c.env_remove(name);
-            }
-            c.envs(env.iter().map(|(name, value)| (name, value)));
         }
         c
     }
@@ -442,7 +495,13 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let mut want: BTreeMap<String, Option<String>> = SIX.iter().map(|n| n.to_string()).chain(own).map(|n| (n, None)).collect();
         want.insert("GIT_DIR".into(), Some(dir.to_string_lossy().into_owned()));
         assert_eq!(got, want);
-        assert_eq!(Git::new(&root).unwrap().command(&["status"]).get_envs().count(), 0);
+        let own: BTreeMap<String, Option<String>> = Git::new(&root)
+            .unwrap()
+            .command(&["status"])
+            .get_envs()
+            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned())))
+            .collect();
+        assert_eq!(own, own_env().into_iter().map(|(n, v)| (n, Some(v))).collect());
     }
 
     #[test]
@@ -473,6 +532,70 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let git = Git::with_env(&root, &[]).unwrap();
         assert_eq!(git.commit("HEAD").unwrap(), std::env::var("SCRUTATE_TEST_GIT_HEAD").unwrap());
         assert!(!trace.exists());
+    }
+
+    #[test]
+    fn a_relative_value_is_made_absolute_where_git_reads_it_from_the_start_directory() {
+        let (cwd, abs) = if cfg!(windows) { ("C:\\a\\b", "C:\\abs\\tree") } else { ("/a/b", "/abs/tree") };
+        let joined = |rel: &str| if cfg!(windows) { format!("C:\\a\\b\\{rel}") } else { format!("/a/b/{rel}") };
+        let vars = [
+            ("GIT_DIR", "../x.git"),
+            ("GIT_WORK_TREE", abs),
+            ("GIT_OBJECT_DIRECTORY", "objs"),
+            ("GIT_COMMON_DIR", ""),
+            ("GIT_INDEX_FILE", "idx"),
+            ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "o1"),
+            ("PATH", "bin"),
+            ("GIT_EDITOR", "vi"),
+        ];
+        let got = absolute_env(Path::new(cwd), vars.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let want: Vec<(String, String)> = [
+            ("GIT_DIR", joined("../x.git")),
+            ("GIT_WORK_TREE", abs.to_string()),
+            ("GIT_OBJECT_DIRECTORY", joined("objs")),
+            // empty is unset to git
+            ("GIT_COMMON_DIR", String::new()),
+            // git reads these two at the top of the work tree, from wherever it starts
+            ("GIT_INDEX_FILE", "idx".to_string()),
+            ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "o1".to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn from_an_index_root_below_the_top_git_reads_what_it_would_from_the_user_s_directory() {
+        let top = scratch("below_top");
+        repo(&top);
+        std::fs::create_dir_all(top.join("root/deep")).unwrap();
+        std::fs::write(top.join("root/b"), "b\n").unwrap();
+        // an index of its own at the top holds root/b staged, as `GIT_INDEX_FILE=idx git add` there leaves it
+        let out = Command::new("git")
+            .args(["read-tree", "HEAD"])
+            .current_dir(&top)
+            .env("GIT_INDEX_FILE", "idx")
+            .envs([("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_NOSYSTEM", "1")])
+            .status()
+            .unwrap();
+        assert!(out.success());
+        assert!(Command::new("git").args(["add", "root/b"]).current_dir(&top).env("GIT_INDEX_FILE", "idx").status().unwrap().success());
+        // the user is in root/deep, the index root is root, and both name the same work tree
+        let user = [("GIT_DIR", "../../.git"), ("GIT_WORK_TREE", "../.."), ("GIT_INDEX_FILE", "idx")].map(|(k, v)| (k.to_string(), v.to_string()));
+        // git's own answer, started where the user is
+        let own = Command::new("git")
+            .args(["diff", "--cached", "--name-only", "HEAD"])
+            .current_dir(top.join("root/deep"))
+            .envs(user.clone())
+            .envs([("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_NOSYSTEM", "1")])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&own.stdout), "root/b\n");
+        let git = Git::overriding(&top.join("root"), absolute_env(&top.join("root/deep"), user)).unwrap();
+        let staged: Vec<(Option<String>, Option<String>)> =
+            git.diff(&git.commit("HEAD").unwrap(), &New::Staged).unwrap().into_iter().map(|e| (e.old, e.new)).collect();
+        assert_eq!(staged, [(None, Some("b".to_string()))]);
     }
 
     #[test]
