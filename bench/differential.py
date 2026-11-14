@@ -33,7 +33,29 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
-RG = shutil.which("rg") or "/usr/bin/rg"
+RG = os.environ.get("SCRUTATE_RG") or shutil.which("rg") or "/usr/bin/rg"
+# ripgrep before 15.2.0 matched a parent directory's ignore rules against the root that first
+# compiled them, so with overlapping path arguments (`sub/deep sub`) it searched an ignored
+# directory twice, by argument order or by a race between threads (BurntSushi/ripgrep 43e2f08ede)
+RG_MIN = (15, 2, 0)
+
+
+def rg_version(text: str) -> tuple[int, ...]:
+    """(15, 2, 0) from `ripgrep 15.2.0 (rev ...)`; () when the first line does not say."""
+    words = text.split()
+    try:
+        return tuple(int(x) for x in words[1].split(".")[:3]) if words[:1] == ["ripgrep"] else ()
+    except (IndexError, ValueError):
+        return ()
+
+
+def require_rg(rg: str = RG) -> str:
+    """`rg` when it is ripgrep 15.2.0 or newer, else exit naming the fix the comparison needs."""
+    out = subprocess.run([rg, "--version"], capture_output=True, text=True).stdout
+    if rg_version(out) < RG_MIN:
+        sys.exit(f"{rg} is {out.splitlines()[0] if out else 'not ripgrep'}: the comparison needs ripgrep 15.2.0 or newer "
+                 "(43e2f08ede fixed overlapping path arguments); set SCRUTATE_RG")
+    return rg
 
 WORDS = ["alpha", "beta", "gamma", "delta", "token", "refresh", "Token", "REFRESH_TOKEN", "refreshToken", "foo_bar", "x", "y1", "self", "def",
          "class", "import", "return", "value", "été", "日本語", "naïve", "Ωmega", "tab\there", "a.b", "a*b", "(x)", "[y]", "end$", "^start", "back\\slash"]
@@ -271,6 +293,7 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
 
 
 def main() -> int:
+    require_rg()
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", type=int, default=200)
     ap.add_argument("--seed", type=int, default=1)

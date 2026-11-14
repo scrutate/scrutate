@@ -144,10 +144,17 @@ jobs:
       # the yardstick on its tiny fixture: rivals absent here report missing, scrutate's rows must pass
       - name: yardstick smoke
         run: SCRUTATE_BIN="$GITHUB_WORKSPACE/target/release/scrutate" python bench/yardstick.py --smoke
-      - name: differential test against ripgrep
+      # ripgrep 15.2.0 or newer: earlier ones search an ignored directory twice when path arguments overlap
+      - name: ripgrep for the differential and random checks
         run: |
-          sudo apt-get -o Acquire::Retries=5 install -y ripgrep sqlite3
-          python bench/differential.py --cases 200 --seed 3
+          sudo apt-get -o Acquire::Retries=5 install -y sqlite3
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o rg.tar.gz https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz
+          echo "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c  rg.tar.gz" | sha256sum -c -
+          tar xzf rg.tar.gz
+          echo "$RUNNER_TEMP/ripgrep-15.2.0-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+      - name: differential test against ripgrep
+        run: python bench/differential.py --cases 200 --seed 3
       - name: random checks against ripgrep and a fresh index
         run: |
           python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7

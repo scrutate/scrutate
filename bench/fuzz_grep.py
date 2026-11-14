@@ -18,7 +18,8 @@ in the lines of the files that got a NUL byte are excused. Runs whose arguments 
 (exit 2 with a message) are not compared; on any other exit 2 the output is. Exit status 1 when
 anything else differs, or when no compared run had any output. With --ordered, a run draws
 `--sort path` (scrutate's `--sort`) for both tools four times in ten, and then their lines are
-compared in the order printed.
+compared in the order printed. ripgrep is `SCRUTATE_RG` or `rg` on PATH, and must be 15.2.0 or
+newer: an older one searches an ignored directory twice when path arguments overlap.
 """
 import argparse, os, random, shutil, subprocess, sys, tempfile, time
 from collections import Counter
@@ -30,6 +31,10 @@ ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--ordered", action="store_true")
 a_ = ap.parse_args()
 BIN, SECONDS, SEED, ORDERED = os.path.abspath(a_.bin), a_.seconds, a_.seed, a_.ordered
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from differential import require_rg  # noqa: E402
+
+RG = require_rg()
 HERE = tempfile.mkdtemp(prefix="scrutate-fuzz-")
 WORK = os.path.join(HERE, f"work{SEED}")
 KEEP = os.path.join(HERE, f"diffs{SEED}")
@@ -164,7 +169,7 @@ def ours(a):
 
 
 def run(tool, a):
-    cmd = ["rg", "-n", "--no-heading", "--no-messages"] + a if tool == "rg" else [BIN, "grep"] + ours(a)
+    cmd = [RG, "-n", "--no-heading", "--no-messages"] + a if tool == "rg" else [BIN, "grep"] + ours(a)
     if tool == "rg" and "--sort" in a:
         cmd.insert(cmd.index("--sort") + 1, "path")
     try:
