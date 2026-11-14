@@ -480,23 +480,25 @@ mod tests {
         assert!(r.note().unwrap().starts_with("(1 secret redacted"));
     }
 
-    /// False redactions on a real tree: every line of every text file under `SCRUTATE_FP_ROOT`
-    /// through `redact`, each mark printed with its line, and the rate per 10,000 lines.
+    /// False redactions on a real tree: every line of every file a search of `SCRUTATE_FP_ROOT`
+    /// covers (`files::look`) through `redact`, each mark printed with its line, and the rate per
+    /// 10,000 lines.
     #[test]
     #[ignore = "needs SCRUTATE_FP_ROOT"]
     fn false_redactions_per_ten_thousand_lines() {
         let Some(root) = std::env::var_os("SCRUTATE_FP_ROOT") else { return };
         let (mut lines, mut marks) = (0u64, 0u64);
-        let walk = ignore::WalkBuilder::new(&root).hidden(false).filter_entry(|e| e.file_name() != ".git" && e.file_name() != ".scrutate").build();
-        for e in walk.flatten().filter(|e| e.file_type().is_some_and(|t| t.is_file())) {
-            let Ok(text) = std::fs::read_to_string(e.path()) else { continue };
+        let root = std::path::PathBuf::from(root);
+        for f in crate::files::look(&root, true).unwrap().into_iter().filter(|f| f.repo) {
+            let path = root.join(&f.path);
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
             let mut r = Redactor::default();
             for (i, line) in text.lines().enumerate() {
                 lines += 1;
                 let (out, m) = r.redact(line);
                 if !m.is_empty() {
                     marks += m.len() as u64;
-                    println!("{}:{}: {}", e.path().display(), i + 1, out.chars().take(200).collect::<String>());
+                    println!("{}:{}: {}", path.display(), i + 1, out.chars().take(200).collect::<String>());
                 }
             }
         }
