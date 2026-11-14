@@ -1260,15 +1260,15 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
     }));
     if !i.findings.is_empty() {
         out.push(vec![Brief::text(format!("findings: {}", i.findings.len()))]);
-        out.extend(i.findings.iter().map(|f| {
+        for (n, f) in i.findings.iter().enumerate() {
             let mut b = Brief::at(&f.path, f.start, f.end, &format!("{} ({})", named(&f.name), f.kind()));
             for (k, (path, _, start, end)) in f.related().iter().enumerate() {
                 b = b.then(if k == 0 { " of " } else { ", " }).then_at(path, *start, *end);
             }
-            vec![b]
-        }));
-        if i.more_findings {
-            out.push(vec![Brief::text(i.more_line())]);
+            out.push(vec![b]);
+            if i.more_findings && n + 1 == i.duplicate_findings() {
+                out.push(vec![Brief::text(i.more_line())]);
+            }
         }
     }
     if !i.notes.is_empty() {
@@ -2072,9 +2072,17 @@ impl Answer {
                     if !matches!(key, "findings" | "notes") || len(&v[key]) > 0 {
                         w.take(1);
                     }
-                    list(&mut w, &mut v[key]);
                     if key == "findings" && i.more_findings {
+                        // the line that more were new follows the duplicates
+                        let (all, dup) = (len(&v[key]), i.duplicate_findings());
+                        let a = w.take(dup);
                         w.take(1);
+                        let b = w.take(all - dup);
+                        let start = if a.is_empty() { dup + b.start } else { a.start };
+                        let end = if b.is_empty() { a.end } else { dup + b.end };
+                        keep(&mut v[key], start..end.max(start));
+                    } else {
+                        list(&mut w, &mut v[key]);
                     }
                 }
             }

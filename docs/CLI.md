@@ -598,7 +598,7 @@ line per item:
 - `findings`: what a reviewer would want named, as `path:start-end  [kind, severity] sentence`.
   First each new duplicate group (kind `duplicate`, severity `minor`), at its member the change
   touched: the groups `dupes` finds with its defaults (`--min-tokens 30`, `--threshold 0.75`)
-  that the base lacked, largest first, at most 50, with a last line when more were new. Only a
+  that the base lacked, largest first, at most 50, with a line after them when more were new. Only a
   group with a member in a changed file can be new. The base's groups come from the same search
   over the index's definitions, each changed file replaced by a parse of its base copy. A group is
   old when one base group matches each of its members, each base member used once: the same

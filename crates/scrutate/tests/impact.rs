@@ -486,3 +486,49 @@ fn an_edited_readme_section_is_a_changed_definition_and_no_untested_finding() {
     assert!(kinds.contains(&"section"), "{v}");
     assert_eq!(v["findings"], serde_json::json!([]), "{v}");
 }
+
+/// The line that more duplicate groups were new than the list holds comes right after the
+/// duplicates it counts, in both forms, and a page of the structured answer holds the findings
+/// its text shows.
+#[test]
+fn the_line_that_more_duplicates_were_new_follows_the_duplicates_it_counts() {
+    let t = chain("more");
+    let fruit = ["mango", "pear", "plum", "kiwi", "lime", "guava", "papaya", "melon"];
+    let seeds: Vec<String> = fruit.iter().flat_map(|a| fruit.iter().map(move |b| format!("{a}{b}"))).take(51).collect();
+    for s in &seeds {
+        t.write(&format!("lib/{s}.py"), &long_fn(&format!("{s}_one"), s));
+    }
+    t.commit("originals");
+    for s in &seeds {
+        t.write(&format!("lib/{s}_copy.py"), &long_fn(&format!("{s}_two"), s));
+    }
+    let text = t.impact(&[]);
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| l.starts_with("(more than 50 duplicate groups")).unwrap_or_else(|| panic!("{text}"));
+    assert!(lines[at - 1].contains("  [duplicate, minor] ") && lines[at + 1].contains("  [untested-change, info] "), "{text}");
+    let session = scrutate::session::Session::open(&t.root, scrutate::session::Every::given(Some(3600.0))).unwrap();
+    let call = |args: serde_json::Value| {
+        let c = scrutate::mcp::call_tool(&session, "impact", &args, &scrutate::mcp::Settings::new(None), &Default::default());
+        assert!(!c.is_error, "{}", c.text);
+        c
+    };
+    let concise = call(serde_json::json!({"response_format": "concise"})).text;
+    let lines: Vec<&str> = concise.lines().collect();
+    let at = lines.iter().position(|l| l.starts_with("(more than 50 duplicate groups")).unwrap_or_else(|| panic!("{concise}"));
+    assert!(lines[at - 1].ends_with(".py:1-10") && lines[at + 1].ends_with(" (untested-change)"), "{concise}");
+    let (mut offset, mut pages, mut seen) = (0u64, 0, 0);
+    loop {
+        let c = call(serde_json::json!({"response_format": "detailed", "max_bytes": 1000, "offset": offset}));
+        let shown = c.text.lines().filter(|l| l.contains("  [duplicate, minor] ") || l.contains("  [untested-change, info] ")).count();
+        let held = c.structured["result"]["findings"].as_array().map_or(0, Vec::len);
+        assert_eq!(shown, held, "page at {offset}: {}\n{}", c.text, c.structured);
+        seen += held;
+        pages += 1;
+        match c.structured["next_offset"].as_u64() {
+            Some(next) if pages < 200 => offset = next,
+            _ => break,
+        }
+    }
+    // 50 duplicate findings, then the untested copies
+    assert_eq!(seen, 50 + seeds.len(), "over {pages} pages");
+}

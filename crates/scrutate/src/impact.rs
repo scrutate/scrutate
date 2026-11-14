@@ -513,11 +513,11 @@ impl Impact {
         }));
         if !self.findings.is_empty() {
             out.push(format!("findings: {}", self.findings.len()));
-            out.extend(
-                self.findings.iter().map(|f| format!("{}:{}-{}  [{}, {}] {}", shown(&f.path), f.start, f.end, f.kind(), f.severity(), shown(&f.text()))),
-            );
-            if self.more_findings {
-                out.push(self.more_line());
+            for (k, f) in self.findings.iter().enumerate() {
+                out.push(format!("{}:{}-{}  [{}, {}] {}", shown(&f.path), f.start, f.end, f.kind(), f.severity(), shown(&f.text())));
+                if self.more_findings && k + 1 == self.duplicate_findings() {
+                    out.push(self.more_line());
+                }
             }
         }
         if !self.notes.is_empty() {
@@ -527,7 +527,12 @@ impl Impact {
         out
     }
 
-    /// The line under a list of findings that more duplicate groups were new than it holds.
+    /// The duplicate findings, which come first in the list.
+    pub fn duplicate_findings(&self) -> usize {
+        self.findings.iter().take_while(|f| matches!(f.what, crate::findings::What::Duplicate(_))).count()
+    }
+
+    /// The line after the duplicate findings that more duplicate groups were new than they are.
     pub fn more_line(&self) -> String {
         format!("(more than {} duplicate groups were new: these are the largest)", crate::findings::MAX_DUPLICATES)
     }
