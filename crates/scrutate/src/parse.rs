@@ -1969,30 +1969,44 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 body_start = stmt.end_byte();
             }
             let cap = if CONTAINERS.contains(&kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
-            chunks.push(Chunk {
-                name,
-                qualname: q,
-                kind,
-                start: (outer.start_position().row - above) as i64 + 1,
-                end: last_row(node) + 1,
-                sig,
-                doc,
-                lazy: Some(Lazy { text: text_start, body: body_start, end: node.end_byte(), lines: cap }),
-                doc_lines,
-                ..Default::default()
+            // a further clause of a Haskell function (`f 0 = 0` then `f n = ...`) is the same function
+            let clause_of = ancestors.last().filter(|_| spec.id == "haskell").and_then(|(_, kids)| {
+                let prev = kids[..at].iter().rev().find(|k| k.is_named() && k.kind() != "comment")?;
+                let i = chunks.iter().rposition(|c| c.qualname == q && c.kind == kind)?;
+                (matches!(prev.kind(), "function" | "bind") && last_row(*prev) + 1 == chunks[i].end).then_some(i)
             });
-            if let (true, Some((_, siblings))) = (spec.id == "asm" && t == "label", ancestors.last()) {
-                let c = chunks.last_mut().unwrap();
-                let last = asm_block(node, siblings, at, src, &mut c.calls);
-                c.end = last_row(last) + 1;
-                if let Some(l) = c.lazy.as_mut() {
-                    l.end = last.end_byte();
+            if let Some(i) = clause_of {
+                chunks[i].end = last_row(node) + 1;
+                if let Some(l) = chunks[i].lazy.as_mut() {
+                    l.end = node.end_byte();
                 }
+                def_stack.push(i);
+            } else {
+                chunks.push(Chunk {
+                    name,
+                    qualname: q,
+                    kind,
+                    start: (outer.start_position().row - above) as i64 + 1,
+                    end: last_row(node) + 1,
+                    sig,
+                    doc,
+                    lazy: Some(Lazy { text: text_start, body: body_start, end: node.end_byte(), lines: cap }),
+                    doc_lines,
+                    ..Default::default()
+                });
+                if let (true, Some((_, siblings))) = (spec.id == "asm" && t == "label", ancestors.last()) {
+                    let c = chunks.last_mut().unwrap();
+                    let last = asm_block(node, siblings, at, src, &mut c.calls);
+                    c.end = last_row(last) + 1;
+                    if let Some(l) = c.lazy.as_mut() {
+                        l.end = last.end_byte();
+                    }
+                }
+                if let (true, Some((_, siblings))) = (spec.id == "gdscript" && t == "class_name_statement", ancestors.last()) {
+                    gdscript_header_doc(chunks.last_mut().unwrap(), &siblings[at + 1..], src);
+                }
+                def_stack.push(chunks.len() - 1);
             }
-            if let (true, Some((_, siblings))) = (spec.id == "gdscript" && t == "class_name_statement", ancestors.last()) {
-                gdscript_header_doc(chunks.last_mut().unwrap(), &siblings[at + 1..], src);
-            }
-            def_stack.push(chunks.len() - 1);
             pushed_now = true;
             heads.extend(def_head(spec.id, node).map(|h| h.id()));
         } else if let Some((names, shown, kind)) = constant_of(spec.id, node, &ancestors, scopes.last().map(|&i| ancestors[i].0.kind()), src) {

@@ -204,8 +204,13 @@ incompatible index by itself, and that is never breaking.
   Lib\phpfn as pf`, and `refs T` lists `t::make()` ([CLI](docs/CLI.md#engine-b)).
 - A JavaScript or TypeScript quoted key holding a function (`"get": function () {}`,
   `"q": () => 5`) is a method of what holds the object, as `get: function () {}` is; a call in it
-  had only the module chunk as caller. The content revision is 9 so an older index reads its
+  had only the module chunk as caller. The content revision goes up so an older index reads its
   files again ([CLI](docs/CLI.md#engine-b)).
+- The clauses of a Haskell function (`double 0 = 0` then `double x = x * 2`) are one definition
+  with its signature, and each clause head is that definition in `refs` and the LSP, where the
+  second clause was a definition of its own and a clause head a by-name use; the LSP's
+  references without the declaration leave out every line of it. The content revision is 10 so
+  an older index reads its files again ([CLI](docs/CLI.md#engine-b)).
 - `callers` and `refs` follow an element and a returned value to its declared type: Go
   `xs[0].Save()`, `m["a"].Save()` and `f().Save()` for `xs []Store`, `m map[string]Store`,
   `f func() Store`, and Python `xs[0].save()` and `d['a'].save()` for `list[Store]` and

@@ -728,3 +728,28 @@ fn an_alias_that_starts_with_the_name_spans_the_whole_alias() {
     drop(c);
     child.wait().unwrap();
 }
+
+#[test]
+fn a_haskell_signature_and_its_clauses_are_one_declaration() {
+    let r = Repo::new("hs_clauses");
+    r.write("M.hs", "module M where\n\ndouble :: Int -> Int\ndouble 0 = 0\ndouble x = x * 2\n\nquad :: Int -> Int\nquad x = double (double x)\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    // from the signature and from a use: the two calls alone without the declaration, every
+    // line of it with
+    for (line, ch) in [(2, 1), (7, 10)] {
+        for (with, want) in [(false, vec![7, 7]), (true, vec![2, 3, 4, 7, 7])] {
+            let pos = json!({"textDocument": {"uri": uri(&r.root.join("M.hs"))}, "position": {"line": line, "character": ch}, "context": {"includeDeclaration": with}});
+            let found = c.request("textDocument/references", pos);
+            let mut lines: Vec<u64> = places(&found["result"]).into_iter().map(|(_, l, _)| l).collect();
+            lines.sort();
+            assert_eq!(lines, want, "from {line}:{ch}, includeDeclaration {with}: {found}");
+        }
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}

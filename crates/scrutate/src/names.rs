@@ -240,7 +240,7 @@ impl<'a> Names<'a> {
             // a file with no grammar has no call sites in the index, so `callers` could not list it
             Reason::Unread | Reason::TooDeep if self.whole_name(path, line, col, spelled) => {
                 let how = if why == Reason::TooDeep { Reason::ByNameTooDeep } else { Reason::ByName };
-                self.by_name(path, line, spelled, how).unwrap_or(Tie::Undecided(why))
+                self.by_name(path, line, col, spelled, how).unwrap_or(Tie::Undecided(why))
             }
             Reason::Unread | Reason::TooDeep => Tie::Undecided(why),
             Reason::NoGrammar => Tie::Undecided(why),
@@ -260,14 +260,21 @@ impl<'a> Names<'a> {
 
     /// The by-name tie of a use of `spelled` on `line` of `path`, a file the resolver does not
     /// read: the name of a definition starting there is that definition.
-    fn by_name(&mut self, path: &str, line: u64, spelled: &str, deep: Reason) -> Option<Tie> {
+    fn by_name(&mut self, path: &str, line: u64, col: usize, spelled: &str, deep: Reason) -> Option<Tie> {
         let kinds: Vec<&str> = crate::search::CODE_KINDS.to_vec();
         let mut rows: Vec<ChunkRow> = self.s.ix.named_of_kinds(spelled, &kinds).ok()?.into_iter().filter(|r| self.langs.same_family(path, &r.path)).collect();
         if self.langs.folds(path, "function") {
             let more = self.s.ix.named_of_kinds_any_case(spelled, &kinds).ok()?;
             rows.extend(more.into_iter().filter(|r| r.name != spelled && self.langs.folds(&r.path, &r.kind) && self.langs.same_family(path, &r.path)));
         }
-        if let Some(d) = rows.iter().find(|r| r.path == path && r.start == line as i64) {
+        // a definition's own name: on its first line, or starting a line of it at the first line's
+        // indent (each clause head of a Haskell function after its signature)
+        let src = &self.rv.file(path).src;
+        let text = |n: i64| src.lines().nth((n.max(1) - 1) as usize).unwrap_or("");
+        let indent = |t: &str| t.len() - t.trim_start().len();
+        let here = text(line as i64);
+        let head = |r: &ChunkRow| r.start == line as i64 || (r.start..=r.end).contains(&(line as i64)) && indent(here) == col && col == indent(text(r.start));
+        if let Some(d) = rows.iter().find(|r| r.path == path && head(r)) {
             return Some(Tie::Resolved(vec![d.id], Reason::Definition));
         }
         let own: Vec<i64> = rows.iter().filter(|r| r.path == path).map(|r| r.id).collect();

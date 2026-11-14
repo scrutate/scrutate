@@ -344,7 +344,7 @@ fn cpp_call_operators_haskell_operators_and_r6_methods_are_named_definitions() {
     ];
     assert_eq!(defs("f.cpp", cpp), triples(&want));
     let hs = "module M where\na <+> b = a + b\n(<+>) a b = a\n(|>) = flip ($)\nx `op` y = x\nplain x = x\n";
-    let want = [("function", "<+>", "<+>"), ("function", "<+>", "<+>"), ("function", "|>", "|>"), ("function", "op", "op"), ("function", "plain", "plain")];
+    let want = [("function", "<+>", "<+>"), ("function", "|>", "|>"), ("function", "op", "op"), ("function", "plain", "plain")];
     assert_eq!(defs("m.hs", hs), triples(&want));
     let r = "Counter <- R6Class(\"Counter\",\n  public = list(\n    n = 0,\n    add = function(n) {\n      self$n <- self$n + n\n    }\n  ),\n  private = list(h = function() 1)\n)\nx <- list(f = function() 1)\ng <- function() 1\nStack <- R6::R6Class(\"Stack\", public = list(push = function(x) x))\n";
     let want = [("method", "add", "Counter.add"), ("method", "h", "Counter.h"), ("function", "g", "g"), ("method", "push", "Stack.push")];
@@ -1427,6 +1427,29 @@ fn an_objc_multi_part_selector_call_is_a_call_of_its_definition() {
     let chunks = parse_source("m.mm", "@implementation Foo\n- (void)a:(int)x b:(int)y {\n}\n- (void)run {\n  [obj a:1 b:2];\n}\n@end\n");
     assert_eq!(find(&chunks, "Foo.a").name, "a");
     assert_eq!(find(&chunks, "Foo.run").calls.iter().collect::<Vec<_>>(), ["a"]);
+}
+
+#[test]
+fn the_clauses_of_a_haskell_function_are_one_definition() {
+    let hs = parse_source("M.hs", "module M where\n\ndouble :: Int -> Int\ndouble 0 = 0\ndouble x = helper x\n\nquad :: Int -> Int\nquad x = double x\n");
+    let fns: Vec<(&str, i64, i64)> = hs.iter().filter(|c| c.kind == "function").map(|c| (c.name.as_str(), c.start, c.end)).collect();
+    assert_eq!(fns, [("double", 3, 5), ("quad", 7, 8)]);
+    assert_eq!(find(&hs, "double").calls.iter().collect::<Vec<_>>(), ["helper"]);
+    // guards are one clause; a `where` helper stays a definition of its own inside the clause it
+    // belongs to, and the next clause still joins the function
+    let hs = parse_source(
+        "G.hs",
+        "module G where\n\nsign :: Int -> Int\nsign x\n  | x > 0 = 1\n  | otherwise = 0\n\nscale 0 = 0\n  where k = 2\nscale n = n * k2\n  where k2 = 3\n",
+    );
+    let fns: Vec<(&str, i64, i64)> =
+        hs.iter().filter(|c| c.kind == "function" && matches!(c.name.as_str(), "sign" | "scale")).map(|c| (c.name.as_str(), c.start, c.end)).collect();
+    assert_eq!(fns, [("sign", 3, 6), ("scale", 8, 11)]);
+    // the same name in two instances, or in another module, is another definition
+    let hs = parse_source("S.hs", "module S where\n\ninstance Show A where\n  show _ = \"a\"\n\ninstance Show B where\n  show _ = \"b\"\n");
+    let shows: Vec<(i64, i64)> = hs.iter().filter(|c| c.name == "show").map(|c| (c.start, c.end)).collect();
+    assert_eq!(shows, [(4, 4), (7, 7)]);
+    let other = parse_source("N.hs", "module N where\n\ndouble :: Int -> Int\ndouble x = x\n");
+    assert_eq!(other.iter().filter(|c| c.name == "double").map(|c| (c.start, c.end)).collect::<Vec<_>>(), [(3, 4)]);
 }
 
 #[test]
