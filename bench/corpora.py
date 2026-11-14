@@ -8,6 +8,8 @@ Real corpora are shallow clones of release tags; a tag given with its commit mus
 systems. Generated corpora are built deterministically from the Linux tree and a seeded generator.
 `manifest.json` records, per corpus, its source, commit, file count, bytes and tree checksum
 (SHA-256 over the sorted list of `path NUL sha256(content)`; `.git` and `.scrutate` excluded).
+`--verify` fetches nothing: it checks each corpus on disk against that manifest (and a git corpus
+against its pinned head) and exits 1 on any mismatch.
 """
 from __future__ import annotations
 
@@ -216,14 +218,37 @@ def generate(root, name):
     return {"kind": "generated", "recipe": info}
 
 
+def verify(root, manifest) -> int:
+    """0 when every corpus in `manifest` is on disk with the files, bytes and tree checksum it pins
+    (and a git corpus at its pinned head); else 1, each mismatch printed."""
+    bad = 0
+    for name, want in sorted(manifest.items()):
+        d = os.path.join(root, name)
+        if not os.path.isdir(d):
+            print(f"{name}: missing from {root}")
+            bad += 1
+            continue
+        digest, n, size = tree_hash(d)
+        got = {"tree_sha256": digest, "files": n, "bytes": size}
+        if want.get("kind") == "git":
+            got["head"] = sh(["git", "rev-parse", "HEAD"], cwd=d).strip()
+        diff = [f"{k} {got[k]} (pinned {want.get(k)})" for k in got if got[k] != want.get(k)]
+        print(f"{name}: " + ("; ".join(diff) if diff else "ok"))
+        bad += bool(diff)
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=os.path.expanduser("~/.cache/scrutate-bench/corpora"))
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--verify", action="store_true", help="fetch nothing: check each corpus on disk against manifest.json, exit 1 on a mismatch")
     a = ap.parse_args()
     os.makedirs(a.root, exist_ok=True)
     mpath = os.path.join(a.root, "manifest.json")
     manifest = json.load(open(mpath)) if os.path.exists(mpath) else {}
+    if a.verify:
+        return verify(a.root, {k: v for k, v in manifest.items() if not a.only or k in a.only})
     for name in list(REAL) + GENERATED:
         if a.only and name not in a.only:
             continue
