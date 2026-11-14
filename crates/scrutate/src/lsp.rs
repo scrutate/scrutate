@@ -770,7 +770,13 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.request(method, params)))
             .unwrap_or_else(|_| Err((-32603, format!("internal failure while answering {method} (a bug: please report it)"))));
         send(&match reply {
-            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+            Ok(mut result) => {
+                // what an editor's agent reads has its secrets redacted unless SCRUTATE_REDACT=off
+                if crate::secrets::on(true) {
+                    crate::secrets::Redactor::default().redact_json(&mut result);
+                }
+                json!({"jsonrpc": "2.0", "id": id, "result": result})
+            }
             Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
         });
     }

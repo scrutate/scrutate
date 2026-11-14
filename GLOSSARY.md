@@ -143,6 +143,9 @@ definition only (`intel::location`).
 items and says how to continue. `grep --max-bytes` pages its lines by the same rule
 (`ops::paged_counted`).
 
+**Redaction**: a secret in an answer replaced with `[redacted:KIND]` before the budget pages it
+(`secrets::Redactor`), on for what an agent reads (MCP, the hooks, `lsp`) and off for the CLI.
+
 **Form**: how an answer's text is written (`ops::Form`, the MCP argument `response_format`):
 **detailed**, or **concise**, every location and name without what a call can ask for again. Both
 page the same items (`Answer::text_as`).

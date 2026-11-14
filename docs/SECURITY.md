@@ -296,6 +296,45 @@ file (`-F body=@FILE`), never on a command line. Tests: `tests/review.rs`
 a warning with exit 0, the comment is posted once and then edited, a person's comment with the
 marker is not).
 
+## Secrets in answers
+
+What an agent reads is secret-safe by default: the MCP tools, the Grep hook and `lsp` pass every
+answer through `secrets.rs`, which replaces each secret it finds with `[redacted:KIND]` and keeps
+the key name, URL scheme or PEM armour around it. A page says how many it redacted, and the
+structured form counts them by kind. Items are redacted before the budget pages them, so a page
+edge never cuts a secret in two; only the items a page can show are redacted, and the lines before
+them are read for where a private key starts. `SCRUTATE_REDACT=off` turns it off; no tool argument
+does, so an agent cannot.
+
+The detectors are ports of gitleaks v8.30.1 and secretlint v13.1.0 rules, each regex run only on
+text that holds one of its keywords (an Aho-Corasick pass), with gitleaks' entropy thresholds:
+AWS access key IDs and secret access keys; GitHub classic and fine-grained tokens; GitLab
+personal access tokens; Slack tokens and incoming webhooks; Stripe secret and restricted keys;
+Google API keys; OpenAI and Anthropic API keys; npm and PyPI tokens; JWTs; Twilio API key SIDs;
+SendGrid and Mailgun keys; database URLs with a password; PEM private key bodies, line by line
+between their armour lines; a line of base64 alone as wide as a key's body, near random, for a key
+read without its armour; `.env` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
+`KEY` or `CREDENTIALS`; and gitleaks' generic assignment rule (a name holding `key`, `token`,
+`secret`, `password` or kin, a value over 3.5 bits of entropy with a digit or symbol), without
+gitleaks' stopword list, which drops real secrets that hold a common word. Placeholders
+(`${VAR}`, `{{ x }}`, `<value>`), numbers as code writes them and identifiers in one case
+(`NL80211_AUTHTYPE_SAE`) are left alone.
+
+Measured, every line of every text file through the redactor: on scrutate's own tree (477,017
+lines) each of the 35 redactions is a test's planted secret; on the Linux tree at c52356211790
+(43,843,823 lines) 197 redactions, 37 of them the bodies of the test private keys it ships and 160
+false, 0.036 per 10,000 lines (the bar is 1). A page of 24,000 bytes costs 0.65 ms to redact
+(release build, the Mac).
+`tests/secrets.rs` plants three secrets of each kind, a `.env` and private keys among them, asks
+every MCP tool that returns text and the Grep hook for them at two page sizes, and finds no byte of
+any.
+
+Not covered: secrets in base64, hex or URL encoding (gitleaks decodes them; scrutate does not);
+formats outside the list above; a secret split over two lines of code or built at run time; the
+CLI and the Python bindings, which print what the files hold unless `SCRUTATE_REDACT=on` (the
+CLI's index answers only); and the index itself: `.scrutate/` keeps chunk text, secrets included,
+as before (mode 0700 on Unix).
+
 ## Known gaps and residual risks
 
 - **Not independently audited** (no external review or penetration test). The fuzzing campaign

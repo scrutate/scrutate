@@ -9,6 +9,12 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- Secret-safe answers: the MCP tools, the Grep hook and `lsp` replace a secret in what they
+  return with `[redacted:KIND]`, its name or armour kept, and say how many they redacted. The
+  detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,
+  Google, OpenAI, Anthropic, npm, PyPI, JWT, Twilio, SendGrid, Mailgun, database URLs, private
+  keys, `.env` lines and a generic assignment rule). `SCRUTATE_REDACT=off` turns it off and `on`
+  turns it on for the CLI's index answers ([Security](docs/SECURITY.md#secrets-in-answers)).
 - Vendored code ranks below the project's own in `search` and the MCP `search_code`, and is never
   left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
   their kin, a subset of GitHub linguist's `vendor.yml`. A name only vendored code defines,

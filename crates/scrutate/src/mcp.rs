@@ -200,8 +200,23 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
     let form = ops::Form::from_tool(args).unwrap_or_default();
     match ops::Op::from_tool(name, args).and_then(|op| session.run_counted(&op, cancel, count)) {
         Ok(answer) => {
-            let (text, shown, total) = answer.text_page(max_bytes, offset, form);
+            // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off
+            let redact = crate::secrets::on(true);
+            let mut r = crate::secrets::Redactor::default();
+            let (mut text, shown, total) = answer.text_page(max_bytes, offset, form, redact.then_some(&mut r));
             let mut structured = answer.structured(text.len(), max_bytes, offset, shown, total);
+            if redact {
+                let mut rj = crate::secrets::Redactor::default();
+                rj.redact_json(&mut structured);
+                if rj.total() > 0 {
+                    structured["redacted"] = json!(rj.counts);
+                }
+                // the redactions the page shows, not those of items past it
+                if let Some(note) = crate::secrets::note(text.matches("[redacted:").count()) {
+                    text.push_str(if text.ends_with('\n') { "" } else { "\n" });
+                    text.push_str(&note);
+                }
+            }
             if structured["result"].is_null() {
                 // a client that shows only the structured form still gets the part that fits
                 structured["text"] = json!(text);

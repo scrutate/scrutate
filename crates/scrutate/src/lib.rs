@@ -38,6 +38,7 @@ pub mod review;
 pub mod rewrite;
 pub mod running;
 pub mod search;
+pub mod secrets;
 pub mod semantic;
 pub mod session;
 pub mod setup;

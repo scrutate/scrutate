@@ -714,6 +714,16 @@ Nineteen tools over stdio, each an operation above (`search_code`, `grep_code`, 
 `dead_code` is `dead`, with its directory or file in `path`. A message is one line of at most
 256 MiB, as for `lsp`; a longer one is read and dropped, and answered with a parse error.
 
+Answers are secret-safe: a secret in the text a tool returns is replaced with
+`[redacted:KIND]` (`aws-access-key-id`, `github-token`, `private-key`, `env-secret`,
+`generic-secret` and the other kinds [Security](SECURITY.md#secrets-in-answers) lists), its key
+name, URL scheme or PEM armour left in place, and the page ends with `(N secrets redacted:
+SCRUTATE_REDACT=off shows them)`; the structured form carries `"redacted": {KIND: count}`.
+Items are redacted before the budget pages them, so a page edge never cuts a secret in two. The
+Grep hook and `lsp` answer the same way. The CLI and the Python bindings print what the files
+hold; `SCRUTATE_REDACT=on` redacts the CLI's index answers too, and `SCRUTATE_REDACT=off` turns
+redaction off everywhere. No tool argument turns it off, so an agent cannot.
+
 Before a call the server checks the repository for changed files and updates the index. Without
 `--refresh-interval`, scans are at most a second apart, closer when a scan is cheap; with
 `--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S seconds after
@@ -1090,6 +1100,7 @@ root.
 
 | Variable | Meaning |
 |---|---|
+| `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts the CLI's index answers too |
 | `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none`; a model whose tables do not agree in size is refused with an error |
 | `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's makes `search` fail |
 | `SCRUTATE_PROFILE` | print indexing phase timings |

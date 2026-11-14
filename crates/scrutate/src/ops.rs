@@ -1542,12 +1542,22 @@ impl Answer {
 
     /// `text_within` in either form.
     pub fn text_as(&self, max_bytes: usize, offset: usize, form: Form) -> String {
-        self.text_page(max_bytes, offset, form).0
+        self.text_page(max_bytes, offset, form, None).0
     }
 
-    /// `text_as`, with how many items the page shows and how many the answer has.
-    pub fn text_page(&self, max_bytes: usize, offset: usize, form: Form) -> (String, usize, usize) {
+    /// `text_as`, with how many items the page shows and how many the answer has. With a
+    /// `redactor` every item is redacted before the budget pages them, so no secret is cut in two
+    /// at a page's edge.
+    pub fn text_page(&self, max_bytes: usize, offset: usize, form: Form, redactor: Option<&mut crate::secrets::Redactor>) -> (String, usize, usize) {
         let mut parts = self.parts();
+        if let Some(r) = redactor {
+            // the head, the items a page of max_bytes can show, and the tail
+            let mut ends = [std::mem::take(&mut parts.head), std::mem::take(&mut parts.tail)];
+            r.redact_shown(&mut ends[..1], 0, usize::MAX);
+            r.redact_shown(&mut parts.items, offset, max_bytes);
+            r.redact_shown(&mut ends[1..], 0, usize::MAX);
+            [parts.head, parts.tail] = ends;
+        }
         let briefs = parts.brief.as_ref().map(Vec::len);
         // a concise form that does not line up with the items would page other items
         debug_assert!(briefs.is_none_or(|n| n == parts.items.len()), "the concise form has another number of items");

@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 
 PURPOSE = {
-    "aho-corasick": "multi-pattern prefilter for fuzzy search",
+    "aho-corasick": "multi-pattern prefilter for fuzzy search and for the secret detectors' keywords",
     "anyhow": "error type",
     "blake2": "token hashing (63-bit keys)",
     "clap": "command-line parsing",

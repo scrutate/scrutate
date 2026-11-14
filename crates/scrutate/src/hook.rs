@@ -101,8 +101,29 @@ pub fn answer(input: &Value, budget: usize) -> Option<Answer> {
     if !ask.target.starts_with(&project) || rules_limit_reads(&project) {
         return None;
     }
-    let lines = search(&ask)?;
-    Some(render(&ask, lines, budget))
+    let mut lines = search(&ask)?;
+    let mut texts: Vec<String> = lines.iter_mut().map(|i| std::mem::take(&mut i.text)).collect();
+    let first = window(texts.len(), ask.head, ask.offset).0;
+    let note = redacted(&mut texts, first, budget);
+    lines.iter_mut().zip(texts).for_each(|(i, t)| i.text = t);
+    let mut answer = render(&ask, lines, budget);
+    if let Some(note) = note {
+        answer.reason.push('\n');
+        answer.reason.push_str(&note);
+    }
+    Some(answer)
+}
+
+/// The lines a hook shows an agent with their secrets redacted, unless SCRUTATE_REDACT=off: from
+/// `first`, up to `room` bytes (`secrets::Redactor::redact_shown`). -> the closing line that says
+/// how many were redacted, when any were. Every hook writes its lines through this.
+pub(crate) fn redacted(lines: &mut [String], first: usize, room: usize) -> Option<String> {
+    if !crate::secrets::on(true) {
+        return None;
+    }
+    let mut r = crate::secrets::Redactor::default();
+    r.redact_shown(lines, first, room);
+    r.note()
 }
 
 fn read_ask(input: &Value) -> Option<Ask> {

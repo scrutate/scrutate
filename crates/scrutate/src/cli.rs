@@ -1893,6 +1893,17 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request) -> Result<cr
         writeln!(p.err, "[scrutate] {w}")?;
     }
     p.code = if answer.is_empty() { 1 } else { 0 };
+    // a person reads the CLI's answers as they are, unless SCRUTATE_REDACT=on
+    if crate::secrets::on(false) {
+        let mut r = crate::secrets::Redactor::default();
+        if let std::borrow::Cow::Owned(s) = r.redact(&p.out).0 {
+            p.out = s;
+        }
+        if let Some(note) = r.note() {
+            p.out.push_str(&note);
+            p.out.push('\n');
+        }
+    }
     Ok(p)
 }
 
