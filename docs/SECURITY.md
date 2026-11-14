@@ -242,8 +242,8 @@ extension refused).
 for that agent and scope (under the home directory, `$CODEX_HOME` or `$XDG_CONFIG_HOME`, or the
 repository's top with `--project`), and only when it is run; no other command touches them. Each
 file gets one entry named `scrutate`, which runs this binary by its absolute path with `serve`
-(with `--project`, `--root <repository> serve`) and nothing else. Only with `--hook` does Claude
-Code's settings get one `PreToolUse` group, and only with `--instructions` does the agent's
+(with `--project`, `--root <repository> serve`) and nothing else. Only with `--hook` do Claude
+Code's settings get two `PreToolUse` groups (Grep and Bash) and Codex's `hooks.json` one (Bash), and only with `--instructions` does the agent's
 instruction file get one marked block. A file that does not parse is left as it is, and a crash leaves the old file or the new one, never half of one. For Claude Code's
 user file, `setup` runs `claude` from `PATH` (`claude mcp add-json`, `claude mcp remove`), because
 running Claude Code sessions rewrite that file themselves. An entry in a project file (`.mcp.json`,
@@ -263,6 +263,26 @@ on any argument it does not map, an error, a binary or unreadable file and after
 exits 2, which would block the call. Its one file is the counter
 `$XDG_STATE_HOME/scrutate/hook-grep.jsonl`: per answered call the session id, two byte counts and
 the time, and no file name or text of the repository.
+
+`scrutate hook bash` rewrites a shell command only by putting `scrutate hook run --` in front of
+its first command, when that command is a read-only search by `rg`, `grep` or `find`; the rest of
+the line stays as written. `scrutate hook run` is the boundary, as an agent can type it and a user
+may allow it without a prompt: it runs only a bare `rg`, `grep` or `find` looked up in the absolute
+directories of `PATH`, and refuses (exit 2, nothing run) every argument, as the shell expanded it,
+that runs a program or writes a file (`rg --pre`, `--pre-glob`, `-z`, `--hostname-bin`, the text
+index's `--index` and `--update`; `find -exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
+`-fprint0`, `-fprintf`, `-fls`, and any `find` expression outside its read-only list), so a file
+named `--pre=x` that a glob expands into is refused too. A command with a redirection to anything but the null
+device (`2>/dev/null`, `2>&1`, `>/dev/null`, `&>/dev/null`) is never rewritten: `2> ~/.bashrc`
+would truncate a file. Codex takes a rewrite only with `allow`, which approves the whole
+line, so for Codex the hook rewrites only a search with at most `| head` or `| tail` after it;
+Claude Code gets no decision and checks each command of the line by its own rules: on that
+path, what follows the first command (`;`, `&&`, `| tee`) is approved or not by Claude Code's own
+permission parser under the user's rules, the same as without the hook. A line with `\r` or
+another control character but tab and line feed is never rewritten (bash reads them as part of a
+word). `hook run` takes no program from a `PATH` directory inside the current directory or its git
+work tree, and runs the program with `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` and every
+`DYLD_*` variable removed.
 
 ## The structural rewrite
 

@@ -317,6 +317,16 @@ const GREP_ENV: [&str; 9] = [
     "SCRUTATE_THREADS",
 ];
 
+/// Whether `scrutate grep ARGS` parses and every path it names is there: `hook run` sends `rg`
+/// there only then, so an error is `rg`'s own, in its own words.
+pub(crate) fn grep_takes(args: &[String]) -> bool {
+    let all: Vec<&str> = ["scrutate", "grep"].into_iter().chain(args.iter().map(String::as_str)).collect();
+    let Ok(GrepCli { cmd: GrepCmd::Grep(g), .. }) = GrepCli::try_parse_from(all) else { return false };
+    // with `-e`, the first word that is no flag is a path too
+    let first = g.pattern.iter().filter(|_| !g.regexp.is_empty()).map(PathBuf::from);
+    g.paths.iter().cloned().chain(first).all(|p| p.as_os_str() == "-" || std::fs::symlink_metadata(&p).is_ok())
+}
+
 /// `scrutate grep ARGS` of the plain shapes (`[-FiwnlcU...] [-e PATTERN]... [-g GLOB]... [-j N]
 /// [PATTERN] [PATH]...`, flags anywhere, each at most once), read without clap: clap's parse of
 /// even these is 1.3 M instructions and 4 page-ins, more than a small search. `None` for anything
@@ -807,6 +817,14 @@ pub enum Cmd {
 pub enum HookCmd {
     /// read a PreToolUse call of Grep on standard input and answer it, or print nothing so Grep runs
     Grep,
+    /// read a PreToolUse call of the shell tool (Claude Code's Bash, Codex's shell) and put `hook
+    /// run` in front of a first command that is a read-only rg, grep or find search, or print nothing
+    Bash,
+    /// answer a rewritten search: `hook run [--session ID] [--piped] -- rg/grep/find ARGS...`
+    Run {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// the bytes Grep would have returned against the bytes the hook sent, per session and in all
     Stats {
         #[arg(long)]
@@ -1054,6 +1072,12 @@ pub fn run() -> Result<i32> {
     // before the configuration file, which can stop a command: the hook must never fail
     if args.len() == 3 && args[1] == "hook" && args[2] == "grep" {
         return Ok(crate::hook::grep_main());
+    }
+    if args.len() == 3 && args[1] == "hook" && args[2] == "bash" {
+        return Ok(crate::shellhook::bash_main());
+    }
+    if args.len() >= 3 && args[1] == "hook" && args[2] == "run" {
+        return Ok(crate::shellhook::run_main(&args[3..]));
     }
     let cwd = std::env::current_dir().ok();
     let root_given = std::env::var_os("SCRUTATE_ROOT").is_some() || args.iter().any(|a| a == "--root" || a.starts_with("--root="));
@@ -1749,6 +1773,8 @@ pub fn run() -> Result<i32> {
             crate::setup::run(agent, crate::setup::Options { project, uninstall, dry_run, hook, instructions })
         }
         Cmd::Hook { cmd: HookCmd::Grep } => Ok(crate::hook::grep_main()),
+        Cmd::Hook { cmd: HookCmd::Bash } => Ok(crate::shellhook::bash_main()),
+        Cmd::Hook { cmd: HookCmd::Run { args } } => Ok(crate::shellhook::run_main(&args)),
         Cmd::Hook { cmd: HookCmd::Stats { json } } => crate::hook::stats(json),
     }
 }

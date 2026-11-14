@@ -281,7 +281,11 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     let (code, _, _) = s.setup(&["claude", "--hook", "--instructions"]);
     assert_eq!(code, 0);
     assert_eq!(fs::read_to_string(&claude_md).unwrap(), md, "one block");
-    assert_eq!(serde_json::from_str::<Value>(&fs::read_to_string(&settings).unwrap()).unwrap()["hooks"]["PreToolUse"].as_array().unwrap().len(), 2, "one hook");
+    assert_eq!(
+        serde_json::from_str::<Value>(&fs::read_to_string(&settings).unwrap()).unwrap()["hooks"]["PreToolUse"].as_array().unwrap().len(),
+        3,
+        "one Grep and one Bash hook"
+    );
     let (code, _, err) = s.setup(&["claude", "--uninstall", "--hook", "--instructions"]);
     assert_eq!(code, 0, "{err}");
     assert_eq!(fs::read_to_string(&settings).unwrap(), before_settings);
@@ -296,13 +300,40 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     assert_eq!(s.setup(&["claude", "--project", "--hook", "--instructions", "--uninstall"]).0, 0);
     assert!(!s.repo.join(".claude/settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
 
-    for agent in ["codex", "opencode", "cursor", "gemini"] {
+    for agent in ["opencode", "cursor", "gemini"] {
         let (code, out, _) = s.setup(&[agent, "--hook", "--dry-run"]);
         assert_eq!(code, 0);
         assert!(out.contains("no hook was installed"), "{agent}: {out}");
     }
     let (_, out, _) = s.setup(&["gemini", "--dry-run"]);
     assert!(out.contains("trust"), "{out}");
+}
+
+#[test]
+fn setup_codex_hook_adds_the_bash_hook_to_its_hooks_file_and_uninstall_takes_it_out() {
+    let s = Scratch::new("codexhook");
+    let hooks = s.base.join("codex/hooks.json");
+    let before = "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"/usr/bin/true\"}]}\n    ]\n  }\n}\n";
+    s.write(&hooks, before);
+    let (code, out, err) = s.setup(&["codex", "--hook"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("/hooks") && out.contains("trust"), "{out}");
+    let v: Value = serde_json::from_str(&fs::read_to_string(&hooks).unwrap()).unwrap();
+    let groups = v["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(groups.len(), 2, "{v}");
+    let run = if cfg!(windows) { bin().replace('\\', "/") } else { bin() };
+    assert_eq!(groups[1]["matcher"], "Bash");
+    assert_eq!(groups[1]["hooks"][0]["command"], format!("{run} hook bash"));
+    assert_eq!(s.setup(&["codex", "--hook"]).0, 0);
+    assert_eq!(serde_json::from_str::<Value>(&fs::read_to_string(&hooks).unwrap()).unwrap()["hooks"]["PreToolUse"].as_array().unwrap().len(), 2, "one hook");
+    assert_eq!(s.setup(&["codex", "--uninstall"]).0, 0);
+    assert_eq!(fs::read_to_string(&hooks).unwrap(), before);
+    // a hooks file setup made goes with the uninstall
+    fs::remove_file(&hooks).unwrap();
+    assert_eq!(s.setup(&["codex", "--hook"]).0, 0);
+    assert!(hooks.is_file());
+    assert_eq!(s.setup(&["codex", "--uninstall"]).0, 0);
+    assert!(!hooks.exists());
 }
 
 #[test]

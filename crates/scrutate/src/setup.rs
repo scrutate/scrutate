@@ -287,14 +287,26 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
                 let settings = if o.project { env.top.join(".claude").join("settings.json") } else { env.claude_dir.join("settings.json") };
                 steps.extend(asked(o.hook, claude_hook(&settings, &bin, o)?));
             }
+            if o.hook && !o.uninstall {
+                // Claude Code checks its permission rules against the command the hook returns
+                let rule = format!("Bash({} hook run:*)", crate::shellhook::quote(&bin));
+                steps.push(Step::Note(format!(
+                    "the Bash hook rewrites rg, grep and find searches to `{} hook run ...`, and Claude Code asks about that command by its own rules: to keep a search you allowed from asking, also allow {rule}",
+                    crate::shellhook::quote(&bin)
+                )));
+            }
         }
         Agent::Codex => {
             if o.project {
                 bail!("Codex has no project configuration file: run `scrutate setup codex` for the user's {}", env.codex_home.join("config.toml").display());
             }
             steps.extend(toml_entry(&env.codex_home.join("config.toml"), &bin, &args, o)?);
-            if o.hook {
-                steps.push(Step::Note("Codex has PreToolUse hooks but searches by running rg in its shell, not through a search tool of its own; scrutate's hook answers Claude Code's Grep only, so no hook was installed".into()));
+            if o.hook || o.uninstall {
+                let groups: [HookGroup; 1] = [("Bash", "bash", is_our_bash_hook)];
+                steps.extend(asked(o.hook, hooks_file(&env.codex_home.join("hooks.json"), &bin, o, &groups, "the scrutate Bash hook")?));
+            }
+            if o.hook && !o.uninstall {
+                steps.push(Step::Note("Codex runs a new hook only after you trust it: open Codex, type /hooks, and trust the scrutate Bash hook".into()));
             }
         }
         Agent::Opencode => {
@@ -425,29 +437,49 @@ fn json_entry(path: &Path, keys: &[&str], entry: &J, o: Options) -> Result<Vec<S
     })
 }
 
-/// The hook entry of Claude Code's settings: a `PreToolUse` group with matcher `Grep`.
-fn claude_hook(path: &Path, bin: &str, o: Options) -> Result<Vec<Step>> {
+/// (matcher, `hook` subcommand, whether a group is that one of ours)
+type HookGroup = (&'static str, &'static str, fn(&Value) -> bool);
+
+/// A `PreToolUse` group with `matcher` whose one command is this binary's `hook SUB`.
+fn hook_group(bin: &str, matcher: &str, sub: &str) -> J {
     let mut hook = vec![("type", J::S("command".into()))];
-    hook.extend(hook_run(bin, cfg!(windows)));
+    hook.extend(hook_command(bin, cfg!(windows), sub));
     hook.push(("timeout", J::N(HOOK_TIMEOUT_S)));
-    let group = obj(vec![("matcher", J::S("Grep".into())), ("hooks", J::A(vec![obj(hook)]))]);
+    obj(vec![("matcher", J::S(matcher.into())), ("hooks", J::A(vec![obj(hook)]))])
+}
+
+/// The hook entries of Claude Code's settings: `PreToolUse` groups with matcher `Grep` (`hook
+/// grep`) and `Bash` (`hook bash`).
+fn claude_hook(path: &Path, bin: &str, o: Options) -> Result<Vec<Step>> {
+    let groups: [HookGroup; 2] = [("Grep", "grep", is_our_hook), ("Bash", "bash", is_our_bash_hook)];
+    hooks_file(path, bin, o, &groups, "the scrutate Grep hook and Bash hook")
+}
+
+/// The `PreToolUse` groups of `groups` added to `path` (a hooks file of Claude Code's or Codex's
+/// shape), or taken out with `--uninstall`.
+fn hooks_file(path: &Path, bin: &str, o: Options, groups: &[HookGroup], label: &str) -> Result<Vec<Step>> {
     let before = read(path)?;
     let refused = |e: anyhow::Error| anyhow!("{} does not parse ({e:#}): left as it is", path.display());
     let keys = ["hooks", "PreToolUse"];
-    let text = before.as_deref().filter(|t| !t.trim().is_empty());
-    if o.uninstall {
-        let after = match text {
-            Some(t) => pull(t, &keys, is_our_hook).map_err(refused)?,
-            None => None,
-        };
-        return Ok(match after {
-            None => vec![Step::Note(format!("{} has no scrutate hook", path.display()))],
-            Some(a) => vec![file_step(path, before.clone(), a, "removed the scrutate Grep hook from")],
-        });
+    let mut text: Option<String> = before.clone().filter(|t| !t.trim().is_empty());
+    let mut changed = false;
+    for (matcher, sub, ours) in groups {
+        if o.uninstall {
+            let Some(t) = text.as_deref() else { break };
+            if let Some(after) = pull(t, &keys, *ours).map_err(refused)? {
+                text = after;
+                changed = true;
+            }
+        } else if let Some(after) = push(text.as_deref(), &keys, &hook_group(bin, matcher, sub), *ours).map_err(refused)? {
+            text = Some(after);
+            changed = true;
+        }
     }
-    Ok(match push(text, &keys, &group, is_our_hook).map_err(refused)? {
-        None => vec![Step::Note(format!("{} already has the scrutate Grep hook", path.display()))],
-        Some(a) => vec![file_step(path, before, Some(a), "added the scrutate Grep hook to")],
+    Ok(match (changed, o.uninstall) {
+        (false, true) => vec![Step::Note(format!("{} has no scrutate hook", path.display()))],
+        (false, false) => vec![Step::Note(format!("{} already has {label}", path.display()))],
+        (true, true) => vec![file_step(path, before, text, &format!("removed {label} from"))],
+        (true, false) => vec![file_step(path, before, text, &format!("added {label} to"))],
     })
 }
 
@@ -455,26 +487,40 @@ fn claude_hook(path: &Path, bin: &str, o: Options) -> Result<Vec<Step>> {
 /// when there is no Git Bash (`Sn=e.shell??ij()`): a path with `/` and no character either shell
 /// reads runs the same in both; another path goes as the program and its arguments, which
 /// Claude Code starts with no shell (`B$e(wo[0],wo[1],...)`).
+#[cfg(test)]
 fn hook_run(bin: &str, windows: bool) -> Vec<(&'static str, J)> {
+    hook_command(bin, windows, "grep")
+}
+
+fn hook_command(bin: &str, windows: bool, sub: &str) -> Vec<(&'static str, J)> {
     if !windows {
-        return vec![("command", J::S(format!("{} hook grep", shell_word(bin))))];
+        return vec![("command", J::S(format!("{} hook {sub}", shell_word(bin))))];
     }
     if bin.chars().all(|c| c.is_alphanumeric() || r"\/._-:".contains(c)) {
-        vec![("command", J::S(format!("{} hook grep", bin.replace('\\', "/"))))]
+        vec![("command", J::S(format!("{} hook {sub}", bin.replace('\\', "/"))))]
     } else {
-        vec![("command", J::S(bin.into())), ("args", strings(&["hook".into(), "grep".into()]))]
+        vec![("command", J::S(bin.into())), ("args", strings(&["hook".into(), sub.into()]))]
     }
 }
 
-fn is_our_hook(v: &Value) -> bool {
+/// Whether `v` is a group of `matcher` whose one command is a `scrutate` binary's `hook SUB`.
+fn is_ours(v: &Value, matcher: &str, sub: &str) -> bool {
     let ours = |h: &Value| {
         let command = h.get("command").and_then(Value::as_str).unwrap_or("");
         match h.get("args") {
-            None => command.ends_with(" hook grep") && command.contains("scrutate"),
-            Some(a) => command.contains("scrutate") && *a == serde_json::json!(["hook", "grep"]),
+            None => command.ends_with(&format!(" hook {sub}")) && command.contains("scrutate"),
+            Some(a) => command.contains("scrutate") && *a == serde_json::json!(["hook", sub]),
         }
     };
-    v.get("matcher").and_then(Value::as_str) == Some("Grep") && v.get("hooks").and_then(Value::as_array).is_some_and(|h| h.len() == 1 && ours(&h[0]))
+    v.get("matcher").and_then(Value::as_str) == Some(matcher) && v.get("hooks").and_then(Value::as_array).is_some_and(|h| h.len() == 1 && ours(&h[0]))
+}
+
+fn is_our_hook(v: &Value) -> bool {
+    is_ours(v, "Grep", "grep")
+}
+
+fn is_our_bash_hook(v: &Value) -> bool {
+    is_ours(v, "Bash", "bash")
 }
 
 /// `[mcp_servers.scrutate]` of Codex's `config.toml`, appended as one table, or removed.

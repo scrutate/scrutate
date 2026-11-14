@@ -43,6 +43,7 @@ pub mod secrets;
 pub mod semantic;
 pub mod session;
 pub mod setup;
+pub mod shellhook;
 pub mod stores;
 pub mod text;
 pub mod textindex;

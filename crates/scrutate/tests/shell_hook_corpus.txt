@@ -1,0 +1,203 @@
+# 200 shell searches for the Bash hook's acceptance test: the shapes of real Claude Code search commands
+# (program, flags, pipes, redirections and chains kept) with every pattern, path and flag value
+# replaced by one of the fixture's, so no text of the sessions they came from is kept.
+grep -n TODO docs | cut -d: -f1 | cut -d: -f1 && echo done
+grep -rhoE a.b docs/c.md | sort | uniq
+grep -rn foo src src/b.py src . 2>/dev/null | cut -d: -f1 | head -n 1 && echo done
+grep -n 'def foo' src src -c src/a.rs && echo done
+grep -n -i a.b src docs src src/b.py 2>/dev/null | grep -v bar | cut -d: -f1 | head -n 20
+grep -n foo src/b.py | head -n 1 | head -n 3 && echo done
+grep -n foo src/b.py | head -n 20 | head -n 1 && echo done
+find src -name '*.rs' 2>/dev/null | sed -n 1p | head -n 1 && echo done
+grep -n fo+ . | grep -v bar | head -n 20
+grep -n -i fo+ src/b.py | head -n 1
+grep -rn foo_bar src/b.py docs/c.md docs | grep -v bar && echo done
+grep -n Foo src/b.py | head -n 3 && echo done
+grep -n TODO src | head -n 1 && echo done
+grep -n foo src/b.py docs src/a.rs docs/c.md | cut -d: -f1 | grep -v bar | cut -d: -f1 | head -n 20 && echo done
+grep -ln TODO src/a.rs src/b.py -n src/a.rs . | head -n 5 | head -n 3 | cut -d: -f1 | head -n 3 && echo done
+grep -n 'def foo' src src/b.py 2>/dev/null | head -n 5 | head -n 20 | sed -n 1p && echo done
+grep -n TODO docs/c.md | head -n 20
+grep -n foo_bar src/b.py | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | grep -v bar | sed -n 1p | head -n 1 | tail -n 3 && echo done
+grep -rn Foo src/b.py src/a.rs --include='*.py' | head -n 3 | grep -v bar | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | head -n 5 && echo done
+grep -n fo+ src/a.rs | cut -d: -f1 | grep -v bar | cut -d: -f1 && echo done
+grep -n a.b src | sed -n 1p | head -n 1 && echo done
+grep -n TODO -A 1 . | head -n 5
+grep -n -i return src/b.py 2>/dev/null | head -n 20 && echo done
+grep -n Foo src . -n src/a.rs docs/c.md && echo done
+grep -n Foo src docs/c.md -n docs/c.md . && echo done
+grep -n return . docs/c.md src/a.rs docs/c.md --stat . src && echo done
+grep -c return . docs src/b.py src src/a.rs src docs . docs docs/c.md docs src/a.rs src/a.rs src/a.rs src docs src/a.rs src/a.rs | grep -v bar | sed -n 1p | tail -n 3 | grep -v bar | sed -n 1p && echo done
+grep -n foo_bar docs | head -n 20 && echo done
+grep -n foo_bar docs/c.md src/a.rs | cut -d: -f1 | grep -v bar | cut -d: -f1 | head -n 5 && echo done
+grep -n a.b -A 1 docs docs -n src docs | head -n 3 && echo done
+grep -n 'def foo' docs/c.md | cut -d: -f1 | head -n 3 | cut -d: -f1 | head -n 1 && echo done
+grep -o return src/b.py 2>/dev/null | head -n 3 | head -n 5 && echo done
+grep -n foo_bar src docs | cut -d: -f1 | head -n 20
+grep -n TODO src/b.py | sed -n 1p | head -n 5 | grep -v bar && echo done
+grep -n fo+ docs/c.md | head -n 1
+grep -rIl -i return docs/c.md 2>/dev/null | head -n 20 | head -n 20 | head -n 20 && echo done
+grep -rn a.b src | head -n 20 | head -n 20 && echo done
+grep -v foo docs | tail -n 3 | cut -d: -f1 | head -n 1 && echo done
+grep -n 'def foo' src/a.rs | head -n 3
+grep -n Foo . | sed -n 1p | head -n 1 && echo done
+grep -n Foo src | head -n 3
+grep -n Foo . src/b.py | head -n 1 && echo done
+grep -n Foo docs src/b.py -rn src/a.rs docs docs/c.md . . src/b.py 2>/dev/null | grep -v bar | head -n 5 | head -n 20 | tail -n 3 && echo done
+grep -n Foo src | sed -n 1p | cut -d: -f1
+grep -n return src/a.rs | head -n 20 && echo done
+grep -rnE return . src docs src docs/c.md . 2>/dev/null | grep -v bar | sed -n 1p | grep -v bar | head -n 5 | grep -v bar | grep -v bar | sed -n 1p | sort | uniq | sort | head -n 20 && echo done
+grep -n fo+ src/b.py | grep -v bar | cut -d: -f1 | cut -d: -f1 && echo done
+grep -n foo docs src/b.py
+grep -n TODO docs | head -n 1
+grep -n foo_bar docs/c.md | head -n 1 | head -n 5 | head -n 5 && echo done
+find src -depth -type f -empty docs src && echo done
+grep -n TODO docs/c.md | head -n 3 | head -n 3 | sed -n 1p | head -n 3 && echo done
+grep -n a.b docs/c.md docs -n docs src/b.py | cut -d: -f1 && echo done
+grep -n -i return . | head -n 1 && echo done
+grep -n foo . src/a.rs -rn -i . docs docs/c.md src/b.py . src/a.rs | cut -d: -f1 | head -n 5 | cut -d: -f1 | head -n 5 && echo done
+grep -n Foo docs | head -n 1 && echo done
+grep -n 'def foo' src/a.rs docs | sed -n 1p && echo done
+grep -rn TODO docs src/a.rs 2>/dev/null | head -n 1 | sed -n 1p | grep -v bar | head -n 20 && echo done
+grep -n TODO docs/c.md | head -n 1 | sed -n 1p | grep -v bar | sed -n 1p | sed -n 1p && echo done
+grep -n Foo src/a.rs | head -n 3 | cut -d: -f1
+grep -n return docs | head -n 20 | head -n 5 | head -n 1 && echo done
+grep -rn a.b --include='*.py' --include='*.py' --include='*.py' src/a.rs 2>/dev/null | grep -v bar | cut -d: -f1 | head -n 20 | head -n 1 && echo done
+grep -rln fo+ docs docs src docs src/b.py src/a.rs docs/c.md -n docs src/b.py src/b.py src/a.rs 2>/dev/null | cut -d: -f1 | head -n 5 && echo done
+grep -n fo+ src/b.py src/b.py docs src src docs/c.md docs/c.md src src/b.py docs/c.md docs src/a.rs docs docs -rf src . -p docs . src/b.py docs src/b.py . -R . src/b.py src/a.rs docs src docs/c.md . src/a.rs docs/c.md src/b.py src/b.py src/a.rs -I src/b.py docs src/b.py --no-boot --tools docs --defaults src/b.py src/b.py 2>/dev/null | grep -v bar | sed -n 1p | sed -n 1p | cut -d: -f1 | sed -n 1p && echo done
+grep -n foo src/a.rs | sed -n 1p | head -n 3 && echo done
+grep -n foo docs | cut -d: -f1 | head -n 3
+grep -n fo+ src/a.rs | sed -n 1p | sed -n 1p | head -n 1 && echo done
+grep -n foo . | head -n 20 && echo done
+grep -n Foo src/b.py | head -n 1
+grep -n 'def foo' docs . src src src/b.py src/a.rs 2>/dev/null | sed -n 1p && echo done
+grep -n foo src | cut -d: -f1 | head -n 20 | head -n 5 && echo done
+grep -n 'def foo' docs/c.md | sed -n 1p | cut -d: -f1 && echo done
+grep -n foo_bar src/a.rs | head -n 20 | head -n 3 && echo done
+grep -n foo_bar src/b.py docs | sed -n 1p && echo done
+grep -oE return docs | head -n 20
+grep -rn Foo --include='*.py' --include='*.py' --include='*.py' --include='*.py' --include='*.py' src/a.rs 2>/dev/null | grep -v bar | cut -d: -f1 | sed -n 1p && echo done
+grep -n return . src | head -n 3 && echo done
+grep -n a.b src
+grep -rn 'def foo' docs/c.md --include='*.py' --include='*.py' -l | sed -n 1p | head -n 5 && echo done
+grep -n Foo docs docs/c.md -n docs/c.md docs/c.md . -n docs . docs -n src/a.rs docs && echo done
+grep -n Foo src/a.rs src/a.rs | sed -n 1p | head -n 3 && echo done
+grep -n 'def foo' docs | head -n 20 | cut -d: -f1 | cut -d: -f1 | sed -n 1p | head -n 20 | cut -d: -f1 && echo done
+grep -n TODO src/a.rs | sed -n 1p | head -n 3 && echo done
+grep -n TODO . | sed -n 1p | cut -d: -f1 && echo done
+grep -c Foo docs/c.md . -s -A 1 src | grep -v bar | grep -v bar | sed -n 1p && echo done
+grep -n TODO src/b.py src/a.rs src/a.rs 2>/dev/null | cut -d: -f1 | head -n 1 | head -n 20 | head -n 5 | cut -d: -f1 | head -n 5 && echo done
+grep -n Foo src | head -n 3 | head -n 1 | head -n 1 && echo done
+grep -n foo_bar . -r | grep -v bar | head -n 1 | head -n 3 && echo done
+grep -c foo_bar docs src/a.rs docs/c.md . src/a.rs docs src/b.py 2>/dev/null | grep -v bar | head -n 20 | head -n 5 && echo done
+grep -n Foo . src 2>/dev/null | head -n 3 && echo done
+grep -rn foo_bar src --include='*.py' --include='*.py' docs/c.md -rn src . && echo done
+grep -rn Foo src/b.py --include='*.py' | grep -v bar | cut -d: -f1
+grep -rn 'def foo' --include='*.py' src | head -n 5 | sed -n 1p | grep -v bar | sed -n 1p && echo done
+grep -ln Foo src/a.rs | sed -n 1p | head -n 1 | head -n 5 && echo done
+grep -n a.b .
+grep -rn fo+ src | grep -v bar | head -n 3 | head -n 1 | head -n 3 && echo done
+grep -n foo_bar src | head -n 3 | head -n 3 && echo done
+grep -n foo_bar docs/c.md | head -n 5
+grep -n 'def foo' . | head -n 20 | cut -d: -f1 | sed -n 1p && echo done
+grep -n fo+ -A 1 . . -n src . && echo done
+grep -n foo src | head -n 1
+grep -n 'def foo' src/b.py | grep -v bar | head -n 20
+grep -n 'def foo' src/a.rs | head -n 1 | cut -d: -f1 | grep -v bar && echo done
+grep -rn a.b docs/c.md src/a.rs src/b.py src/a.rs src/b.py . docs/c.md docs docs 2>/dev/null | head -n 5 && echo done
+grep -rn 'def foo' docs/c.md docs/c.md docs/c.md | sed -n 1p && echo done
+grep -n fo+ src/a.rs | head -n 5 && echo done
+grep -n foo -B 1 -A 1 docs
+grep -n foo -B 1 -A 1 src | head -n 5 | head -n 20 && echo done
+grep -n fo+ src src -n docs/c.md src/a.rs | head -n 5 | head -n 3 | head -n 5 && echo done
+grep -n foo src/a.rs docs -rn docs --include='*.py' . | grep -v bar | head -n 20 && echo done
+grep -rn foo . . | head -n 5
+grep -n foo_bar docs . | head -n 3 | sed -n 1p | head -n 1 && echo done
+grep -n TODO src/a.rs | cut -d: -f1 | head -n 1 | grep -v bar | cut -d: -f1 | head -n 20 && echo done
+grep -n foo_bar src/b.py | head -n 3
+grep -n 'def foo' src/b.py src -n src . src -n docs src/a.rs | grep -v bar && echo done
+grep -n foo src/a.rs src . -n . docs/c.md | grep -v bar | head -n 3 && echo done
+grep -n Foo src/b.py | head -n 3 | cut -d: -f1 | head -n 20 | cut -d: -f1 | cut -d: -f1 && echo done
+grep -rhoE fo+ . docs/c.md | sort | uniq | sed -n 1p | wc -l | tail -n 3 && echo done
+grep -n fo+ src | head -n 20
+grep -n fo+ src/b.py
+grep -n foo docs/c.md | head -n 3 && echo done
+grep -rn -i Foo src | head -n 1 && echo done
+grep -rn fo+ docs/c.md . | grep -v bar | cut -d: -f1
+grep -n Foo src/a.rs | head -n 20
+grep -rn foo docs/c.md src docs/c.md | grep -v bar
+grep -n 'def foo' src/a.rs . src | cut -d: -f1 | head -n 20
+grep -rn Foo --include='*.py' docs/c.md | grep -v bar | grep -v bar
+grep -n Foo docs/c.md | grep -v bar | grep -v bar
+grep -n Foo docs/c.md | sed -n 1p | cut -d: -f1 | cut -d: -f1 && echo done
+grep -n return . | head -n 1
+grep -n foo_bar docs docs/c.md -n docs docs docs/c.md -n docs/c.md src/a.rs src/a.rs -n src/a.rs src src/a.rs docs/c.md . src && echo done
+grep -rn 'def foo' src src/b.py 2>/dev/null | grep -v bar | head -n 3 | head -n 5 | cut -d: -f1 && echo done
+grep -n foo_bar docs/c.md | head -n 5 && echo done
+grep -oE foo src/a.rs | head -n 5 | head -n 1 && echo done
+grep -rn -i 'def foo' --include='*.py' --include='*.py' --include='*.py' docs/c.md 2>/dev/null | grep -v bar | grep -v bar | cut -d: -f1 | head -n 20
+grep -rln foo_bar docs/c.md src/b.py . src/a.rs | sed -n 1p | cut -d: -f1 | head -n 20 && echo done
+grep -n return src src/b.py -n docs . src src/a.rs | grep -v bar | grep -v bar | head -n 1 && echo done
+grep -n foo_bar src/a.rs | head -n 1
+grep -rnE return --include='*.py' . | grep -v bar | grep -v bar | sed -n 1p | grep -v bar | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | cut -d: -f1
+grep -n a.b docs | head -n 3
+grep -rn Foo src/b.py src docs | cut -d: -f1 | head -n 5 && echo done
+grep -n TODO docs | head -n 5 | head -n 1 && echo done
+grep -n -i TODO docs | cut -d: -f1 | cut -d: -f1 && echo done
+grep -n return src/a.rs src/a.rs 2>/dev/null | tail -n 3 | sed -n 1p && echo done
+grep -rn foo docs | grep -v bar
+grep -c foo src/a.rs docs/c.md src/a.rs src/a.rs -A 1 . docs/c.md -q -m 2 docs src/a.rs . src/a.rs . src --stat . | tail -n 3 && echo done
+grep -n foo . | head -n 5 | grep -v bar && echo done
+grep -n a.b src docs docs/c.md 2>/dev/null | grep -v bar | head -n 1 | cut -d: -f1 | head -n 5 | cut -d: -f1 && echo done
+grep -n foo_bar . src | head -n 20 && echo done
+grep -n a.b src/b.py | head -n 1
+grep -n TODO -A 1 src/a.rs | head -n 5
+grep -rln foo . src src docs/c.md -rn . docs/c.md docs docs | head -n 5 | head -n 20 && echo done
+grep -rln TODO docs | sed -n 1p | head -n 5 && echo done
+grep -n a.b src | head -n 20 | head -n 3 && echo done
+grep -rn Foo src | cut -d: -f1 | head -n 20 | wc -l && echo done
+grep -o return src/b.py docs | sort | uniq | head -n 5
+grep -n return src | head -n 3 | grep -v bar | sed -n 1p && echo done
+grep -n fo+ src/a.rs | sed -n 1p | cut -d: -f1 && echo done
+grep -rhn a.b . | grep -v bar | sed -n 1p | sort | sed -n 1p | head -n 5 && echo done
+grep -n foo_bar . | grep -v bar | cut -d: -f1 | head -n 5
+grep -n a.b docs/c.md | grep -v bar | head -n 3 && echo done
+grep -n foo_bar -A 1 src/a.rs src/b.py -n docs/c.md -A 1 src/a.rs | sed -n 1p && echo done
+grep -rn Foo --include='*.py' docs | sed -n 1p | grep -v bar | sort | uniq | sed -n 1p | grep -v bar && echo done
+grep -o fo+ src | sort | tail -n 3
+grep -n 'def foo' src/b.py | grep -v bar && echo done
+grep -n return -A 1 src/b.py | head -n 3 | sed -n 1p && echo done
+grep -n return . | head -n 20
+grep -rn a.b docs src/b.py docs | grep -v bar | cut -d: -f1 | grep -v bar | sed -n 1p | sed -n 1p | sed -n 1p | sed -n 1p | tail -n 3 && echo done
+grep -n 'def foo' src | sed -n 1p | cut -d: -f1 | head -n 3 | cut -d: -f1 | head -n 5 && echo done
+grep -n Foo . docs . . src/b.py docs | head -n 1
+grep -rln a.b src/a.rs 2>/dev/null | sed -n 1p | head -n 20 && echo done
+grep -n 'def foo' src/a.rs
+grep -n foo_bar -A 1 . src -n src/a.rs . | sed -n 1p | head -n 5 | head -n 3 && echo done
+grep -n 'def foo' src | sed -n 1p | cut -d: -f1
+grep -n foo_bar docs | sed -n 1p
+grep -n a.b src/a.rs docs/c.md | head -n 20
+grep -n a.b . | cut -d: -f1
+grep -n foo docs | cut -d: -f1 | head -n 1
+grep -n a.b docs/c.md | head -n 20 | grep -v bar | head -n 20 && echo done
+grep -n foo src src/a.rs -n src/b.py src/a.rs | head -n 20 && echo done
+grep -o -i 'def foo' src | grep -v bar | head -n 3
+grep -n fo+ docs src/b.py | head -n 1
+grep -n return src | sed -n 1p && echo done
+grep -n foo src docs -n docs src/b.py | head -n 1 | cut -d: -f1 && echo done
+grep -o foo_bar docs | sort | sort | uniq && echo done
+grep -n foo_bar src/b.py docs/c.md -n src/a.rs docs/c.md && echo done
+grep -n Foo src src | cut -d: -f1 | head -n 5 | cut -d: -f1 | head -n 3 && echo done
+grep -n a.b -A 1 . | head -n 3
+grep -n foo src | head -n 5 && echo done
+grep -n return .
+grep -rn TODO docs/c.md docs src/a.rs src/b.py 2>/dev/null | head -n 3
+grep -n 'def foo' src | head -n 20
+grep -o foo_bar src | head -n 1 | sed -n 1p
+grep -n 'def foo' src/a.rs | head -n 20 | cut -d: -f1
+grep -n Foo . | sed -n 1p | head -n 3 && echo done
+grep -n a.b . docs src/a.rs src docs/c.md | cut -d: -f1 | head -n 5
+grep -n a.b . | sed -n 1p | cut -d: -f1 | cut -d: -f1 && echo done
+grep -n a.b docs | sed -n 1p | head -n 1 && echo done
+grep -n foo_bar docs/c.md src/b.py -n src docs && echo done
+grep -rln return docs | sort

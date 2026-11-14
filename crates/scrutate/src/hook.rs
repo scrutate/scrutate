@@ -617,10 +617,20 @@ pub fn counter_path() -> Option<PathBuf> {
 
 /// One line per answered call: one write, so lines of hooks running at once do not mix.
 fn count(session: &str, grep_bytes: usize, sent_bytes: usize) -> Result<()> {
+    counted(json!({"session": session, "grep_bytes": grep_bytes, "sent_bytes": sent_bytes}))
+}
+
+/// Counts one shell search `hook run` answered: the bytes the program gave, the bytes sent.
+pub(crate) fn count_bash(session: &str, full_bytes: usize, sent_bytes: usize) -> Result<()> {
+    counted(json!({"session": session, "grep_bytes": full_bytes, "sent_bytes": sent_bytes, "via": "bash"}))
+}
+
+fn counted(mut rec: Value) -> Result<()> {
     let path = counter_path().context("no state directory")?;
     std::fs::create_dir_all(path.parent().expect("a file in a directory"))?;
     let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let line = format!("{}\n", json!({"session": session, "grep_bytes": grep_bytes, "sent_bytes": sent_bytes, "time": time}));
+    rec["time"] = json!(time);
+    let line = format!("{rec}\n");
     std::fs::OpenOptions::new().create(true).append(true).open(&path)?.write_all(line.as_bytes())?;
     Ok(())
 }
@@ -658,6 +668,8 @@ pub fn stats(json_out: bool) -> Result<i32> {
     };
     let mut sessions: Vec<(String, Tally)> = Vec::new();
     let mut all = Tally::default();
+    // the shell searches `hook run` answered, apart: their bytes are the program's own output
+    let mut bash = Tally::default();
     for v in text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
         let (Some(g), Some(s)) = (v.get("grep_bytes").and_then(Value::as_u64), v.get("sent_bytes").and_then(Value::as_u64)) else { continue };
         let id = v.get("session").and_then(Value::as_str).unwrap_or("").to_string();
@@ -665,7 +677,8 @@ pub fn stats(json_out: bool) -> Result<i32> {
             sessions.push((id, Tally::default()));
             sessions.len() - 1
         });
-        for t in [&mut sessions[i].1, &mut all] {
+        let shell = v.get("via").and_then(Value::as_str) == Some("bash");
+        for t in [Some(&mut sessions[i].1), Some(&mut all), shell.then_some(&mut bash)].into_iter().flatten() {
             t.calls += 1;
             t.grep += g;
             t.sent += s;
@@ -686,7 +699,7 @@ pub fn stats(json_out: bool) -> Result<i32> {
                     .unwrap_or_default()
             })
             .collect();
-        writeln!(so, "{}", json!({"counter": path.to_string_lossy(), "sessions": list, "total": all.json()}))?;
+        writeln!(so, "{}", json!({"counter": path.to_string_lossy(), "sessions": list, "total": all.json(), "shell": bash.json()}))?;
     } else if all.calls == 0 {
         eprintln!("no Grep call was answered yet (counter: {})", path.display());
     } else {
@@ -694,6 +707,9 @@ pub fn stats(json_out: bool) -> Result<i32> {
             writeln!(so, "session {}: {}", if id.is_empty() { "(none)" } else { id }, t.text())?;
         }
         writeln!(so, "all sessions: {}", all.text())?;
+        if bash.calls > 0 {
+            writeln!(so, "of which shell searches (hook run): {}", bash.text())?;
+        }
     }
     Ok(if all.calls == 0 { 1 } else { 0 })
 }
