@@ -180,6 +180,11 @@ the files named, or every file when nothing can vouch for fewer. A session's rea
 each call; the walk adapter always says every file, a watch's (`watch::Notes`) names the files
 its events touched.
 
+**[Pending](docs/ARCHITECTURE.md#sessions-sessionrs)**: the files of a read's **change set** its answer
+does not hold yet, because a write of the process ran past the read's wait (250 ms) or another
+process held the lock (`session::Pending`); every file when a walk could not run. Every front
+end says so with the answer; the next read applies them.
+
 **[Stores](docs/ARCHITECTURE.md#keeping-the-stores-current-storesrs)**: the derived data under
 `.scrutate/` and the one module that keeps them current (`stores.rs`). A caller names a **change
 set** (`stores::Changes`, see Change set) and what it does (`stores::Writer`), never a store.

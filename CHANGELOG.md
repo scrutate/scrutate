@@ -182,6 +182,13 @@ incompatible index by itself, and that is never breaking.
   schema is 15, so an older index is built again once; the keys make the index larger and a full
   index slower (measured by hand for the change, in its commit message: no script in `bench/`
   reruns it).
+- A read in the MCP server, the language server or the Python bindings waits up to 250 ms for
+  the process's own index update, and past that answers from the last committed index and says
+  which changed files the answer does not hold yet: a line in the tool's text and `pending` in
+  `structuredContent`, a language server log warning, a Python `UserWarning`. Before, it answered
+  at once and said nothing. A command `serve` answers is no longer handed back to the command
+  while an update runs, and says the same on stderr
+  ([ADR 0002](docs/adr/0002-reads-during-a-write.md), [CLI](docs/CLI.md#the-index-directory)).
 - The MCP server, the language server and the Python bindings watch a tree on a local disk, and
   a walk in the background finds within 60 s a change that makes no event; each call looks
   only at the files the watch says changed since the last call, one `stat` each, where it looked

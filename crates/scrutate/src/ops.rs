@@ -516,9 +516,12 @@ pub fn output_schema(tool: &str) -> Value {
     let complete = json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result then holds the items of this page (null when the call failed)"});
     let page = |d: &str| json!({"type": "integer", "minimum": 0, "description": d});
     let next = json!({"type": ["integer", "null"], "minimum": 0, "description": "the offset to call again with for the next page; null on the last"});
+    let mut pending = obj(json!({"files": list(ty("string")), "all": ty("boolean")}), &["files", "all"]);
+    pending["description"] =
+        json!("present when an index update was still running: the changed files this answer does not hold yet (all: any file changed since the last scan)");
     obj(
         json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped,
-            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer")}),
+            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending}),
         &["schema", "complete", "result"],
     )
 }

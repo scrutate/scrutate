@@ -796,7 +796,7 @@ impl Server {
         let mut out = Vec::new();
         for i in asked {
             let f = &self.folders[i];
-            let answer = self.run(f, &mut |s| match method {
+            let answer = self.run(method, f, &mut |s| match method {
                 "textDocument/definition" => f.definition(s, p),
                 "textDocument/references" => f.references(s, p),
                 "textDocument/documentSymbol" => f.document_symbols(s, p),
@@ -812,7 +812,7 @@ impl Server {
     }
 
     /// `f` on a reader of `folder`'s index, once its first build is done.
-    fn run(&self, folder: &Folder, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
+    fn run(&self, method: &str, folder: &Folder, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
         // read within a second of a request that waited out the build: queued behind it
         let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
         let build_wait = if queued { std::time::Duration::ZERO } else { self.build_wait };
@@ -825,15 +825,19 @@ impl Server {
             return Err((-32801, "the index is still being built".to_string()));
         }
         // a damaged index is built again and the request answered from the new one
-        session
-            .read(&never, true, |s| {
+        let (v, pending) = session
+            .read_pending(&never, |s| {
                 // a newer scrutate took the index over since it was opened: nothing here can read it
                 if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
                     return Err(newer.into());
                 }
                 crate::ops::in_snapshot(s, &mut *f)
             })
-            .map_err(|e| (-32603, format!("{e:#}")))
+            .map_err(|e| (-32603, format!("{e:#}")))?;
+        if let Some(note) = pending.note() {
+            log(2, &format!("scrutate: {method}: {note}"));
+        }
+        Ok(v)
     }
 }
 

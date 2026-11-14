@@ -218,7 +218,7 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
     // a wrong value is refused with the other arguments
     let form = ops::Form::from_tool(args).unwrap_or_default();
     match ops::Op::from_tool(name, args).and_then(|op| session.run_counted(&op, cancel, count)) {
-        Ok(mut answer) => {
+        Ok((mut answer, pending)) => {
             // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off; a capture
             // of a value alone, as its line reads it
             let redact = crate::secrets::on(true);
@@ -241,6 +241,10 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
             if structured["result"].is_null() {
                 // a client that shows only the structured form still gets the part that fits
                 structured["text"] = json!(text);
+            }
+            if let (Some(note), Some(json)) = (pending.note(), pending.json()) {
+                text.push_str(&format!("\n[{note}]"));
+                structured["pending"] = json;
             }
             Called { text, structured, is_error: false }
         }
@@ -651,6 +655,36 @@ mod tests {
     fn call(calls: &Calls, id: i64, progress: Value) -> Call {
         let id = json!(id);
         Call { name: "find_symbol".into(), args: json!({"name": "make_point"}), stateless: true, structured: true, progress, cancelled: calls.begin(&id), id }
+    }
+
+    /// A call while a write of the server's own runs on answers from the committed index once the
+    /// wait is over, and its text and structured answer say what it may not hold.
+    #[test]
+    fn a_call_during_a_long_write_of_the_server_says_what_is_pending() {
+        let (root, session, _) = fixture("pending");
+        let ((taken, is_taken), (release, released)) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let session = &session;
+        let called = std::thread::scope(|sc| {
+            sc.spawn(move || {
+                session
+                    .write(|repo| {
+                        let writer = repo.writer();
+                        let _w = writer.lock().unwrap();
+                        taken.send(()).unwrap();
+                        let _ = released.recv_timeout(Duration::from_secs(20));
+                        Ok(())
+                    })
+                    .unwrap()
+            });
+            is_taken.recv().unwrap();
+            let called = call_tool(session, "find_symbol", &json!({"name": "make_point"}), &Settings::new(None), &Arc::default());
+            release.send(()).unwrap();
+            called
+        });
+        assert!(!called.is_error && called.text.contains("src/geo.py"), "{}", called.text);
+        assert!(called.text.contains("an index update is still running"), "{}", called.text);
+        assert_eq!(called.structured["pending"], json!({"files": [], "all": true}));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

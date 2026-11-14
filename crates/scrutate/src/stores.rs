@@ -16,8 +16,8 @@
 //! | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 //! | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 //! | an index command, `batch` | every file before the first operation; never waits | code index |
-//! | an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; never waits | code index |
-//! | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); never waits (else the command does the work itself) | code index |
+//! | an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; waits up to 250 ms for a write of its own process, never for another process: past that it answers from the last committed index and says which files are pending | code index |
+//! | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); waits as a tool call does, and says on stderr which files are pending | code index |
 //! | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 //! | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 //! | `tsquery` | Engine A's default walk, one `stat` per file against the code index's record | `tsquery` cache |
@@ -45,6 +45,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
@@ -169,13 +170,21 @@ fn hold(writer: &Mutex<()>) -> MutexGuard<'_, ()> {
     writer.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// The writer lock when no write of this process holds it: a read does not wait for one, which may
-/// itself be waiting for another process's lock (`serve --watch`).
-fn hold_if_free(writer: &Mutex<()>) -> Option<MutexGuard<'_, ()>> {
-    match writer.try_lock() {
-        Ok(g) => Some(g),
-        Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
-        Err(std::sync::TryLockError::WouldBlock) => None,
+/// How long the scan before a read waits for a write of this process that holds the writer lock
+/// (one that may itself wait for another process's lock, as `serve --watch` does); past it the read
+/// answers from the committed index.
+pub const OWN_WRITE_WAIT: Duration = Duration::from_millis(250);
+
+/// `m`, waiting up to `limit` while another thread of this process holds it.
+pub(crate) fn hold_within<T>(m: &Mutex<T>, limit: Duration) -> Option<MutexGuard<'_, T>> {
+    let started = Instant::now();
+    loop {
+        match m.try_lock() {
+            Ok(g) => return Some(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => return Some(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(1)),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        }
     }
 }
 
@@ -323,8 +332,9 @@ impl Repo {
     }
 
     /// `update` before a read, unless the index was checked less than `min_interval` seconds
-    /// ago. When it cannot run (another process holds the write lock, the index directory is
-    /// read-only) the read answers from the last committed index, and stderr says why once. A
+    /// ago. When it cannot run (a write of this process past `OWN_WRITE_WAIT`, another process
+    /// holds the write lock, the index directory is read-only) the read answers from the last
+    /// committed index and the repository is stale; stderr says why once for the last two. A
     /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
         self.refreshed(|ix| ix.refresh_or_fail(min_interval))
@@ -337,10 +347,10 @@ impl Repo {
 
     fn refreshed(&mut self, f: impl FnOnce(&mut index::Index) -> Result<Option<UpdateStats>>) -> Result<Option<UpdateStats>> {
         let writer = Arc::clone(&self.writer);
-        let Some(_w) = hold_if_free(&writer) else {
-            // a write of this process runs: answer from the committed index, as against another
-            // process's writer, unless nothing is committed yet; stale, so a change set this
-            // refresh was to apply is asked for again
+        let Some(_w) = hold_within(&writer, OWN_WRITE_WAIT) else {
+            // a write of this process runs past the wait: answer from the committed index, as
+            // against another process's writer, unless nothing is committed yet; stale, so a
+            // change set this refresh was to apply is asked for again
             self.stale = true;
             return match &self.searcher {
                 Some(s) if s.ix.has_files()? => Ok(None),
@@ -417,7 +427,7 @@ impl Repo {
         }
         let updated = {
             let writer = Arc::clone(&self.writer);
-            let Some(_w) = hold_if_free(&writer) else { return first };
+            let Some(_w) = hold_within(&writer, Duration::ZERO) else { return first };
             match self.ix.update_paths(&stale, false) {
                 Err(e) if index::error_is_corruption(&e) => self.rebuild_unless_rebuilt(&e).map(|_| true),
                 // another writer holds the lock, or the index cannot be written: answer as it is

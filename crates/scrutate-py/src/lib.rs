@@ -20,7 +20,7 @@ use pyo3::types::{PyDict, PyList, PyType};
 
 use scrutate::instant::{self, Files, Output, Pattern, Query, Record};
 use scrutate::ops::{Answer, Op};
-use scrutate::session::{Every, Session};
+use scrutate::session::{Every, Pending, Session};
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -407,9 +407,29 @@ impl Repo {
     /// second, as the MCP server runs a tool call (`Session::run`). Calls from several Python
     /// threads run side by side.
     fn run(&self, py: Python<'_>, op: Op) -> PyResult<Answer> {
-        py.detach(move || self.session.run(&op, &Arc::default()))
-            .map_err(err)
+        let r = py.detach(move || {
+            self.session
+                .run_counted(&op, &Arc::default(), &Arc::default())
+        });
+        let (answer, pending) = r.map_err(err)?;
+        warn_pending(py, &pending)?;
+        Ok(answer)
     }
+}
+
+/// An answer that does not hold every change yet says so as a `UserWarning`, which a caller may
+/// filter or turn into an error.
+fn warn_pending(py: Python<'_>, pending: &Pending) -> PyResult<()> {
+    let Some(note) = pending.note() else {
+        return Ok(());
+    };
+    let note = std::ffi::CString::new(note).unwrap_or_default();
+    PyErr::warn(
+        py,
+        &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+        &note,
+        1,
+    )
 }
 
 /// An answer of another kind than its operation gives: a bug.
@@ -769,9 +789,15 @@ impl Repo {
             end: Some(end),
             history: 0,
         };
-        let r = py.detach(|| self.session.run(&op, &Arc::default()));
+        let r = py.detach(|| {
+            self.session
+                .run_counted(&op, &Arc::default(), &Arc::default())
+        });
         let e = match r {
-            Ok(Answer::Read { lines, .. }) => return Ok(lines.join("\n")),
+            Ok((Answer::Read { lines, .. }, pending)) => {
+                warn_pending(py, &pending)?;
+                return Ok(lines.join("\n"));
+            }
             Ok(_) => return Err(unexpected()),
             Err(e) => e.to_string(),
         };

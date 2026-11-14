@@ -821,7 +821,7 @@ place of 28 ms on a copy of this repository). The meeting point is a socket file
 `.scrutate/session.sock` (owner only; Unix; no network port), removed when the server exits. A
 command never starts a server. When anything about the server differs from how the command would
 do the work (another build of scrutate, another `SCRUTATE_*` setting, another root, a stale
-socket, a write running), the command does the work itself and says nothing;
+socket), the command does the work itself and says nothing;
 `SCRUTATE_SESSION_DEBUG=1` says why on stderr, and `SCRUTATE_NO_SESSION=1` turns the use off. A
 command waits 20 ms for the server's greeting (a server stopped in a terminal costs no more);
 `SCRUTATE_SESSION_WAIT_MS` sets another wait for a machine too busy to greet in time. Of two
@@ -924,7 +924,9 @@ Per tool:
   above 0, the result is a page: `complete` is `false`, `result` has the shape of the whole
   answer with only the items the text page shows (the same items in `detailed` and `concise`),
   `offset` is the first of them, `next_offset` the `offset` of the next page (`null` on the
-  last) and `total` the number of items. An item is what the text pages by: a result, a
+  last) and `total` the number of items. `pending` is there when the server's own update ran past
+  the read's wait: the changed files the answer does not hold yet
+  ([The index directory](#the-index-directory)). An item is what the text pages by: a result, a
   `grep_code` group, a line of `read_code`, `references` or `impact`; a definition or group whose
   lines a page boundary cuts is on both pages, each with its own lines, and `callees` names its
   external callees on the last page. A failed call has a `null` result and the error in `text`.
@@ -1221,11 +1223,15 @@ If a newer scrutate built `.scrutate/`, this version reads the index without upd
 stderr line says so), or refuses it with exit 2 when it cannot read it;
 `scrutate index --force` (`--text --force` for the text index) rebuilds it with this version. A
 running `serve` or `lsp` answers each request with that refusal as an error and stays up. A
-command that reads the index never waits for a writer: it answers from the last committed index
-and says so in one stderr line. In `serve`, `lsp` and the Python module a read also skips the
-process's own update while it runs (a `serve --watch` update, perhaps waiting for another
-process's lock) and answers from the last committed index, with no stderr line; the files its
-change set named are applied by the next read. The one exception is another process's first build, with nothing
+command that reads the index never waits for another process's writer: it answers from the last
+committed index and says so in one stderr line. In `serve`, `lsp` and the Python module a read
+waits up to 250 ms for the process's own update (a `serve --watch` update, perhaps waiting for
+another process's lock); a burst's update takes 3 to 4 ms on Linux and about 150 ms on a loaded
+Mac. Past that it answers from the last committed index and says which changed files the answer
+does not hold yet: a line at the end of the MCP text and `pending` (`{"files": [...], "all":
+false}`, or `"all": true` for a walk that could not run) in `structuredContent`, a
+`window/logMessage` warning from `lsp`, a `UserWarning` in Python, a stderr line from a command
+`serve` answers. The next read applies those files. The one exception is another process's first build, with nothing
 committed to answer from: the command fails with "the index is being built by another process"
 (exit 2), and a `serve` tool call waits up to 20 seconds, then answers that the index is still
 being built. `scrutate index` (and `--force`) waits for the writer, at most 10 minutes: then it

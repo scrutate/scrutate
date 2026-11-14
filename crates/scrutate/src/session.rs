@@ -10,14 +10,15 @@
 //! and kept. Writes (the first build, a watch burst, a save, the scan before a read) take the
 //! writer lock the repositories share, so they run one at a time; a read beside a write sees
 //! the index as of its last commit, never half of one (SQLite's write-ahead log, one transaction
-//! per update, a segment manifest swapped in that transaction).
+//! per update, a segment manifest swapped in that transaction). The scan before a read waits for
+//! a write of this process up to `stores::OWN_WRITE_WAIT`, then answers with what is `Pending`.
 //!
 //! A command line call may use the session `serve` runs, through a socket under the
 //! repository's `.scrutate/` (`listen`, `ask`; Unix only). The session is a cache of work there:
 //! anything it cannot vouch for makes the command line do the work itself.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -27,7 +28,7 @@ use crate::fresh::{Freshness, Token};
 use crate::index::{self, FileCount, UpdateStats};
 use crate::ops::{Answer, Op};
 use crate::search::Searcher;
-use crate::stores::Changes;
+use crate::stores::{self, Changes};
 use crate::Repo;
 
 /// How long a call waits for an index another process is building before it gives that answer
@@ -72,6 +73,44 @@ enum Build {
     Failed,
 }
 
+/// What a read's answer does not hold yet: the change set its scan could not apply within
+/// `stores::OWN_WRITE_WAIT` (a write of this process ran on, or another process held the lock).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pending(pub Option<Changes>);
+
+impl Pending {
+    /// The files, by path relative to the root; every file for a walk that could not run.
+    pub fn files(&self) -> Option<&[String]> {
+        match &self.0 {
+            Some(Changes::Named(n)) => Some(&n.code),
+            _ => None,
+        }
+    }
+
+    /// One sentence for the person or model reading the answer; None when nothing is pending.
+    pub fn note(&self) -> Option<String> {
+        const SHOWN: usize = 10;
+        let files = match &self.0 {
+            None => return None,
+            Some(Changes::All) => return Some("files changed since the last scan may be missing from this answer: an index update is still running".into()),
+            Some(Changes::Named(n)) => &n.code,
+        };
+        let mut list = files.iter().take(SHOWN).map(String::as_str).collect::<Vec<_>>().join(", ");
+        if files.len() > SHOWN {
+            list.push_str(&format!(" and {} more", files.len() - SHOWN));
+        }
+        Some(format!("{} changed file(s) not in this answer yet, an index update is still running: {list}", files.len()))
+    }
+
+    /// The JSON form a structured answer carries under `pending`.
+    pub fn json(&self) -> Option<serde_json::Value> {
+        self.0.as_ref().map(|_| match self.files() {
+            Some(f) => serde_json::json!({"files": f, "all": false}),
+            None => serde_json::json!({"files": [], "all": true}),
+        })
+    }
+}
+
 #[derive(Default)]
 struct Pool {
     idle: Vec<Repo>,
@@ -88,8 +127,10 @@ pub struct Session {
     root: PathBuf,
     every: Every,
     max_readers: usize,
-    /// writes, and the repository the readers are opened from
+    /// writes
     seed: Mutex<Repo>,
+    /// the repository the readers are opened from, never written: a write holds `seed` throughout
+    opener: Mutex<Repo>,
     writer: Arc<Mutex<()>>,
     pool: Mutex<Pool>,
     freed: Condvar,
@@ -98,7 +139,6 @@ pub struct Session {
     clock: Mutex<Clock>,
     /// one scan decision at a time: a call that waited for another's scan does not scan again
     scanning: Mutex<()>,
-    writing: AtomicUsize,
     /// the files the writes of `seed` read, the first build's among them
     written: Arc<FileCount>,
     fresh: Box<dyn Freshness>,
@@ -137,6 +177,7 @@ impl Session {
             every,
             max_readers,
             writer: seed.writer(),
+            opener: Mutex::new(seed.another()?),
             seed: Mutex::new(seed),
             pool: Mutex::default(),
             freed: Condvar::new(),
@@ -144,7 +185,6 @@ impl Session {
             built: Condvar::new(),
             clock: Mutex::default(),
             scanning: Mutex::new(()),
-            writing: AtomicUsize::new(0),
             written,
             fresh,
             applied: Mutex::default(),
@@ -282,7 +322,6 @@ impl Session {
 
     /// Run `f` on the repository writes use, with its panic kept inside this call.
     pub fn write<T>(&self, f: impl FnOnce(&mut Repo) -> Result<T>) -> Result<T> {
-        self.writing.fetch_add(1, Ordering::AcqRel);
         let mut seed = lock(&self.seed);
         let r = caught(|| f(&mut seed));
         let updated = seed.take_updated();
@@ -291,7 +330,6 @@ impl Session {
         if let Some(names) = names {
             self.release_idle(&names);
         }
-        self.writing.fetch_sub(1, Ordering::AcqRel);
         self.note_update(updated);
         r
     }
@@ -300,17 +338,16 @@ impl Session {
     /// not read the index is not scanned for), waiting up to `BUILD_WAIT` for another process's
     /// first build. A panic is the error `Panicked`.
     pub fn run(&self, op: &Op, cancel: &Arc<AtomicBool>) -> Result<Answer> {
-        self.run_counted(op, cancel, &Arc::default())
+        self.run_counted(op, cancel, &Arc::default()).map(|(a, _)| a)
     }
 
-    /// `run`, counting the files the operation reads in `count` as it goes.
-    pub fn run_counted(&self, op: &Op, cancel: &Arc<AtomicBool>, count: &Arc<FileCount>) -> Result<Answer> {
+    /// `run`, counting the files the operation reads in `count` as it goes, with what its answer
+    /// does not hold yet.
+    pub fn run_counted(&self, op: &Op, cancel: &Arc<AtomicBool>, count: &Arc<FileCount>) -> Result<(Answer, Pending)> {
         self.waiting_for_others(cancel, || {
             self.call(cancel, Some(count), None, |repo| {
-                if op.reads_index() {
-                    self.scan_if_due(repo)?;
-                }
-                repo.run_as_is(op)
+                let pending = if op.reads_index() { self.scan(repo, false)?.1 } else { Pending::default() };
+                Ok((repo.run_as_is(op)?, pending))
             })
         })
     }
@@ -318,54 +355,38 @@ impl Session {
     /// Run `f` on the searcher, as `run` runs an operation: with `refresh` the index is scanned
     /// as for an operation; a damaged index is built again and `f` run once more.
     pub fn read<T>(&self, cancel: &Arc<AtomicBool>, refresh: bool, mut f: impl FnMut(&mut Searcher) -> Result<T>) -> Result<T> {
+        if refresh {
+            return self.read_pending(cancel, f).map(|(v, _)| v);
+        }
+        self.waiting_for_others(cancel, || self.call(cancel, None, None, |repo| repo.recovering(&mut f)))
+    }
+
+    /// `read` after a scan, with what the scan could not bring into the index yet.
+    pub fn read_pending<T>(&self, cancel: &Arc<AtomicBool>, mut f: impl FnMut(&mut Searcher) -> Result<T>) -> Result<(T, Pending)> {
         self.waiting_for_others(cancel, || {
             self.call(cancel, None, None, |repo| {
-                if refresh {
-                    self.scan_if_due(repo)?;
-                }
-                repo.recovering(&mut f)
+                let (_, pending) = self.scan(repo, false)?;
+                Ok((repo.recovering(&mut f)?, pending))
             })
         })
     }
 
     /// A command line call: every file is looked at first, as a fresh process does, then `op`
-    /// runs. None when the session cannot answer now without waiting (a write running, every
-    /// reader busy, another process holding the write lock) or a panic: the caller does the work.
+    /// runs; a write of this process is waited for as long as a read waits for one. None when the
+    /// session cannot answer (nothing is committed while a first build runs, or a panic): the
+    /// caller does the work.
     pub fn run_scanned(&self, op: &Op) -> Option<(UpdateStats, Result<Answer>)> {
-        const WAIT: Duration = Duration::from_millis(50);
-        if self.writing.load(Ordering::Acquire) > 0 || self.is_building() {
-            return None;
-        }
-        let cancel = Arc::default();
-        let r = self.call(&cancel, None, Some(WAIT), |repo| {
-            let mut st = UpdateStats::default();
-            if op.reads_index() {
-                let t0 = Instant::now();
-                let scanning = loop {
-                    match self.scanning.try_lock() {
-                        Ok(g) => break g,
-                        Err(std::sync::TryLockError::Poisoned(p)) => break p.into_inner(),
-                        Err(_) if t0.elapsed() < WAIT => std::thread::sleep(Duration::from_micros(500)),
-                        Err(_) => return Ok(None),
-                    }
-                };
-                let t = Instant::now();
-                let (changes, token) = self.changes();
-                st = match &changes {
-                    Changes::Named(n) if n.code.is_empty() => UpdateStats::default(),
-                    Changes::Named(n) => repo.refresh_named(&n.code)?.unwrap_or_default(),
-                    Changes::All => repo.refresh(0.0)?.unwrap_or_default(),
-                };
-                if repo.is_stale() {
-                    return Ok(None);
-                }
-                self.applied_up_to(token);
-                if changes == Changes::All {
-                    self.scanned(t, true);
-                }
-                drop(scanning);
+        self.run_scanned_pending(op).map(|(st, a, _)| (st, a))
+    }
+
+    /// `run_scanned`, with what the answer does not hold yet.
+    pub fn run_scanned_pending(&self, op: &Op) -> Option<(UpdateStats, Result<Answer>, Pending)> {
+        let r = self.call(&Arc::default(), None, None, |repo| {
+            if self.is_building() && !repo.ix.has_files()? {
+                return Ok(None);
             }
-            Ok(Some((st, repo.run_as_is(op))))
+            let (st, pending) = if op.reads_index() { self.scan(repo, true)? } else { Default::default() };
+            Ok(Some((st, repo.run_as_is(op), pending)))
         });
         r.ok().flatten()
     }
@@ -419,7 +440,7 @@ impl Session {
             if pool.open < self.max_readers {
                 pool.open += 1;
                 drop(pool);
-                let opened = caught(|| lock(&self.seed).another());
+                let opened = caught(|| lock(&self.opener).another());
                 if opened.is_err() {
                     self.give_back(None);
                 }
@@ -467,30 +488,38 @@ impl Session {
     }
 
     /// The scan before a read: the files of the change set, or, when it is every file, a walk once
-    /// the refresh interval has passed since the last one.
-    fn scan_if_due(&self, repo: &mut Repo) -> Result<()> {
+    /// the refresh interval has passed since the last one (at once with `now`). A write of this
+    /// process is waited for up to `OWN_WRITE_WAIT`; what could not be applied by then is pending.
+    fn scan(&self, repo: &mut Repo, now: bool) -> Result<(UpdateStats, Pending)> {
         let (changes, token) = self.changes();
-        let Changes::Named(n) = changes else { return self.walk_if_due(repo, token) };
+        let Changes::Named(n) = changes else { return self.walk_if_due(repo, token, now) };
+        let mut st = UpdateStats::default();
         if !n.code.is_empty() {
-            repo.refresh_named(&n.code)?;
+            st = repo.refresh_named(&n.code)?.unwrap_or_default();
             if repo.is_stale() {
-                return Ok(()); // not applied: the next call asks for these files again
+                // not applied: the next call asks for these files again
+                return Ok((st, Pending(Some(Changes::Named(n)))));
             }
         }
         self.applied_up_to(token);
-        Ok(())
+        Ok((st, Pending::default()))
     }
 
     /// A watch that asks for a walk gets it at once, unless the interval is a floor the user gave.
-    fn walk_if_due(&self, repo: &mut Repo, token: Token) -> Result<()> {
-        let asked = self.fresh.watching() && !self.every.floor;
+    fn walk_if_due(&self, repo: &mut Repo, token: Token, now: bool) -> Result<(UpdateStats, Pending)> {
+        let watching = self.fresh.watching();
+        let asked = now || watching && !self.every.floor;
+        let nothing = Ok((UpdateStats::default(), Pending::default()));
         if !asked && !self.due() {
-            return Ok(());
+            return nothing;
         }
-        let _scanning = lock(&self.scanning);
-        let walked_meanwhile = asked && *lock(&self.applied) >= token;
+        let Some(_scanning) = stores::hold_within(&self.scanning, stores::OWN_WRITE_WAIT) else {
+            return Ok((UpdateStats::default(), Pending(Some(Changes::All))));
+        };
+        // only a watch's tokens move: without one every token is the first
+        let walked_meanwhile = asked && watching && *lock(&self.applied) >= token;
         if walked_meanwhile || !asked && !self.due() {
-            return Ok(());
+            return nothing;
         }
         let t = Instant::now();
         let r = repo.refresh(0.0);
@@ -500,7 +529,8 @@ impl Session {
         }
         // a scan that could not run does not start a floor's interval: the next call tries again
         self.scanned(t, walked || !self.every.floor);
-        r.map(|_| ())
+        let st = r?.unwrap_or_default();
+        Ok((st, Pending((!walked).then_some(Changes::All))))
     }
 
     fn due(&self) -> bool {
@@ -649,6 +679,7 @@ mod unix {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use std::os::unix::io::AsRawFd;
     use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::atomic::AtomicUsize;
 
     /// How long the command line waits for a session's greeting.
     const HELLO: Duration = Duration::from_millis(20);
@@ -829,7 +860,13 @@ mod unix {
         let mut line = Vec::new();
         BufReader::new(std::io::Read::take(&conn, MAX_REQUEST)).read_until(b'\n', &mut line)?;
         let request: Request = serde_json::from_slice(&line)?;
-        let printed = session.run_scanned(&request.op).and_then(|(st, a)| Some((st, answer(a.ok()?, &request, session.root()).ok()?)));
+        let printed = session.run_scanned_pending(&request.op).and_then(|(st, a, pending)| {
+            let mut p = answer(a.ok()?, &request, session.root()).ok()?;
+            if let Some(note) = pending.note() {
+                p.err.push_str(&format!("[scrutate] {note}\n"));
+            }
+            Some((st, p))
+        });
         let reply = match printed {
             Some((st, p)) => Reply { printed: Some(p), changed: st.files_changed, removed: st.files_removed, chunks: st.chunks, seconds: st.seconds },
             None => Reply { printed: None, changed: 0, removed: 0, chunks: 0, seconds: 0.0 },
@@ -897,6 +934,7 @@ mod unix {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     /// A repository of one function, its session, and its first build done.
     fn fixture(name: &str) -> (PathBuf, Session) {
@@ -909,34 +947,77 @@ mod tests {
         (root, s)
     }
 
-    /// A read while a write of this process runs (one that waits for another process's lock, as
-    /// `serve --watch` does) answers from the committed index at once, as against another
-    /// process's writer.
-    #[test]
-    fn a_read_does_not_wait_for_a_write_of_this_process() {
-        let root = std::env::temp_dir().join(format!("scrutate_session_own_writer_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
-        let s = Session::open(&root, Every::given(Some(0.0))).unwrap();
-        s.build().unwrap();
-        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 2\n\n\ndef more():\n    return 3\n").unwrap();
-        let writer = lock(&s.seed).writer();
-        let (held, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+    /// A write of `s` (one that holds the writer lock, as an update does) running for `held` in
+    /// another thread of this process while `f` runs.
+    fn while_own_write_runs<T>(s: &Session, held: Duration, f: impl FnOnce() -> T) -> T {
+        let ((taken, is_taken), (release, released)) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
         std::thread::scope(|sc| {
             sc.spawn(move || {
-                let _w = writer.lock().unwrap();
-                held.0.send(()).unwrap();
-                let _ = release.1.recv_timeout(Duration::from_secs(20));
+                s.write(|repo| {
+                    let writer = repo.writer();
+                    let _w = writer.lock().unwrap();
+                    taken.send(()).unwrap();
+                    let _ = released.recv_timeout(held);
+                    Ok(())
+                })
+                .unwrap();
             });
-            held.1.recv().unwrap();
+            is_taken.recv().unwrap();
+            let r = f();
+            let _ = release.send(()); // a short write may be over already
+            r
+        })
+    }
+
+    /// A read while a write of this process runs on (one that waits for another process's lock,
+    /// as `serve --watch` does) answers from the committed index once the wait is over, and says
+    /// which files it does not hold yet.
+    #[test]
+    fn a_read_does_not_wait_for_a_write_of_this_process() {
+        let (root, s) = watched("own_writer", 1, Every::given(Some(0.0)));
+        std::fs::write(root.join("src/d0/late.py"), "def late():\n    return 2\n").unwrap();
+        let (took, r) = while_own_write_runs(&s, Duration::from_secs(20), || {
             let t0 = Instant::now();
-            let r = s.run(&Op::Outline { path: "src/geo.py".into() }, &Arc::default());
-            let took = t0.elapsed();
-            release.0.send(()).unwrap();
-            assert!(r.is_ok(), "{:?}", r.err());
-            assert!(took < Duration::from_secs(3), "{took:?}");
+            let r = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1 }, &Arc::default(), &Arc::default());
+            (t0.elapsed(), r)
         });
+        let (a, pending) = r.unwrap();
+        assert!(a.is_empty(), "answered from the committed index");
+        assert_eq!(pending.files(), Some(&["src/d0/late.py".to_string()][..]));
+        assert!(pending.note().is_some_and(|n| n.contains("src/d0/late.py")));
+        assert!(took >= stores::OWN_WRITE_WAIT && took < stores::OWN_WRITE_WAIT + Duration::from_secs(2), "{took:?}");
+        let (a, pending) = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1 }, &Arc::default(), &Arc::default()).unwrap();
+        assert!(!a.is_empty() && pending == Pending::default(), "the next read applies them");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A write of this process that ends within the wait is waited for: the read's answer holds
+    /// the files of its change set, and nothing is pending.
+    #[test]
+    fn a_read_waits_out_a_short_write_of_this_process() {
+        let (root, s) = watched("short_write", 1, Every::given(Some(0.0)));
+        std::fs::write(root.join("src/d0/soon.py"), "def soon():\n    return 2\n").unwrap();
+        let (a, pending) = while_own_write_runs(&s, Duration::from_millis(50), || {
+            s.run_counted(&Op::Symbol { name: "soon".into(), limit: 1 }, &Arc::default(), &Arc::default())
+        })
+        .unwrap();
+        assert!(!a.is_empty(), "the answer holds the file the write held back");
+        assert_eq!(pending, Pending::default());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A command line call is answered while a write of this process runs, where the session
+    /// refused it and the command line did the work itself; a walk that could not run is pending.
+    #[test]
+    fn a_command_line_call_during_a_write_of_this_process_is_answered() {
+        let (root, s) = fixture("scanned_during_write");
+        std::fs::write(root.join("src/new.py"), "def brand_new():\n    return 3\n").unwrap();
+        let op = Op::Symbol { name: "make_point".into(), limit: 5 };
+        let r = while_own_write_runs(&s, Duration::from_secs(20), || s.run_scanned_pending(&op));
+        let (_, a, pending) = r.expect("answered");
+        assert!(a.is_ok_and(|a| !a.is_empty()));
+        assert_eq!(pending, Pending(Some(Changes::All)));
+        assert!(pending.note().is_some());
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -602,8 +602,8 @@ set for both: a watch's events name files of either set, read by the same two wa
 | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 | an index command, `batch` | every file before the first operation; never waits | code index |
-| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; never waits | code index |
-| an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); never waits (else the command does the work itself) | code index |
+| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; waits up to 250 ms for a write of its own process, never for another process: past that it answers from the last committed index and says which files are pending | code index |
+| an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); waits as a tool call does, and says on stderr which files are pending | code index |
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 | `tsquery` | Engine A's default walk, one `stat` per file against the code index's record | `tsquery` cache |
@@ -655,10 +655,10 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 | `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) for the walk of every file |
 | `open_watched(root, Every)`, `watch(apply)` | `open` with reads told the change set by a watch (`watch::Notes`), which `watch` starts once nothing else needs the process to itself; with `apply` (`serve --watch`) each burst also updates the stores. The MCP server, the language server and the Python bindings open this way |
 | `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()`, `build_count()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through; the files it has read and has to read |
-| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` |
-| `read(cancel, refresh, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again |
+| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
+| `read(cancel, refresh, f)`, `read_pending(cancel, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again; `read_pending` scans first and gives the `Pending` set |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
-| `run_scanned(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing when it would have to wait |
+| `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing only while a first build runs with nothing committed |
 | `hold_writes()` | at exit: the first build is waited for and no write starts after it |
 
 Every call gets its own cancel flag, and a panic stays inside it: the call gets the error
@@ -670,7 +670,14 @@ open), up to the limit [CLI](CLI.md#serve-mcp) gives, and kept; the model set is
 (`Arc<ModelSet>`). Writes take the shared writer lock; a read beside a write sees the index as of
 its last commit (WAL, one transaction per update, the segment manifest swapped in that
 transaction). The scan before a read is a write, and a call that waited for another call's scan
-does not scan again.
+does not scan again. The scan waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this
+process, which may itself wait for another process's lock; past that, or when another process
+holds the lock, the read answers from the last committed index with a **pending** set
+(`session::Pending`): the files of its change set the answer does not hold yet, or every file for
+a walk that could not run. Each front end says so: the MCP text and `structuredContent.pending`,
+a `window/logMessage` warning in the language server, a Python `UserWarning`, a stderr line of a
+command a `serve` answers. Readers are opened from a repository no write holds, so a reader opened
+during a write does not wait for it ([ADR 0002](adr/0002-reads-during-a-write.md)).
 
 What a scan looks at is the **change set** since the token of the last one applied
 (`fresh::Freshness::changes_since`, [ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)).
