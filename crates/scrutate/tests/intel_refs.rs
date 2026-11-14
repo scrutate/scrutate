@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+#[path = "support/agreement.rs"]
+mod agreement;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 struct Repo {
@@ -31,6 +34,7 @@ impl Repo {
         let files: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (*p, b.as_bytes())).collect();
         let r = Repo::at(scratch(name), &files);
         r.index();
+        agreement::check(BIN, &r.root, &format!("intel_refs::{name}"));
         r
     }
 

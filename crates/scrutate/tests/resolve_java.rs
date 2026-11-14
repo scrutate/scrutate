@@ -6,6 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[path = "support/agreement.rs"]
+mod agreement;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 const SHAPES: &str = "src/main/java/com/acme/shapes";
@@ -109,6 +112,7 @@ impl Repo {
         }
         let r = Repo { root };
         assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+        agreement::check(BIN, &r.root, &format!("resolve_java::{tag}"));
         r
     }
     fn run(&self, args: &[&str]) -> (i32, String) {
