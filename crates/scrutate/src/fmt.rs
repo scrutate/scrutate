@@ -113,6 +113,9 @@ pub fn hit_blocks(hits: &[Hit], words: &[String], snippet: bool, why: bool) -> V
     for h in hits {
         let name = if h.qualname.is_empty() { &h.name } else { &h.qualname };
         let mut head = format!("{}  [{}] {}", loc(h), h.kind, shown(name));
+        if let Some(how) = h.matched {
+            head.push_str(&format!("  ({how} match)"));
+        }
         if why && !h.why.is_empty() {
             head.push_str(&format!("  ({})", h.why.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(", ")));
         }
@@ -131,11 +134,15 @@ pub fn hits_json(hits: &[Hit]) -> serde_json::Value {
         hits.iter()
             .map(|h| {
                 let why: serde_json::Map<String, serde_json::Value> = h.why.iter().cloned().collect();
-                serde_json::json!({
+                let mut v = serde_json::json!({
                     "id": h.loc(), "path": h.path, "start": h.start, "end": h.end,
                     "name": if h.qualname.is_empty() { &h.name } else { &h.qualname },
                     "kind": h.kind, "score": h.score, "why": why,
-                })
+                });
+                if let Some(how) = h.matched {
+                    v["match"] = serde_json::json!(how);
+                }
+                v
             })
             .collect(),
     )

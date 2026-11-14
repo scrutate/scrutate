@@ -62,6 +62,11 @@ incompatible index by itself, and that is never breaking.
   (`path:12:5: code`, as `refs` writes an occurrence) keeps that shape and is named instead in one
   `vendored: PATH, ...` line at the end of the answer
   ([CLI](docs/CLI.md#engine-b)).
+- `symbol` lists near matches when no definition has the name: names that start with the query,
+  names whose first words its parts start (`BkSvc` finds `BookingsService`), then names that hold
+  it (three characters or more), each saying how it matched (`match` in JSON, MCP and Python).
+  `--exact` (MCP `exact`, Python `exact=True`) keeps the old answer. The language server's
+  workspace symbols rank the same way ([CLI](docs/CLI.md#engine-b)).
 - `SCRUTATE_COUNT_KEY=N` keeps a count of big searches apart from the one the user's other
   searches join; the tests of that count use it, so another suite's searches cannot change what
   they see ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
@@ -77,7 +82,7 @@ incompatible index by itself, and that is never breaking.
   answer is 5% to 44% of the detailed one ([CLI](docs/CLI.md)). The Python `Repo.call` reads it
   too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short tool list with the same
-  tools, arguments and checks: 5,614 bytes against 16,647 (13,968 before `response_format`).
+  tools, arguments and checks: 5,657 bytes against 17,055 (13,968 before `response_format`).
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes an MCP server entry that runs this
   binary into the agent's user file (or with `--project` the repository's), editing it in place;
   `--uninstall` restores it byte for byte, `--dry-run` writes nothing, `--instructions` adds a
@@ -180,7 +185,7 @@ incompatible index by itself, and that is never breaking.
 - `dupes` and `review` read the duplicate keys the index keeps for each definition, made once per
   text when it is parsed, and read a definition's text only when it is in a group or shares a
   bucket, so they no longer read every definition's text, and find the same groups. The index's
-  schema is 15, so an older index is built again once; the keys make the index larger and a full
+  schema goes up, so an older index is built again once; the keys make the index larger and a full
   index slower (measured by hand for the change, in its commit message: no script in `bench/`
   reruns it).
 - On macOS an index update flushes its files with a write barrier (`F_BARRIERFSYNC`) in place of
@@ -206,6 +211,9 @@ incompatible index by itself, and that is never breaking.
   The semantic model's tables are read where they lie in the binary instead of being copied.
   On a 61 MB index, `symbol` takes 16.5 ms where it took 86.7 ms, and `search` 68.8 ms where it
   took 174.6 ms ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
+- The index keeps a table of the distinct definition names with their word initials and a
+  trigram index over them, for `symbol`'s near matches; its schema version goes up, so an index
+  made before is rebuilt on its next use ([CLI](docs/CLI.md#engine-b)).
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
   (7.5 MiB compressed), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
   crates; publishing waits for the release ([INSTALL](docs/INSTALL.md)).

@@ -687,6 +687,32 @@ fn symbol_callers_and_callees_take_a_limit() {
 }
 
 #[test]
+fn symbol_lists_near_matches_when_no_definition_has_the_name() {
+    let r = Repo::new("near_matches");
+    r.write(
+        "src/svc.py",
+        b"class BookingsService:\n    def run(self):\n        return 1\n\n\ndef bookings_helper():\n    return 2\n\n\nclass ReportService:\n    pass\n",
+    );
+    assert_eq!(r.run(&["index"]).0, 0);
+    let hits = |args: &[&str]| -> Vec<(String, Option<String>)> {
+        let (_, out, _) = r.run(args);
+        let v = answer(&out);
+        let row = |h: &serde_json::Value| (h["name"].as_str().unwrap().to_string(), h.get("match").and_then(|m| m.as_str()).map(str::to_string));
+        v.as_array().map(|a| a.iter().map(row).collect()).unwrap_or_default()
+    };
+    let near = |name: &str, how: &str| (name.to_string(), Some(how.to_string()));
+    assert_eq!(hits(&["symbol", "--json", "BookingsServ"]), [near("BookingsService", "prefix")]);
+    assert_eq!(hits(&["symbol", "--json", "BkSvc"]), [near("BookingsService", "humps")]);
+    assert_eq!(hits(&["symbol", "--json", "Service"]), [near("ReportService", "contains"), near("BookingsService", "contains")]);
+    // the name itself answers as before, with no near matches and no match field
+    assert_eq!(hits(&["symbol", "--json", "BookingsService"]), [("BookingsService".to_string(), None)]);
+    let (code, out, _) = r.run(&["symbol", "--exact", "BkSvc"]);
+    assert_eq!((code, out.trim()), (1, "(no results)"));
+    let (_, out, _) = r.run(&["symbol", "BkSvc"]);
+    assert!(out.contains("[class] BookingsService  (humps match)"), "{out}");
+}
+
+#[test]
 fn search_also_prints_other_repositories_by_the_path_given() {
     let outer = Repo::new("also_paths");
     let body = |doc: &str| format!("def renew_token(session):\n    \"\"\"{doc}\"\"\"\n    return session\n");
@@ -3010,4 +3036,28 @@ fn a_path_naming_the_root_from_below_it_is_the_whole_repository() {
         let (code, out, err) = run_in(&r.root.join("pkg"), &[cmd, ".."], &[]);
         assert_eq!((code, out), (0, whole), "{cmd} ..: {err}");
     }
+}
+
+#[test]
+fn a_name_no_file_defines_any_more_matches_no_query() {
+    let r = Repo::new("names_follow_files");
+    r.write("src/geo.py", b"def make_point():\n    return 1\n");
+    r.write("src/other.py", b"def other():\n    return 2\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let names = |q: &str| -> Vec<String> {
+        let (_, out, _) = r.run(&["symbol", "--json", q]);
+        answer(&out).as_array().map(|a| a.iter().map(|h| h["name"].as_str().unwrap().to_string()).collect()).unwrap_or_default()
+    };
+    for q in ["make_po", "mP", "ake_poi"] {
+        assert_eq!(names(q), ["make_point"], "{q} before the delete");
+    }
+    std::fs::remove_file(r.root.join("src/geo.py")).unwrap();
+    assert_eq!(r.run(&["index"]).0, 0);
+    for q in ["make_po", "mP", "ake_poi"] {
+        assert_eq!(names(q), Vec::<String>::new(), "{q} after the delete");
+    }
+    r.write("src/geo.py", b"def build_point():\n    return 1\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    assert_eq!(names("build_po"), ["build_point"]);
+    assert_eq!(names("bP"), ["build_point"]);
 }

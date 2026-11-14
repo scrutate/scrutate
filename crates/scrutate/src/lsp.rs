@@ -16,7 +16,6 @@ use crate::names::Names;
 use crate::ops::{self, Answer, Op};
 use crate::search::Searcher;
 use crate::session::{Every, Session};
-use crate::text::name_key;
 
 const MAX_MESSAGE: usize = 256 << 20;
 
@@ -627,12 +626,11 @@ impl Folder {
     }
 
     fn workspace_symbols(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
-        let q = name_key(p["query"].as_str().unwrap_or(""));
-        let rows = s.ix.symbols_containing(&q)?;
+        let rows = crate::symmatch::ranked(&s.ix, p["query"].as_str().unwrap_or(""), 200)?;
         let mut lines = self.lines();
         Ok(Value::Array(
             rows.iter()
-                .map(|r| {
+                .map(|(r, _)| {
                     let container = r.qualname.rsplit_once('.').map(|(c, _)| c).unwrap_or("");
                     json!({"name": r.name, "kind": symbol_kind(&r.kind), "containerName": container,
                            "location": lines.location(&r.path, r.start, r.end, &r.name)})
@@ -850,7 +848,7 @@ fn definitions(s: &mut Searcher, name: &str) -> Result<Vec<crate::search::Hit>> 
     if crate::intel::location(name).is_some() {
         return Ok(Vec::new());
     }
-    let Answer::Hits { hits, .. } = ops::run(s, &Op::Symbol { name: name.to_string(), limit: 50 })? else { unreachable!("symbol answers hits") };
+    let Answer::Hits { hits, .. } = ops::run(s, &Op::Symbol { name: name.to_string(), limit: 50, exact: true })? else { unreachable!("symbol answers hits") };
     Ok(hits)
 }
 

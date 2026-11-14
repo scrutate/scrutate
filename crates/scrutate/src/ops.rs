@@ -88,6 +88,8 @@ pub enum Op {
     Symbol {
         name: String,
         limit: usize,
+        /// only definitions of that name; off, a name no definition has gets the near matches
+        exact: bool,
     },
     Callers {
         name: String,
@@ -257,7 +259,7 @@ impl Op {
                 },
                 max_results: count("max_results", GREP_MAX, 5000)?,
             },
-            "find_symbol" => Op::Symbol { name: text("name")?, limit: count("limit", SYMBOL_LIMIT as u64, 500)? as usize },
+            "find_symbol" => Op::Symbol { name: text("name")?, limit: count("limit", SYMBOL_LIMIT as u64, 500)? as usize, exact: flag("exact")? },
             "callers" => Op::Callers { name: text("name")?, limit: count("limit", CALLERS_LIMIT as u64, 500)? as usize },
             "callees" => Op::Callees { name: text("name")?, limit: count("limit", CALLEES_LIMIT as u64, 500)? as usize },
             "read_code" => {
@@ -800,8 +802,15 @@ fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (groups, stopped) = crate::intel::grouped_grep(s, &q, &files)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
-        Op::Symbol { name, limit } => {
-            let (hits, stopped) = cut(targets(s, name, limit.saturating_add(1), false)?, *limit, RAISE_LIMIT);
+        Op::Symbol { name, limit, exact } => {
+            let mut found = targets(s, name, limit.saturating_add(1), false)?;
+            if found.is_empty() && !exact && crate::intel::location(name).is_none() {
+                found = crate::symmatch::ranked(&s.ix, name, limit.saturating_add(1))?
+                    .into_iter()
+                    .map(|(r, how)| Hit { matched: Some(how.as_str()), ..Hit::from_row(&r, true) })
+                    .collect();
+            }
+            let (hits, stopped) = cut(found, *limit, RAISE_LIMIT);
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
@@ -1289,19 +1298,31 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
             let hits = if qs.len() == 1 { s.search_filtered(query, *k, *snippets, f)? } else { s.search_many_in(&qs, *k, *snippets, Some(f))? };
             Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
         }
-        Op::Symbol { name, limit } => {
+        Op::Symbol { name, limit, exact } => {
             // the lookup cuts before the filter sees its rows, so it reads more until enough pass
             let want = limit.saturating_add(1);
-            let mut n = want;
-            let kept = loop {
-                let got = targets(s, name, n, false)?;
-                let short = got.len() < n;
-                let kept: Vec<Hit> = got.into_iter().filter(|h| f.admits(&h.path, &h.kind)).collect();
-                if kept.len() >= want || short || n >= SCOPED_SYMBOLS_MAX {
-                    break kept;
+            let read = |s: &mut Searcher, near: bool| -> Result<Vec<Hit>> {
+                let mut n = want;
+                loop {
+                    let got: Vec<Hit> = if near {
+                        let ranked = crate::symmatch::ranked(&s.ix, name, n)?;
+                        ranked.into_iter().map(|(r, how)| Hit { matched: Some(how.as_str()), ..Hit::from_row(&r, true) }).collect()
+                    } else {
+                        targets(s, name, n, false)?
+                    };
+                    let short = got.len() < n;
+                    let kept: Vec<Hit> = got.into_iter().filter(|h| f.admits(&h.path, &h.kind)).collect();
+                    if kept.len() >= want || short || n >= SCOPED_SYMBOLS_MAX {
+                        return Ok(kept);
+                    }
+                    n = n.saturating_mul(4).min(SCOPED_SYMBOLS_MAX);
                 }
-                n = n.saturating_mul(4).min(SCOPED_SYMBOLS_MAX);
             };
+            let mut kept = read(s, false)?;
+            // as without filters: no definition of the name, then the near matches the filter keeps
+            if kept.is_empty() && !exact && crate::intel::location(name).is_none() {
+                kept = read(s, true)?;
+            }
             let (hits, stopped) = cut(kept, *limit, RAISE_LIMIT);
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }

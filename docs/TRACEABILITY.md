@@ -111,7 +111,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | R-6.4 | Repository isolation | one `.scrutate/` per repository | design; concurrency tests | PASS |
 | R-6.5 | Resource exhaustion protection | regex size limits, file size caps, binary skip, bounded buffers, overflow-checked array sizes | robustness; fuzz target `npy` | PASS |
 | R-6.6 | Index corruption detection and recovery | triage on open, segment validation, `check`, auto rebuild; text index: structural checks on open, deep checks in `check`, rebuild with `--force` | robustness `corrupted_index_is_detected_and_rebuilt`; `cli.rs::indexed_grep_equals_walk` (damaged segment) | PASS |
-| R-6.7 | Versioned storage and migration | `schema_version` 15 (the artifact store and the path map; the duplicate keys), text index `format` 3, model signature; mismatch → rebuild; a different `content_rev` (parsing rules) reads every file again | robustness; `Triage::Rebuild` | PASS (migration policy = rebuild the cache) |
+| R-6.7 | Versioned storage and migration | `schema_version` 16 (the artifact store and the path map; the duplicate keys; the definition names), text index `format` 3, model signature; mismatch → rebuild; a different `content_rev` (parsing rules) reads every file again | robustness; `Triage::Rebuild` | PASS (migration policy = rebuild the cache) |
 | R-6.8 | Offline and air-gapped operation | no network code; models embedded | code review | PASS |
 | R-6.9 | No unauthorized source-code transmission | nothing leaves the machine | code review | PASS |
 | R-6.10 | Dependency and supply-chain security | `Cargo.lock`, `cargo audit`, SBOM (CycloneDX), licences reviewed | TEST_RESULTS.md, `tools/sbom.py` | PASS |

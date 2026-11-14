@@ -210,6 +210,26 @@ fn lsp_round_trip() {
     assert_eq!(child.wait().unwrap().code(), Some(0), "exit after shutdown is a clean exit");
 }
 
+#[test]
+fn workspace_symbols_rank_the_name_then_prefixes_then_camel_case_humps_then_the_rest() {
+    let r = Repo::new("ranked");
+    r.write(
+        "src/svc.py",
+        "class MyBkSvc:\n    pass\n\n\nclass BookingsService:\n    pass\n\n\ndef bk_svc_config():\n    return 1\n\n\nclass ReportService:\n    pass\n",
+    );
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let ws = c.request("workspace/symbol", json!({"query": "BkSvc"}));
+    let names: Vec<&str> = ws["result"].as_array().unwrap_or_else(|| panic!("{ws}")).iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["bk_svc_config", "BookingsService", "MyBkSvc"], "{ws}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
 /// The file a location names, from the repository top, after checking that it exists.
 fn real_file(top: &Path, loc: &Value) -> String {
     let p = scrutate::lsp::uri_to_path(loc["uri"].as_str().unwrap()).unwrap();

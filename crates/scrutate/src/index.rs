@@ -18,7 +18,7 @@ use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::name_key;
 
-pub const SCHEMA_VERSION: u32 = 15;
+pub const SCHEMA_VERSION: u32 = 16;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
@@ -54,6 +54,9 @@ CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path, start);
 CREATE INDEX IF NOT EXISTS chunks_name ON chunks(name_key);
 CREATE INDEX IF NOT EXISTS chunks_qual ON chunks(qual_key);
 CREATE INDEX IF NOT EXISTS chunks_kind ON chunks(kind);
+CREATE TABLE IF NOT EXISTS names(name_key TEXT PRIMARY KEY, name TEXT NOT NULL, initials TEXT NOT NULL, n INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS names_initials ON names(initials);
+CREATE VIRTUAL TABLE IF NOT EXISTS names_tri USING fts5(name_key, content='names', content_rowid='rowid', tokenize='trigram', detail='none', columnsize=0);
 CREATE TABLE IF NOT EXISTS refs(chunk_id INTEGER NOT NULL, callee TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS refs_callee ON refs(callee);
 CREATE INDEX IF NOT EXISTS refs_chunk ON refs(chunk_id);
@@ -1532,7 +1535,10 @@ impl Index {
             return Ok(());
         }
         let old = self.segments();
-        self.db.execute_batch("DELETE FROM refs; DELETE FROM dupkeys; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts;")?;
+        self.db.execute_batch(
+            "DELETE FROM refs; DELETE FROM dupkeys; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts; \
+             DELETE FROM names; INSERT INTO names_tri(names_tri) VALUES('delete-all');",
+        )?;
         self.set_meta("segments", "[]")?;
         let ver = self.bump_version()?;
         self.set_meta("chunks_at", &format!("{ver} 0 0"))?;
@@ -2638,10 +2644,20 @@ impl Index {
         )?;
         let mut refs = self.db.prepare_cached("INSERT INTO refs(chunk_id,callee) VALUES(?1,?2)")?;
         let mut dups = self.db.prepare_cached("INSERT INTO dupkeys(id,nbody,body,words,ntok,bands) VALUES(?1,?2,?3,?4,?5,?6)")?;
+        let mut name = self
+            .db
+            .prepare_cached("INSERT INTO names(name_key,name,initials,n) VALUES(?1,?2,?3,1) ON CONFLICT(name_key) DO UPDATE SET n=n+1 RETURNING rowid, n")?;
+        let mut tri = self.db.prepare_cached("INSERT INTO names_tri(rowid,name_key) VALUES(?1,?2)")?;
         for (c, calls, blob, dup) in rows {
             let cid = next_id;
             next_id += 1;
             ins.execute(params![cid, rel, c.kind, c.name, c.qualname, c.name_key, c.qual_key, c.start, c.end, c.is_test, c.ndoc, c.nbody, blob, c.name_tok])?;
+            if c.kind != "window" && !c.name.is_empty() {
+                let (rowid, n): (i64, i64) = name.query_row(params![c.name_key, c.name, crate::symmatch::initials(&c.name)], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                if n == 1 {
+                    tri.execute(params![rowid, c.name_key])?;
+                }
+            }
             for callee in calls {
                 refs.execute(params![cid, callee])?;
             }
@@ -2747,6 +2763,19 @@ impl Index {
         let mut q = self.db.prepare_cached("SELECT id FROM chunks WHERE path=?1")?;
         let ids: Vec<i64> = q.query_map([rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         if !ids.is_empty() {
+            let mut gone =
+                self.db.prepare_cached("SELECT name_key, count(*) FROM chunks WHERE path=?1 AND kind != 'window' AND name != '' GROUP BY name_key")?;
+            let counts: Vec<(String, i64)> = gone.query_map([rel], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let mut less = self.db.prepare_cached("UPDATE names SET n=n-?2 WHERE name_key=?1 RETURNING rowid, n")?;
+            for (key, k) in counts {
+                if let Some((rowid, n)) = less.query_row(params![key, k], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).optional()? {
+                    if n <= 0 {
+                        // the trigram index is told what it held, then the row goes
+                        self.db.execute("INSERT INTO names_tri(names_tri,rowid,name_key) VALUES('delete',?1,?2)", params![rowid, key])?;
+                        self.db.execute("DELETE FROM names WHERE rowid=?1", [rowid])?;
+                    }
+                }
+            }
             self.db.execute("DELETE FROM refs WHERE chunk_id IN (SELECT id FROM chunks WHERE path=?1)", [rel])?;
             self.db.execute("DELETE FROM dupkeys WHERE id IN (SELECT id FROM chunks WHERE path=?1)", [rel])?;
             self.db.execute("DELETE FROM chunks WHERE path=?1", [rel])?;
@@ -2945,12 +2974,49 @@ impl Index {
         Ok(rows)
     }
 
-    /// Definitions whose name key contains `key`: whole keys first, then prefixes, then those
-    /// outside tests and shorter names; at most 200.
-    pub fn symbols_containing(&self, key: &str) -> Result<Vec<ChunkRow>> {
+    /// Each distinct name key `pick` keeps, until it has kept `limit`, from the names `sql` lists
+    /// (best first) for `args`: the candidates are read one by one, so none is cut before it is seen.
+    fn names_until(&self, sql: &str, args: &[&dyn rusqlite::ToSql], limit: usize, mut pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached(sql)?;
+        let mut rows = st.query(args)?;
+        let mut out = Vec::new();
+        while out.len() < limit {
+            let Some(r) = rows.next()? else { break };
+            let (key, name): (String, String) = (r.get(0)?, r.get(1)?);
+            if pick(&key, &name) {
+                out.push(key);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Name keys starting with `key`, shorter first (the key itself first).
+    pub fn names_with_prefix(&self, key: &str, limit: usize, pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {
+        let sql = "SELECT name_key, name FROM names WHERE name_key >= ?1 AND name_key < ?2 ORDER BY length(name_key), name_key";
+        self.names_until(sql, &[&key, &past(key)], limit, pick)
+    }
+
+    /// Name keys whose names' word initials start with `initials`, fewest words, then shorter, first.
+    pub fn names_with_initials(&self, initials: &str, limit: usize, pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {
+        let sql = "SELECT name_key, name FROM names WHERE initials >= ?1 AND initials < ?2 ORDER BY length(initials), length(name_key), name_key";
+        self.names_until(sql, &[&initials, &past(initials)], limit, pick)
+    }
+
+    /// Name keys holding `key` (three characters or more: the trigram index), shorter first.
+    pub fn names_containing(&self, key: &str, limit: usize, pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {
+        // LIKE reads `%` and `_` as wildcards, and no name key holds either
+        if key.contains(['%', '_']) {
+            return Ok(Vec::new());
+        }
+        let sql = "SELECT n.name_key, n.name FROM names_tri t JOIN names n ON n.rowid = t.rowid WHERE t.name_key LIKE ?1 \
+                   ORDER BY length(n.name_key), n.name_key";
+        self.names_until(sql, &[&format!("%{key}%")], limit, pick)
+    }
+
+    /// The named definitions of the name key, outside tests first, then shorter names, by path and line.
+    pub fn defs_named(&self, key: &str) -> Result<Vec<ChunkRow>> {
         let mut st = self.db.prepare_cached(&format!(
-            "SELECT {CHUNK_COLS} FROM chunks WHERE kind != 'window' AND name != '' AND instr(name_key, ?1) > 0 \
-             ORDER BY name_key != ?1, substr(name_key, 1, length(?1)) != ?1, is_test, length(name), path, start LIMIT 200"
+            "SELECT {CHUNK_COLS} FROM chunks WHERE name_key = ?1 AND kind != 'window' AND name != '' ORDER BY is_test, length(name), path, start"
         ))?;
         let rows = st.query_map([key], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
@@ -3343,6 +3409,11 @@ impl Index {
             "segments": self.segments().len(),
         }))
     }
+}
+
+/// The least string above every string that starts with `prefix`.
+fn past(prefix: &str) -> String {
+    format!("{prefix}\u{10FFFF}")
 }
 
 #[cfg(test)]

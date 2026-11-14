@@ -75,6 +75,8 @@ pub struct Hit {
     pub text: String,
     pub score: f64,
     pub why: Vec<(String, serde_json::Value)>,
+    /// how a near match matched the name asked for (`symmatch::How`); None for the name itself
+    pub matched: Option<&'static str>,
 }
 
 impl Hit {
@@ -94,6 +96,7 @@ impl Hit {
             text: if with_text { r.text.clone() } else { String::new() },
             score: 0.0,
             why: Vec::new(),
+            matched: None,
         }
     }
 

@@ -315,7 +315,7 @@ fn a_database_another_process_rebuilt_is_reopened_and_not_written_after_it_was_d
 fn a_process_on_an_index_rebuilt_by_force_answers_from_the_new_one() {
     let t = indexed_tree("forced_under");
     let mut repo = scrutate::Repo::open(&t.0).unwrap();
-    let op = |name: &str| scrutate::ops::Op::Symbol { name: name.into(), limit: 5 };
+    let op = |name: &str| scrutate::ops::Op::Symbol { name: name.into(), limit: 5, exact: true };
     assert!(repo.run(&op("alpha"), 0.0).is_ok());
     set_meta_of(&t.0, "schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string());
     assert!(repo.run(&op("alpha"), 0.0).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
@@ -746,7 +746,7 @@ fn a_running_process_stops_updating_when_a_newer_scrutate_takes_over_the_index()
     // a long-lived process answers every operation with the error, without touching the index
     let t = indexed_tree("newer_repo");
     let mut repo = scrutate::Repo::open(&t.0).unwrap();
-    let op = scrutate::ops::Op::Symbol { name: "alpha".into(), limit: 5 };
+    let op = scrutate::ops::Op::Symbol { name: "alpha".into(), limit: 5, exact: true };
     assert!(repo.run(&op, 0.0).is_ok());
     repo.ix.set_meta("schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string()).unwrap();
     for _ in 0..2 {

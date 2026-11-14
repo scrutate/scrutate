@@ -48,6 +48,7 @@ pub mod session;
 pub mod setup;
 pub mod shellhook;
 pub mod stores;
+pub mod symmatch;
 pub mod text;
 pub mod textindex;
 pub mod tscache;

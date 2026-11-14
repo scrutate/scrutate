@@ -1012,7 +1012,7 @@ mod tests {
         std::fs::write(root.join("src/d0/late.py"), "def late():\n    return 2\n").unwrap();
         let (took, r) = while_own_write_runs(&s, Duration::from_secs(20), || {
             let t0 = Instant::now();
-            let r = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1 }, &Arc::default(), &Arc::default());
+            let r = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1, exact: true }, &Arc::default(), &Arc::default());
             (t0.elapsed(), r)
         });
         let (a, pending) = r.unwrap();
@@ -1020,7 +1020,7 @@ mod tests {
         assert_eq!(pending.files(), Some(&["src/d0/late.py".to_string()][..]));
         assert!(pending.note().is_some_and(|n| n.contains("src/d0/late.py")));
         assert!(took >= stores::OWN_WRITE_WAIT && took < stores::OWN_WRITE_WAIT + Duration::from_secs(2), "{took:?}");
-        let (a, pending) = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1 }, &Arc::default(), &Arc::default()).unwrap();
+        let (a, pending) = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1, exact: true }, &Arc::default(), &Arc::default()).unwrap();
         assert!(!a.is_empty() && pending == Pending::default(), "the next read applies them");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1032,7 +1032,7 @@ mod tests {
         let (root, s) = watched("short_write", 1, Every::given(Some(0.0)));
         std::fs::write(root.join("src/d0/soon.py"), "def soon():\n    return 2\n").unwrap();
         let (a, pending) = while_own_write_runs(&s, Duration::from_millis(50), || {
-            s.run_counted(&Op::Symbol { name: "soon".into(), limit: 1 }, &Arc::default(), &Arc::default())
+            s.run_counted(&Op::Symbol { name: "soon".into(), limit: 1, exact: true }, &Arc::default(), &Arc::default())
         })
         .unwrap();
         assert!(!a.is_empty(), "the answer holds the file the write held back");
@@ -1046,7 +1046,7 @@ mod tests {
     fn a_command_line_call_during_a_write_of_this_process_is_answered() {
         let (root, s) = fixture("scanned_during_write");
         std::fs::write(root.join("src/new.py"), "def brand_new():\n    return 3\n").unwrap();
-        let op = Op::Symbol { name: "make_point".into(), limit: 5 };
+        let op = Op::Symbol { name: "make_point".into(), limit: 5, exact: true };
         let r = while_own_write_runs(&s, Duration::from_secs(20), || s.run_scanned_pending(&op));
         let (_, a, pending) = r.expect("answered");
         assert!(a.is_ok_and(|a| !a.is_empty()));
@@ -1121,7 +1121,7 @@ mod tests {
         });
         assert!(out[0].as_ref().is_err_and(|e| e.is::<Panicked>()));
         assert!(matches!(out[1], Ok(1)));
-        let op = Op::Symbol { name: "make_point".into(), limit: 5 };
+        let op = Op::Symbol { name: "make_point".into(), limit: 5, exact: true };
         for _ in 0..3 {
             assert!(matches!(s.run(&op, &Arc::default()), Ok(Answer::Hits { ref hits, .. }) if hits.len() == 1));
         }
@@ -1142,7 +1142,7 @@ mod tests {
         // a cancelled reindex stops and leaves the index as it was
         let reindex = s.run(&Op::Reindex { force: true }, &Arc::new(AtomicBool::new(true)));
         assert!(reindex.is_err_and(|e| format!("{e:#}").contains("cancelled")));
-        let op = Op::Symbol { name: "make_point".into(), limit: 5 };
+        let op = Op::Symbol { name: "make_point".into(), limit: 5, exact: true };
         assert!(matches!(s.run(&op, &Arc::default()), Ok(Answer::Hits { ref hits, .. }) if hits.len() == 1));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1188,7 +1188,7 @@ mod tests {
         s.building();
         assert!(!s.wait_built(&never, Some(Duration::from_millis(50)), |_| {}), "the limit ends the wait");
         assert!(!s.wait_built(&AtomicBool::new(true), None, |_| {}), "a cancel ends the wait");
-        assert!(s.run_scanned(&Op::Symbol { name: "first".into(), limit: 5 }).is_none(), "a command line call does not wait");
+        assert!(s.run_scanned(&Op::Symbol { name: "first".into(), limit: 5, exact: false }).is_none(), "a command line call does not wait");
         std::thread::scope(|sc| {
             let waiter = sc.spawn(|| s.wait_built(&never, None, |_| {}));
             std::thread::sleep(Duration::from_millis(100));
@@ -1196,7 +1196,7 @@ mod tests {
             s.build().unwrap();
             assert!(waiter.join().unwrap());
         });
-        assert!(s.run_scanned(&Op::Symbol { name: "first".into(), limit: 5 }).is_some_and(|(_, a)| a.is_ok_and(|a| !a.is_empty())));
+        assert!(s.run_scanned(&Op::Symbol { name: "first".into(), limit: 5, exact: false }).is_some_and(|(_, a)| a.is_ok_and(|a| !a.is_empty())));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1214,7 +1214,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(600));
             other.execute_batch("ROLLBACK").unwrap();
         });
-        let op = Op::Symbol { name: "make_point".into(), limit: 5 };
+        let op = Op::Symbol { name: "make_point".into(), limit: 5, exact: true };
         assert!(s.run_scanned(&op).is_none(), "a command line call does not wait: it does the work itself");
         let a = s.run(&op, &Arc::default());
         release.join().unwrap();
@@ -1279,10 +1279,10 @@ mod tests {
         std::fs::write(root.join("src/named.py"), "def brand_new():\n    return 3\n").unwrap();
         std::fs::write(root.join("src/unnamed.py"), "def not_named():\n    return 4\n").unwrap();
         *lock(&told) = vec!["src/named.py".into()];
-        let (st, a) = s.run_scanned(&Op::Symbol { name: "brand_new".into(), limit: 5 }).unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "brand_new".into(), limit: 5, exact: true }).unwrap();
         assert_eq!((st.files_looked, st.files_changed), (1, 1), "{st:?}");
         assert!(a.is_ok_and(|a| !a.is_empty()));
-        let (st, a) = s.run_scanned(&Op::Symbol { name: "not_named".into(), limit: 5 }).unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "not_named".into(), limit: 5, exact: true }).unwrap();
         assert_eq!(st.files_looked, 0, "{st:?}");
         assert!(a.is_ok_and(|a| a.is_empty()), "a file the change set does not name is not looked at");
         let _ = std::fs::remove_dir_all(root);
@@ -1312,7 +1312,7 @@ mod tests {
         let t0 = Instant::now();
         for k in 0.. {
             std::fs::write(root.join("src/d0/probe.py"), format!("def probe_{k}():\n    return 0\n")).unwrap();
-            let (st, _) = s.run_scanned(&Op::Symbol { name: format!("probe_{k}"), limit: 1 }).unwrap();
+            let (st, _) = s.run_scanned(&Op::Symbol { name: format!("probe_{k}"), limit: 1, exact: true }).unwrap();
             if st.files_looked == 1 {
                 break;
             }
@@ -1328,7 +1328,7 @@ mod tests {
         let (root, s) = watched_with("barrier", 1, Every::given(Some(3600.0)), Some(Duration::from_secs(3600)));
         for i in 0..1000 {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
-            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1 }).unwrap();
+            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
             assert_eq!(st.files_looked, 1, "write {i}: {st:?}");
         }
@@ -1339,12 +1339,12 @@ mod tests {
     fn a_read_looks_at_the_changed_files_alone_and_a_walk_at_all() {
         let (root, s) = watched("o_changed", 2000, Every::given(Some(3600.0)));
         std::fs::write(root.join("src/d7/m7.py"), "def edited():\n    return 7\n").unwrap();
-        let (st, a) = s.run_scanned(&Op::Symbol { name: "edited".into(), limit: 1 }).unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "edited".into(), limit: 1, exact: true }).unwrap();
         assert_eq!((st.files_looked, st.files_changed), (1, 1), "{st:?}");
         assert!(a.is_ok_and(|a| !a.is_empty()));
         drop(s);
         let walk = Session::open(&root, Every::given(Some(3600.0))).unwrap();
-        let (st, _) = walk.run_scanned(&Op::Symbol { name: "edited".into(), limit: 1 }).unwrap();
+        let (st, _) = walk.run_scanned(&Op::Symbol { name: "edited".into(), limit: 1, exact: true }).unwrap();
         assert_eq!(st.files_looked, 2001, "every file and the probe: {st:?}");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1354,11 +1354,11 @@ mod tests {
         let (root, s) = watched("lost", 10, Every::given(Some(3600.0)));
         s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
         std::fs::write(root.join("src/d3/m3.py"), "def after_loss():\n    return 3\n").unwrap();
-        let (st, a) = s.run_scanned(&Op::Symbol { name: "after_loss".into(), limit: 1 }).unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "after_loss".into(), limit: 1, exact: true }).unwrap();
         assert_eq!(st.files_looked, 11, "a walk: {st:?}");
         assert!(a.is_ok_and(|a| !a.is_empty()));
         std::fs::write(root.join("src/d3/m3.py"), "def after_walk():\n    return 3\n").unwrap();
-        let (st, _) = s.run_scanned(&Op::Symbol { name: "after_walk".into(), limit: 1 }).unwrap();
+        let (st, _) = s.run_scanned(&Op::Symbol { name: "after_walk".into(), limit: 1, exact: true }).unwrap();
         assert_eq!(st.files_looked, 1, "named again after the walk: {st:?}");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1369,7 +1369,7 @@ mod tests {
             let (root, s) = watched(&format!("asked_{seen}"), 10, Every::given(floor));
             s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
             std::fs::write(root.join("src/d3/m3.py"), "def after_loss():\n    return 3\n").unwrap();
-            let a = s.run(&Op::Symbol { name: "after_loss".into(), limit: 1 }, &Arc::default()).unwrap();
+            let a = s.run(&Op::Symbol { name: "after_loss".into(), limit: 1, exact: true }, &Arc::default()).unwrap();
             assert_eq!(!a.is_empty(), seen, "interval {floor:?}");
             let _ = std::fs::remove_dir_all(root);
         }
@@ -1383,12 +1383,12 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         // s2's reads write cookies whose events reach s1's watch too
         for k in 0..200 {
-            let _ = s2.run_scanned(&Op::Symbol { name: format!("warm_{k}"), limit: 1 }).unwrap();
+            let _ = s2.run_scanned(&Op::Symbol { name: format!("warm_{k}"), limit: 1, exact: true }).unwrap();
         }
         let mut missed = Vec::new();
         for i in 0..100 {
             std::fs::write(root.join("src/d0/w.py"), format!("def twin_{i}():\n    return {i}\n")).unwrap();
-            let (_, a) = s1.run_scanned(&Op::Symbol { name: format!("twin_{i}"), limit: 1 }).unwrap();
+            let (_, a) = s1.run_scanned(&Op::Symbol { name: format!("twin_{i}"), limit: 1, exact: true }).unwrap();
             if !a.is_ok_and(|a| !a.is_empty()) {
                 missed.push(i);
             }
@@ -1406,7 +1406,7 @@ mod tests {
         let mut missed = Vec::new();
         for i in 0..100 {
             std::fs::write(root.join("src/d0/w.py"), format!("def idle_{i}():\n    return {i}\n")).unwrap();
-            let (_, a) = s1.run_scanned(&Op::Symbol { name: format!("idle_{i}"), limit: 1 }).unwrap();
+            let (_, a) = s1.run_scanned(&Op::Symbol { name: format!("idle_{i}"), limit: 1, exact: true }).unwrap();
             if !a.is_ok_and(|a| !a.is_empty()) {
                 missed.push(i);
             }
@@ -1420,7 +1420,7 @@ mod tests {
         let (root, s) = watched("cookies", 1, Every::given(Some(3600.0)));
         let notes = s.notes.clone().unwrap();
         for i in 0..1000 {
-            let _ = s.run_scanned(&Op::Symbol { name: "made_0".into(), limit: 1 }).unwrap();
+            let _ = s.run_scanned(&Op::Symbol { name: "made_0".into(), limit: 1, exact: true }).unwrap();
             assert_eq!(notes.cookies_kept(), 0, "after read {i}");
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -1430,7 +1430,7 @@ mod tests {
     fn a_change_set_a_write_of_this_process_held_back_is_applied_by_the_next_read() {
         let (root, s) = watched("held_back", 1, Every::given(Some(3600.0)));
         std::fs::write(root.join("src/d0/h.py"), "def held_back():\n    return 1\n").unwrap();
-        let op = Op::Symbol { name: "held_back".into(), limit: 1 };
+        let op = Op::Symbol { name: "held_back".into(), limit: 1, exact: true };
         let writer = lock(&s.seed).writer();
         let (held, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
         std::thread::scope(|sc| {
@@ -1451,7 +1451,7 @@ mod tests {
     #[test]
     fn a_command_line_call_scans_every_file_first() {
         let (root, s) = fixture("scanned");
-        let op = Op::Symbol { name: "brand_new".into(), limit: 5 };
+        let op = Op::Symbol { name: "brand_new".into(), limit: 5, exact: true };
         assert!(s.run(&op, &Arc::default()).is_ok_and(|a| a.is_empty()));
         std::fs::write(root.join("src/new.py"), "def brand_new():\n    return 3\n").unwrap();
         assert!(s.run(&op, &Arc::default()).is_ok_and(|a| a.is_empty()), "inside the interval a call reads the index as it is");

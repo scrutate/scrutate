@@ -573,6 +573,9 @@ pub enum Cmd {
         /// list at most this many definitions
         #[arg(long, default_value_t = crate::ops::SYMBOL_LIMIT)]
         limit: usize,
+        /// only definitions of that name: no prefix, camelCase or contains matches when none has it
+        #[arg(long)]
+        exact: bool,
         #[arg(long)]
         json: bool,
         #[command(flatten)]
@@ -1541,8 +1544,8 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, limit, json, filter } => {
-            run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }.scoped(filter.into()), json, page, outside.as_deref())
+        Cmd::Symbol { name, limit, exact, json, filter } => {
+            run_op(&cli.root, Op::Symbol { name: here.location(&name), limit, exact }.scoped(filter.into()), json, page, outside.as_deref())
         }
         Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page, outside.as_deref()),
         Cmd::Callees { name, limit, json } => run_op(&cli.root, Op::Callees { name: here.location(&name), limit }, json, page, outside.as_deref()),

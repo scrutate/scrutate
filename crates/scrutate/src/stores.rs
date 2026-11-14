@@ -622,7 +622,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let mut repo =
             Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default(), customs: None };
-        let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
+        let op = ops::Op::Symbol { name: "f".into(), limit: 5, exact: true };
         repo.set_cancel(Arc::default());
         assert!(repo.update(false).is_err());
         assert!(repo.refresh(0.0).is_err());

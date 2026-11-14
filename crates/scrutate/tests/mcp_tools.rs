@@ -178,6 +178,16 @@ fn the_three_navigation_tools_match_names_alike() {
     }
 }
 
+#[test]
+fn find_symbol_lists_near_matches_unless_exact() {
+    let mut r = Repo::new("near", &[("svc.py", "class BookingsService:\n    pass\n")]);
+    let near = r.ok("find_symbol", json!({"name": "BkSvc"}));
+    assert!(near.contains("[class] BookingsService  (humps match)"), "{near}");
+    assert_eq!(r.ok("find_symbol", json!({"name": "BkSvc", "exact": true})), "(no results)");
+    assert_eq!(r.ok("find_symbol", json!({"name": "BookingsService", "exact": true})), r.ok("find_symbol", json!({"name": "BookingsService"})));
+    assert!(r.err("find_symbol", json!({"name": "BkSvc", "exact": "yes"})).contains("exact"));
+}
+
 fn many_lines(n: usize) -> String {
     (1..=n).map(|i| format!("x_{i} = {i}\n")).collect()
 }

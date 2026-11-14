@@ -94,6 +94,9 @@ pub struct Hit {
     pub kind: String,
     pub score: f64,
     pub text: String,
+    /// how a near match of `symbol` matched ("prefix", "humps", "contains"); None for the name itself
+    #[pyo3(name = "match")]
+    pub matched: Option<String>,
 }
 
 #[pymethods]
@@ -117,6 +120,7 @@ impl From<scrutate::search::Hit> for Hit {
             kind: h.kind,
             score: h.score,
             text: h.text,
+            matched: h.matched.map(str::to_string),
         }
     }
 }
@@ -513,18 +517,21 @@ impl Repo {
     }
 
     /// Where is this function/class/method defined? (`Class.method` works.) A `Results` list:
-    /// `stopped_at` is `limit` when there were more.
-    #[pyo3(signature = (name, limit=scrutate::ops::SYMBOL_LIMIT))]
+    /// `stopped_at` is `limit` when there were more. When no definition has the name, the near
+    /// matches (prefix, camelCase humps, contains), each with its `match`, unless `exact`.
+    #[pyo3(signature = (name, limit=scrutate::ops::SYMBOL_LIMIT, exact=false))]
     fn symbol<'py>(
         &self,
         py: Python<'py>,
         name: &str,
         limit: usize,
+        exact: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         // a location (`path:start-end`) and a path spelling are read as the MCP tools read them
         let op = Op::Symbol {
             name: name.to_string(),
             limit,
+            exact,
         };
         match self.run(py, op)? {
             Answer::Hits { hits, stopped, .. } => results(py, hits_py(hits), stopped),
