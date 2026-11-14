@@ -357,6 +357,14 @@ fn seen(p: &Path) -> Option<Seen> {
     std::fs::symlink_metadata(p).ok().map(|m| Seen::of(&m))
 }
 
+/// The start of the cookie names of the `n`th notes of process `pid`. Random bits too: two
+/// containers that share a bind-mounted root can both run their session as pid 1.
+fn cookie_prefix(pid: u32, n: u64) -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let random = std::collections::hash_map::RandomState::new().build_hasher().finish();
+    format!("cookie-{pid}-{n}-{random:016x}-")
+}
+
 impl Notes {
     /// Notes for the watch of `root` (canonical), with its cookie directory made and emptied.
     pub fn new(root: &Path) -> Notes {
@@ -372,7 +380,7 @@ impl Notes {
             root: root.to_path_buf(),
             cookies,
             code: CodeWalk::new(root),
-            prefix: format!("cookie-{}-{}-", std::process::id(), NOTES.fetch_add(1, Ordering::Relaxed)),
+            prefix: cookie_prefix(std::process::id(), NOTES.fetch_add(1, Ordering::Relaxed)),
             next_cookie: AtomicU64::new(0),
             safety_every: AtomicU64::new(SAFETY_EVERY.as_millis() as u64),
             noted: Mutex::default(),
@@ -1318,6 +1326,14 @@ mod tests {
         assert_eq!(named, [("src/a.py".to_string(), false), ("src/deep/new.py".into(), false), ("src/gone.py".into(), true)]);
         assert!(safety.check_now().is_empty(), "the next walk starts from this one");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Two sessions of one root with the same process id and session number (two containers,
+    /// each with its session as pid 1) still name their cookies apart.
+    #[test]
+    fn two_processes_with_one_pid_name_their_cookies_apart() {
+        assert_ne!(super::cookie_prefix(1, 0), super::cookie_prefix(1, 0));
+        assert!(super::cookie_prefix(1, 0).starts_with("cookie-1-0-"));
     }
 
     #[test]
