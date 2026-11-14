@@ -301,19 +301,29 @@ fn save_i64(p: &Path, name: &str, v: &[i64]) -> Result<()> {
 }
 
 /// fields[c] = (row i32[E], key i64[E], tf u8[E]); if `row_sorted` the entries are already in
-/// ascending row order (true for freshly indexed chunks, false when merging). `vec` is [n, 2, k].
+/// ascending row order (true for freshly indexed chunks, false when merging). `vec` is [n, 2, k],
+/// with its `k`.
 pub fn write_segment(
+    stop: Stop,
     dest: &Path,
     ids: &[i64],
     dl: &[f32],
     fields: &[(Vec<i32>, Vec<i64>, Vec<u8>)],
-    vec: Option<&QVecs>,
-    k: usize,
+    vec: Option<(&QVecs, usize)>,
     row_sorted: bool,
 ) -> Result<()> {
     let n = ids.len();
     let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
     let _ = std::fs::remove_dir_all(&tmp);
+    // a write that stops or fails takes its half-written directory with it; after the rename
+    // there is nothing left to take
+    struct Leftover<'a>(&'a Path);
+    impl Drop for Leftover<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0);
+        }
+    }
+    let _leftover = Leftover(&tmp);
     std::fs::create_dir_all(&tmp).with_context(|| format!("create {}", tmp.display()))?;
     let mut vocab: Vec<i64> = fields.iter().flat_map(|f| f.1.iter().copied()).collect();
     vocab.sort_unstable();
@@ -359,9 +369,9 @@ pub fn write_segment(
     npy::save(&tmp.join("df.npy"), &df, &[nv])?;
     save_i64(&tmp, "ids", ids)?;
     npy::save(&tmp.join("dl.npy"), dl, &[n])?;
-    if let Some(v) = vec {
+    if let Some((v, k)) = vec {
         if n >= IVF_MIN_ROWS {
-            let order = build_ivf(&tmp, v, n, k)?;
+            let order = build_ivf(stop, &tmp, v, n, k)?;
             let mut q = vec![0i8; v.q.len()];
             let mut sc = vec![0f32; v.scale.len()];
             for (pos, &r) in order.iter().enumerate() {
@@ -375,7 +385,9 @@ pub fn write_segment(
             npy::save(&tmp.join("vscale.npy"), &v.scale, &[n, 2])?;
         }
     }
+    crate::index::sync_dir(&tmp)?;
     crate::index::rename_settled(&tmp, dest).with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
+    dest.parent().map_or(Ok(()), crate::index::sync_dir)?;
     Ok(())
 }
 
@@ -414,7 +426,7 @@ impl SegmentBuilder {
         self.n += m;
     }
 
-    pub fn write(&self, dest: &Path) -> Result<()> {
+    pub fn write(&self, stop: Stop, dest: &Path) -> Result<()> {
         let mut fields = Vec::with_capacity(NF);
         for c in 0..NF {
             let mut rows = Vec::new();
@@ -435,7 +447,7 @@ impl SegmentBuilder {
             q: self.vec.iter().flat_map(|v| v.q.iter().copied()).collect(),
             scale: self.vec.iter().flat_map(|v| v.scale.iter().copied()).collect(),
         });
-        write_segment(dest, &self.ids, &self.dl, &fields, vec.as_ref(), self.k, true)
+        write_segment(stop, dest, &self.ids, &self.dl, &fields, vec.as_ref().map(|v| (v, self.k)), true)
     }
 }
 
@@ -450,12 +462,12 @@ pub enum Vectors<'a> {
 }
 
 /// Write one segment holding only the alive documents of `segs` (any order, ids may interleave).
-pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Result<()> {
-    merge_segments_with(dest, segs, alive, Vectors::Kept)
+pub fn merge_segments(stop: Stop, dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Result<()> {
+    merge_segments_with(stop, dest, segs, alive, Vectors::Kept)
 }
 
 /// `merge_segments`, with the vectors `vectors` names.
-pub fn merge_segments_with(dest: &Path, segs: &[&Segment], alive: &[&[bool]], vectors: Vectors) -> Result<()> {
+pub fn merge_segments_with(stop: Stop, dest: &Path, segs: &[&Segment], alive: &[&[bool]], vectors: Vectors) -> Result<()> {
     // the loops below index the arrays directly
     for s in segs {
         s.validate_deep().map_err(|_| damaged())?;
@@ -539,7 +551,7 @@ pub fn merge_segments_with(dest: &Path, segs: &[&Segment], alive: &[&[bool]], ve
         offset += acc;
     }
     let ids_sorted: Vec<i64> = order.iter().map(|&i| ids[i]).collect();
-    write_segment(dest, &ids_sorted, &dl, &fields, vec.as_ref(), k, false)
+    write_segment(stop, dest, &ids_sorted, &dl, &fields, vec.as_ref().map(|v| (v, k)), false)
 }
 
 // ------------------------------------------------------------------------- inverted file
@@ -571,16 +583,23 @@ impl Rng {
     }
 }
 
+/// Whether the operation that writes a segment was asked to stop: clustering a large segment's
+/// vectors takes minutes in a debug build, and a stop is seen within one block of rows.
+pub type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
+
 /// Nearest centroid of each row of `x` (unit rows, unit centroids): the centroid with the largest
 /// `dot_seq64`, the lowest cluster number on a tie. A float32 product in any summation order is
 /// within k * 2^-24 of the true dot product, so the winner always scores within `margin` of the
 /// float32 maximum; only rows with more than one centroid that close are decided by `dot_seq64`.
-fn nearest(x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
+fn nearest(stop: Stop, x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
     let margin = 4.0 * k as f32 * f32::EPSILON;
     let n = x.len() / k;
     let block = 2048;
     let mut out = vec![0i32; n];
     out.par_chunks_mut(block).enumerate().for_each(|(bi, chunk)| {
+        if stop() {
+            return;
+        }
         let r0 = bi * block;
         let rows = chunk.len();
         let mut c = vec![0f32; rows * nk];
@@ -643,7 +662,7 @@ fn normalize_rows(m: &mut [f32], k: usize) {
 
 /// Spherical k-means on `nsample` rows of the A+B vectors, then one assignment pass over every row:
 /// (centroids [nk, k], cluster order, cluster pointers [nk + 1]).
-fn kmeans(vec: &QVecs, n: usize, k: usize, nsample: usize) -> (Vec<f32>, Vec<usize>, Vec<i64>) {
+fn kmeans(stop: Stop, vec: &QVecs, n: usize, k: usize, nsample: usize) -> Option<(Vec<f32>, Vec<usize>, Vec<i64>)> {
     let mut unit = vec![0f32; n * k];
     for r in 0..n {
         let (q, s) = (&vec.q[r * 2 * k..(r + 1) * 2 * k], &vec.scale[r * 2..r * 2 + 2]);
@@ -665,7 +684,10 @@ fn kmeans(vec: &QVecs, n: usize, k: usize, nsample: usize) -> (Vec<f32>, Vec<usi
         cent[c * k..(c + 1) * k].copy_from_slice(&sample[i * k..(i + 1) * k]);
     }
     for _ in 0..IVF_ITERS {
-        let a = nearest(&sample, k, &cent, nk);
+        let a = nearest(stop, &sample, k, &cent, nk);
+        if stop() {
+            return None;
+        }
         let mut sums = vec![0f32; nk * k];
         let mut counts = vec![0usize; nk];
         for (i, &c) in a.iter().enumerate() {
@@ -686,7 +708,10 @@ fn kmeans(vec: &QVecs, n: usize, k: usize, nsample: usize) -> (Vec<f32>, Vec<usi
             }
         }
     }
-    let a = nearest(&unit, k, &cent, nk);
+    let a = nearest(stop, &unit, k, &cent, nk);
+    if stop() {
+        return None;
+    }
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by_key(|&i| a[i]); // stable
     let mut ptr = vec![0i64; nk + 1];
@@ -696,14 +721,14 @@ fn kmeans(vec: &QVecs, n: usize, k: usize, nsample: usize) -> (Vec<f32>, Vec<usi
     for c in 0..nk {
         ptr[c + 1] += ptr[c];
     }
-    (cent, order, ptr)
+    Some((cent, order, ptr))
 }
 
 /// Cluster the A+B vectors of a segment (see `kmeans`). Returns the cluster order (segment row at
 /// each sorted position); the caller stores the vectors in that order so a query can scan a few
 /// clusters contiguously.
-pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usize>> {
-    let (cent, order, ptr) = kmeans(vec, n, k, IVF_SAMPLE);
+pub fn build_ivf(stop: Stop, tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usize>> {
+    let (cent, order, ptr) = kmeans(stop, vec, n, k, IVF_SAMPLE).ok_or_else(|| anyhow::anyhow!("cancelled"))?;
     let nk = ptr.len() - 1;
     let mut inv = vec![0i32; n];
     for (pos, &r) in order.iter().enumerate() {
@@ -1265,6 +1290,38 @@ mod tests {
 
     const DOT_DIGEST: u64 = 438482546770;
 
+    /// A stop asked for while a segment's vectors are clustered ends the clustering at the next
+    /// block of rows, with no file written, and the clustering asked once more finishes.
+    #[test]
+    fn a_stopped_segment_write_leaves_no_directory_behind() {
+        let (n, k) = (IVF_MIN_ROWS, 4);
+        let base = std::env::temp_dir().join(format!("scrutate_seg_stop_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let ids: Vec<i64> = (0..n as i64).collect();
+        let fields: Vec<(Vec<i32>, Vec<i64>, Vec<u8>)> = (0..NF).map(|_| (Vec::new(), Vec::new(), Vec::new())).collect();
+        let v = QVecs { q: (0..n * 2 * k).map(|i| (i % 7) as i8).collect(), scale: vec![1.0; n * 2] };
+        let e = write_segment(&|| true, &base.join("s000001"), &ids, &vec![1.0; n], &fields, Some((&v, k)), true).unwrap_err();
+        assert_eq!(e.to_string(), "cancelled");
+        assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0, "a directory was left");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_stop_ends_the_clustering_of_a_segment_s_vectors() {
+        let (n, k) = (3000, 16);
+        let v = QVecs { q: (0..n * 2 * k).map(|i| (i % 251) as i8).collect(), scale: vec![1.0; n * 2] };
+        let tmp = std::env::temp_dir().join(format!("scrutate_ivf_stop_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let late = || calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 3;
+        let e = build_ivf(&late, &tmp, &v, n, k).unwrap_err();
+        assert_eq!(e.to_string(), "cancelled");
+        assert!(!tmp.join("ivf_order.npy").exists());
+        assert_eq!(build_ivf(&|| false, &tmp, &v, n, k).unwrap().len(), n);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn kmeans_matches_python_reference_bit_for_bit() {
         // the same digest is asserted in python/tests/test_lex.py test_kmeans_matches_the_rust_engine_bit_for_bit
@@ -1284,7 +1341,7 @@ mod tests {
                 v.scale.copy_within((r - 2) * 2..(r - 1) * 2, r * 2);
             }
         }
-        let (cent, order, ptr) = kmeans(&v, n, k, 1000);
+        let (cent, order, ptr) = kmeans(&|| false, &v, n, k, 1000).unwrap();
         let sizes: Vec<i64> = ptr.windows(2).map(|w| w[1] - w[0]).collect();
         let weighted: i64 = sizes.iter().enumerate().map(|(c, &s)| (c as i64 + 1) * s).sum();
         let bits: u64 = cent.iter().map(|x| x.to_bits() as u64).sum();

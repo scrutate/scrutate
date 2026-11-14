@@ -18,6 +18,10 @@ const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 /// One test at a time: each one counts the searches the others start.
 static ONE: Mutex<()> = Mutex::new(());
 
+/// The count these tests keep, apart from the one every other search of this user joins: another
+/// suite's searches running meanwhile cannot change what a test sees.
+const KEY: &str = "1129270868";
+
 /// 4,000 files of 16 KB in 40 directories: a walk long enough to stop in the middle. Each file has
 /// two lines with `needle`: 1,000 files (when a walk is counted) print about 48 KB, less than the
 /// output buffer and a pipe hold, and 4,000 files 192 KB, more.
@@ -61,6 +65,7 @@ impl Search {
             .arg(".")
             .current_dir(tree())
             .env("SCRUTATE_GREP_DEBUG", "1")
+            .env("SCRUTATE_COUNT_KEY", KEY)
             .env_remove("SCRUTATE_THREADS")
             // a group of its own, as a shell gives a job: in a group with no parent outside it
             // the system drops SIGTSTP
@@ -123,9 +128,40 @@ fn probe() -> (usize, usize) {
     first
 }
 
-fn lock() -> std::sync::MutexGuard<'static, ()> {
+/// The tests of this file one at a time, also across processes that run them at once.
+fn lock() -> (std::sync::MutexGuard<'static, ()>, std::fs::File) {
     tree();
-    ONE.lock().unwrap_or_else(|p| p.into_inner())
+    let one = ONE.lock().unwrap_or_else(|p| p.into_inner());
+    let file = std::fs::File::create(std::env::temp_dir().join("scrutate_running_tests.lock")).unwrap();
+    file.lock().unwrap();
+    (one, file)
+}
+
+#[test]
+fn a_count_of_its_own_does_not_see_the_searches_of_the_shared_one() {
+    let _one = lock();
+    let (alone, _) = probe();
+    // a search of the count every other search joins, stopped while it is counted
+    let mut other = Command::new(BIN)
+        .args(["grep", "-F", "nothing-matches-this", "."])
+        .current_dir(tree())
+        .env("SCRUTATE_GREP_DEBUG", "1")
+        .env_remove("SCRUTATE_COUNT_KEY")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut err = BufReader::new(other.stderr.take().unwrap());
+    let mut line = String::new();
+    err.read_line(&mut line).unwrap();
+    assert!(line.starts_with("[scrutate] searches running: "), "{line}");
+    assert!(Command::new("kill").args(["-STOP", &other.id().to_string()]).status().unwrap().success());
+    let seen = probe();
+    let _ = other.kill();
+    let _ = other.wait();
+    assert_eq!(seen.0, alone, "the shared count's search was seen: {seen:?} where alone gave {alone}");
 }
 
 #[test]

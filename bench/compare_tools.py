@@ -30,13 +30,11 @@ import sys
 import tempfile
 import time
 
+from leaderboard import drop_scrutate_settings
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
 WORK = os.environ.get("SCRUTATE_WORK", os.path.join(HERE, "..", "..", "work"))
-# the tools run without these and without the caller's own settings: any SCRUTATE_ variable in a
-# search's environment is a setting to scrutate, which then reads its arguments the slower way
-for _name in [k for k in os.environ if k.startswith("SCRUTATE_")]:
-    del os.environ[_name]
 
 
 # --------------------------------------------------------------------------- tool discovery
@@ -616,14 +614,20 @@ def bench_structural(tools: dict, corpora: dict, runs: int) -> list[dict]:
         counts = {}
         for name, cmd in cmds.items():
             first = timed_rusage(cmd, cdir, count_only=True)
+            if first["rc"] not in (0, 1):
+                counts[name] = None
+                rows.append({"corpus": cname, "tool": name, "status": f"exit {first['rc']}: {first['err'][:200].decode(errors='replace')}",
+                             "cmd": " ".join(shlex_quote(c) for c in cmd)})
+                print(f"  structural {cname} {name}: {rows[-1]['status']}", file=sys.stderr)
+                continue
             counts[name] = first["out"]
             walls = [timed_rusage(cmd, cdir, count_only=True)["wall"] for _ in range(runs)]
-            rows.append({"corpus": cname, "tool": name, "matches": counts[name], "wall_median_ms": 1000 * statistics.median(walls),
+            rows.append({"corpus": cname, "tool": name, "status": "ok", "matches": counts[name], "wall_median_ms": 1000 * statistics.median(walls),
                          "maxrss_mb": peak_rss_mb(cmd, cdir), "cmd": " ".join(shlex_quote(c) for c in cmd)})
             print(f"  structural {cname} {name}: {counts[name]} in {rows[-1]['wall_median_ms']:.0f} ms", file=sys.stderr)
         for r in rows:
             if r["corpus"] == cname:
-                r["agrees"] = len(set(counts.values())) == 1
+                r["agrees"] = None not in counts.values() and len(set(counts.values())) == 1
     return rows
 
 
@@ -648,6 +652,7 @@ def environment(tools: dict) -> dict:
 
 
 def main() -> int:
+    drop_scrutate_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", action="append", required=True, help="NAME=DIR")
     ap.add_argument("--runs", type=int, default=5)

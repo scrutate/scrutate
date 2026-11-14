@@ -305,6 +305,72 @@ fn a_size_too_large_for_64_bits_is_refused() {
 }
 
 #[test]
+fn a_case_folded_class_that_matches_nothing_finds_nothing() {
+    let d = Dir::new("emptyclass");
+    d.write("e.txt", b"xab\n");
+    for pat in [r"ab[^\s\S]", r"(?-u)ab[^\x00-\xff]"] {
+        let (code, out, err) = d.run(&["grep", "-i", pat, "e.txt"]);
+        assert_eq!((code, out.as_str()), (1, ""), "{pat}: {err}");
+    }
+}
+
+#[test]
+fn after_and_before_win_over_context_in_either_order() {
+    let d = Dir::new("ctxorder");
+    d.write("a.txt", b"a\nb\nfoo\nc\nd\ne\n");
+    for args in [["-C1", "-A3"], ["-A3", "-C1"]] {
+        let (_, out, err) = d.run(&[&["grep"][..], &args, &["foo", "a.txt"]].concat());
+        assert_eq!(out, "2-b\n3:foo\n4-c\n5-d\n6-e\n", "{args:?}: {err}");
+    }
+    let (_, out, _) = d.run(&["grep", "-B2", "-C0", "foo", "a.txt"]);
+    assert_eq!(out, "1-a\n2-b\n3:foo\n");
+}
+
+/// `grep foo . > out.txt` in the tree it searches, with the file size capped at 10 MB so a search
+/// that reads its own output stops (SIGXFSZ) instead of growing without bound.
+#[cfg(unix)]
+#[test]
+fn a_walk_skips_the_file_standard_output_writes() {
+    let d = Dir::new("ownoutput");
+    let lines: String = (0..2000).map(|i| format!("foo {i}\n")).collect();
+    for i in 0..50 {
+        d.write(&format!("f{i:02}.txt"), lines.as_bytes());
+    }
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("ulimit -f 20000; exec '{BIN}' grep foo . > out.txt"))
+        .current_dir(&d.0)
+        .env_remove("NO_COLOR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = fs::read_to_string(d.0.join("out.txt")).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!text.lines().any(|l| l.starts_with("out.txt:") || l.starts_with("./out.txt:")), "its own output was searched");
+    assert_eq!(text.lines().count(), 50 * 2000);
+}
+
+/// A write that fails for another reason than a closed pipe (here the file size limit, with
+/// SIGXFSZ ignored so the write returns EFBIG) is an error, as in ripgrep.
+#[cfg(unix)]
+#[test]
+fn a_failed_write_to_standard_output_is_an_error() {
+    let d = Dir::new("writefails");
+    let lines: String = (0..5000).map(|i| format!("foo {i}\n")).collect();
+    d.write("a.txt", lines.as_bytes());
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("trap '' XFSZ; ulimit -f 20; exec '{BIN}' grep foo a.txt > out.txt"))
+        .current_dir(&d.0)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("os error 27"), "{err}");
+}
+
+#[test]
 fn smart_case_folds_only_a_pattern_with_lowercase_literals() {
     let d = Dir::new("smart");
     d.write("a.txt", b"ABC\nabc\n");
@@ -647,6 +713,57 @@ fn a_multi_line_count_counts_matches_that_share_a_line() {
         v.extend(args);
         assert_eq!(d.run(&v).1, want, "{args:?}");
     }
+}
+
+#[test]
+fn a_multi_line_count_does_not_count_the_empty_match_after_a_group_ends() {
+    let d = Dir::new("mlempty");
+    d.write("b.txt", b"a\n\nb\n");
+    // ripgrep 15's counts: `^` and `$` match again where the group's line end is, past the group
+    for (pat, want) in [("^$", "1\n"), ("^", "3\n"), ("$", "3\n")] {
+        assert_eq!(d.run(&["grep", "-c", "-U", pat, "b.txt"]).1, want, "{pat}");
+    }
+}
+
+#[test]
+fn a_multi_line_count_matches_ripgrep_without_a_final_line_end_and_after_a_match() {
+    let d = Dir::new("mlnofinal");
+    // ripgrep 15.2.0's counts
+    for (text, pat, want) in [
+        (&b"a\n\nb"[..], "$", "2\n"),
+        (b"a\n\nb", "b?$", "3\n"),
+        (b"a\nb", "$", "1\n"),
+        (b"a\nb", "b?$", "2\n"),
+        (b"b", "$", "1\n"),
+        (b"b", "b?$", "1\n"),
+        (b"a\n\nb\n", "b?$", "3\n"),
+        (b"a\n\nb\n", "$", "3\n"),
+        (b"a\nb", "^", "2\n"),
+    ] {
+        d.write("t.txt", text);
+        assert_eq!(d.run(&["grep", "-c", "-U", pat, "t.txt"]).1, want, "{pat} on {:?}", String::from_utf8_lossy(text));
+    }
+}
+
+/// The spans `--json` gives, as ripgrep 15.2.0 gives them: no empty match right where a match
+/// ended, none past the line's end, and an empty match stays empty.
+#[test]
+fn json_spans_leave_out_the_empty_matches_ripgrep_leaves_out() {
+    let d = Dir::new("jsonspans");
+    let spans = |text: &str, args: &[&str]| -> Vec<(u64, u64)> {
+        d.write("t.txt", format!("{text}\n").as_bytes());
+        let (_, out, err) = d.run(&[&["grep", "--json"][..], args, &["t.txt"]].concat());
+        let line = out.lines().find(|l| l.contains("\"type\":\"match\"")).unwrap_or_else(|| panic!("{args:?}: {out}{err}"));
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        v["spans"].as_array().unwrap().iter().map(|s| (s["start"].as_u64().unwrap(), s["end"].as_u64().unwrap())).collect()
+    };
+    assert_eq!(spans("foo  ", &["-e", r"\s*$"]), [(3, 5)]);
+    assert_eq!(spans("foo", &["-e", "^"]), [(0, 0)]);
+    assert_eq!(spans("hello", &["-F", "-e", ""]), [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]);
+    assert_eq!(spans("ab", &["-e", "b*"]), [(0, 0), (1, 2)]);
+    assert_eq!(spans("aXbX", &["-e", "X*"]), [(0, 0), (1, 2), (3, 4)]);
+    // an empty match keeps its byte offset, inside `é` and `€` too, as ripgrep's does
+    assert_eq!(spans("é€x", &["-P", "-e", "x*"]), [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 6)]);
 }
 
 #[test]
@@ -1326,4 +1443,117 @@ fn a_type_matches_after_the_ignore_rules_as_ripgrep_does() {
     }
     let (code, out, _) = d.run_env(&["grep", "-n", "needle"], &[("SCRUTATE_GREP_TYPES", "py")]);
     assert_eq!((code, sorted(&out)), (0, want(&[".hidden.py:1:needle", "kept.py:1:needle", "sub/also.py:1:needle"])));
+}
+
+/// `-t` of a language takes the extensions it shares with another language and is told apart in
+/// by content (`.h` for C++ and Objective-C, `.m` for Objective-C), as ripgrep 15.2.0's types do.
+#[test]
+fn a_type_takes_the_extensions_its_language_shares_by_content() {
+    let d = Dir::new("shared_types");
+    for f in ["a.c", "a.cpp", "a.h", "a.hpp", "a.m", "a.mm"] {
+        d.write(f, b"needle\n");
+    }
+    for (t, want) in [("cpp", "a.cpp\na.h\na.hpp\n"), ("c", "a.c\na.h\n"), ("objc", "a.h\na.m\na.mm\n")] {
+        let (code, out, err) = d.run(&["grep", "--sort", "-l", "-t", t, "needle"]);
+        assert_eq!((code, out.as_str()), (0, want), "-t {t}: {err}");
+    }
+}
+
+/// `grep --index` skips the file standard output writes to, as the walk does, also when that
+/// file is in the text index (the output of an earlier search, indexed with the rest).
+#[cfg(unix)]
+#[test]
+fn an_indexed_search_skips_the_file_standard_output_writes() {
+    let d = Dir::new("ownoutput_index");
+    fs::create_dir_all(d.0.join(".git")).unwrap();
+    let lines: String = (0..200).map(|i| format!("foo {i}\n")).collect();
+    for i in 0..50 {
+        d.write(&format!("f{i:02}.txt"), lines.as_bytes());
+    }
+    d.write("out.txt", lines.as_bytes());
+    let (code, _, err) = d.run(&["index", "--text"]);
+    assert_eq!(code, 0, "{err}");
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("trap '' XFSZ; ulimit -f 20000; exec '{BIN}' grep --index foo > out.txt"))
+        .current_dir(&d.0)
+        .env_remove("NO_COLOR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = fs::read_to_string(d.0.join("out.txt")).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!text.lines().any(|l| l.starts_with("out.txt:")), "its own output was searched");
+    assert_eq!(text.lines().count(), 50 * 200);
+}
+
+/// A grep option given twice takes its last value, as in ripgrep 15.2.0, where it was an error.
+#[test]
+fn an_option_given_twice_takes_its_last_value() {
+    let d = Dir::new("twice");
+    d.write("a.txt", b"x\nfoo 1\nFOO 2\nfoo 3\n");
+    for (args, want) in [
+        (&["-N", "-m1", "-m2", "foo", "a.txt"][..], "foo 1\nfoo 3\n"),
+        (&["-i", "-i", "-c", "foo", "a.txt"], "3\n"),
+        (&["-n", "-n", "-F", "-F", "-w", "-w", "FOO", "a.txt"], "3:FOO 2\n"),
+        (&["-A1", "-A0", "-c", "-c", "FOO", "a.txt"], "1\n"),
+    ] {
+        let mut all = vec!["grep"];
+        all.extend_from_slice(args);
+        let (code, out, err) = d.run(&all);
+        assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
+    }
+}
+
+/// Ctrl-C ends `grep --index --update`'s wait for the text index's lock that another process
+/// holds.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_ends_an_indexed_search_s_wait_for_the_text_index_lock() {
+    let d = Dir::new("text_lock_grep");
+    fs::create_dir_all(d.0.join(".git")).unwrap();
+    d.write("a.txt", b"foo\n");
+    assert_eq!(d.run(&["index", "--text"]).0, 0);
+    d.write("a.txt", b"foo two\n");
+    let lock = fs::File::options().write(true).open(d.0.join(".scrutate/text/lock")).unwrap();
+    lock.lock().unwrap();
+    let mut child = Command::new(BIN)
+        .args(["grep", "--index", "--update", "foo"])
+        .current_dir(&d.0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert!(child.try_wait().unwrap().is_none(), "the search ended before the signal");
+    assert!(Command::new("kill").args(["-INT", &child.id().to_string()]).status().unwrap().success());
+    let t0 = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(t0.elapsed().as_secs() < 10, "the search did not stop on Ctrl-C");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(child.wait().unwrap().code(), Some(130));
+    drop(lock);
+}
+
+/// `-c -U` counts each match as ripgrep 15.2.0 does, with `$`, `\B` and `-w` read against the
+/// text around the matched lines, not against their end.
+#[test]
+fn a_multiline_count_reads_anchors_against_the_whole_text() {
+    let d = Dir::new("multiline_count");
+    d.write("one.txt", b"b\nc");
+    d.write("two.txt", b"a b\nc\n");
+    for (args, want) in [
+        (&["-U", "-c", "-e", r"b|\n$", "one.txt"][..], "1\n"),
+        (&["-U", "-c", "-e", r"a|b\n\B", "two.txt"], "1\n"),
+        (&["-U", "-w", "-c", "-e", r"a|b\n", "two.txt"], "1\n"),
+        (&["-U", "-c", "-e", r"b\n|\n$", "one.txt"], "1\n"),
+        (&["-U", "-c", "-e", r"b$|c", "one.txt"], "2\n"),
+    ] {
+        let mut all = vec!["grep"];
+        all.extend_from_slice(args);
+        let (code, out, err) = d.run(&all);
+        assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
+    }
 }

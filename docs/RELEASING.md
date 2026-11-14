@@ -48,9 +48,14 @@ that raises it fails there. README.md and docs/INSTALL.md name it too.
 | `MODEL_REVISION` | the embedded semantic model changes |
 | the text index `FORMAT` | its files change |
 
-0.1.0 ships with content revision 3: builds with earlier rules were in use before the release,
+0.1.0 ships with content revision 8: builds with earlier rules were in use before the release,
 and their indexes must not keep the chunks, symbols and tokens those rules made (revision 3 joins
-Japanese shinjitai to the Han fold, and adds Java fields as symbols). The four only go up: a binary leaves an index of a higher number
+Japanese shinjitai to the Han fold, and adds Java fields as symbols; revision 4 makes a Pascal
+statement that is a name alone a call; revision 5 reads a Free Pascal `.pp` unit as Pascal;
+revision 6 reads a C++ header with a Doxygen `@class` as C++; revision 7 names the definition
+after `let rec`, `let inline` and the like in the keyword tier; revision 8 takes only OCaml's and
+F#'s own words after `let` for modifiers, so `let data x y` binds `data`). `tools/gen_doc_assets.py --check` fails when this number
+differs from `CONTENT_REVISION`. The four only go up: a binary leaves an index of a higher number
 alone, so two versions on one checkout never rebuild it in turn
 ([Architecture](ARCHITECTURE.md#storage-indexrs-lexrs)).
 
@@ -120,6 +125,16 @@ in the script: a new tool version needs its new hash there, from the tool's own 
 The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux x86_64 runs on a
 dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,
 without `SCRUTATE_PREBUILT`), and can run at the same time as the macOS chain.
+
+The yardstick (`bench/yardstick.py`) runs on Linux x86_64 against every rival at once, each
+answer checked before it is timed. Build the image with every rival pinned
+(`docker build -f bench/competitors/yardstick.Dockerfile -t scrutate-yardstick .`), or install
+them under a user account with `bench/competitors/install_rivals.sh DIR`. claude-context and
+grepai need Milvus and Ollama: `bench/competitors/claude-context.compose.yml` starts both, and its
+header has the model pull. Then run `yardstick.py --corpus DIR --queries FILE --out FILE` for
+W1 to W6, W9 and W10, and `yardstick.py --quality 200 --out FILE` for W8; `--only W4,W5` narrows
+a run. The output records each rival's version and the machine. clangd needs a
+`compile_commands.json` in the corpus, and gopls a Go corpus (`corpora.py --only hugo`).
 
 Then read the results:
 
@@ -225,8 +240,6 @@ names for macOS.
 actionlint && uvx zizmor --offline --persona pedantic .github   # the workflows, when one changed
 docker run --rm -i --platform linux/arm64 -v "$PWD":/src:ro python:3.13-slim-bookworm \
   bash /src/tools/ci_rehearsal.sh | tee bench/results/platforms/linux-aarch64/ci-rehearsal.log
-docker run --rm --platform linux/arm64 -e BASE=<the previous release> -v "$PWD":/src:ro python:3.13-slim-bookworm \
-  bash /src/tools/bench_rehearsal.sh | tee bench/results/platforms/linux-aarch64/benchmarks-rehearsal.log
 tools/repro_docker.sh                                   # one hash from two build images
 docker run --rm --platform linux/arm64 -v "$PWD":/src:ro -v "$PWD/bench/results/platforms":/out \
   rust:1-slim-bookworm bash /src/tools/linux_verify.sh  # tests with no Python, musl, wheels
@@ -256,8 +269,8 @@ last.
 ## 7. What a published release adds
 
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
-checks the version, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the release
-job waits for that run and for the binaries and wheels. The package definitions in `packaging/`
+checks the version, then runs all of `ci.yml` and `security.yml` on the tagged commit
+(`workflow_call`); the release job waits for both runs and for the binaries and wheels. The package definitions in `packaging/`
 need the release checksums (packaging/README.md). The two `-linux-gnu` binaries build on Ubuntu
 22.04 runners, and a step fails when one asks for a glibc newer than 2.34. When GitHub retires
 that image, build them in a container of that glibc or older, never on a newer runner (Ubuntu
@@ -276,13 +289,13 @@ gh workflow run release.yml --ref main -f dry_run=true
 gh run watch "$(gh run list --workflow release.yml -L 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` too. The
-sign-and-publish job runs in the `rehearsal` environment: it attests every file (real, public
-attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
+It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` and
+`security.yml` too. The sign-and-publish job runs in the `rehearsal` environment: it attests every
+file (real, public attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
 `refs/tags/v0.1.0` rejects them), makes a draft release `rehearsal-<run id>` with every file,
-checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for
-this workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag
-if one exists. The files stay as the run's artifacts for 7 days.
+checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for this
+workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag if one
+exists. The files stay as the run's artifacts for 7 days.
 
 The repository is on GitHub, public, `main` only. Run 43013926055 of `ci.yml` (on `9384c18`) is
 the first green one; all 12 jobs of a push passed:
@@ -291,7 +304,7 @@ the first green one; all 12 jobs of a push passed:
 |---|---|
 | Rust tests | macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64, Windows arm64 |
 | builds | the musl build; extra-langs on the oldest supported Rust |
-| others | fuzz regressions; the Python reference, bindings, parity and differential job (now training code, bindings, differential and ranking quality); advisories; editor integrations |
+| others | fuzz regressions; the Python reference, bindings, parity and differential job (now training code, bindings, differential and ranking quality); advisories (now `security.yml`'s `deny`); editor integrations |
 
 The dependency review runs on pull requests only. The workflows pass `actionlint` and `zizmor`,
 and the Linux jobs of `ci.yml` pass in a container (`tools/ci_rehearsal.sh`).

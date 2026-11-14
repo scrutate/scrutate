@@ -41,8 +41,10 @@ means. Above, duplicates (`0`) fail the job and none (`1`) pass it. For `search`
 the other way round, on `exit-code == '1'`.
 
 `args` is split on spaces; quote an argument with spaces or an apostrophe
-(`search "don't parse twice" -k 5`). Later steps can call `scrutate` directly, since the first
-step put it on `PATH`. Without `args` the action runs no command and `exit-code` is empty.
+(`search "don't parse twice" -k 5`). A backslash is kept as written (`grep -c \bTODO\b .`,
+`--root C:\repo`); one before a blank, a quote or another backslash still escapes it, as in
+xargs (`foo\ bar`, `don\'t`). Later steps can call `scrutate` directly, since the first step
+put it on `PATH`. Without `args` the action runs no command and `exit-code` is empty.
 
 ## A review comment on each pull request
 

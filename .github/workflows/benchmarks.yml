@@ -145,8 +145,10 @@ jobs:
         run: |
           python3 bench/corpora.py --root "$RUNNER_TEMP/corpora" --only linux ripgrep bigfile smallfiles binheavy patho rgbuilt startup
           df -h "$RUNNER_TEMP"
-      # no competitor is installed: the gate compares scrutate with its base only. The load wait
-      # is short because both binaries share every block, so load slows both alike.
+      # no competitor is installed, but the runner's grep and git grep are found and timed too: the
+      # gate compares scrutate with its base only, and fails a change cut to one run for being 20x
+      # slower than the fastest tool. The load wait is short because both binaries share every
+      # block, so load slows both alike.
       - name: leaderboard suite, the change and its base in the same blocks
         run: |
           SCRUTATE_BIN="$RUNNER_TEMP/bin/new/scrutate" SCRUTATE_BASE_BIN="$RUNNER_TEMP/bin/old/scrutate" python3 bench/leaderboard.py \

@@ -14,7 +14,7 @@ impl Rules for Js {
         js_bindings(n, path, src, out)
     }
 
-    fn occurrence(r: &mut Resolver, _path: &str, fi: &FileInfo, node: Node, _name: &str, line: i64) -> Option<Resolution> {
+    fn occurrence(r: &mut Resolver, path: &str, fi: &FileInfo, node: Node, _name: &str, line: i64) -> Option<Resolution> {
         if node.kind() != "super" {
             return None;
         }
@@ -22,6 +22,23 @@ impl Rules for Js {
         let called = node.parent().and_then(|p| p.child_by_field_name("function")).is_some_and(|f| f.id() == node.id());
         if !called {
             return Some(Err("keyword"));
+        }
+        // a class expression (`const Kid = class extends Base {..}`) is no definition of the index:
+        // its base is the one its `extends` names
+        let class =
+            std::iter::successors(node.parent(), |n| n.parent()).find(|n| matches!(n.kind(), "class" | "class_declaration" | "abstract_class_declaration"));
+        if let Some(c) = class.filter(|c| c.kind() == "class") {
+            let mut cur = c.walk();
+            let heritage = c.children(&mut cur).find(|h| h.kind() == "class_heritage");
+            let base = heritage.and_then(|h| h.named_child(0)).and_then(|b| {
+                if b.kind() == "extends_clause" {
+                    b.child_by_field_name("value").or_else(|| b.named_child(0))
+                } else {
+                    Some(b)
+                }
+            });
+            let Some(leaf) = base.and_then(type_name) else { return Some(Err("receiver")) };
+            return Some(r.type_leaf(path, fi, Lang::Js, leaf, line).map(|(id, _)| (id, "super")));
         }
         let Some(Ty::Local(c)) = r.container_at(fi, line) else { return Some(Err("receiver")) };
         let (order, outside, unknown) = r.linearized(c, 0, &mut HashMap::new());
@@ -119,6 +136,16 @@ fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
     };
     match n.kind() {
         "import_statement" => {
+            // TypeScript `import m = require('./m')` binds the module as `require` does
+            let mut cur = n.walk();
+            if let Some(c) = n.named_children(&mut cur).find(|c| c.kind() == "import_require_clause") {
+                let mut c2 = c.walk();
+                let kids: Vec<Node> = c.named_children(&mut c2).collect();
+                if let (Some(id), Some(m)) = (kids.iter().find(|k| k.kind() == "identifier"), kids.iter().find(|k| k.kind() == "string")) {
+                    out.push(Binding { local: text(*id, src).into(), module: string_content(*m, src), item: None, sites: vec![id.start_byte()] });
+                }
+                return true;
+            }
             let Some(source) = n.child_by_field_name("source") else { return true };
             let module = string_content(source, src);
             let mut cur = n.walk();
@@ -169,16 +196,31 @@ fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
             true
         }
         "variable_declarator" => {
-            // CommonJS: `const x = require('./m')`, `const {a, b: c} = require('./m')`
+            // CommonJS: `const x = require('./m')`, `const {a, b: c} = require('./m')`, `const x =
+            // require('./m').x`; a dynamic `await import('./m')` is the module too
             let (Some(name), Some(value)) = (n.child_by_field_name("name"), n.child_by_field_name("value")) else { return false };
-            if value.kind() != "call_expression" || value.child_by_field_name("function").map(|f| text(f, src)) != Some("require") {
+            let (value, member) = match value.kind() {
+                "member_expression" => {
+                    (value.child_by_field_name("object"), value.child_by_field_name("property").filter(|p| p.kind() == "property_identifier"))
+                }
+                "await_expression" => (value.named_child(0), None),
+                _ => (Some(value), None),
+            };
+            let awaited = n.child_by_field_name("value").is_some_and(|v| v.kind() == "await_expression");
+            let Some(value) = value.filter(|v| v.kind() == "call_expression") else { return false };
+            // `import(..)` without `await` is a promise of the module, not the module
+            let wanted = if awaited { "import" } else { "require" };
+            if value.child_by_field_name("function").map(|f| text(f, src)) != Some(wanted) {
                 return false;
             }
             let Some(arg) = value.child_by_field_name("arguments").and_then(|a| a.named_child(0)).filter(|a| a.kind() == "string") else { return false };
             let module = string_content(arg, src);
-            match name.kind() {
-                "identifier" => out.push(Binding { local: text(name, src).into(), module, item: None, sites: vec![name.start_byte()] }),
-                "object_pattern" => {
+            match (name.kind(), member) {
+                ("identifier", Some(m)) => {
+                    out.push(Binding { local: text(name, src).into(), module, item: Some(text(m, src).into()), sites: vec![name.start_byte(), m.start_byte()] })
+                }
+                ("identifier", None) => out.push(Binding { local: text(name, src).into(), module, item: None, sites: vec![name.start_byte()] }),
+                ("object_pattern", None) => {
                     let mut cur = name.walk();
                     for p in name.named_children(&mut cur) {
                         match p.kind() {
@@ -207,7 +249,11 @@ fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
             true
         }
         "assignment_expression" => {
-            if let Some(item) = n.child_by_field_name("right").and_then(default_of) {
+            let right = n.child_by_field_name("right");
+            // `module.exports = helper` exports the file's own `helper` as the default
+            let exports = n.child_by_field_name("left").and_then(|l| crate::langs::js_member_path(l, src.as_bytes())).as_deref() == Some("module.exports");
+            let named = right.filter(|r| exports && r.kind() == "identifier").map(|r| text(r, src).to_string());
+            if let Some(item) = named.or_else(|| right.and_then(default_of)) {
                 out.push(Binding { local: "default".into(), module: String::new(), item: Some(item), sites: vec![] });
             }
             false
@@ -239,7 +285,10 @@ impl Resolver<'_> {
     pub(super) fn required(&mut self, from: &str, b: &Binding) -> bool {
         let fi = self.file(from);
         let (Some(tree), Some(&at)) = (fi.tree.as_ref(), b.sites.first()) else { return false };
-        tree.root_node().descendant_for_byte_range(at, at).and_then(|n| n.parent()).is_some_and(|p| p.kind() == "variable_declarator")
+        tree.root_node()
+            .descendant_for_byte_range(at, at)
+            .and_then(|n| n.parent())
+            .is_some_and(|p| matches!(p.kind(), "variable_declarator" | "import_require_clause"))
     }
 }
 
@@ -512,14 +561,22 @@ pub(super) fn plain_json(text: &str) -> String {
 fn literal_owner(fi: &FileInfo, n: Node) -> Option<String> {
     let f = std::iter::successors(n.parent(), |p| p.parent()).find(|p| FUNCTION_NODES.contains(&p.kind()) && p.kind() != "arrow_function")?;
     let p = f.parent()?;
-    let key = match f.kind() {
-        "method_definition" if p.kind() == "object" => f.child_by_field_name("name")?,
-        "function_expression" | "function" if p.kind() == "pair" && p.parent()?.kind() == "object" => p.child_by_field_name("key")?,
+    let (key, object) = match f.kind() {
+        "method_definition" if p.kind() == "object" => (f.child_by_field_name("name")?, p),
+        "function_expression" | "function" if p.kind() == "pair" && p.parent()?.kind() == "object" => (p.child_by_field_name("key")?, p.parent()?),
         _ => return None,
     };
-    let (name, line) = (text(key, &fi.src), key.start_position().row as i64 + 1);
-    let d = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start);
-    Some(d.and_then(|d| d.qualname.rsplit_once('.')).map(|(o, _)| o.to_string()).unwrap_or_default())
+    // the owner of the method a key names; a quoted key (`"get": function`) may name none, then a
+    // sibling member's owner is the literal's
+    let owner = |key: Node| {
+        let name = if key.kind() == "string" { string_content(key, &fi.src) } else { text(key, &fi.src).to_string() };
+        let line = key.start_position().row as i64 + 1;
+        let d = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start);
+        d.and_then(|d| d.qualname.rsplit_once('.')).map(|(o, _)| o.to_string())
+    };
+    let mut cur = object.walk();
+    let siblings: Vec<Node> = object.named_children(&mut cur).filter_map(|m| m.child_by_field_name("name").or_else(|| m.child_by_field_name("key"))).collect();
+    Some(owner(key).or_else(|| siblings.into_iter().find_map(owner)).unwrap_or_default())
 }
 
 /// A binder declared with JavaScript `var`, which belongs to the whole function around it.

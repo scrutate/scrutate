@@ -337,6 +337,76 @@ fn a_plain_uninstall_takes_out_the_server_the_hook_and_the_block() {
     assert!(!s.repo.join(".claude/settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
 }
 
+#[test]
+fn a_marker_quoted_in_prose_is_not_the_block() {
+    let s = Scratch::new("markerprose");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let before_md = "The setup writes `<!-- scrutate:begin -->` markers.\n\n- rule one\n- rule two\n";
+    s.write(&claude_md, before_md);
+    let (code, _, err) = s.setup(&["claude", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    let md = fs::read_to_string(&claude_md).unwrap();
+    assert!(md.starts_with(before_md) && md.matches("<!-- scrutate:end -->").count() == 1, "{md}");
+    let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), before_md);
+
+    // a begin line with no end line is left alone
+    let broken = "# Rules\n<!-- scrutate:begin -->\nmine\n";
+    s.write(&claude_md, broken);
+    let (code, _, err) = s.setup(&["claude", "--instructions"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("scrutate:end"), "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), broken);
+}
+
+#[test]
+fn a_block_with_crlf_line_ends_is_the_block() {
+    let s = Scratch::new("markercrlf");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let before_md = "# Rules\r\n\r\nBe brief.\r\n";
+    s.write(&claude_md, before_md);
+    assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
+    // an editor or git's autocrlf turns every line end into CRLF
+    let crlf = fs::read_to_string(&claude_md).unwrap().replace("\r\n", "\n").replace('\n', "\r\n");
+    s.write(&claude_md, &crlf);
+    let (code, _, err) = s.setup(&["claude", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap().matches("<!-- scrutate:begin -->").count(), 1, "one block");
+    let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    let after = fs::read_to_string(&claude_md).unwrap();
+    assert!(!after.contains("scrutate:"), "{after:?}");
+    assert!(after.starts_with(before_md.trim_end()), "{after:?}");
+}
+
+/// Claude Code's own `claude mcp` replaces an entry by remove, then add: when the add fails, the
+/// old entry is added back, so the user is not left with none.
+#[cfg(unix)]
+#[test]
+fn a_failed_replace_through_claude_mcp_puts_the_old_entry_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("claudeundo");
+    let old = r#"{"type":"stdio","command":"/old/place/scrutate","args":["serve"]}"#;
+    s.write(&s.user_file("claude"), &format!("{{\n  \"mcpServers\": {{\n    \"scrutate\": {old}\n  }}\n}}\n"));
+    let bin = s.base.join("bin");
+    let log = s.base.join("claude.log");
+    // a claude whose add-json fails for anything but the old entry
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$2 $4\" in\n  'add-json '*/old/place/*) exit 0 ;;\n  add-json*) echo 'refused' >&2; exit 1 ;;\nesac\nexit 0\n",
+        log.display()
+    );
+    s.write(&bin.join("claude"), &script);
+    fs::set_permissions(bin.join("claude"), fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, _, err) = s.setup_in(&s.repo, &["claude"], &format!("{}:/usr/bin:/bin", bin.display()));
+    assert_ne!(code, 0, "{err}");
+    let calls: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(calls[0].starts_with("mcp remove scrutate") && calls[1].starts_with("mcp add-json scrutate"), "{calls:?}");
+    assert!(calls[2].starts_with("mcp add-json scrutate") && calls[2].contains("/old/place/scrutate"), "the old entry goes back: {calls:?}");
+    assert!(err.contains("put back"), "{err}");
+}
+
 /// Sends `initialize` and `tools/list` to `argv` run in `dir` and returns the tool names.
 fn mcp_tools(argv: &[String], dir: &Path, s: &Scratch) -> Vec<String> {
     let mut child = s
@@ -468,5 +538,24 @@ fn each_installed_agent_lists_the_server() {
         s.write(&s.home.join(".gemini/trustedFolders.json"), &format!("{{\"{}\": \"TRUST_FOLDER\"}}", s.repo.display()));
         let listed = run_for(s.command(&gemini, &path).args(["mcp", "list"]), limit).expect("gemini mcp list finishes");
         assert!(listed.contains("scrutate") && listed.contains("Connected"), "{listed}");
+    }
+}
+
+/// Text added after the scrutate block stays on a line of its own when the block is taken out:
+/// only a block at the end of the file takes the line break setup put before it.
+#[test]
+fn uninstall_keeps_text_added_after_the_block_on_its_own_line() {
+    let s = Scratch::new("after_block");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    // with and without a line break at the end of the user's text, LF and CRLF
+    for before in ["# Notes", "# Notes\n", "# Notes\r\n"] {
+        s.write(&claude_md, before);
+        assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
+        let md = fs::read_to_string(&claude_md).unwrap();
+        s.write(&claude_md, &format!("{md}- rule two\n"));
+        let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+        assert_eq!(code, 0, "{err}");
+        let want = if before.ends_with('\n') { format!("{before}- rule two\n") } else { format!("{before}\n- rule two\n") };
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), want, "{before:?}");
     }
 }

@@ -23,6 +23,17 @@ def test_a_regression_shows_through_a_machine_whose_load_drifts():
     assert compare([("slower", base, slower)], 0.10, paired=False) == (0, 1)
 
 
+def test_a_change_too_slow_to_be_timed_fails_the_gate():
+    rnd = random.Random(3)
+    load = [1.0] * 6
+    base = {"status": "ok", "blocks": 6, "median": 0.010, "times": _runs(1.0, load, rnd)}
+    # leaderboard.py keeps one run of a tool more than 20x slower than the fastest
+    cut = {"status": "ok", "n": 1, "median": 6.0, "times": [6.0], "note": "not a contender (more than 20x slower in the correctness run)"}
+    assert compare([("cut", base, cut)], 0.10, paired=True) == (1, 0)
+    # both cut, as the base was: nothing to compare, and no failure
+    assert compare([("both", {**cut, "median": 5.5, "times": [5.5]}, cut)], 0.10, paired=True) == (0, 0)
+
+
 def test_the_instruction_gate_counts_one_thread_and_fails_past_one_percent():
     from instructions import command, verdict
     from leaderboard import suite

@@ -1158,6 +1158,8 @@ dependencies = [
  "regex-syntax",
  "rusqlite",
  "rust-stemmers",
+ "rustix",
+ "same-file",
  "scrutate-ignore",
  "serde",
  "serde_json",
@@ -1239,6 +1241,7 @@ dependencies = [
  "tree-sitter-yaml",
  "tree-sitter-zig",
  "unicode-normalization",
+ "windows-sys",
  "zip",
 ]
 

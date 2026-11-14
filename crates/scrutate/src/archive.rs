@@ -6,8 +6,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-/// Decompressed bytes allowed per archive or compressed file: a small zip bomb must not fill memory
-/// or keep a search busy for hours.
+/// Decompressed bytes allowed per archive or compressed file: a small zip bomb must not keep a
+/// search busy for hours. Memory is bounded by `MAX_LINE`, except under `-U`, which holds a whole
+/// member, as ripgrep does.
 pub const MAX_EXPANDED: u64 = 8 << 30;
 /// The longest line of an archive member or a compressed file that is searched.
 pub const MAX_LINE: usize = 64 << 20;

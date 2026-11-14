@@ -56,6 +56,9 @@ impl SemanticModel {
         let idf_a = take("idf_a")?.to_vec::<f32>()?;
         let idf_b = take("idf_b")?.to_vec::<f32>()?;
         let u = take("U")?;
+        if u.shape.len() != 2 || u.shape[1] == 0 {
+            return Err(anyhow!("model table U is not a table of rows"));
+        }
         let k = u.shape[1];
         let int8 = "its word tables must be int8 with a scale per row (bench/train_semantic.py writes them)";
         let uq = Table { q: u.to_vec::<i8>().context(int8)?, scale: take("U_scale")?.to_vec::<f32>()? };
@@ -64,6 +67,11 @@ impl SemanticModel {
             return Err(anyhow!("model scales do not match its tables"));
         }
         let s = take("s")?.to_vec::<f32>()?;
+        let rows_a = [idf_a.len(), uq.scale.len()].iter().all(|&n| n == va.len());
+        let rows_b = [idf_b.len(), vq.scale.len()].iter().all(|&n| n == vb.len());
+        if !rows_a || !rows_b || s.len() != k {
+            return Err(anyhow!("model tables do not agree in size"));
+        }
         let cfg_s = take("cfg")?.to_strings()?.into_iter().next().unwrap_or_else(|| "{}".into());
         let cfg: serde_json::Value = serde_json::from_str(&cfg_s).unwrap_or(serde_json::Value::Null);
         let gamma = cfg.get("gamma").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
@@ -180,5 +188,26 @@ impl SemanticModel {
         }
         let z = self.proj(&Self::lookup(&a, &self.va), &self.idf_a, &self.uq, &self.u32)?;
         Self::normalize(z)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_model_whose_tables_disagree_in_size_is_refused() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("models/semantic.npz");
+        assert!(SemanticModel::from_arrays(crate::npy::load_npz(&path).unwrap()).is_ok(), "the bundled model loads");
+        let tmp = std::env::temp_dir().join(format!("scrutate_semantic_cut_{}.npy", std::process::id()));
+        for name in ["idf_a", "idf_b", "s"] {
+            let mut arrays = crate::npy::load_npz(&path).unwrap();
+            let i = arrays.iter().position(|(n, _)| n == name).unwrap();
+            let v = arrays[i].1.to_vec::<f32>().unwrap();
+            crate::npy::save(&tmp, &v[..5], &[5]).unwrap();
+            arrays[i].1 = crate::npy::Npy::open(&tmp).unwrap();
+            assert!(SemanticModel::from_arrays(arrays).is_err(), "{name} cut to 5 values");
+        }
+        let _ = std::fs::remove_file(&tmp);
     }
 }

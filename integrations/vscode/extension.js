@@ -61,11 +61,23 @@ async function pickHits(r, placeHolder) {
   if (pick) await open(r.root, pick.hit.path, pick.hit.start);
 }
 
-function wordUnderCursor() {
+/** As the language server: the run with dots first (R's `is.ready`), then the word (`norm` in `p.norm()`). */
+function wordsUnderCursor() {
   const ed = vscode.window.activeTextEditor;
-  if (!ed) return undefined;
-  const range = ed.document.getWordRangeAtPosition(ed.selection.active, /[A-Za-z_][A-Za-z0-9_.]*/);
-  return range ? ed.document.getText(range) : undefined;
+  if (!ed) return [];
+  const ranges = [/[\p{Alphabetic}\p{N}_][\p{Alphabetic}\p{N}_.]*/u, /[\p{Alphabetic}\p{N}_]+/u].map((re) => ed.document.getWordRangeAtPosition(ed.selection.active, re));
+  return [...new Set(ranges.filter(Boolean).map((r) => ed.document.getText(r)))];
+}
+
+/** The answer of `scrutate CMD --json -- NAME` for the first name that has one, else for the last. */
+async function firstAnswer(cmd, names) {
+  let r, name;
+  for (name of names) {
+    r = await run([cmd, "--json", "--", name]);
+    const res = r.out ? JSON.parse(r.out).result : [];
+    if (Array.isArray(res) ? res.length : (res.definitions || []).length || (res.unresolved || []).length) break;
+  }
+  return { r, name };
 }
 
 async function withErrors(f) {
@@ -125,23 +137,27 @@ function activate(context) {
     ),
     vscode.commands.registerCommand("scrutate.symbol", () =>
       withErrors(async () => {
-        const name = wordUnderCursor() || (await vscode.window.showInputBox({ prompt: "Symbol (Class.method works)" }));
-        if (!name) return;
-        await pickHits(await run(["symbol", "--json", "--", name]), `definitions of ${name}`);
+        const words = wordsUnderCursor();
+        if (!words.length) words.push(await vscode.window.showInputBox({ prompt: "Symbol (Class.method works)" }));
+        if (!words[0]) return;
+        const { r, name } = await firstAnswer("symbol", words);
+        await pickHits(r, `definitions of ${name}`);
       })
     ),
     vscode.commands.registerCommand("scrutate.callers", () =>
       withErrors(async () => {
-        const name = wordUnderCursor() || (await vscode.window.showInputBox({ prompt: "Function name" }));
-        if (!name) return;
-        await pickHits(await run(["callers", "--json", "--", name]), `callers of ${name}`);
+        const words = wordsUnderCursor();
+        if (!words.length) words.push(await vscode.window.showInputBox({ prompt: "Function name" }));
+        if (!words[0]) return;
+        const { r, name } = await firstAnswer("callers", words);
+        await pickHits(r, `callers of ${name}`);
       })
     ),
     vscode.commands.registerCommand("scrutate.refs", () =>
       withErrors(async () => {
-        const name = wordUnderCursor();
-        if (!name) return;
-        const { out, root } = await run(["refs", "--json", "--", name]);
+        const words = wordsUnderCursor();
+        if (!words.length) return;
+        const { out, root } = (await firstAnswer("refs", words)).r;
         const r = out ? JSON.parse(out).result : {};
         const items = [];
         for (const d of r.definitions || []) {

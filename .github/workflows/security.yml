@@ -8,6 +8,7 @@ on:
   pull_request:
   schedule:
     - cron: "41 4 * * 1"
+  workflow_call: # release.yml runs every job on the tagged commit before it publishes
 permissions: {}
 defaults:
   run:

@@ -5,7 +5,8 @@ Run from anywhere (Python 3.9 or newer, standard library only):
 
     python3 tools/gen_doc_assets.py            # write docs/README.md, the heads and docs/assets/banner-*, diagram-*
     python3 tools/gen_doc_assets.py --check    # fail when a committed file differs from what this script writes,
-                                               # an SVG is malformed or too large, or a link or #anchor is broken
+                                               # an SVG is malformed or too large, a link or #anchor is broken,
+                                               # or a content revision in the docs differs from index.rs
 
 The images are drawn in the README's system (tools/gen_assets.py: its tokens, parts and outlined type):
 flat ink or paper panels, one file each, and the highlighter colour only on what a diagram is about.
@@ -27,7 +28,7 @@ ASSETS = os.path.join(ROOT, "docs", "assets")
 # the palette, the type, the parts and the image rules are the README's: one source, so the two sets cannot drift apart
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_assets as G  # noqa: E402
-from gen_assets import INK, PAPER, MARK, ALERT, ON, W, PAD, SANS, MONO, EASE, REDUCED  # noqa: E402
+from gen_assets import INK, PAPER, MARK, ALERT, ON, W, PAD, SANS, MONO, REDUCED  # noqa: E402
 
 WRITTEN = "<!-- written by tools/gen_doc_assets.py; edit that, not this file -->"
 
@@ -1146,6 +1147,22 @@ def check_links(path, text, problems):
                 problems.append(f"{path}:{n + 1}: #{anchor}: no such heading")
 
 
+def check_content_revision(problems):
+    """RELEASING.md and the CHANGELOG's Unreleased section name the content revision index.rs
+    declares, wherever they state one: the number has drifted twice behind the code."""
+    with open(os.path.join(ROOT, "crates", "scrutate", "src", "index.rs"), encoding="utf-8") as f:
+        code = int(re.search(r"pub const CONTENT_REVISION: u32 = (\d+);", f.read()).group(1))
+    for path in ("docs/RELEASING.md", "CHANGELOG.md"):
+        with open(os.path.join(ROOT, path), encoding="utf-8") as f:
+            text = f.read()
+        if path == "CHANGELOG.md":
+            text = text[: text.find("\n## [", text.find("## [Unreleased]") + 1)]
+        for m in re.finditer(r"content revision(?:\s+is)?\s+(\d+)", text, re.I):
+            if int(m.group(1)) != code:
+                problems.append(f"{path}:{text.count(chr(10), 0, m.start()) + 1}: says content revision {m.group(1)}; "
+                                f"crates/scrutate/src/index.rs declares CONTENT_REVISION = {code}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true", help="change nothing; fail when a file differs or a link is broken")
@@ -1194,6 +1211,7 @@ def main():
             with open(os.path.join(ROOT, path), encoding="utf-8") as f:
                 text = f.read()
         check_links(path, text, problems)
+    check_content_revision(problems)
     for p in problems:
         print(p, file=sys.stderr)
     if problems:

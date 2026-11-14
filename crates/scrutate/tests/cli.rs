@@ -91,6 +91,19 @@ fn exit_codes_and_plain_output() {
 }
 
 #[test]
+fn a_root_that_is_no_directory_is_an_error_for_files_and_tsquery_too() {
+    let r = Repo::new("badroot");
+    r.write("a.py", b"x = 1\n");
+    for root in ["nope", "a.py"] {
+        for args in [&["files", "x"][..], &["tsquery", "python", "(identifier) @i"]] {
+            let (code, out, err) = r.run(&[&["--root", root][..], args].concat());
+            assert_eq!(code, 2, "--root {root} {args:?}: {out}{err}");
+            assert!(err.contains(if root == "nope" { "no such directory" } else { "not a directory" }), "{err}");
+        }
+    }
+}
+
+#[test]
 fn json_lines_schema_and_modes() {
     let r = python_repo("json");
     let (code, out, _) = r.run(&["grep", "-F", "--json", "--sort", "import os", "."]);
@@ -268,6 +281,67 @@ fn search_finds_a_python_function_by_the_comment_above_it() {
     assert_eq!(code, 0, "{err}");
     let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     assert!(hits.first().is_some_and(|h| h["path"] == "lib/tokens.py" && h["name"] == "renew"), "{out}");
+}
+
+#[test]
+fn search_ranks_vendored_code_below_project_code_and_marks_it() {
+    let r = Repo::new("vendored");
+    r.write("lib/tokens.py", b"# Renews the zqvortex lease.\ndef renew(session):\n    return session.renew()\n\n\ndef parse_lease(text):\n    return text\n");
+    r.write(
+        "vendor/leases/lease.py",
+        b"# Renews the zqvortex lease.\ndef zqvortex_lease(session):\n    return session\n\n\ndef parse_lease(text):\n    return text\n\n\ndef burst_frames(n):\n    return n\n",
+    );
+    let search = |q: &str| {
+        let (code, out, err) = r.run(&["search", q, "-k", "5", "--json"]);
+        assert_eq!(code, 0, "{err}");
+        let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
+        hits
+    };
+    let hits = search("zqvortex lease");
+    // every project hit first, though the vendored zqvortex_lease matches the query better
+    let paths: Vec<&str> = hits.iter().map(|h| h["path"].as_str().unwrap()).collect();
+    let first_vendored = paths.iter().position(|p| p.starts_with("vendor/")).unwrap_or_else(|| panic!("vendored hits kept: {paths:?}"));
+    assert!(first_vendored > 0 && paths[first_vendored..].iter().all(|p| p.starts_with("vendor/")), "{paths:?}");
+    let v = hits.iter().find(|h| h["name"] == "zqvortex_lease").unwrap_or_else(|| panic!("vendored hit kept: {hits:?}"));
+    assert_eq!(v["vendored"], true, "{v}");
+    assert!(hits[0].get("vendored").is_none(), "{}", hits[0]);
+    // a name both define: the project's first; a name only vendored code defines: still first
+    assert_eq!(search("parse_lease").first().map(|h| h["path"].clone()), Some("lib/tokens.py".into()));
+    let burst = search("burst_frames");
+    assert!(burst.first().is_some_and(|h| h["name"] == "burst_frames" && h["vendored"] == true), "{burst:?}");
+}
+
+#[test]
+fn every_json_item_with_a_vendored_path_is_marked() {
+    let r = Repo::new("vendored_all");
+    r.write("lib/app.py", b"from vendor.leases.lease import parse_lease\n\n\ndef main():\n    return parse_lease(1)\n");
+    r.write("vendor/leases/lease.py", b"def parse_lease(text):\n    return text\n\n\ndef unused_vendored(x):\n    return x\n");
+    r.run(&["index"]);
+    let items = |args: &[&str]| {
+        let (code, out, err) = r.run(args);
+        assert!(code == 0 || code == 1, "{args:?}: {err}");
+        let mut all = Vec::new();
+        let mut stack = vec![answer(&out)];
+        while let Some(v) = stack.pop() {
+            match v {
+                serde_json::Value::Object(m) => {
+                    if let Some(p) = m.get("path").and_then(|p| p.as_str()) {
+                        all.push((p.to_string(), m.get("vendored") == Some(&serde_json::Value::Bool(true))));
+                    }
+                    stack.extend(m.into_iter().map(|(_, v)| v));
+                }
+                serde_json::Value::Array(a) => stack.extend(a),
+                _ => {}
+            }
+        }
+        assert!(!all.is_empty(), "{args:?}: no item with a path");
+        all
+    };
+    for args in [&["refs", "parse_lease", "--json"][..], &["dead", "--json"], &["callers", "parse_lease", "--json"], &["symbol", "parse_lease", "--json"]] {
+        for (path, marked) in items(args) {
+            assert_eq!(marked, path.starts_with("vendor/"), "{args:?}: {path}");
+        }
+    }
 }
 
 #[test]
@@ -2603,7 +2677,7 @@ fn map_ranks_the_hub_first_and_fits_every_budget() {
     let (code, out, _) = r.run(&["map", "sub"]);
     assert_eq!(code, 0);
     assert!(out.starts_with("sub/inner.py  (rank 1, score ") && out.lines().all(|l| l.starts_with(' ') || l.starts_with("sub/")), "{out}");
-    assert_eq!(r.run(&["map", "nothing_here"]).0, 1);
+    assert_eq!(r.run(&["map", "nothing_here"]).0, 2);
 }
 
 /// `top -> middle -> deep`, each in its own file.
@@ -2680,4 +2754,53 @@ fn path_takes_a_call_the_resolver_cannot_tie_and_says_so() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(out.lines().nth(1), Some("  a.c:4  calls b.c:1-3  [function] deep  (by name: the resolver did not tie this call)"), "{out}");
     assert_eq!(answer(&r.run(&["path", "top", "deep", "--json"]).1)["steps"][0]["tied"], false);
+}
+
+/// A compressed file named on the command line is searched as a named file is: text with a NUL
+/// is a binary match, as ripgrep 15.2.0 reports it; found by a walk, it is skipped, as ripgrep
+/// skips it.
+#[test]
+fn a_named_compressed_file_whose_text_has_a_nul_is_a_binary_match() {
+    use std::io::Write as _;
+    let r = Repo::new("named_gz_binary");
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(b"needle\0x\nneedle\n").unwrap();
+    r.write("bin.gz", &e.finish().unwrap());
+    let (code, out, _) = r.run(&["grep", "-z", "needle", "bin.gz"]);
+    assert_eq!((code, out.as_str()), (0, "binary file matches (found \"\\0\" byte around offset 6)\n"));
+    let (code, out, _) = r.run(&["grep", "-z", "-c", "needle", "bin.gz"]);
+    assert_eq!((code, out.as_str()), (0, "2\n"));
+    let (code, out, _) = r.run(&["grep", "-z", "needle"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+}
+
+/// A path that leaves the repository and comes back into it (`../../repo/pkg/a.py` from
+/// `repo/pkg`) names the repository's file.
+#[test]
+fn a_path_that_leaves_the_repository_and_comes_back_names_its_file() {
+    let r = Repo::new("out_and_back");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("pkg/a.py", b"def used():\n    return 1\n\ndef dead_one():\n    return used()\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
+    let (code, out, err) = run_in(&r.root.join("pkg"), &["outline", &format!("../../{name}/pkg/a.py")], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("function  used") && out.contains("function  dead_one"), "{out}");
+}
+
+/// `..` from a directory below the root names the root, for `dead` and `map` as for the other
+/// commands that take a path.
+#[test]
+fn a_path_naming_the_root_from_below_it_is_the_whole_repository() {
+    let r = Repo::new("root_from_below");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("pkg/a.py", b"def used():\n    return 1\n\ndef dead_one():\n    return used()\n");
+    r.write("b.py", b"from pkg.a import used\n\nused()\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    for cmd in ["dead", "map"] {
+        let (code, whole, err) = r.run(&[cmd]);
+        assert_eq!(code, 0, "{cmd}: {err}");
+        let (code, out, err) = run_in(&r.root.join("pkg"), &[cmd, ".."], &[]);
+        assert_eq!((code, out), (0, whole), "{cmd} ..: {err}");
+    }
 }

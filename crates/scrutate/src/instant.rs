@@ -206,6 +206,9 @@ pub struct Files {
     /// files at least this large are searched as several ranges of whole lines at once (an eighth of
     /// it each): one huge file would otherwise keep a single core busy while the others idle
     pub split_file_bytes: u64,
+    /// the custom languages `-t` names, when not those `custom::current` gives (a caller that
+    /// searches for one repository among several in the process)
+    pub customs: Option<Arc<crate::custom::Customs>>,
 }
 
 impl Default for Files {
@@ -226,6 +229,7 @@ impl Default for Files {
             threads: 0,
             small_tree: None,
             split_file_bytes: 64 << 20,
+            customs: None,
         }
     }
 }
@@ -1296,6 +1300,9 @@ pub fn builtin_type_globs(name: &str) -> Option<Vec<String>> {
     };
     let spec = crate::langs::by_id(id)?;
     let mut globs: Vec<String> = spec.exts.iter().map(|e| format!("*{e}")).collect();
+    // an extension shared with another language is the language's too (`-t cpp` takes `.h`)
+    let shared = crate::langs::BY_CONTENT.iter().filter(|(e, ids)| ids.contains(&spec.id) && !spec.exts.contains(e));
+    globs.extend(shared.map(|(e, _)| format!("*{e}")));
     globs.extend(spec.files.iter().map(|f| f.to_string()));
     Some(globs)
 }
@@ -1322,8 +1329,10 @@ pub struct PlainSink {
     /// the buffer holds output
     holding: AtomicBool,
     start: Instant,
-    /// the reader went away (`| head`)
+    /// a write failed: the reader went away (`| head`), or `failed` says why
     pub broken: AtomicBool,
+    /// the first write error that is not a closed pipe (a full disk, a file size limit)
+    failed: Mutex<Option<std::io::Error>>,
     /// a file searched with context lines has written output (later files start with `--`)
     grouped: AtomicBool,
 }
@@ -1339,6 +1348,7 @@ impl PlainSink {
             holding: AtomicBool::new(false),
             start: Instant::now(),
             broken: AtomicBool::new(false),
+            failed: Mutex::new(None),
             grouped: AtomicBool::new(false),
         }
     }
@@ -1365,7 +1375,10 @@ impl PlainSink {
             }),
             Err(_) => Err(std::io::Error::other("output lock poisoned")),
         };
-        if res.is_err() {
+        if let Err(e) = res {
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                self.failed.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
+            }
             self.broken.store(true, Ordering::Relaxed);
             stop.set();
         }
@@ -1409,6 +1422,11 @@ impl PlainSink {
         if self.holding.load(Ordering::Relaxed) && self.waited().is_some() {
             self.with(stop, |_| Ok(()));
         }
+    }
+
+    /// The write error that stopped the output, unless it was a closed pipe.
+    pub fn failure(&self) -> Option<std::io::Error> {
+        self.failed.lock().unwrap_or_else(|p| p.into_inner()).take()
     }
 
     pub fn flush(&self) -> std::io::Result<()> {
@@ -1574,11 +1592,13 @@ struct Collector<'a> {
     numbered: bool,
     /// `-c` counts each match of a multi-line search, not each merged group of lines
     count_each: bool,
+    /// those matches in the group `matched` was given, counted there against the whole buffer
+    each: Option<u64>,
 }
 
 /// Offsets into `line` (a match may run on into the line end left out of it) as offsets into
-/// `text`, `lossy(line)`: inside it and on character boundaries, a U+FFFD that a match ends or
-/// starts within taken whole.
+/// `text`, `lossy(line)`: inside it and on character boundaries (but an empty match in valid
+/// text, as ripgrep gives it), a U+FFFD that a match ends or starts within taken whole.
 fn text_offsets(spans: &mut [(usize, usize)], line: &[u8], text: &str, valid: bool) {
     // each piece of the line: where it starts in `line` and in `text`, its valid and invalid bytes
     let whole = [(0, 0, line.len(), 0)];
@@ -1615,7 +1635,14 @@ fn text_offsets(spans: &mut [(usize, usize)], line: &[u8], text: &str, valid: bo
         y
     };
     for s in spans {
-        *s = (at(s.0, false), at(s.1, true));
+        *s = match (s.0 == s.1, valid) {
+            // an empty match in text that is the line keeps its byte offset, inside a character
+            // too, as ripgrep's does; nothing is cut there
+            (true, true) => (s.0.min(text.len()), s.0.min(text.len())),
+            // elsewhere it stays empty, at the start of the character it falls in
+            (true, false) => (at(s.0, false), at(s.0, false)),
+            _ => (at(s.0, false), at(s.1, true)),
+        };
     }
 }
 
@@ -1628,9 +1655,19 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Calls `f` with each match in `line` until it returns false.
-fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize) -> bool) {
-    let mut at = 0;
+/// Calls `f` with each match in `line` until it returns false. As ripgrep, leaves out an empty
+/// match right where the match before it ended, and one past the line's end (after its `\n`).
+fn each_match(matcher: &AnyMatcher, line: &[u8], f: impl FnMut(usize, usize) -> bool) {
+    each_match_in(matcher, line, 0..line.len(), f)
+}
+
+/// `each_match` over `hay[lines]`, read with the text around it: `$`, `\B` and word edges see
+/// what follows the lines, not their end. Offsets are into `hay`.
+fn each_match_in(matcher: &AnyMatcher, hay: &[u8], lines: std::ops::Range<usize>, mut f: impl FnMut(usize, usize) -> bool) {
+    let line = hay;
+    let mut at = lines.start;
+    let content = lines.end - usize::from(hay[lines.clone()].ends_with(b"\n"));
+    let mut last_end = None;
     let find = |at: usize| -> Option<MatchSpan> {
         match matcher {
             AnyMatcher::Literal(m) => m.find_at(line, at).ok().flatten(),
@@ -1644,7 +1681,17 @@ fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize)
     while at <= line.len() {
         match find(at) {
             Some(m) => {
+                if m.start() > content {
+                    break;
+                }
                 at = if m.end() > m.start() { m.end() } else { m.end() + 1 };
+                let empty = m.start() == m.end();
+                if empty && last_end == Some(m.start()) {
+                    continue;
+                }
+                if !empty {
+                    last_end = Some(m.end());
+                }
                 if !f(m.start(), m.end()) {
                     break;
                 }
@@ -1659,6 +1706,15 @@ impl<'a> Sink for Collector<'a> {
 
     fn matched(&mut self, _s: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, std::io::Error> {
         let bytes = mat.bytes();
+        if self.count_each {
+            // as ripgrep counts: not an empty match at the end of a file with no line end
+            let (hay, mut n) = (mat.buffer(), 0);
+            each_match_in(self.matcher, hay, mat.bytes_range_in_buffer(), |a, b| {
+                n += u64::from(!(a == b && a == hay.len()));
+                true
+            });
+            self.each = Some(n.max(1));
+        }
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
         self.take_match(bytes, Text::Here(line), mat.line_number())
     }
@@ -1743,16 +1799,7 @@ impl Collector<'_> {
             }
             self.matched = true;
             // as ripgrep: merged matches that span lines count one by one
-            self.file_count += if self.count_each {
-                let mut n = 0;
-                each_match(self.matcher, bytes, |_, _| {
-                    n += 1;
-                    true
-                });
-                n.max(1)
-            } else {
-                1
-            };
+            self.file_count += self.each.take().unwrap_or(1);
             if self.max_results.is_some_and(|max| n >= max) {
                 self.stop.set();
                 return Ok(false);
@@ -1876,7 +1923,11 @@ pub fn file_types(f: &Files) -> Result<ignore::types::Types> {
         };
         // the builder takes only alphanumeric names, and a registry id may hold `_`
         let key = format!("t{i}");
-        for g in type_globs(name).ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))? {
+        let globs = match &f.customs {
+            Some(c) => builtin_type_globs(name).or_else(|| c.by_id(name).map(|l| l.exts.iter().map(|e| format!("*{e}")).collect())),
+            None => type_globs(name),
+        };
+        for g in globs.ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))? {
             tb.add(&key, &g)?;
         }
         if neg {
@@ -1985,6 +2036,8 @@ fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuil
         .follow_links(f.follow_links)
         .max_depth(f.max_depth)
         .max_filesize(f.max_filesize)
+        // `grep foo . > out.txt` must not read what it writes, as ripgrep skips it
+        .skip_stdout(true)
         .threads(threads);
     if !f.no_ignore {
         wb.add_custom_ignore_filename(RGIGNORE);
@@ -2184,6 +2237,7 @@ impl<'a> Run<'a> {
             named: o.with_filename,
             numbered: o.line_numbers,
             count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
+            each: None,
         }
     }
 }
@@ -2196,7 +2250,7 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     count_file(r, size);
     if r.f.search_zip {
         if let Some(kind) = crate::archive::Kind::of(&rel) {
-            search_archive(w, r, path, &rel, kind);
+            search_archive(w, r, path, &rel, kind, named);
             return;
         }
     }
@@ -2245,8 +2299,10 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
 
 /// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
 /// `archive.zip{member}` (the decompressed file keeps its own name).
-fn search_archive(w: &mut FileWorker, run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind) {
+fn search_archive(w: &mut FileWorker, run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind, named: bool) {
     let (c, stop) = (run.c, run.stop);
+    // one compressed file named on the command line is that file, as ripgrep reads it
+    let named = named && matches!(kind, crate::archive::Kind::Gz | crate::archive::Kind::Other);
     // the members of one archive share a searcher, made for that archive
     w.member = None;
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
@@ -2259,7 +2315,7 @@ fn search_archive(w: &mut FileWorker, run: &Run, path: &Path, rel: &Arc<str>, ki
             (Some(b), Some(m)) => Some(Arc::from([&b[..], b"{", m.as_bytes(), b"}"].concat())),
             (b, _) => b.cloned(),
         };
-        source::search(w, &Run { raw: raw.as_ref(), ..*run }, &mut source::Member(r), label, false);
+        source::search(w, &Run { raw: raw.as_ref(), ..*run }, &mut source::Member(r), label, named);
         !stop.is_set()
     };
     let mut failed = |what: String| c.failed(format!("{rel}: {what}"));
@@ -2917,6 +2973,10 @@ fn run_files(
         })
         .map(|rel| (root.join(rel), Arc::from(rel.as_str()), false))
         .collect();
+    // the file standard output writes to is not searched, as the walk skips it
+    if let Some(out) = stdout_file() {
+        files.retain(|(p, ..)| same_file::Handle::from_path(p).map_or(true, |h| h != out));
+    }
     let counters = Counters::default();
     let labels = [root.to_path_buf()];
     let s = Common { matcher: &matcher, q, f, p, m, c: &counters, stop, plain, labels: &labels };
@@ -2929,6 +2989,12 @@ fn run_files(
     }
     schedule(Feed::List(&files, None), &s, on_hit)?;
     Ok(stats(&counters, t0, stop))
+}
+
+/// Standard output, when it writes to a regular file.
+fn stdout_file() -> Option<same_file::Handle> {
+    let h = same_file::Handle::stdout().ok()?;
+    h.as_file().metadata().ok()?.is_file().then_some(h)
 }
 
 /// The files under `roots` the search would reach (path, path as reported, named on the command

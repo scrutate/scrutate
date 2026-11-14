@@ -33,35 +33,42 @@ mod interrupt {
     #[cfg(any(unix, windows))]
     static FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
-    // async-signal-safe: an atomic load of the cell and an atomic store
+    // async-signal-safe: an atomic load of the cell and an atomic store. -> whether the flag was
+    // set already: a second Ctrl-C ends the process as it would any program
     #[cfg(any(unix, windows))]
-    fn fire() {
-        if let Some(f) = FLAG.get() {
-            f.store(true, Ordering::Relaxed);
-        }
+    fn fire() -> bool {
+        FLAG.get().is_some_and(|f| f.swap(true, Ordering::Relaxed))
     }
 
     #[cfg(unix)]
     pub fn install(flag: Arc<AtomicBool>) {
         extern "C" fn handler(_: i32) {
-            fire()
+            if fire() {
+                // the default action, then the signal again: the process ends as Ctrl-C ends any
+                unsafe {
+                    signal(SIGINT, SIG_DFL);
+                    raise(SIGINT);
+                }
+            }
         }
         extern "C" {
-            fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+            fn signal(sig: i32, handler: usize) -> usize;
+            fn raise(sig: i32) -> i32;
         }
         const SIGINT: i32 = 2;
+        const SIG_DFL: usize = 0;
         if FLAG.set(flag).is_ok() {
             unsafe {
-                signal(SIGINT, handler);
+                signal(SIGINT, handler as *const () as usize);
             }
         }
     }
 
     #[cfg(windows)]
     pub fn install(flag: Arc<AtomicBool>) {
+        // 0 for a second Ctrl-C: the next handler, the system's own, ends the process
         unsafe extern "system" fn handler(_: u32) -> i32 {
-            fire();
-            1
+            i32::from(!fire())
         }
         #[link(name = "kernel32")]
         extern "system" {
@@ -191,12 +198,12 @@ pub struct GrepArgs {
     /// print no line numbers (--json still has them)
     #[arg(short = 'N', long, overrides_with = "line_number")]
     pub no_line_number: bool,
-    /// lines of context after each match
-    #[arg(short = 'A', long, default_value_t = 0)]
-    pub after: usize,
-    /// lines of context before each match
-    #[arg(short = 'B', long, default_value_t = 0)]
-    pub before: usize,
+    /// lines of context after each match (wins over -C, as in ripgrep)
+    #[arg(short = 'A', long)]
+    pub after: Option<usize>,
+    /// lines of context before each match (wins over -C, as in ripgrep)
+    #[arg(short = 'B', long)]
+    pub before: Option<usize>,
     /// lines of context around each match
     #[arg(short = 'C', long)]
     pub context: Option<usize>,
@@ -274,7 +281,8 @@ struct GrepCli {
 #[derive(Subcommand)]
 enum GrepCmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
-    #[command(alias = "g", version)]
+    // an option given twice takes its last value, as in ripgrep
+    #[command(alias = "g", version, args_override_self = true)]
     Grep(GrepArgs),
 }
 
@@ -365,8 +373,8 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
         no_filename: false,
         line_number: false,
         no_line_number: false,
-        after: 0,
-        before: 0,
+        after: None,
+        before: None,
         context: None,
         max_count: None,
         max_results: None,
@@ -484,7 +492,8 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
-    #[command(alias = "g", version)]
+    // an option given twice takes its last value, as in ripgrep
+    #[command(alias = "g", version, args_override_self = true)]
     Grep(GrepArgs),
     /// Engine B: build or update the index (code intelligence and the text index for `grep --index`)
     Index {
@@ -976,27 +985,13 @@ impl Here {
         if arg.is_empty() || !self.cwd.join(p).exists() {
             return Named::Given;
         }
-        if self.inside && !p.is_absolute() {
-            // spelled from here, so a symbolic link inside the repository keeps its name
-            let lexical = p.components().try_fold(self.below.clone(), |mut parts, c| {
-                match c {
-                    std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
-                    std::path::Component::ParentDir => {
-                        parts.pop()?;
-                    }
-                    _ => {}
-                }
-                Some(parts)
-            });
-            if let Some(parts) = lexical {
-                return Named::Root(parts.join("/"));
-            }
+        // spelled from here, so a symbolic link inside the repository keeps its name
+        let from_root = if self.inside && !p.is_absolute() { PathBuf::from(self.below.join("/")).join(p) } else { self.cwd.join(p) };
+        if let Some(rel) = crate::ops::repo_rel(&self.canonical_root, &from_root) {
+            return Named::Root(rel);
         }
         match std::fs::canonicalize(self.cwd.join(p)) {
-            Ok(abs) => match abs.strip_prefix(&self.canonical_root) {
-                Ok(rel) => Named::Root(crate::instant::slashed(rel.to_string_lossy())),
-                Err(_) => Named::Outside(abs),
-            },
+            Ok(abs) => Named::Outside(abs),
             Err(_) => Named::Given,
         }
     }
@@ -1005,7 +1000,9 @@ impl Here {
     /// given (a path from the root, as answers print it, or a module name).
     fn path(&self, arg: &str) -> String {
         match self.named(arg) {
-            Named::Root(r) if !r.is_empty() => r,
+            // the root itself (`..` from a directory below it)
+            Named::Root(r) if r.is_empty() => ".".to_string(),
+            Named::Root(r) => r,
             _ => arg.to_string(),
         }
     }
@@ -1296,8 +1293,8 @@ pub fn run() -> Result<i32> {
                 max_count,
                 max_results,
                 first_in_path_order: sort,
-                before: context.unwrap_or(before),
-                after: context.unwrap_or(after),
+                before: before.or(context).unwrap_or(0),
+                after: after.or(context).unwrap_or(0),
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 text_spans: true,
@@ -1515,8 +1512,12 @@ pub fn run() -> Result<i32> {
             }
             Ok(i32::from(r.is_empty()))
         }
-        Cmd::Files { query, limit, json } => run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None),
+        Cmd::Files { query, limit, json } => {
+            crate::files::root_dir(&cli.root)?;
+            run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None)
+        }
         Cmd::Tsquery { lang, query, paths, rewrite: Some(template), write, .. } => {
+            crate::files::root_dir(&cli.root)?;
             if cli.offset != 0 {
                 anyhow::bail!("--offset does nothing with --rewrite: the diff is printed whole");
             }
@@ -1557,6 +1558,7 @@ pub fn run() -> Result<i32> {
         }
         Cmd::Dead { path, json } => run_op(&cli.root, Op::Dead { path: path.map(|p| here.path(&p)) }, json, page, outside.as_deref()),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache, .. } => {
+            crate::files::root_dir(&cli.root)?;
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
             let mut w = std::io::BufWriter::new(stdout.lock());
@@ -1900,9 +1902,21 @@ fn watch_command(root: &Path) -> Result<i32> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
-    let session = Session::open(&root, crate::session::Every::given(None))?;
+    // Ctrl-C also ends a wait for another process's write lock
+    crate::index::stop_waits_on(Arc::clone(&stop));
+    let stopped = || stop.load(Ordering::Relaxed);
+    let session = match Session::open(&root, crate::session::Every::given(None)) {
+        Err(_) if stopped() => return Ok(130),
+        s => s?,
+    };
     let update = |changes: &crate::stores::Changes| -> Result<()> {
-        let up = session.write(|repo| repo.update_stores(Writer::Watch, changes, false))?;
+        // Ctrl-C stops an update at its next batch of files
+        let up = session.write(|repo| {
+            repo.set_cancel(Arc::clone(&stop));
+            let up = repo.update_stores(Writer::Watch, changes, false);
+            repo.set_cancel(Arc::default());
+            up
+        })?;
         let (st, text) = (up.code.unwrap_or_default(), up.text);
         let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
         if st.files_changed + st.files_removed + text_changed > 0 {
@@ -1916,8 +1930,11 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update)?;
-    Ok(if stop.load(Ordering::Relaxed) { 130 } else { 0 })
+    let r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update);
+    if stopped() {
+        return Ok(130);
+    }
+    r.map(|()| 0)
 }
 
 /// `check`: integrity of the database and the segments; with `--files`, re-hash every indexed file.
@@ -2096,6 +2113,8 @@ fn indexed_candidates(root: &Path, q: &Query, update: bool, under: Option<&str>)
 fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let cancel = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&cancel));
+    // Ctrl-C also ends `--update`'s wait for another process's lock
+    crate::index::stop_waits_on(Arc::clone(&cancel));
     let roots = match &f.paths {
         Paths::Walk(roots) => roots.clone(),
         Paths::List { .. } | Paths::Memory(_) => Vec::new(),
@@ -2104,7 +2123,10 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
     let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
     if out.indexed {
-        let (root, files) = indexed_candidates(&out.root, &q, out.update, out.under.as_deref())?;
+        let (root, files) = match indexed_candidates(&out.root, &q, out.update, out.under.as_deref()) {
+            Err(_) if cancel.load(Ordering::Relaxed) => return Ok(130),
+            r => r?,
+        };
         f.paths = Paths::List { root, files };
     }
     if let Some(sink) = sink {
@@ -2331,7 +2353,7 @@ fn write_colour(w: &mut impl WriteColor, h: &instant::Line, context: bool, path:
             w.reset()?;
             write!(w, "{sep}")?;
         }
-        // the spans lie on character boundaries of the text
+        // the spans lie on character boundaries of the text, but an empty one, which colours nothing
         let mut pos = start;
         for &(a, b) in &h.spans {
             let (x, y) = (a.max(start), b.min(end));
@@ -2377,6 +2399,9 @@ fn grep_plain(roots: &[PathBuf], q: &Query, f: &Files, out: GrepOutput, cancel: 
     warn_failures(&stats);
     let found = stats.matches > 0;
     if sink.broken.load(Ordering::Relaxed) {
+        if let Some(e) = sink.failure() {
+            return Err(anyhow::Error::new(e).context("write the output"));
+        }
         return Ok(if found { 0 } else { 1 }); // the reader went away (`| head`): stop quietly
     }
     if let Err(e) = sink.flush() {
@@ -2607,12 +2632,14 @@ fn diagnostic(kind: &str, message: &str) {
     }
 }
 
-/// The one line a panic prints. Only a panic that may come from the index advises rebuilding it.
-fn panic_text(msg: &str, location: &str) -> String {
+/// The one line a panic prints. Only a panic in a process that opened an index advises rebuilding it.
+fn panic_text(msg: &str, location: &str, index_opened: bool) -> String {
     if msg.contains("failed to spawn thread") {
         format!("{msg} ({location}). The system refused another thread: lower -j or SCRUTATE_THREADS, or raise the process limit.")
-    } else {
+    } else if index_opened {
         format!("{msg} ({location}). If this persists run `scrutate index --force`; please report it with RUST_BACKTRACE=1.")
+    } else {
+        format!("{msg} ({location}). Please report it with RUST_BACKTRACE=1.")
     }
 }
 
@@ -2621,7 +2648,8 @@ pub fn main_exit() {
     // (2 = error) instead of a backtrace dump; RUST_BACKTRACE=1 shows the details
     std::panic::set_hook(Box::new(|info| {
         let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
-        diagnostic("internal_error", &panic_text(&msg, &info.location().map(|l| l.to_string()).unwrap_or_default()));
+        let opened = crate::index::OPENED.load(std::sync::atomic::Ordering::Relaxed);
+        diagnostic("internal_error", &panic_text(&msg, &info.location().map(|l| l.to_string()).unwrap_or_default(), opened));
     }));
     let code = match std::panic::catch_unwind(run) {
         Ok(Ok(c)) => c,
@@ -2851,8 +2879,14 @@ mod tests {
 
     #[test]
     fn a_failed_thread_spawn_does_not_blame_the_index() {
-        let t = super::panic_text("failed to spawn thread: Os { code: 35 }", "x.rs:1:1");
+        let t = super::panic_text("failed to spawn thread: Os { code: 35 }", "x.rs:1:1", true);
         assert!(!t.contains("index") && t.contains("-j"), "{t}");
-        assert!(super::panic_text("index out of bounds", "x.rs:1:1").contains("index --force"));
+        assert!(super::panic_text("index out of bounds", "x.rs:1:1", true).contains("index --force"));
+    }
+
+    #[test]
+    fn a_panic_in_a_process_that_opened_no_index_does_not_blame_the_index() {
+        let t = super::panic_text("index out of bounds", "x.rs:1:1", false);
+        assert!(!t.contains("index --force") && t.contains("RUST_BACKTRACE=1"), "{t}");
     }
 }

@@ -128,6 +128,17 @@ def to_regex(q):
     return rf"\b{pat}\b" if q["word"] else pat
 
 
+def livegrep_config(corpus, work):
+    """livegrep's index config in `work`: exactly the files the other engines index (never
+    .scrutate/). -> those files."""
+    files = lb.file_list(corpus, "ignore")
+    with open(os.path.join(work, "livegrep-files.txt"), "w") as f:
+        f.write("\n".join(files) + "\n")
+    json.dump({"name": "linux", "fs_paths": [{"name": "linux", "path": corpus, "ordered_contents": os.path.join(work, "livegrep-files.txt")}]},
+              open(os.path.join(work, "livegrep.json"), "w"))
+    return files
+
+
 def zoekt_query(q):
     return f'case:{"no" if q["icase"] else "yes"} content:"{to_regex(q).replace(chr(34), chr(92) + chr(34))}"'
 
@@ -212,6 +223,7 @@ def du(path, apparent=False):
 
 
 def main() -> int:
+    lb.drop_scrutate_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=os.path.expanduser("~/.cache/scrutate-bench/corpora/linux-nodot"))
     ap.add_argument("--work", default=os.path.expanduser("~/.cache/scrutate-bench/indexed-work"))
@@ -226,12 +238,7 @@ def main() -> int:
     ap.add_argument("--livegrep-bin", default=os.path.expanduser("~/.cache/scrutate-bench/livegrep"))
     a = ap.parse_args()
     os.makedirs(a.work, exist_ok=True)
-    files = lb.file_list(a.corpus, "ignore")
-    # livegrep indexes exactly this list (the files the other engines index; never .scrutate/)
-    with open(os.path.join(a.work, "livegrep-files.txt"), "w") as f:
-        f.write("\n".join(files) + "\n")
-    json.dump({"name": "linux", "fs_paths": [{"name": "linux", "path": a.corpus, "ordered_contents": os.path.join(a.work, "livegrep-files.txt")}]},
-              open(os.path.join(a.work, "livegrep.json"), "w"))
+    files = livegrep_config(a.corpus, a.work)
     names = a.tools.split(",")
     defs = tool_defs(a)
     res = {"environment": lb.environment(), "corpus": a.corpus, "settings": vars(a) | {"queries": len(QUERIES)}, "tools": {n: {"version": defs[n]["version"]} for n in names}}

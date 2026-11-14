@@ -139,6 +139,8 @@ fn php_method_calls_follow_the_type_of_their_receiver() {
             (app, 20, circle),
             // a typed parameter
             (app, 21, shape),
+            // a call through a `use function` alias
+            (app, 22, helpers),
             // an unqualified call falls back to the global function
             (app, 23, global),
             (app, 24, square),
@@ -186,4 +188,59 @@ fn the_accept_fixture_resolves_a_method_through_a_typed_local() {
         ],
     );
     assert_eq!(r.resolved("name"), expect(&[("app/Http/Controller.php", 8, "app/Models/User.php"), ("app/Models/User.php", 6, "app/Models/User.php")]));
+}
+
+#[test]
+fn php_class_alias_namespace_and_method_names_match_in_any_case() {
+    let str_php = "<?php\nnamespace App\\Util;\n\nclass Str\n{\n    public static function slug($s) { return $s; }\n}\n";
+    let app = "<?php\nnamespace App;\n\nuse App\\Util\\Str as S;\n\nfunction run() {\n    s::SLUG(\"a\");\n    \\app\\util\\str::slug(\"b\");\n    $x = new s();\n    $x->Slug(\"c\");\n}\n";
+    let r = Repo::new("any_case", &[("src/Util/Str.php", str_php), ("app.php", app)]);
+    let s = "src/Util/Str.php";
+    assert_eq!(r.resolved("slug"), expect(&[(s, 6, s), ("app.php", 7, s), ("app.php", 8, s), ("app.php", 10, s)]));
+}
+
+#[test]
+fn a_variable_a_closure_captures_with_use_has_the_type_it_has_outside() {
+    let a = "<?php\nclass User\n{\n    public function save() { return 1; }\n}\nfunction run(User $u) {\n    $f = function () use ($u) {\n        return $u->save();\n    };\n    $g = fn() => $u->save();\n}\n";
+    let r = Repo::new("closure_use", &[("a.php", a)]);
+    assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php"), ("a.php", 10, "a.php")]));
+}
+
+#[test]
+fn this_in_a_trait_calling_a_method_the_trait_lacks_is_a_receiver() {
+    let a = "<?php\ntrait Greets\n{\n    public function hello() { return $this->word(); }\n}\nclass Person\n{\n    use Greets;\n    public function word() { return 'hi'; }\n}\n";
+    let r = Repo::new("trait_this", &[("a.php", a)]);
+    assert_eq!(r.resolved("word"), expect(&[("a.php", 4, "receiver"), ("a.php", 9, "a.php")]));
+}
+
+#[test]
+fn a_call_on_a_static_property_goes_through_the_property_type() {
+    let a = "<?php\nclass User\n{\n    public static User $current;\n    public function save() { return 1; }\n}\nfunction run() {\n    User::$current->save();\n}\n";
+    let r = Repo::new("static_prop", &[("a.php", a)]);
+    assert_eq!(r.resolved("save"), expect(&[("a.php", 5, "a.php"), ("a.php", 8, "a.php")]));
+    assert_eq!(r.resolved("current"), expect(&[("a.php", 4, "field or key"), ("a.php", 8, "field or key")]));
+}
+
+#[test]
+fn self_static_and_parent_match_in_any_case() {
+    let a = "<?php\nclass Base\n{\n    public static function make() { return 1; }\n}\nclass Kid extends Base\n{\n    public static function build() { return 2; }\n    public static function run()\n    {\n        return SELF::build() + Static::build() + PARENT::make();\n    }\n}\n";
+    let r = Repo::new("keyword_case", &[("a.php", a)]);
+    assert_eq!(r.resolved("build"), expect(&[("a.php", 8, "a.php"), ("a.php", 11, "a.php")]));
+    assert_eq!(r.resolved("make"), expect(&[("a.php", 4, "a.php"), ("a.php", 11, "a.php")]));
+}
+
+#[test]
+fn a_variable_a_closure_captures_by_reference_has_the_type_it_has_outside() {
+    let a = "<?php\nclass User\n{\n    public function save() { return 1; }\n}\nfunction run(User $u) {\n    $f = function () use (&$u) {\n        return $u->save();\n    };\n}\n";
+    let r = Repo::new("closure_use_ref", &[("a.php", a)]);
+    assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php")]));
+}
+
+#[test]
+fn refs_find_a_use_alias_written_in_another_case() {
+    let app = "<?php\nnamespace App;\nuse function Lib\\phpfn as pf;\nuse Lib\\Tool as T;\nfunction upper() { return PF(); }\nfunction cls() { return t::make(); }\nfunction cls2() { return T::make(); }\n";
+    let lib = "<?php\nnamespace Lib;\nfunction phpfn() { return 1; }\nclass Tool\n{\n    public static function make() { return 1; }\n}\n";
+    let r = Repo::new("alias_case_refs", &[("app.php", app), ("lib.php", lib)]);
+    assert_eq!(r.resolved("phpfn"), expect(&[("app.php", 3, "lib.php"), ("app.php", 5, "lib.php"), ("lib.php", 3, "lib.php")]));
+    assert_eq!(r.resolved("Tool"), expect(&[("app.php", 4, "lib.php"), ("app.php", 6, "lib.php"), ("app.php", 7, "lib.php"), ("lib.php", 4, "lib.php")]));
 }

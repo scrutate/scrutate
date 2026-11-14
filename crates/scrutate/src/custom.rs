@@ -61,6 +61,12 @@ pub struct Customs {
     files: Vec<(PathBuf, String)>,
 }
 
+impl std::fmt::Debug for Customs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.langs.iter().map(|l| &l.id)).finish()
+    }
+}
+
 impl Customs {
     /// The custom language whose extension `path` ends with (the longest one).
     pub fn for_path(&self, path: &str) -> Option<&Lang> {
@@ -95,9 +101,30 @@ pub fn changed(old: &str, new: &str) -> Vec<String> {
 
 static CURRENT: LazyLock<RwLock<Arc<Customs>>> = LazyLock::new(RwLock::default);
 
-/// The custom languages the last `load` found (none before it).
+thread_local! {
+    static SCOPED: std::cell::RefCell<Option<Arc<Customs>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The custom languages of the `with` this thread runs in, else those the last `load` found (none
+/// before it).
 pub fn current() -> Arc<Customs> {
+    if let Some(c) = SCOPED.with(|s| s.borrow().clone()) {
+        return c;
+    }
     Arc::clone(&CURRENT.read().unwrap_or_else(|p| p.into_inner()))
+}
+
+/// Runs `f` with `c` as this thread's `current`: an update parses under its own root's tables
+/// while another root's are loaded (two `Repo`s of the Python module side by side).
+pub fn with<T>(c: &Arc<Customs>, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Arc<Customs>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED.with(|s| *s.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(SCOPED.with(|s| s.replace(Some(Arc::clone(c)))));
+    f()
 }
 
 /// The user's configuration file, when there is one.
@@ -111,6 +138,20 @@ fn user_file() -> Option<PathBuf> {
 
 /// Reads the tables that apply to `root`, checks them, and makes them `current`.
 pub fn load(root: &Path) -> Result<Arc<Customs>> {
+    let c = of_root(root, None)?;
+    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Arc::clone(&c);
+    Ok(c)
+}
+
+/// The tables of the index a search started in `dir` uses (the one above it, else `dir`'s own), as
+/// the command line reads them; `current` is left alone.
+pub fn for_search(dir: &Path) -> Result<Arc<Customs>> {
+    of_root(&crate::cli::index_above(dir).unwrap_or_else(|| dir.to_path_buf()), None)
+}
+
+/// The tables that apply to `root`, checked, with `current` left alone: `known` (or `current`)
+/// when its texts are the ones found, so an unchanged table is not compiled again.
+pub fn of_root(root: &Path, known: Option<&Arc<Customs>>) -> Result<Arc<Customs>> {
     let own = root.join(".scrutate.toml");
     let mut files: Vec<(PathBuf, String)> = Vec::new();
     if let Some(text) = crate::files::root_config_text(root) {
@@ -122,21 +163,31 @@ pub fn load(root: &Path) -> Result<Arc<Customs>> {
             files.push((user, text));
         }
     }
+    if let Some(k) = known.filter(|k| k.files == files) {
+        return Ok(Arc::clone(k));
+    }
     let cur = current();
     if cur.files == files {
         return Ok(cur);
     }
-    let mut langs: Vec<Lang> = Vec::new();
+    let mut tables = Vec::new();
     for (i, (path, text)) in files.iter().enumerate() {
         let source = if i == 0 && *path == own { ".scrutate.toml".to_string() } else { path.display().to_string() };
-        for l in crate::config::parse(path, text)?.language {
-            let lang = check(l, path, &source, text, &langs)?;
+        tables.push((path, source, text, crate::config::parse(path, text)?.language));
+    }
+    // every pattern of every table shares the size budget one regex has: a repository's table of
+    // many large patterns is refused at once, where each pattern had it whole (gigabytes)
+    let patterns = tables.iter().flat_map(|t| &t.3).map(|l| l.definitions.len()).sum::<usize>().max(1);
+    let all = crate::instant::Pattern::default();
+    let limits = (all.regex_size_limit / patterns, all.dfa_size_limit / patterns);
+    let mut langs: Vec<Lang> = Vec::new();
+    for (path, source, text, table) in tables {
+        for l in table {
+            let lang = check(l, path, &source, text, &langs, limits)?;
             langs.push(lang);
         }
     }
-    let c = Arc::new(Customs { langs, files });
-    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Arc::clone(&c);
-    Ok(c)
+    Ok(Arc::new(Customs { langs, files }))
 }
 
 /// The first line of a regex error that says what is wrong.
@@ -145,7 +196,7 @@ fn regex_error(e: &regex::Error) -> String {
     s.lines().find_map(|l| l.strip_prefix("error: ")).unwrap_or(&s).trim().replace('\n', " ")
 }
 
-fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -> Result<Lang> {
+fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang], (size, dfa): (usize, usize)) -> Result<Lang> {
     let err = |span: Range<usize>, msg: String| anyhow!("{}: {msg}", at(path, text, span.start));
     let name = l.name.get_ref().clone();
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
@@ -168,7 +219,9 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -
         }
         let ext = format!(".{}", e.to_lowercase());
         let probe = format!("x{ext}");
-        if let Some(spec) = crate::langs::spec_for(&probe) {
+        // a built-in language that claims a whole file name (`CMakeLists.txt`) claims its extension too
+        let named = || crate::langs::LANGS.iter().copied().find(|s| s.files.iter().any(|f| f.to_lowercase().ends_with(&ext)));
+        if let Some(spec) = crate::langs::spec_for(&probe).or_else(named) {
             return Err(err(span.clone(), format!("extension {e:?} belongs to the built-in language {}", spec.id)));
         }
         if !crate::parse::is_indexable(&probe) {
@@ -192,7 +245,6 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -
         },
         None => None,
     };
-    let limits = crate::instant::Pattern::default();
     let mut defs = Vec::new();
     for d in l.definitions {
         let kind = d.kind.get_ref();
@@ -200,8 +252,8 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -
             return Err(err(d.kind.span(), format!("definition kind {kind:?} is not one of {}", KINDS.join(", "))));
         };
         let re = regex::RegexBuilder::new(d.pattern.get_ref())
-            .size_limit(limits.regex_size_limit)
-            .dfa_size_limit(limits.dfa_size_limit)
+            .size_limit(size)
+            .dfa_size_limit(dfa)
             .build()
             .map_err(|e| err(d.pattern.span(), format!("the pattern of a {kind} definition does not compile: {}", regex_error(&e))))?;
         if re.captures_len() < 2 {

@@ -6,7 +6,7 @@ is its own workspace, so the product never builds with nightly.
 | Target | What it checks |
 |---|---|
 | `npy` | arbitrary bytes as an `.npy` array: the reader rejects or reads them, never panics or over-allocates |
-| `trigram_query` | soundness of the text index: if a regex, literal or identifier pattern matches a line, that line's trigrams satisfy the pattern's trigram condition |
+| `trigram_query` | soundness of the text index: if a regex, literal, identifier or fuzzy pattern matches a line (a fuzzy one through the matcher grep builds), that line's trigrams satisfy the pattern's trigram condition |
 | `fuzzy_matcher` | the edit-distance matcher: no panic, every match inside the haystack and on one line |
 | `parse_file` | every parser tier under 60 file extensions: no panic, chunk line ranges inside the file |
 

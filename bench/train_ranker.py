@@ -136,7 +136,7 @@ def build(recs):
     return np.vstack(Xs), np.concatenate(ys), np.array(groups), np.concatenate(ws)
 
 
-def fit(recs, params=None) -> "lightgbm.LGBMRanker":
+def fit(recs, params=None):
     import lightgbm as lgb
     X, y, g, w = build(recs)
     m = lgb.LGBMRanker(**(params or PARAMS))

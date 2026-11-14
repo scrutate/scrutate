@@ -357,7 +357,7 @@ def train(cache: str, out: str, init: str | None, epochs: int, batch: int, lr: f
             Zq, nq = encode(wq, EA)
             Za, na = encode(wa, EA)
             Zb, nb = encode(wb, EB)
-            vq, vqa, vqb, vab = has_q[idx], has_q[idx] & has_a[idx], has_q[idx] & has_b[idx], has_a[idx] & has_b[idx]
+            vqa, vqb, vab = has_q[idx] & has_a[idx], has_q[idx] & has_b[idx], has_a[idx] & has_b[idx]
             l1, dq1, da1 = nce(Zq, Za, tau, vqa)
             l2, dq2, db2 = nce(Zq, Zb, tau, vqb)
             l3, da3, db3 = nce(Za, Zb, tau, vab)

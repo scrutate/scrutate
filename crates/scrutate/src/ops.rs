@@ -312,17 +312,21 @@ pub struct Scope {
 }
 
 impl Scope {
-    fn files(&self, root: &std::path::Path) -> Result<Files> {
+    fn files(&self, ix: &crate::index::Index) -> Result<Files> {
+        let root = ix.root.as_path();
         let mut f = crate::files::repository_files(root);
         // the repository's own exclusions come last, where a later glob wins, so no glob of the caller brings them back
         let skip = std::mem::take(&mut f.globs);
         f.globs = self.globs.iter().cloned().chain(skip).collect();
         let path = self.path.as_deref().map(|p| p.trim_start_matches("./")).filter(|p| !p.is_empty() && *p != ".");
         if let Some(p) = path {
-            let p = crate::fmt::unshown(p);
+            let p = respelled(ix, p);
+            let p = unescaped(root, &p);
             if !inside(root, &p) {
                 bail!("path outside repo: give a path relative to the repository root, or an absolute one under it");
             }
+            // spelled from the root, so the answer names files as without a detour (`../repo/pkg`)
+            let p = repo_rel(root, std::path::Path::new(&*p)).map_or(p, std::borrow::Cow::Owned);
             // a link that leaves the repository reads as a missing path, as read_code answers it
             match std::fs::canonicalize(root.join(&*p)) {
                 Ok(c) if c.starts_with(root) => f.paths = crate::instant::Paths::Walk(vec![root.join(&*p)]),
@@ -458,12 +462,28 @@ pub fn output_schema(tool: &str) -> Value {
 }
 
 /// An answer's JSON form in the envelope every front end prints.
-pub fn envelope(result: Value, stopped: Option<Stop>) -> Value {
+pub fn envelope(mut result: Value, stopped: Option<Stop>) -> Value {
+    mark_vendored(&mut result);
     let mut v = json!({"schema": ANSWER_SCHEMA, "result": result});
     if let Some(stop) = stopped {
         v["stopped_at"] = json!(stop.at);
     }
     v
+}
+
+/// Every item of an answer with a `path` of vendored code (`text::is_vendored_path`) gains
+/// `"vendored": true`: the one place, so no answer can leave it out.
+fn mark_vendored(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            if m.get("path").and_then(Value::as_str).is_some_and(crate::text::is_vendored_path) {
+                m.insert("vendored".into(), Value::Bool(true));
+            }
+            m.values_mut().for_each(mark_vendored);
+        }
+        Value::Array(a) => a.iter_mut().for_each(mark_vendored),
+        _ => {}
+    }
 }
 
 /// Where an answer stopped because it reached its limit, and what to pass to see more.
@@ -566,8 +586,38 @@ pub fn files(root: &std::path::Path, query: &str, limit: usize) -> Result<Answer
     Ok(Answer::Files(hits, more.then_some(Stop { at: limit, how: RAISE_LIMIT })))
 }
 
-/// Run one operation on the index as it is; `Repo::run` brings the index up to date first.
+/// Run one operation on the index as it is; `Repo::run` brings the index up to date first. Every
+/// read of it comes from one commit: a writer's commit meanwhile shows in the next operation.
 pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
+    in_snapshot(s, |s| run_in(s, op))
+}
+
+/// `f` on `s` with every read of the code index from one commit (`Index::begin_read`).
+pub fn in_snapshot<T>(s: &mut Searcher, f: impl FnOnce(&mut Searcher) -> Result<T>) -> Result<T> {
+    let snap = Snapshot::begin(s)?;
+    f(&mut *snap.0)
+}
+
+/// A read snapshot of the code index while it lives, ended on every way out (an error or a panic
+/// too); none when a transaction is open already (an update).
+struct Snapshot<'s>(&'s mut Searcher, bool);
+
+impl<'s> Snapshot<'s> {
+    fn begin(s: &'s mut Searcher) -> Result<Snapshot<'s>> {
+        let own = s.ix.begin_read()?;
+        Ok(Snapshot(s, own))
+    }
+}
+
+impl Drop for Snapshot<'_> {
+    fn drop(&mut self) {
+        if self.1 {
+            self.0.ix.end_read();
+        }
+    }
+}
+
+fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
         Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
@@ -583,7 +633,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 first_in_path_order: true,
                 ..Default::default()
             };
-            let files = scope.files(&s.ix.root)?;
+            let files = scope.files(&s.ix)?;
             let (groups, stopped) = crate::intel::grouped_grep(s, &q, &files)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
@@ -697,21 +747,53 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
             Answer::Captures(caps, stopped)
         }
-        Op::Map { path } => Answer::Map(crate::repomap::map(s, path.as_deref().map(|p| repo_path(s, p)).as_deref())?),
+        Op::Map { path } => {
+            let path = path.as_deref().map(|p| repo_path(s, p)).filter(|p| !p.is_empty() && p != ".");
+            existing(s, path.as_deref())?;
+            Answer::Map(crate::repomap::map(s, path.as_deref())?)
+        }
         Op::Path { from, to, depth } => Answer::Path(Box::new(Names::new(s)?.path(from, to, *depth)?)),
         Op::Dead { path } => {
             let path = path.as_deref().map(|p| repo_path(s, p)).filter(|p| !p.is_empty() && p != ".");
-            if let Some(p) = &path {
-                if !inside(&s.ix.root, p) || !s.ix.root.join(p).exists() {
-                    bail!("no such file or directory in the repository: {}", echo(p));
-                }
-            }
+            existing(s, path.as_deref())?;
             Answer::Dead(Names::new(s)?.dead(path.as_deref())?)
         }
         Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
         Op::Impact { base, staged, depth } => Answer::Impact(crate::impact::impact(s, base.as_deref(), *staged, *depth)?),
         Op::Files { query, limit } => files(&s.ix.root, query, *limit)?,
     })
+}
+
+/// `p` with the escapes an answer writes read back (`a\tb` as a tab), when that names a file or
+/// directory and prints as `p` again; else `p` as written (a directory named `x\ty`).
+fn unescaped<'p>(root: &std::path::Path, p: &'p str) -> std::borrow::Cow<'p, str> {
+    let back = crate::fmt::unshown(p);
+    if back != p && crate::fmt::shown(&back) == p && root.join(&*back).exists() {
+        back
+    } else {
+        std::borrow::Cow::Borrowed(p)
+    }
+}
+
+/// `path` with the root as the index was given it (`<dir>/link`, macOS's `/tmp/x`) spelled as the
+/// index's own root; a look at its text only, as for every path outside.
+fn respelled<'p>(ix: &crate::index::Index, path: &'p str) -> std::borrow::Cow<'p, str> {
+    let p = std::path::Path::new(path);
+    if ix.given == ix.root || !p.is_absolute() {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    match p.strip_prefix(&ix.given) {
+        Ok(rest) => std::borrow::Cow::Owned(ix.root.join(rest).to_string_lossy().into_owned()),
+        Err(_) => std::borrow::Cow::Borrowed(path),
+    }
+}
+
+/// An error unless `path` (from the root, or none) is a file or directory of the repository.
+fn existing(s: &Searcher, path: Option<&str>) -> Result<()> {
+    match path {
+        Some(p) if !inside(&s.ix.root, p) || !s.ix.root.join(p).exists() => bail!("no such file or directory in the repository: {}", echo(p)),
+        _ => Ok(()),
+    }
 }
 
 /// Whether `root` joined with `path` stays under `root` by their parts alone (`.` dropped and
@@ -756,6 +838,7 @@ fn under(path: &str, root: &str) -> bool {
 pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec<String>, Option<i64>)> {
     use std::io::BufRead;
     let shown = echo(path);
+    let path = &*respelled(&s.ix, path);
     // the answer for a path outside the repository must not tell whether a file is there: one
     // that leaves by its own parts is outside, with nothing looked at (on Windows a share on
     // another machine would be connected to, and offered the user's login), and a link that
@@ -851,24 +934,51 @@ pub fn capture_line(c: &Capture) -> String {
     format!("{}:{}:{}  @{} ({})  {}", shown(&c.path), c.line, c.column, c.capture, c.kind, shown(&c.text))
 }
 
-/// `path` as the index spells it, when it names a repository file in a spelling `read_code`
-/// accepts (`./a.py`, `pkg/../a.py`, another case on a case-insensitive file system); else as given.
-pub fn repo_path(s: &Searcher, path: &str) -> String {
-    // a path that leaves the repository names no file of it (`/a.py` is not `a.py`), and is not looked at
-    if !inside(&s.ix.root, path) {
-        return path.to_string();
+/// `path` from the root of `root` with `.`, `..` and empty parts gone: a path from the root, or
+/// an absolute one under it (as written, else once its links are resolved). None when it leaves
+/// the root, by its parts or by being elsewhere.
+pub fn repo_rel(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    use std::path::Component;
+    let lexical = |p: &std::path::Path| {
+        let mut parts: Vec<String> = Vec::new();
+        for c in p.components() {
+            match c {
+                Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+                Component::ParentDir => {
+                    parts.pop()?;
+                }
+                _ => {}
+            }
+        }
+        Some(parts.join("/"))
+    };
+    if !path.is_absolute() {
+        // one that leaves the root and comes back by its parts (`../repo/pkg`) is resolved from
+        // the root, as `inside` reads it, with no file looked at
+        return lexical(path).or_else(|| inside(root, &path.to_string_lossy()).then(|| repo_rel(root, &root.join(path))).flatten());
     }
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in path.split('/') {
-        match seg {
-            "" | "." => {}
-            // above the root: no repository file, and the answer names the path as given
-            ".." if parts.pop().is_none() => return path.to_string(),
-            ".." => {}
-            seg => parts.push(seg),
+    if inside(root, &path.to_string_lossy()) {
+        // `inside` read the `..` parts already; what is left starts with the root's own parts
+        let rest = lexical(path)?;
+        let top = lexical(root)?;
+        if let Some(r) = rest.strip_prefix(&top).filter(|r| r.is_empty() || r.starts_with('/')) {
+            return Some(r.trim_start_matches('/').to_string());
         }
     }
-    let plain = parts.join("/");
+    let real = std::fs::canonicalize(path).ok()?;
+    let top = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    real.strip_prefix(&top).ok().map(|r| crate::instant::slashed(r.to_string_lossy()))
+}
+
+/// `path` as the index spells it, when it names a repository file in a spelling `read_code`
+/// accepts (`./a.py`, `pkg/../a.py`, `<root>/a.py`, another case on a case-insensitive file
+/// system); else as given.
+pub fn repo_path(s: &Searcher, given: &str) -> String {
+    let path = &*respelled(&s.ix, given);
+    // a path that leaves the repository names no file of it (`/a.py` is not `a.py`), and is not looked at
+    let Some(plain) = inside(&s.ix.root, path).then(|| repo_rel(&s.ix.root, std::path::Path::new(path))).flatten() else {
+        return given.to_string();
+    };
     let indexed = |p: &str| s.ix.has_file(p);
     // a path copied from an answer has its control characters and backslashes written as
     // escapes; the text an answer prints for a file names that file, whatever else exists
@@ -1248,8 +1358,10 @@ impl Parts {
         loop {
             let (out, shown, cut) = self.render(max_bytes, room, offset);
             if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
+                // the concise text of the same items when it fits, else the detailed page, which
+                // says how to go on
                 let text = match &self.brief {
-                    Some(brief) if form == Form::Concise => self.render_brief(brief, max_bytes, offset, shown),
+                    Some(brief) if form == Form::Concise => Some(self.render_brief(brief, offset, shown)).filter(|b| b.len() <= max_bytes).unwrap_or(out),
                     _ => out,
                 };
                 return (text, shown);
@@ -1258,7 +1370,7 @@ impl Parts {
         }
     }
 
-    fn render_brief(&self, brief: &[Vec<Brief>], max_bytes: usize, offset: usize, count: usize) -> String {
+    fn render_brief(&self, brief: &[Vec<Brief>], offset: usize, count: usize) -> String {
         let mut out = self.head.clone();
         let mut page = Written::default();
         let lines: Vec<&Brief> = brief.iter().skip(offset).take(count).flatten().collect();
@@ -1269,15 +1381,6 @@ impl Parts {
         if let (false, Some((_, first, _))) = (any, &self.file) {
             let last = first + (offset + count) as i64 - 1;
             push_line(&mut out, &format!("(no definition starts in lines {}-{last}: response_format detailed shows them)", first + offset as i64));
-        }
-        if out.len() > max_bytes {
-            let mut at = max_bytes.saturating_sub(CUT_ITEM.len() + 1);
-            while !out.is_char_boundary(at) {
-                at -= 1;
-            }
-            out.truncate(at);
-            push_line(&mut out, CUT_ITEM);
-            return out;
         }
         self.close(&mut out, offset, count, self.brief_tail.as_deref().unwrap_or(&self.tail));
         out
@@ -1810,7 +1913,7 @@ impl Answer {
         let from = offset.min(total);
         let to = (from + shown).min(total);
         v["complete"] = json!(false);
-        v["result"] = self.page_json(from..to, total);
+        v["result"] = envelope(self.page_json(from..to, total), None)["result"].take();
         v["offset"] = json!(from);
         v["next_offset"] = if to < total { json!(to) } else { Value::Null };
         v["total"] = json!(total);

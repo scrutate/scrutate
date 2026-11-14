@@ -42,15 +42,32 @@ HEURISTIC_ONLY = {
 }
 
 
-def header_rule() -> tuple[list[str], str]:
-    """How `sniff` in langs.rs reads a `.h` file: the Objective-C markers and the C++ line pattern."""
+def static_regex(src: str, name: str) -> str | None:
+    """The pattern of `static NAME ... Regex::new(r"...")` (or `r#"..."#`) in langs.rs."""
+    m = re.search(r"static " + name + r'\b.*?Regex::new\(\s*r(#*)"(.*?)"\1\s*,?\s*\)', src, re.S)
+    return m.group(2) if m else None
+
+
+def header_rule() -> tuple[str, str]:
+    """How `sniff` in langs.rs reads a `.h` file: the Objective-C line pattern and the C++ one."""
     src = open(LANGS_RS).read()
-    branch = re.search(r'ends_with\("\.h"\) \{\s*if \[([^\]]*)\]\.iter\(\)\.any\(\|k\| source\.contains\(k\)\) \{\s*"objc"\s*'
+    branch = re.search(r'ends_with\("\.h"\) \{\s*if OBJC_HEADER\.is_match\(source\) \{\s*"objc"\s*'
                        r'\} else if CPP_HEADER\.is_match\(source\) \{\s*"cpp"', src)
-    pattern = re.search(r'static CPP_HEADER\b.*?r#"(.*?)"#', src, re.S)
-    if not branch or not pattern:
+    objc, cpp = static_regex(src, "OBJC_HEADER"), static_regex(src, "CPP_HEADER")
+    if not branch or not objc or not cpp:
         raise SystemExit(f"{LANGS_RS}: the .h rule of sniff no longer reads as expected; update header_rule")
-    return re.findall(r'"([^"]*)"', branch.group(1)), pattern.group(1)
+    return objc, cpp
+
+
+def pp_rule() -> tuple[str, list[str]]:
+    """How `sniff` in langs.rs reads a `.pp` file: the Pascal header pattern and the Pascal words."""
+    src = open(LANGS_RS).read()
+    branch = re.search(r'ends_with\("\.pp"\) \{.*?let pascal_words = \[([^\]]*)\]\.iter\(\)\.any\(\|k\| source\.contains\(k\)\);\s*'
+                       r'if PASCAL_HEADER\.is_match\(head\) \|\| \(pascal_words && !head\.contains\("\$"\)\) \{\s*"pascal"', src, re.S)
+    header = static_regex(src, "PASCAL_HEADER")
+    if not branch or not header:
+        raise SystemExit(f"{LANGS_RS}: the .pp rule of sniff no longer reads as expected; update pp_rule")
+    return header, re.findall(r'"([^"]*)"', branch.group(1))
 
 
 def marker_rule(ext: str, first: str) -> list[str]:
@@ -104,7 +121,8 @@ def main() -> int:
     out.append("| Language | Extensions / files | Definition kinds verified | Calls | Imports | Docstrings | Evidence |")
     out.append("|---|---|---|---|---|---|---|")
     n_verified = 0
-    h_markers, h_pattern = header_rule()
+    h_objc, h_cpp = header_rule()
+    pp_header, pp_words = pp_rule()
     for r in sorted(regs, key=lambda x: x["id"]):
         exts = " ".join(r["extensions"] + r["filenames"])
         shared = " ".join(f"`{e}`" for e in r["extensions_by_content"])
@@ -131,12 +149,12 @@ def main() -> int:
             kinds_s = "not verified by a sample"
             evidence = "registry only"
         out.append(f"| {r['id']}{optional} | {f'`{exts}`' if exts else ''}{h_note} | {kinds_s} | {'yes' if r['call_edges'] else 'no'} | {'yes' if r['imports'] else 'no'} | {'yes' if r['docstrings'] else 'no'} | {evidence} |")
-    out.append("\nA `.h` file is read as objc when it holds " + ", ".join(f"`{m}`" for m in h_markers)
-               + f", else as cpp when a line matches `{h_pattern}`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).")
+    out.append(f"\nA `.h` file is read as objc when a line matches `{h_objc}`, else as cpp when a line matches `{h_cpp}`, "
+               "else as c (`sniff` in `crates/scrutate/src/langs.rs`).")
     listed = lambda marks: ", ".join(f"`{m}`" for m in marks)
     out.append("A `.m` file is read as objc when its first 4000 bytes hold " + listed(marker_rule(".m", "objc")) + ", else as matlab. "
-               "A `.pp` file is read as pascal when it holds " + listed(marker_rule(".pp", "pascal"))
-               + " and its first 4000 bytes hold no `$`, else as puppet.")
+               f"A `.pp` file is read as pascal when a line of its first 4000 bytes matches `{pp_header}` (a unit, program or "
+               "library header), or when it holds " + listed(pp_words) + " and its first 4000 bytes hold no `$`; else as puppet.")
     n_opt = sum(r["id"] not in default_ids for r in regs)
     out.append(f"\n{len(regs) - n_opt} grammars in the default build" + (f", {n_opt} more with `--features extra-langs`" if n_opt else "")
                + f"; {n_verified} verified by snapshot samples. "

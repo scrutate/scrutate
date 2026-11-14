@@ -19,7 +19,7 @@ impl Rules for Go {
     }
 
     // a method is declared outside its type, in any file of the package: its receiver names the type
-    fn inherited(r: &mut Resolver, _id: i64, name: &str, _depth: usize, path: &str, qualname: &str) -> Option<i64> {
+    fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let owner = strip_generics(qualname);
         for f in r.go_dir(dir_of(path)) {
             let gf = r.file(&f);
@@ -34,6 +34,31 @@ impl Rules for Go {
                         return Some(d.id);
                     }
                 }
+            }
+        }
+        // a method promoted from an embedded field of the struct (`type Wrap struct { *Base }`)
+        if depth > 4 {
+            return None;
+        }
+        let fi = r.file(path);
+        let mut embedded = Vec::new();
+        let mut stack: Vec<Node> = def_node(&fi, id).into_iter().collect();
+        while let Some(n) = stack.pop() {
+            if n.kind() == "field_declaration" {
+                if n.child_by_field_name("name").is_none() {
+                    embedded.extend(n.child_by_field_name("type").and_then(type_name));
+                }
+                continue;
+            }
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+        // an embedded `base.Base` is the `Base` of package `base`, not one of this package
+        for leaf in embedded {
+            let line = leaf.start_position().row as i64 + 1;
+            let Ok((base, _)) = r.type_leaf(path, &fi, Lang::Go, leaf, line) else { continue };
+            if let Some(m) = r.member(base, name, depth + 1) {
+                return Some(m);
             }
         }
         None

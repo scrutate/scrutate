@@ -6,7 +6,7 @@
 # The build jobs can only read the repository. The one job that signs and publishes runs in the
 # `release` environment (`rehearsal` for a dry run), and the release stays a draft until every
 # file is attached. Nothing is published unless the tag names the version the code declares and
-# every ci.yml job passed on the tagged commit.
+# every ci.yml and security.yml job passed on the tagged commit.
 name: release
 on:
   push:
@@ -45,6 +45,11 @@ jobs:
     if: github.ref_type == 'tag' || inputs.dry_run
     # the documented form for a workflow of the same repository and commit; actionlint rejects $/
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+  security:
+    name: security on the tagged commit
+    needs: version
+    if: github.ref_type == 'tag' || inputs.dry_run
+    uses: ./.github/workflows/security.yml # zizmor: ignore[self-repository]
   binaries:
     name: binary (${{ matrix.target }})
     needs: version
@@ -169,7 +174,8 @@ jobs:
         shell: bash
         run: |
           pip install --no-deps dist/scrutate-*.whl
-          python -c "import scrutate, sys; print(scrutate.__version__); print(list(scrutate.grep('fn ', ['crates'], mode='literal'))[:1]); print('gil enabled:', getattr(sys, '_is_gil_enabled', lambda: True)())"
+          # a module not marked gil_used = false turns the GIL back on at import, with only a warning
+          python -c "import scrutate, sys, sysconfig; print(scrutate.__version__); print(list(scrutate.grep('fn ', ['crates'], mode='literal'))[:1]); ft = sysconfig.get_config_var('Py_GIL_DISABLED') == 1; gil = getattr(sys, '_is_gil_enabled', lambda: True)(); print('free-threaded:', ft, 'gil enabled:', gil); assert not (ft and gil), 'importing scrutate turned the GIL on'"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.kind }}
@@ -207,7 +213,7 @@ jobs:
           retention-days: 7
   release:
     name: sign and publish
-    needs: [version, ci, binaries, wheels, vsix]
+    needs: [version, ci, security, binaries, wheels, vsix]
     if: github.ref_type == 'tag' || inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 20

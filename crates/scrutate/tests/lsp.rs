@@ -618,3 +618,113 @@ fn the_index_s_exclude_dirs_comes_from_its_root_not_the_server_s_directory() {
     drop(c);
     child.wait().unwrap();
 }
+
+/// What an editor sees has no byte order mark: definition and document symbols count columns
+/// without it, from the disk and from the editor's text alike; two definitions on one line are
+/// siblings, each range starting where it starts.
+#[test]
+fn a_byte_order_mark_and_two_definitions_on_one_line_are_placed_as_the_editor_sees_them() {
+    let r = Repo::new("bom_symbols");
+    fs::write(r.root.join("u4.py"), b"\xef\xbb\xbfdef foo(): return foo2()\ndef foo2(): return 1\n").unwrap();
+    r.write("u8.js", "function b() { return 1; } function c() { return 2; }\n");
+    r.write("u9.js", "function b() {\n  return 1;\n} function c() { return 2; }\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let doc = |f: &str| json!({"uri": uri(&r.root.join(f))});
+    for open in [false, true] {
+        if open {
+            c.notify("textDocument/didOpen", json!({"textDocument": {"uri": uri(&r.root.join("u4.py")), "languageId": "python", "version": 1, "text": "def foo(): return foo2()\ndef foo2(): return 1\n"}}));
+        }
+        let found = c.request("textDocument/definition", json!({"textDocument": doc("u4.py"), "position": {"line": 0, "character": 18}}));
+        assert_eq!(places(&found["result"]), [("u4.py".to_string(), 1, 4)], "open {open}: {found}");
+        let syms = c.request("textDocument/documentSymbol", json!({"textDocument": doc("u4.py")}));
+        let foo = &syms["result"][0];
+        assert_eq!(
+            (foo["name"].as_str(), &foo["selectionRange"]["start"]["character"], &foo["selectionRange"]["end"]["character"]),
+            (Some("foo"), &json!(4), &json!(7)),
+            "open {open}: {syms}"
+        );
+    }
+    let syms = c.request("textDocument/documentSymbol", json!({"textDocument": doc("u8.js")}));
+    let roots: Vec<(&str, u64)> =
+        syms["result"].as_array().unwrap().iter().map(|s| (s["name"].as_str().unwrap(), s["range"]["start"]["character"].as_u64().unwrap())).collect();
+    // the index keeps lines, not columns: c's range starts at its name, after b
+    assert_eq!(roots, [("b", 0), ("c", 36)], "{syms}");
+    // one that starts on the line another ends on is its sibling too
+    let syms = c.request("textDocument/documentSymbol", json!({"textDocument": doc("u9.js")}));
+    let roots: Vec<(&str, u64, u64)> = syms["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s["range"]["start"]["line"].as_u64().unwrap(), s["range"]["start"]["character"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(roots, [("b", 0, 0), ("c", 2, 11)], "{syms}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[test]
+fn a_reference_under_an_alias_spans_the_alias_as_written() {
+    let r = Repo::new("alias_range");
+    r.write("util.py", "def helper():\n    return 1\n");
+    r.write("app.py", "from util import helper as h\n\n\ndef use():\n    return h()\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let at = json!({"textDocument": {"uri": uri(&r.root.join("util.py"))}, "position": {"line": 0, "character": 5}, "context": {"includeDeclaration": false}});
+    let refs = c.request("textDocument/references", at);
+    let spans: Vec<(u64, u64, u64)> = refs["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{refs}"))
+        .iter()
+        .filter(|l| l["uri"].as_str().unwrap().ends_with("/app.py"))
+        .map(|l| {
+            (
+                l["range"]["start"]["line"].as_u64().unwrap(),
+                l["range"]["start"]["character"].as_u64().unwrap(),
+                l["range"]["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(spans, [(0, 17, 23), (4, 11, 12)], "{refs}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[test]
+fn an_alias_that_starts_with_the_name_spans_the_whole_alias() {
+    let r = Repo::new("alias_prefix");
+    r.write("util.py", "def helper():\n    return 1\n");
+    r.write("app.py", "from util import helper as helper2\n\n\ndef use():\n    return helper2()\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let at = json!({"textDocument": {"uri": uri(&r.root.join("util.py"))}, "position": {"line": 0, "character": 5}, "context": {"includeDeclaration": false}});
+    let refs = c.request("textDocument/references", at);
+    let spans: Vec<(u64, u64, u64)> = refs["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{refs}"))
+        .iter()
+        .filter(|l| l["uri"].as_str().unwrap().ends_with("/app.py"))
+        .map(|l| {
+            (
+                l["range"]["start"]["line"].as_u64().unwrap(),
+                l["range"]["start"]["character"].as_u64().unwrap(),
+                l["range"]["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(spans, [(0, 17, 23), (4, 11, 18)], "{refs}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}

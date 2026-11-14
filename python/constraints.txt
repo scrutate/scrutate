@@ -1,4 +1,5 @@
-# The versions the training code's and bindings' tests were last run with (pip install -c).
+# The versions the training code's and bindings' tests and the Python lint were last run with (pip install -c).
 maturin==1.16.0
 numpy==2.5.4
 pytest==9.2.0
+ruff==0.16.2

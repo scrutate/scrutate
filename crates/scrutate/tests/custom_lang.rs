@@ -160,6 +160,24 @@ fn one_error(t: &Tree, toml: &str, line: usize, words: &str) {
     }
 }
 
+/// The patterns of every table share one size budget, so a repository's table of many large
+/// patterns is refused at once where it took gigabytes (each had the whole budget alone); many
+/// small ones still load.
+#[test]
+fn the_definition_patterns_of_all_tables_share_one_size_budget() {
+    let t = Tree::new("budget");
+    let defs = |pattern: &str, n: usize| (0..n).map(|_| format!("  {{ kind = \"function\", pattern = '{pattern}' }},\n")).collect::<String>();
+    t.write(".scrutate.toml", &format!("[[language]]\nname = \"big\"\nextensions = [\"big\"]\ndefinitions = [\n{}]\n", defs(r"(\w{1,300})", 10)));
+    let t0 = std::time::Instant::now();
+    let (code, out, err) = t.run(&["languages"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("does not compile") && err.contains("size"), "{err}");
+    assert!(t0.elapsed() < std::time::Duration::from_secs(10), "{:?}", t0.elapsed());
+    t.write(".scrutate.toml", &format!("[[language]]\nname = \"small\"\nextensions = [\"sml\"]\ndefinitions = [\n{}]\n", defs(r"^\s*fn\s+(\w+)", 50)));
+    let (code, out, err) = t.run(&["languages"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
 #[test]
 fn a_bad_table_is_one_error_that_names_the_file_and_the_line() {
     let t = Tree::new("errors");
@@ -169,6 +187,8 @@ fn a_bad_table_is_one_error_that_names_the_file_and_the_line() {
     one_error(&t, &TABLE.replace("line_comment", "line_coment"), 4, "line_coment");
     one_error(&t, &TABLE.replace("\"mylang\"", "\"python\""), 2, "built-in");
     one_error(&t, &TABLE.replace("[\"myl\"]", "[\"myl\", \"rs\"]"), 3, "rust");
+    // a built-in language that claims a whole file name (CMakeLists.txt) claims its extension too
+    one_error(&t, &TABLE.replace("[\"myl\"]", "[\"myl\", \"txt\"]"), 3, "cmake");
     one_error(&t, &TABLE.replace("kind = \"class\"", "kind = \"widget\""), 8, "widget");
     one_error(&t, &TABLE.replace("name = \"mylang\"", "name = \"my lang\""), 2, "letters");
 }

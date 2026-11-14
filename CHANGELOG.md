@@ -9,6 +9,15 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- Vendored code ranks below the project's own in `search` and the MCP `search_code`, and is never
+  left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
+  their kin, a subset of GitHub linguist's `vendor.yml`. A name only vendored code defines,
+  searched for as itself, keeps its place. Every JSON item whose `path` is vendored code, in
+  any answer, has `"vendored": true`
+  ([CLI](docs/CLI.md#engine-b)).
+- `SCRUTATE_COUNT_KEY=N` keeps a count of big searches apart from the one the user's other
+  searches join; the tests of that count use it, so another suite's searches cannot change what
+  they see ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `scrutate review --base REV [--head REV]` reports a pull request: `impact` between the two
   commits and the duplicates the head adds, as a PR comment (`--format markdown`), JSON or a
   GitLab Code Quality report, which the GitLab template saves as the job's `codequality` report
@@ -91,6 +100,14 @@ incompatible index by itself, and that is never breaking.
   the MCP server, and records per run whether the answer checks out, tokens, cost, tool calls and
   tool errors. Each run is paid, so it starts only with `--yes-spend`; no round has run yet
   ([Quality](docs/QUALITY.md#agent-eval)).
+- `bench/yardstick.py` measures each workload against its rivals: grep tools, zoekt and livegrep,
+  universal-ctags, ast-grep, rust-analyzer, pyright, clangd and gopls, and on the QUALITY queries
+  (`--quality N`) ck, grepai and claude-context with local embeddings, with each tool's MRR@10
+  and hit@5. It checks every answer before it times one, reports a wrong answer instead of a
+  time, and records each rival's version. `bench/competitors/install_rivals.sh` installs every
+  rival pinned by version and checksum; `yardstick.Dockerfile` and `claude-context.compose.yml`
+  run them in containers. CI runs `--smoke` on a small tree in Python, Rust, C and Go
+  ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
@@ -133,6 +150,9 @@ incompatible index by itself, and that is never breaking.
   (`--signer-workflow`, `--source-ref`): with `--owner` alone any workflow of the organization
   passed. It says what "signed" means and how to run the binaries, which carry no Apple or
   Windows code signature ([Install](docs/INSTALL.md#unsigned-binaries-on-macos-and-windows)).
+- A release waits for `security.yml` on the tagged commit as well as `ci.yml`: a crate under a
+  licence outside `deny.toml`, a git dependency, a zizmor finding or an unlisted `unsafe` now
+  stops it. `ci.yml` no longer runs `cargo audit`; `cargo deny` checks the same advisories.
 - PCRE2 is the `pcre2` cargo feature, on by default; a build without it refuses `-P`
   ([CLI](docs/CLI.md)).
 - The repository is now github.com/scrutate/scrutate, under the `scrutate` organization; the old
@@ -142,8 +162,7 @@ incompatible index by itself, and that is never breaking.
   they showed only slow cross-fades.
 - Ranked search folds Japanese shinjitai with traditional and simplified Han, so `関係` finds
   `關係` and `关系` and the reverse (OpenCC ver.1.4.2 `JPShinjitaiCharacters.txt`, Apache-2.0).
-  The content revision is 3, so an older index reads every file again
-  ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
+  An older index reads every file again ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
 - `watch` on macOS follows FSEvents with file-level events, loaded with `dlopen` only by `watch`,
   so a save updates that file alone with no walk of the tree: 0.24 to 0.31 s from the save to the
   update on a tree of 20,000 directories (release build, the 200 ms burst wait included), where
@@ -156,6 +175,297 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `tsquery --rewrite --write` on Windows reads and writes through the root it opened and each
+  directory opened from it, refusing a junction or link at every name: a directory swapped for a
+  junction after the plan, the root included, sent the write outside `--root`
+  ([Security](docs/SECURITY.md#the-structural-rewrite)).
+- `callees` of PHP code that writes `new self()`, `new static()` or `new parent()` lists the
+  class, where it listed `self`, `static` or `parent` as an external name
+  ([CLI](docs/CLI.md#engine-b)).
+- The language server's references under an import alias span the alias as the line writes it:
+  `h()` after `from util import helper as h` is 1 character wide, where it took the width of
+  `helper` and ran past the end of a short line ([CLI](docs/CLI.md#lsp)).
+- `callers` lists a call the resolver could not place, tied by its name only (`tx.foo.update()`
+  on an untyped parameter), as undecided also when no other definition has the name, where
+  `callers update` listed it as decided and `callers ProviderProfile.update` as undecided;
+  `impact` marks such callers undecided too ([CLI](docs/CLI.md#engine-b)).
+- A name a Python class body binds, `h = 5` beside `from util import helper as h` (also in an
+  `if`, a tuple or a `for` target), is a local of the class body once bound, where `refs helper`
+  listed it as a use of the import; `h = h` still reads the import on its right side, as does a
+  comprehension
+  ([CLI](docs/CLI.md#engine-b)).
+- `callers`, `callees` and `refs` follow a PHP alias written in another case: `PF()` after
+  `use function Lib\phpfn as pf` is a call of `phpfn`, and `t::make()` after `use Lib\Tool as T`
+  a use of `Tool`, where callers and refs missed them and callees said `external: PF` ([CLI](docs/CLI.md#engine-b)).
+- `refs` through an import alias lists only uses of the aliased definition: a local of the
+  alias's name (`const g = () => 2; g()` beside `import { jsfn as g }`) no longer adds its own
+  group to `refs jsfn` ([CLI](docs/CLI.md#engine-b)).
+- A Java class of the default package (a file with no `package` line) is looked for in its own
+  directory only: `Util.help()` in `ex/b/Main.java` is `ex/b/Util.java`'s, where every
+  default-package directory was one package and it could go to `ex/a/Util.java`; with no
+  `Util.java` in the directory, `refs` and `callees` both answer `external`
+  ([CLI](docs/CLI.md#engine-b)).
+- A call on a PHP static property, `User::$current->save()`, goes through the property's declared
+  type to `User::save`, and `current` there is `field or key`, where `save` was `receiver` and
+  `current` a local variable ([CLI](docs/CLI.md#engine-b)).
+- `$this->word()` in a PHP trait that has no `word` is `receiver` in `refs`, since the class using
+  the trait decides, where it said `not found` ([CLI](docs/CLI.md#engine-b)).
+- `this` in a JavaScript method under a quoted key (`"get": function () {}`, `"del"() {}`) is
+  the object literal, so `this.put()` there is `api.put`, where it was `receiver`
+  ([CLI](docs/CLI.md#engine-b)).
+- `callers`, `callees`, `impact` and `refs` follow an import alias through a package that
+  re-exports the name: `from pkg import helper as h` with `pkg/__init__.py` importing `helper`
+  from `.util`, where the alias was looked for only in imports naming `helper` or `util`
+  ([CLI](docs/CLI.md#engine-b)).
+- A PHP variable a closure takes with `function () use ($u)`, or `use (&$u)`, has the type it
+  has around the closure, so `$u->save()` inside is `User::save`, where it was `receiver`
+  ([CLI](docs/CLI.md#engine-b)).
+- `const x = require('./n').x`, `const { later } = await import('./lazy')` and TypeScript
+  `import m = require('./n')` bind their names to the module's definitions, where `refs` read
+  them as local variables or receivers ([CLI](docs/CLI.md#engine-b)).
+- A JavaScript or TypeScript `super()` in a subclass constructor is a call of the base class:
+  `callers Base` and `impact` list `Kid.constructor`, `refs Base` lists the `super()`, and
+  `callees Kid.constructor` gives `Base` where it said `external: super` ([CLI](docs/CLI.md#engine-b)).
+- A field of a Java anonymous class is what a use of its name inside the class reads, where a
+  local of that name in the method around it hid the field and the field had no references
+  ([CLI](docs/CLI.md#engine-b)).
+- `Outer.this.tick()` in a Java inner class is a call of `Outer.tick`, where it was `receiver`
+  and `dead` left `Outer.tick` undecided ([CLI](docs/CLI.md#engine-b)).
+- A local variable of a Java instance initializer block (`{ int count = 3; count++; }` in a
+  class or enum body) is a local there, where it and its uses were read as the field of that name
+  ([CLI](docs/CLI.md#engine-b)).
+- PHP class, interface, trait, enum, method, namespace and `use` alias names, and `self::`,
+  `static::` and `parent::`, match in any case,
+  as PHP matches them: `s::SLUG()` after `use App\Util\Str as S`, `\app\util\str::slug()` and
+  `$x->Slug()` are calls of `Str::slug` in `refs`, `callers` and `dead`, where they were
+  `external` or not found; variables, properties and constants still compare as written
+  ([CLI](docs/CLI.md#engine-b)).
+- `refs` finds a Go method promoted through an embedded struct field: `v.Hello()` on a `Wrap`
+  that embeds `Base` (or `*Base`, `base.Base` from another package, also two levels down) is
+  `Base.Hello`, where it said `not found` ([CLI](docs/CLI.md#engine-b)).
+- `refs` ties a call of a Rust trait's default method on a type that implements the trait
+  without overriding it (`s.hello()` after `impl Greet for S {}`, also `impl Greet for inner::S`
+  and `impl super::Greet for S` inside `mod inner { }`) to that method, where it said
+  `not found` ([CLI](docs/CLI.md#engine-b)).
+- A Rust `use` of an item of an inline `mod other { }` reaches it: `use other::work` and the
+  calls `work()` after it were `external` ([CLI](docs/CLI.md#engine-b)).
+- `refs` lists a use under an import alias also in a file whose import never spells the
+  definition's name: `h()` after `const h = require("./m")` or `import h from "./m"`, which
+  `callers` already found ([CLI](docs/CLI.md#engine-b)).
+- The name of a JavaScript generator expression (`function* load() {}`) or class expression
+  (`class Box {}` as a value) is its own inside it, where uses there went to an outer `load` or
+  `Box`; a generator expression is also a scope for its parameters and locals
+  ([CLI](docs/CLI.md#engine-b)).
+- The name of a JavaScript named function expression is its own inside it: in `var h = function
+  load() { return load(); }` the inner call no longer goes to an outer `function load`, which
+  `callers load` listed `h` for ([CLI](docs/CLI.md#engine-b)).
+- `refs` ties a JavaScript or TypeScript shorthand property, the `helper` in `{ helper }` or
+  `module.exports = { helper }`, to the `helper` it reads, where it listed it as `field or key`.
+- A Rust path inside a macro's arguments resolves as the same path outside a macro: with `use
+  other::work`, the `util::work()` in `println!("{}", util::work())` or `vec![util::work()]` was
+  read as the bare `work` and tied to `other::work` ([CLI](docs/CLI.md#engine-b)).
+- `callers` and `callees` follow a CommonJS `module.exports = helper` or `module.exports =
+  function named() {}` to the call `h()` of `const h = require("./m")`, and an ES default import
+  `import h from "./m"` to the definition it reaches, also through a file that re-exports it
+  with `const helper = require("./m"); module.exports = helper`: they matched the local name
+  to the imported one, so `h` reached nothing ([CLI](docs/CLI.md#engine-b)).
+- `dead` counts a Ruby writer (`def color=`) as used only where it is called (`x.color = 1`,
+  `send(:color=, 1)`): reading `@color` kept a writer nothing calls out of the dead
+  ([CLI](docs/CLI.md#engine-b)).
+- A code index segment write that is stopped or fails removes its half-written directory, which
+  stayed in `.scrutate` until a later write took its name ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
+- A path that names the repository's root from a directory below it (`dead ..`, `map ..` from
+  `repo/pkg`) is the whole repository: it was an error, "no such file or directory in the
+  repository" ([CLI](docs/CLI.md#engine-b)).
+- `grep -c -U` counts as ripgrep does when a match ends at the end of its lines (`b|\n$`,
+  `a|b\n\B`, `-w a|b\n`): `$`, `\B` and word edges saw the end of the matched lines as the end
+  of the text, and counted a match too many ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- The language server answers requests queued behind one that waited out the first build at
+  once, so `shutdown` behind four of them comes after one 20-second wait, not four
+  ([CLI](docs/CLI.md#lsp)).
+- A `serve --watch` tool call no longer waits for the server's own update of a saved file, which
+  may itself wait for another process's write lock: it answers from the last committed index at
+  once, where it waited until the lock was free (37 s for a lock held 40 s)
+  ([CLI](docs/CLI.md#the-index-directory)).
+- Ctrl-C ends a wait for the text index's lock that another process holds, under `watch` and
+  `grep --index --update` (exit 130): the wait went on up to 10 minutes
+  ([CLI](docs/CLI.md#watch)).
+- Ctrl-C stops a code index update while a large segment's vectors are clustered (`watch`, a
+  cancelled `reindex`): it waited for the clustering to end, two minutes in a debug build of a
+  20,000-file tree ([CLI](docs/CLI.md#watch)).
+- A path that leaves the repository and comes back by its parts (`outline ../../repo/pkg/a.py`
+  from `repo/pkg`, an MCP `path` of `../repo/pkg`) names the repository's file or directory:
+  `outline` said the file had no symbols, `dead_code` and `repo_map` found nothing, and
+  `grep_code` named files by the detour ([CLI](docs/CLI.md#answers-from-the-index-one-definition-for-every-front-end)).
+- `setup --uninstall` keeps text added after the scrutate block on its own line: with a file that
+  had no last line break, it joined that text to the line above the block
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- A `grep` option given twice takes its last value, as in ripgrep (`-m1 -m2`, `-i -i`,
+  `-C1 -C3`): it was an error ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- The Arabic letter mark (U+061C) in a path or name is shown as `\u{61c}`, as the other bidi
+  marks are: it was printed raw ([CLI](docs/CLI.md#conventions)).
+- `grep --index` skips the file standard output writes to, as the walk does: with an earlier
+  search's output in the text index, `grep --index foo > out.txt` searched its own output and grew
+  it until the disk filled ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `dead` finds a use of a definition named with its owner (Pascal's `procedure TFoo.Tidy`, used
+  as `o.Tidy`) and of a Ruby writer (`def label=`, used as `v.label = "x"`) by its own name: both
+  were called dead while code used them. A method's declaration in its class and its body no
+  longer count as uses of each other ([CLI](docs/CLI.md#engine-b)).
+- Two `Repo`s of the Python module with different custom languages each work under their own
+  root's tables: an update, a tool call (`impact` parses files itself) and `grep(types=)` could use
+  the tables another `Repo` loaded last, keep chunks parsed with them or call a custom type
+  unknown ([CLI](docs/CLI.md#custom-languages)).
+- `grep -t cpp` takes `.h` files, as ripgrep's `cpp` type does, `-t objc` takes `.h` and `.m`, and `-t matlab` and
+  `-t puppet` find `.m` and `.pp` files, where they found none: a type now includes the extensions its language shares with another and is told apart in by
+  content ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `tsquery --rewrite --write` on Linux and macOS reads and writes through the root as it was
+  opened when the plan started and each directory opened from it, refusing links: a directory
+  swapped for a link between the read and the write, the root included, sent the write and its
+  temporary file outside `--root`
+  ([Security](docs/SECURITY.md#the-structural-rewrite)).
+- The keyword tier (OCaml and F# without a grammar, unknown languages) names `let rec fact` as
+  `fact`, finds `let inline square` and `let private helper`, no longer takes `let mutable x` for a
+  function named `mutable`, and keeps a function named after a modifier word (`let data x`,
+  `proc inner()`), and takes only OCaml's and F#'s own words after `let` for modifiers
+  (`let data x y` binds `data`, `let inline (+.)` gives no definition named `inline`); the
+  content revision is 8 so an older index reads its files again
+  ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
+- `grep -z` on a compressed file named on the command line whose text has a NUL reports a
+  binary match, as ripgrep does, where it reported nothing and exit 1
+  ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- A custom language's extension is refused when a built-in language claims a file name that
+  ends with it (`txt` for `CMakeLists.txt`): such a table took those files from the built-in
+  language ([CLI](docs/CLI.md#custom-languages)).
+- `check` reports a segment whose vectors are gone or not as wide as the model's, and an IVF row
+  out of range, where it said OK or stopped with a bare error; a search finds a segment of the
+  wrong width damaged and rebuilds it, where it panicked ([CLI](docs/CLI.md#engine-b)).
+- A `SCRUTATE_SEMANTIC` model whose tables do not agree in size is refused with an error: it
+  panicked while indexing, and every file stayed skipped after the model was fixed
+  ([CLI](docs/CLI.md#environment-variables)).
+- `watch` on a disk that ignores case (macOS's default) walks the tree after a rename that
+  changes only the case of a name: the text index kept the old name beside the new one
+  ([CLI](docs/CLI.md#watch)).
+- A concise tool answer too long for `max_bytes` is the detailed page, which says how to go on:
+  it was cut in the middle of an item and lost the line with the next offset, so items between
+  pages were never shown ([CLI](docs/CLI.md#serve-mcp)).
+- The language server counts columns as the editor does in a file with a byte order mark, so
+  definition on its first line and its document symbols land on the name, and a definition that
+  starts on the first or last line of another (`} function c() {`) is its sibling in the
+  document symbols, not inside it
+  ([CLI](docs/CLI.md#lsp)).
+- `grep --json` spans and colour leave out the empty matches ripgrep leaves out: one right where
+  a match ended and one past the line's end (`\s*$` on `foo  ` gives one span, not three), and an
+  empty match inside a character stays empty instead of covering the character, at ripgrep's byte
+  offset when the line is valid UTF-8 (`x*` on `é€x`: 0, 1, 2, 3, 4).
+- Ctrl-C stops a `watch` update at its next batch of files, the first update of a large tree
+  included, where it ran on to its end; a second Ctrl-C ends any command at once
+  ([CLI](docs/CLI.md#watch)).
+- A C++ header with a Doxygen `@class` (or `@interface`, `@protocol`) in a comment is parsed as
+  C++: only a line that starts with an Objective-C keyword makes a `.h` file Objective-C; an index
+  reads its files again.
+- Text answers show bidi marks, embeddings, overrides and isolates and the line and paragraph
+  separators in a path as escapes (`\u{202e}`), as they show control characters: a file named
+  `bidi<U+202E>yp.txt` displayed as `biditxt.py` ([CLI](docs/CLI.md#serve-mcp)).
+- `files` and `tsquery` with a `--root` that does not exist or is a file stop with "no such
+  directory" or "not a directory" and exit 2, as the other commands do; they answered "no file
+  matches" with exit 1.
+- The definition patterns of every `[[language]]` table share one regex size budget, so a
+  repository's `.scrutate.toml` with many large patterns is refused at once with the pattern's
+  line; each pattern had the whole budget, and ten took 340 MB and three seconds in every command,
+  `serve` and `lsp` included ([CLI](docs/CLI.md#custom-languages)).
+- The index's write-ahead log stays small while readers overlap: after an update it is cut to
+  nothing once readers on older commits finish (waited for about a second, else by the next
+  update), and a cut log keeps at most 4 MB of its file. Under four MCP servers searching and a
+  `watch` editing every second for 10 minutes, the log peaked at 1.29 MB, where it reached 5.88
+  MB ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- A Free Pascal unit in a `.pp` file that starts with compiler directives (`{$mode objfpc}{$H+}`,
+  the Lazarus default) is parsed as Pascal, not as one Puppet module; an index reads its files
+  again.
+- The resolver takes a file's language as the parser does, from its text where the extension is
+  shared: an Objective-C `.h` header no longer goes through the C rules, which could not place its
+  calls and left `dead` asking about them in place of a C file's call.
+- A `serve` reader left idle lets go of segments a write replaced, so their disk space is freed
+  on Unix and they can be removed on Windows, where idle readers kept them open until reused.
+- `setup claude` replacing an old entry through `claude mcp` adds the old one back when the new
+  `add-json` fails, where the user was left with no scrutate server
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `serve` reads a message of at most 256 MiB, as `lsp` does: a longer line, or one with no end,
+  is dropped as it is read and answered with a parse error, where it was held in memory whole
+  ([CLI](docs/CLI.md#serve-mcp)).
+- `callers` and `refs` through a C# or C++ type whose bases form a wide diamond take linear time:
+  each base type is read once per depth, as for Java, where 9 levels of 6 interfaces took 35 s for
+  one call.
+- `setup` makes its temporary file with the permissions of the file it replaces before writing to
+  it: a `config.toml` only its owner may read was readable by others while it was written
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- A language server request during the first build waits for it up to 20 seconds, then answers
+  -32801 "the index is still being built": it waited for the whole build on the one thread that
+  reads requests, so `shutdown` and cancellations queued behind it ([CLI](docs/CLI.md#lsp)).
+- Each search, tool call and language server request reads the code index from one commit: a
+  `watch` that committed between its reads could drop a hit whose rows it had already picked
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- A failed write of `grep`'s output other than a closed pipe (a full disk, a file size limit)
+  is an error with exit code 2, as in ripgrep: it stopped the search and exited 0 or 1 without a
+  word.
+- `grep foo . > out.txt` skips `out.txt`, as ripgrep does: it searched its own output and grew
+  it until the disk or a file size limit stopped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- A new segment's files and directory are flushed to disk before the database names them, and
+  the text index's before its manifest does, so power lost after an update can no longer leave
+  an index naming segments of empty or zeroed files that pass their shape checks; an update of 20 files takes about 60 ms longer on macOS
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- A Pascal statement that is a name alone (`DoWork;`, `Obj.Tidy;`) is a call edge, so `callers`,
+  `callees` and `impact` see a procedure called without parentheses; an index reads its files
+  again ([CLI](docs/CLI.md#engine-b)).
+- `refs` of a name a Fortran, Pascal or Ada definition or a PHP function has finds its uses in any
+  case in those languages' files: `refs DoWork` missed `dowork()`. Fortran needs a build with
+  `--features extra-langs` ([CLI](docs/CLI.md#engine-b)).
+- `grep --fuzzy-regex` reports where a match starts: the reversed pattern is run back from its
+  end. The column, the `--json` spans and the colour took a lower bound (`zzz a12b` gave column 1
+  for `a[0-9]*b`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- An internal error advises `scrutate index --force` only in a process that opened an index:
+  `grep` without `--index`, `hook`, `setup` and the other commands without one now only ask for a
+  report; with `--index` the text index counts.
+- The MCP tools `repo_map` and `dead_code` take an absolute directory under the root, which
+  gave no files or "no such file", and `repo_map` and `map` refuse a path that is not there;
+  `grep_code` reads a path whose name holds a backslash (`x\ty`) as written when no file has the
+  escape's reading. The tools also take a path spelled through the root as the server was given
+  it (`--root <dir>/link`, macOS's `/tmp`). The command line, the language server and the tools
+  turn paths into repository paths in one place ([CLI](docs/CLI.md#serve-mcp)).
+- `index`, `watch`, `serve --watch` and `reindex` wait for another writer for up to 10 minutes,
+  or until cancelled, and so do the first open of a new index, the rebuild of an index of an
+  older schema and the merge of segments after an update: they gave up with "database is locked"
+  after 30 s. Ctrl-C ends `watch` during such a wait. A `watch` burst whose update failed is tried
+  again with a walk of the tree, with the next burst or after a pause of 1 s doubling up to 30 s,
+  so its files are indexed with no further change ([CLI](docs/CLI.md#watch)).
+- An open of the index that finds another process writing no longer takes the lock for damage:
+  it replaced the database and deleted that process's work.
+- `grep -c -U` no longer counts the empty match after each matched group's line end, at the end
+  of a file with no final line end, or right where a match before it ended, as ripgrep: `^$` on
+  `a`, a blank line and `b` counts 1, not 2, and `b?$` on the same text with no final line end 3,
+  not 4.
+- `grep -A` and `-B` win over `-C` in either order, as in ripgrep: `-C1 -A3` showed one line
+  after each match, not three ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `grep -i` with a class that matches nothing (`ab[^\s\S]`) finds nothing and exits 1, as
+  ripgrep does; it stopped with an internal error.
+- `dead`, `callers` and `callees` match a Fortran, Pascal or Ada name, and a PHP function outside a class,
+  in any case, as those languages do: `call compute_total(y)` is a call of `Compute_Total`, and
+  `FormatPrice(3)` of `formatPrice`, also in a Pascal unit of a `.pp` file, whose language its
+  text decides; an Ada `Main` is an entry point. Fortran needs a build with `--features
+  extra-langs` ([CLI](docs/CLI.md#engine-b)).
+- `dead` no longer lists Ruby methods that Ruby calls itself (`method_missing`,
+  `respond_to_missing?`, `coerce`, `to_str`, `inherited` and their kin) or operator methods
+  (`<=>`) ([CLI](docs/CLI.md#engine-b)).
+- `callers`, `callees`, `impact` and `refs` follow an import alias: with `from util import helper
+  as h` or `const { lone: l } = require("./u")`, a call `h()` was no caller of `helper`, so
+  `impact` found no callers and no tests ([CLI](docs/CLI.md#engine-b)).
+- Several first opens of a new linked work tree at once (an editor starting its language server
+  and MCP server) no longer delete each other's copied segments: the losing open removed the
+  segments the winner's database listed, and `check` found the new index damaged.
+- `setup --instructions` and `--uninstall` take a scrutate marker only as a whole line: a
+  sentence quoting `<!-- scrutate:begin -->` got a second block, and uninstall then cut from that
+  sentence to the block's end. A begin line with no end line stops setup, and `--uninstall`
+  with or without `--instructions`, with no file changed
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - On Windows an index update that a virus scanner or the search indexer briefly blocked failed with
   "Access is denied" or "being used by another process" when it renamed a new segment or the text
   index manifest into place; the rename is now tried again for up to about two seconds.
@@ -196,6 +506,17 @@ incompatible index by itself, and that is never breaking.
 - `grep -t TYPE` (and `-t !TYPE`, `SCRUTATE_GREP_TYPES`, the configuration file's `types`)
   matches after the ignore rules, as ripgrep's `--type` does: a gitignored file of the type is no
   longer searched, and `-g '*.txt' -t py` searches only the `.txt` files.
+- VS Code's symbol, callers and references commands ask for the word under the cursor without
+  what comes before a dot when the name with its dots finds nothing, as the language server
+  does: on `norm` in `p.norm()` they asked only for `p.norm` and found nothing. R's `is.ready` is
+  still asked whole, and a word is alphabetic characters and digits of any script, as the server
+  reads one: on `ß` in `größe(2)` they found no word, and on `हिंदी` they asked only for `ह`, as a
+  vowel sign is alphabetic but not a letter.
+- The GitHub Action keeps a backslash in `args` as written: `grep -c \bTODO\b .` searched for
+  `bTODOb` and `--root C:\repo` named `C:repo`, so a gate could pass on the wrong search.
+- Python `grep(sort=True)` gives the CLI's `--sort` order (`a/b` before `a-b`), and with
+  `max_results=N` the first N matches in it, the same on every run: it capped the search at
+  whichever N matches came first and sorted those ([bindings](crates/scrutate-py/README.md)).
 
 ## [0.1.0] - 2026-11-11
 

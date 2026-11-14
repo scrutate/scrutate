@@ -602,3 +602,98 @@ fn wait_update_any(rx: &Receiver<String>) -> Vec<String> {
         }
     }
 }
+
+/// The names of the definitions the code index holds, read from its database without an update.
+#[cfg(unix)]
+fn chunk_names(root: &Path) -> String {
+    let db = rusqlite::Connection::open_with_flags(root.join(".scrutate/index.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    db.query_row("SELECT group_concat(qualname, ' ') FROM chunks", [], |r| r.get::<_, Option<String>>(0)).unwrap().unwrap_or_default()
+}
+
+#[cfg(unix)]
+#[test]
+fn ctrl_c_ends_a_wait_for_another_writer() {
+    let (r, mut child, _rx) = watched("sigint_wait", &[("a.py", "def alpha():\n    return 1\n")]);
+    let db = rusqlite::Connection::open(r.root.join(".scrutate/index.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    r.write("a.py", b"def alpha_new():\n    return 1\n");
+    // the update of that burst is waiting for the lock by now
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(Command::new("kill").args(["-INT", &child.0.id().to_string()]).status().unwrap().success());
+    let t0 = Instant::now();
+    wait_for(5, "watch to stop on Ctrl-C", || child.0.try_wait().unwrap().is_some());
+    assert_eq!(child.0.wait().unwrap().code(), Some(130), "{:?}", t0.elapsed());
+    db.execute_batch("ROLLBACK").unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_update_is_tried_again_with_no_further_change() {
+    use std::os::unix::fs::PermissionsExt;
+    let (r, _child, rx) = watched("retry", &[("a.py", "def alpha():\n    return 1\n")]);
+    let seg = r.root.join(".scrutate/seg");
+    fs::set_permissions(&seg, fs::Permissions::from_mode(0o555)).unwrap();
+    r.write("a.py", b"def alpha_new():\n    return 1\n");
+    wait_for(30, "the update to fail", || rx.try_iter().any(|l| l.contains("update failed")));
+    fs::set_permissions(&seg, fs::Permissions::from_mode(0o755)).unwrap();
+    // no file changes again: the retry alone indexes the burst
+    wait_for(30, "the retry", || chunk_names(&r.root).contains("alpha_new"));
+}
+
+/// Ctrl-C during watch's first update stops it at its next batch of files, and a second Ctrl-C
+/// ends the process at once, as for any program.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_stops_a_long_first_update_of_watch() {
+    let r = Repo::new("sigint_update");
+    let body: String = (0..40).map(|j| format!("def f{j}(x):\n    return x + {j}\n\n")).collect();
+    for i in 0..20000 {
+        r.write(&format!("d{}/m{i}.py", i % 200), body.as_bytes());
+    }
+    let (mut child, rx) = start_watch(&r.root);
+    // the first update is reading the files by now
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(child.0.try_wait().unwrap().is_none(), "watch ended before the signal");
+    assert!(!rx.try_iter().any(|l| l.contains("watching")), "the first update ended before the signal: a larger tree is needed");
+    assert!(Command::new("kill").args(["-INT", &child.0.id().to_string()]).status().unwrap().success());
+    let t0 = Instant::now();
+    wait_for(10, "watch to stop on Ctrl-C", || child.0.try_wait().unwrap().is_some());
+    assert_eq!(child.0.wait().unwrap().code(), Some(130), "{:?}", t0.elapsed());
+}
+
+/// A rename that changes only the case of a name (on macOS's default disk the old name still
+/// opens the file) leaves the text index with the new name alone.
+#[test]
+fn a_rename_of_the_case_alone_leaves_one_name_in_the_text_index() {
+    let (r, _child, rx) = watched("case_rename", &[("src/Foo.txt", "kappa\n"), ("mod.py", "def f():\n    return 1\n")]);
+    fs::rename(r.root.join("src/Foo.txt"), r.root.join("src/foo.txt")).unwrap();
+    let listed = || {
+        let out = Command::new(BIN).args(["grep", "--index", "-l", "kappa"]).current_dir(&r.root).stdin(Stdio::null()).output().unwrap();
+        let mut v: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+    wait_for(30, "the rename in the text index", || listed().iter().any(|p| p.ends_with("foo.txt")));
+    // a later burst may still be on its way: give it the time a burst takes
+    std::thread::sleep(Duration::from_secs(3));
+    let _ = rx.try_iter().count();
+    assert_eq!(listed(), ["src/foo.txt"]);
+}
+
+/// Ctrl-C ends watch's wait for the text index's lock that another process holds, as it ends the
+/// wait for the code index's.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_ends_a_wait_for_the_text_index_lock() {
+    let (r, mut child, _rx) = watched("text_lock", &[("a.txt", "one\n"), ("mod.py", "def f():\n    return 1\n")]);
+    let lock = fs::File::options().write(true).open(r.root.join(".scrutate/text/lock")).unwrap();
+    lock.lock().unwrap();
+    r.write("a.txt", b"two\n");
+    // the burst reaches the text index and waits for its lock
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(child.0.try_wait().unwrap().is_none(), "watch ended before the signal");
+    assert!(Command::new("kill").args(["-INT", &child.0.id().to_string()]).status().unwrap().success());
+    wait_for(10, "watch to stop on Ctrl-C while the text index is locked", || child.0.try_wait().unwrap().is_some());
+    assert_eq!(child.0.wait().unwrap().code(), Some(130));
+    drop(lock);
+}

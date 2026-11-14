@@ -12,12 +12,18 @@ use crate::parse::is_indexable;
 /// Where the indexes live under the repository root; no walk enters it.
 pub const INDEX_DIR: &str = ".scrutate";
 
-/// `root/.scrutate`, once `root` is an existing directory and nothing the indexes write into is
-/// a symbolic link (which would put the index, and its deletions, outside the repository).
-pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {
+/// An error unless `root` is an existing directory.
+pub fn root_dir(root: &Path) -> anyhow::Result<()> {
     if !root.is_dir() {
         anyhow::bail!("{}: {}", root.display(), if root.exists() { "not a directory" } else { "no such directory" });
     }
+    Ok(())
+}
+
+/// `root/.scrutate`, once `root` is an existing directory and nothing the indexes write into is
+/// a symbolic link (which would put the index, and its deletions, outside the repository).
+pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {
+    root_dir(root)?;
     let dir = root.join(INDEX_DIR);
     let refuse = |p: &Path| anyhow::bail!("{} is a symbolic link; the index is only written inside the repository (remove it)", p.display());
     if std::fs::symlink_metadata(&dir).map(|m| m.file_type().is_symlink()).unwrap_or(false) {

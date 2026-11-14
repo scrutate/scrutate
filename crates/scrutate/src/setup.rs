@@ -104,10 +104,11 @@ enum Step {
         after: Option<String>,
         what: String,
     },
-    /// the agent's own command
+    /// the agent's own command, and the one that undoes the step before it when this one fails
     Run {
         argv: Vec<String>,
         what: String,
+        undo: Option<Vec<String>>,
     },
     Note(String),
 }
@@ -122,7 +123,7 @@ impl Step {
                     let _ = writeln!(out, "  (the file is deleted: nothing else is left in it)");
                 }
             }
-            Step::Run { argv, what } => {
+            Step::Run { argv, what, .. } => {
                 let _ = writeln!(out, "would {what}: {}", shown_command(argv));
             }
             Step::Note(n) => {
@@ -144,14 +145,24 @@ impl Step {
                 }
                 let _ = writeln!(out, "{what}: {}", path.display());
             }
-            Step::Run { argv, what } => {
-                let o = std::process::Command::new(&argv[0])
-                    .args(&argv[1..])
-                    .stdin(std::process::Stdio::null())
-                    .output()
-                    .with_context(|| format!("run {}", argv[0]))?;
-                if !o.status.success() {
-                    bail!("{} failed: {}", shown_command(argv), String::from_utf8_lossy(&o.stderr).trim());
+            Step::Run { argv, what, undo } => {
+                let run = |argv: &[String]| -> Result<()> {
+                    let o = std::process::Command::new(&argv[0])
+                        .args(&argv[1..])
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .with_context(|| format!("run {}", argv[0]))?;
+                    if !o.status.success() {
+                        bail!("{} failed: {}", shown_command(argv), String::from_utf8_lossy(&o.stderr).trim());
+                    }
+                    Ok(())
+                };
+                if let Err(e) = run(argv) {
+                    let Some(undo) = undo else { return Err(e) };
+                    return Err(match run(undo) {
+                        Ok(()) => e.context("the old entry was put back"),
+                        Err(u) => e.context(format!("the old entry could not be put back ({u:#})")),
+                    });
                 }
                 let _ = writeln!(out, "{what}: {}", shown_command(argv));
             }
@@ -209,18 +220,34 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
     let tmp = dir.join(format!(".{name}.scrutate-{}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         use std::io::Write;
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut f = create_tmp(&tmp, &target)?;
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
-        if let Ok(m) = std::fs::metadata(&target) {
-            std::fs::set_permissions(&tmp, m.permissions())?;
-        }
         std::fs::rename(&tmp, &target)
     })();
     if written.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
     written.with_context(|| format!("write {}", target.display()))
+}
+
+/// A new file at `tmp` with the permissions of `target` from the start, so a file only its owner
+/// may read (a config holding a token) is never readable by others while it is written.
+fn create_tmp(tmp: &Path, target: &Path) -> std::io::Result<std::fs::File> {
+    let _ = std::fs::remove_file(tmp);
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    let old = std::fs::metadata(target).ok().map(|m| m.permissions());
+    #[cfg(unix)]
+    if let Some(p) = &old {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        o.mode(p.mode() & 0o7777);
+    }
+    let f = o.open(tmp)?;
+    if let Some(p) = old {
+        std::fs::set_permissions(tmp, p)?;
+    }
+    Ok(f)
 }
 
 // ------------------------------------------------------------------------- what each agent gets
@@ -359,17 +386,17 @@ fn claude_program(claude: &Path, file: &Path, entry: &J, o: Options) -> Result<V
     let remove = Step::Run {
         argv: vec![claude.clone(), "mcp".into(), "remove".into(), NAME.into(), "--scope".into(), "user".into()],
         what: "removed the scrutate server".into(),
+        undo: None,
     };
-    let add = Step::Run {
-        argv: vec![claude, "mcp".into(), "add-json".into(), NAME.into(), entry.value().to_string(), "--scope".into(), "user".into()],
-        what: "added the scrutate server".into(),
-    };
+    let add_json = |v: &Value| vec![claude.clone(), "mcp".into(), "add-json".into(), NAME.into(), v.to_string(), "--scope".into(), "user".into()];
+    let add = |undo: Option<Vec<String>>| Step::Run { argv: add_json(&entry.value()), what: "added the scrutate server".into(), undo };
     Ok(match (o.uninstall, current) {
         (true, Some(_)) => vec![remove],
         (true, None) => vec![Step::Note(format!("{} has no scrutate server", file.display()))],
         (false, Some(v)) if v == entry.value() => vec![Step::Note(format!("{} already has the scrutate server", file.display()))],
-        (false, Some(_)) => vec![remove, add],
-        (false, None) => vec![add],
+        // a replace is a remove, then an add: when the add fails, the old entry goes back
+        (false, Some(old)) => vec![remove, add(Some(add_json(&old)))],
+        (false, None) => vec![add(None)],
     })
 }
 
@@ -555,12 +582,34 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
     );
     let before = read(path)?;
     let text = before.as_deref().unwrap_or("");
-    let found = text.find(BEGIN).and_then(|b| text[b..].find(END).map(|e| (b, b + e + END.len() + usize::from(text[b + e + END.len()..].starts_with('\n')))));
+    // a marker counts only as a whole line, ended by LF or CRLF: a sentence quoting one is the user's text
+    let eol = |i: usize| if text[i..].starts_with("\r\n") { 2 } else { usize::from(text[i..].starts_with('\n')) };
+    let line = |from: usize, m: &str| {
+        text[from..]
+            .match_indices(m)
+            .map(|(i, _)| from + i)
+            .find(|&i| (i == 0 || text.as_bytes()[i - 1] == b'\n') && (i + m.len() == text.len() || eol(i + m.len()) > 0))
+    };
+    let found = match line(0, BEGIN) {
+        Some(b) => match line(b, END) {
+            Some(e) => Some((b, e + END.len() + eol(e + END.len()))),
+            None => bail!("{} has a {BEGIN} line with no {END} line: edit it by hand", path.display()),
+        },
+        None => None,
+    };
     if o.uninstall {
         let Some((b, e)) = found else {
             return Ok(vec![Step::Note(format!("{} has no scrutate block", path.display()))]);
         };
-        let start = b.saturating_sub(usize::from(b > 0 && text.as_bytes()[b - 1] == b'\n'));
+        // setup put a line break before the block; with text after the block it goes only when
+        // the text before it already ended in one, else the two lines would join
+        let start = if e < text.len() && !text[..b.saturating_sub(1)].ends_with('\n') {
+            b
+        } else if text[..b].ends_with("\r\n") {
+            b - 2
+        } else {
+            b.saturating_sub(usize::from(text[..b].ends_with('\n')))
+        };
         let after = format!("{}{}", &text[..start], &text[e..]);
         return Ok(vec![file_step(path, before.clone(), (!after.is_empty()).then_some(after), "removed the scrutate block from")]);
     }
@@ -1037,6 +1086,22 @@ fn pull(text: &str, keys: &[&str], ours: fn(&Value) -> bool) -> Result<Option<Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_temporary_file_has_the_targets_mode_before_anything_is_written() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("scrutate_setup_tmp_mode_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("config.toml");
+        std::fs::write(&target, "env = { TOKEN = \"secret\" }\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let tmp = dir.join(".config.toml.tmp");
+        drop(create_tmp(&tmp, &target).unwrap());
+        assert_eq!(std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn run(bin: &str) -> Value {
         obj(hook_run(bin, true)).value()

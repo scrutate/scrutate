@@ -99,6 +99,7 @@ impl Cache {
         std::fs::create_dir_all(&self.dir)?;
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let tmp = self.dir.join(format!(".tmp-{}-{nanos}", std::process::id()));
+        // not flushed to disk: a cache, built again when it is lost or does not parse
         crate::index::write_new(&tmp, &out)?;
         if let Err(e) = std::fs::rename(&tmp, &self.path) {
             let _ = std::fs::remove_file(&tmp);

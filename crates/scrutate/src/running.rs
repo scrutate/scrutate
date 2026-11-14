@@ -214,8 +214,9 @@ mod sys {
     pub fn id() -> Option<Id> {
         // SAFETY: no arguments
         let uid = unsafe { getuid() };
-        // 0 is IPC_PRIVATE, a new set on every call
-        let key = (0x5343_5254 ^ uid) as c_int;
+        // 0 is IPC_PRIVATE, a new set on every call; SCRUTATE_COUNT_KEY keeps a count apart from
+        // the one this user's other searches join (the tests of this count use it)
+        let key = std::env::var("SCRUTATE_COUNT_KEY").ok().and_then(|k| k.parse::<c_int>().ok()).unwrap_or((0x5343_5254 ^ uid) as c_int);
         if key == 0 {
             return None;
         }

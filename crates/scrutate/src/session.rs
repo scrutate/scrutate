@@ -205,7 +205,11 @@ impl Session {
         let mut seed = lock(&self.seed);
         let r = caught(|| f(&mut seed));
         let updated = seed.take_updated();
+        let names = updated.then(|| seed.ix.segments());
         drop(seed);
+        if let Some(names) = names {
+            self.release_idle(&names);
+        }
         self.writing.fetch_sub(1, Ordering::AcqRel);
         self.note_update(updated);
         r
@@ -339,11 +343,25 @@ impl Session {
         }
     }
 
-    /// A reader back to the pool, or None for one that was closed.
+    /// The idle readers close their segment store unless it holds `names`, the segments of the
+    /// index now.
+    fn release_idle(&self, names: &[String]) {
+        for r in lock(&self.pool).idle.iter_mut() {
+            r.ix.release_segments_other_than(names);
+        }
+    }
+
+    /// A reader back to the pool, or None for one that was closed. What it just read is the
+    /// newest the others can know of: one that holds other segments lets them go.
     fn give_back(&self, repo: Option<Repo>) {
         let mut pool = lock(&self.pool);
         match repo {
-            Some(r) => pool.idle.push(r),
+            Some(r) => {
+                if let Some(names) = r.ix.held_segments() {
+                    pool.idle.iter_mut().for_each(|i| i.ix.release_segments_other_than(names));
+                }
+                pool.idle.push(r)
+            }
             None => pool.open -= 1,
         }
         drop(pool);
@@ -780,6 +798,49 @@ mod tests {
         let s = Session::open(&root, Every::given(Some(3600.0))).unwrap();
         s.build().unwrap();
         (root, s)
+    }
+
+    /// A read while a write of this process runs (one that waits for another process's lock, as
+    /// `serve --watch` does) answers from the committed index at once, as against another
+    /// process's writer.
+    #[test]
+    fn a_read_does_not_wait_for_a_write_of_this_process() {
+        let root = std::env::temp_dir().join(format!("scrutate_session_own_writer_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
+        let s = Session::open(&root, Every::given(Some(0.0))).unwrap();
+        s.build().unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 2\n\n\ndef more():\n    return 3\n").unwrap();
+        let writer = lock(&s.seed).writer();
+        let (held, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        std::thread::scope(|sc| {
+            sc.spawn(move || {
+                let _w = writer.lock().unwrap();
+                held.0.send(()).unwrap();
+                let _ = release.1.recv_timeout(Duration::from_secs(20));
+            });
+            held.1.recv().unwrap();
+            let t0 = Instant::now();
+            let r = s.run(&Op::Outline { path: "src/geo.py".into() }, &Arc::default());
+            let took = t0.elapsed();
+            release.0.send(()).unwrap();
+            assert!(r.is_ok(), "{:?}", r.err());
+            assert!(took < Duration::from_secs(3), "{took:?}");
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_idle_reader_lets_go_of_segments_a_write_replaced() {
+        let (root, s) = fixture("idle_segments");
+        s.read(&Arc::default(), false, |searcher| searcher.search("make point", 5, false)).unwrap();
+        let held = || lock(&s.pool).idle.iter().map(|r| r.ix.held_segments().map(<[String]>::to_vec)).collect::<Vec<_>>();
+        assert!(held().iter().any(Option::is_some), "the reader holds the segments it searched");
+        std::fs::write(root.join("src/more.py"), "def another_point():\n    return 2\n").unwrap();
+        s.write(|repo| repo.update(false)).unwrap();
+        assert!(held().iter().all(Option::is_none), "{:?}", held());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Run `f` in `n` calls at once; each waits until all `n` are inside, or ten seconds.

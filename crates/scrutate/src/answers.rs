@@ -195,6 +195,7 @@ impl Stored {
         // wasi has no process id, and its one thread is the only writer
         #[cfg(target_os = "wasi")]
         let tmp = self.dir.join(format!(".tmp-{nanos}"));
+        // not flushed to disk: a cache, built again when it is lost or does not parse
         crate::index::write_new(&tmp, &out)?;
         if let Err(e) = std::fs::rename(&tmp, &self.path) {
             let _ = std::fs::remove_file(&tmp);

@@ -11,6 +11,7 @@ impl Rules for Php {
     const GRAMMARS: &'static [&'static str] = &["php"];
     // `.` joins strings: `$a . f()` may call a free function
     const METHODS_ONLY: bool = false;
+    const MEMBERS_ANY_CASE: bool = true;
 
     fn bindings(n: Node, _path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
         if n.kind() != "namespace_use_declaration" {
@@ -129,7 +130,7 @@ fn php_qualify(fi: &FileInfo, at: Node, written: &str) -> String {
         Some((f, r)) => (f, Some(r)),
         None => (written, None),
     };
-    if let Some(b) = fi.bindings.iter().find(|b| b.local == first) {
+    if let Some(b) = fi.bindings.iter().find(|b| b.local.eq_ignore_ascii_case(first)) {
         let base = php_full(b);
         return rest.map_or(base.clone(), |r| format!("{base}\\{r}"));
     }
@@ -185,6 +186,8 @@ impl Resolver<'_> {
             "variable_name" if p.parent().is_some_and(|g| matches!(g.kind(), "property_element" | "property_promotion_parameter")) => {
                 return Err("field or key")
             }
+            // `User::$current` reads a static property
+            "variable_name" if p.parent().is_some_and(|g| g.kind() == "scoped_property_access_expression") => return Err("field or key"),
             "variable_name" => return Err("local variable"),
             "namespace_name" | "namespace_definition" => return Err("namespace"),
             _ => {}
@@ -225,7 +228,8 @@ impl Resolver<'_> {
     /// `S::name(..)`: a method of the class `S` names, of the class around for `self` and
     /// `static`, of its parent for `parent`, or of the class of the value `S` is.
     fn php_static_call(&mut self, fi: &FileInfo, scope: Node, name: &str) -> Resolution {
-        match text(scope, &fi.src).trim() {
+        // `self`, `static` and `parent` are keywords, in any case
+        match text(scope, &fi.src).trim().to_ascii_lowercase().as_str() {
             "parent" => {
                 let c = self.php_around(fi, scope)?;
                 let base = self.php_parent(c)?;
@@ -252,6 +256,10 @@ impl Resolver<'_> {
         if let Some(m) = self.member(c, name, 0) {
             return Ok((m, how));
         }
+        // a trait's `$this` is the class that uses it, which may have the method
+        if self.def_kind(c).as_deref() == Some("trait") {
+            return Err("receiver");
+        }
         let (_, outside, unknown) = self.linearized(c, 0, &mut HashMap::new());
         Err(if outside && !unknown { "external" } else { "not found" })
     }
@@ -263,7 +271,7 @@ impl Resolver<'_> {
         let full = php_qualify(fi, whole, written);
         match self.php_path(&full, &["function"]) {
             Ok(id) => Ok((id, "namespace")),
-            Err(_) if !written.contains('\\') && full != written && !fi.bindings.iter().any(|b| b.local == written) => {
+            Err(_) if !written.contains('\\') && full != written && !fi.bindings.iter().any(|b| b.local.eq_ignore_ascii_case(written)) => {
                 self.php_path(written, &["function"]).map(|id| (id, "namespace"))
             }
             Err(e) => Err(e),
@@ -273,7 +281,7 @@ impl Resolver<'_> {
     /// The class a name written at `n` stands for (`User`, `\App\User`, `self`, `parent`).
     fn php_type(&mut self, fi: &FileInfo, n: Node) -> std::result::Result<i64, &'static str> {
         let written = text(n, &fi.src).trim();
-        match written {
+        match written.to_ascii_lowercase().as_str() {
             "self" | "static" => return self.php_around(fi, n),
             "parent" => {
                 let c = self.php_around(fi, n)?;
@@ -302,13 +310,14 @@ impl Resolver<'_> {
             return *r;
         }
         let (ns, name) = full.rsplit_once('\\').unwrap_or(("", full));
-        let mut rows: Vec<Symbol> = self.ix.named(name).unwrap_or_default();
-        rows.retain(|r| r.qualname == name && kinds.contains(&r.kind.as_str()) && path_lang(&r.path) == Some(Lang::Php));
+        // PHP class, function and namespace names ignore case: `FormatPrice(3)` calls `formatPrice`
+        let mut rows: Vec<Symbol> = self.ix.named_any_case(name).unwrap_or_default();
+        rows.retain(|r| r.qualname.eq_ignore_ascii_case(name) && kinds.contains(&r.kind.as_str()) && self.path_lang(&r.path) == Some(Lang::Php));
         rows.sort_by(|a, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
         let mut found = if rows.is_empty() { Err("external") } else { Err("not found") };
         for r in rows {
             let f = self.file(&r.path);
-            if php_namespace(&f, (r.start - 1).max(0) as usize) == ns {
+            if php_namespace(&f, (r.start - 1).max(0) as usize).eq_ignore_ascii_case(ns) {
                 found = Ok(r.id);
                 break;
             }
@@ -333,7 +342,7 @@ impl Resolver<'_> {
         let mut cur = node.walk();
         let base = node.named_children(&mut cur).find(|n| n.kind() == "base_clause").and_then(|b| b.named_child(0)).ok_or("not found")?;
         // `extends parent` would name this class's parent again
-        if matches!(text(base, &fi.src), "self" | "static" | "parent") {
+        if matches!(text(base, &fi.src).to_ascii_lowercase().as_str(), "self" | "static" | "parent") {
             return Err("not found");
         }
         self.php_type(&fi, base)
@@ -394,6 +403,11 @@ impl Resolver<'_> {
                 let c = self.php_value(fi, obj)?;
                 self.php_property(c, &format!("${}", text(prop, src)))
             }
+            "scoped_property_access_expression" => {
+                let (scope, prop) = (e.child_by_field_name("scope").ok_or("receiver")?, e.child_by_field_name("name").ok_or("receiver")?);
+                let c = self.php_type(fi, scope)?;
+                self.php_property(c, text(prop, src))
+            }
             _ => Err("receiver"),
         }
     }
@@ -401,9 +415,15 @@ impl Resolver<'_> {
     /// The class of variable `e`: the value of its latest assignment before the use, else the
     /// type its parameter declares.
     fn php_variable(&mut self, fi: &FileInfo, e: Node) -> std::result::Result<i64, &'static str> {
+        self.php_variable_above(fi, e, e)
+    }
+
+    /// `php_variable` of `e` in the function around `inside`.
+    fn php_variable_above(&mut self, fi: &FileInfo, e: Node, inside: Node) -> std::result::Result<i64, &'static str> {
         let src = fi.src.as_str();
         let var = text(e, src);
-        let scope = std::iter::successors(e.parent(), |n| n.parent()).find(|n| PHP_FUNCTIONS.contains(&n.kind()) || n.parent().is_none()).ok_or("receiver")?;
+        let scope =
+            std::iter::successors(inside.parent(), |n| n.parent()).find(|n| PHP_FUNCTIONS.contains(&n.kind()) || n.parent().is_none()).ok_or("receiver")?;
         let at = e.start_byte();
         let binders = self.found_in(scope, "php binders", var, || php_binders(scope, var, src));
         let latest = binders[..binders.partition_point(|&(_, end)| end <= at)].last().copied();
@@ -418,8 +438,21 @@ impl Resolver<'_> {
         let param = scope
             .child_by_field_name("parameters")
             .and_then(|ps| ps.named_children(&mut cur).find(|p| p.child_by_field_name("name").is_some_and(|n| text(n, src) == var)));
-        let t = param.and_then(|p| p.child_by_field_name("type")).ok_or("receiver")?;
-        self.php_hint(fi, t)
+        if let Some(t) = param.and_then(|p| p.child_by_field_name("type")) {
+            return self.php_hint(fi, t);
+        }
+        // `function () use ($u)` captures `$u` as it is in the code around the closure
+        let mut c2 = scope.walk();
+        let captured = scope.named_children(&mut c2).filter(|c| c.kind() == "anonymous_function_use_clause").find_map(|u| {
+            let mut c3 = u.walk();
+            // `use (&$u)` holds the variable in a by_ref node
+            let found = u.named_children(&mut c3).map(|v| if v.kind() == "by_ref" { v.named_child(0).unwrap_or(v) } else { v }).find(|v| text(*v, src) == var);
+            found
+        });
+        match captured {
+            Some(v) => self.php_variable_above(fi, v, scope),
+            None => Err("receiver"),
+        }
     }
 
     /// The class a type declaration names (`User`, `?User`, `self`); None for a primitive or a union.
@@ -427,7 +460,7 @@ impl Resolver<'_> {
         match t.kind() {
             "named_type" | "optional_type" => self.php_hint(fi, t.named_child(0).ok_or("receiver")?),
             "name" | "qualified_name" | "relative_name" => self.php_type(fi, t),
-            _ if matches!(text(t, &fi.src).trim(), "self" | "static") => self.php_around(fi, t),
+            _ if matches!(text(t, &fi.src).trim().to_ascii_lowercase().as_str(), "self" | "static") => self.php_around(fi, t),
             _ => Err("receiver"),
         }
     }

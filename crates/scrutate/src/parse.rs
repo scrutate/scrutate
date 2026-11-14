@@ -749,6 +749,8 @@ fn callee_name(lang: &str, node: Node, field: &str, seps: &mut Seps) -> Option<S
             return IDENT_START.find(args.trim_start()).map(|m| m.as_str().to_string());
         }
         ("make", "raw_text") => return None,
+        // a call with arguments is its own `exprCall`; any other statement is no call
+        ("pascal", "statement") if node.named_child_count() != 1 || !matches!(target.kind(), "identifier" | "exprDot") => return None,
         ("verilog", "data_declaration") if !verilog_typeless_call(node, target, src) => return None,
         _ => {}
     }
@@ -2193,6 +2195,29 @@ fn strip_modifiers(line: &str) -> &str {
     rest
 }
 
+/// The words OCaml and F# allow between `let` and the name it binds.
+const ML_MODIFIERS: &[&str] = &["rec", "mutable", "inline", "private", "public", "internal"];
+
+/// The name `modifier` modifies in `rest`, and where it ends: `fact` in `let rec fact n`. After
+/// `let` only OCaml's and F#'s own words modify (`let data x y` binds `data`); after another word
+/// a modifier is a name unless another name with more after it follows (`proc inner()`).
+fn modified<'a>(word: &str, modifier: &str, rest: &'a str) -> Option<(&'a str, usize)> {
+    let ml = word == "let" && ML_MODIFIERS.contains(&modifier);
+    if !ml && (word == "let" || !MODIFIERS.contains(&modifier)) {
+        return None;
+    }
+    let body = rest.trim_start();
+    if !body.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+        return None;
+    }
+    let len = body.find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '\'')).unwrap_or(body.len());
+    let after = body[len..].trim_start();
+    if !ml && (after.is_empty() || after.starts_with(['=', '(', ':'])) {
+        return None;
+    }
+    Some((&body[..len], rest.len() - body.len() + len))
+}
+
 fn heuristic_def(line: &str) -> Option<(&'static str, String)> {
     let line = strip_modifiers(line);
     let trimmed = line.trim_start();
@@ -2218,15 +2243,22 @@ fn heuristic_def(line: &str) -> Option<(&'static str, String)> {
         return Some((kind, m[2].to_string()));
     }
     if let Some(m) = DEF_LINE.captures(line) {
-        let word = &m[1];
-        let name = &m[2];
-        if MODIFIERS.contains(&name) || name.len() > 100 {
+        let (mut word, mut name, mut end) = (m.get(1).unwrap().as_str(), m.get(2).unwrap().as_str(), m.get(0).unwrap().end());
+        while let Some((next, at)) = modified(word, name, &line[end..]) {
+            // `let mutable x = 0` binds a value, as `val x = 0` does
+            if name == "mutable" {
+                word = "val";
+            }
+            (name, end) = (next, end + at);
+        }
+        // `let inline (+.)`: what follows is no name the tier can take
+        if name.len() > 100 || (word == "let" && ML_MODIFIERS.contains(&name)) {
             return None;
         }
         if FUNC_WORDS.contains(&word) {
             // `let x = 5` is not a function: require a following `(` / `=` + lambda-ish for binding words
             if matches!(word, "let" | "val" | "var" | "const" | "lambda") {
-                let rest = &line[m.get(0).unwrap().end()..];
+                let rest = &line[end..];
                 let r = rest.trim_start();
                 // OCaml and F#: `let add x y =` takes parameters, `let limit = 5` does not
                 let ml_params = word == "let"
@@ -2671,6 +2703,34 @@ mod tests {
         assert!(ch.iter().any(|c| c.name == "my_func" && c.kind == "function"));
         let plain = "just some prose\nwithout definitions\n";
         assert!(parse_source("notes.unknownext", plain).iter().all(|c| c.kind == "module"));
+    }
+
+    /// The keyword chunker (OCaml and F# have no grammar in the default build): `rec`, `mutable`,
+    /// `inline` and `private` before a name modify it, and a function may be named after a
+    /// modifier word when nothing follows that could be the name (`let data x`, `proc inner()`).
+    #[test]
+    fn heuristics_skip_modifiers_before_a_name_and_keep_a_name_that_is_a_modifier_word() {
+        let src = "let rec fact n =\n  if n = 0 then 1 else n * fact (n - 1)\n\nlet inline square x = x * x\n\nlet private helper y =\n  y + 1\n\nlet mutable count = 0\n\nlet f x =\n  x\n\nlet data x = x\n\nproc inner() =\n  discard\n";
+        let ch = parse_source("f.unknownext", src);
+        let names: Vec<(&str, &str, i64)> = ch.iter().filter(|c| c.kind != "module").map(|c| (c.kind, c.name.as_str(), c.start)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("function", "fact", 1),
+                ("function", "square", 4),
+                ("function", "helper", 6),
+                ("function", "f", 11),
+                ("function", "data", 14),
+                ("function", "inner", 16)
+            ]
+        );
+        assert_eq!(ch.iter().find(|c| c.name == "f").map(|c| c.end), Some(12));
+        // after `let` only OCaml's and F#'s own words modify: `data` with two parameters is a
+        // name, and an operator after `inline` is no definition the tier can name
+        let ml = "let data x y = x + y\n\nlet inline (+.) a b = a + b\n\nlet rec fact n = n\n\nlet private helper z = z\n";
+        let ch = parse_source("g.unknownext", ml);
+        let names: Vec<(&str, i64)> = ch.iter().filter(|c| c.kind != "module").map(|c| (c.name.as_str(), c.start)).collect();
+        assert_eq!(names, vec![("data", 1), ("fact", 5), ("helper", 7)]);
     }
 
     #[test]

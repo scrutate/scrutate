@@ -34,6 +34,10 @@ pub struct Names<'a> {
     line_starts: HashMap<String, Vec<usize>>,
     /// the kept answers of the request running, and the ones it adds
     stored: Option<Stored>,
+    /// every name a call records, by its ASCII lowercase form, read once per request
+    callee_cases: Option<HashMap<String, Vec<String>>>,
+    /// the language of each file asked about, as the parser takes it
+    langs: Langs<'a>,
     _reading: Reading,
 }
 
@@ -41,7 +45,15 @@ impl<'a> Names<'a> {
     pub fn new(s: &'a Searcher) -> Result<Names<'a>> {
         // started first: the store keeps what every read of the request saw
         let reading = Reading::start();
-        Ok(Names { s, rv: Resolver::new(&s.ix)?, line_starts: HashMap::new(), stored: None, _reading: reading })
+        Ok(Names {
+            s,
+            rv: Resolver::new(&s.ix)?,
+            line_starts: HashMap::new(),
+            stored: None,
+            callee_cases: None,
+            langs: Langs { root: &s.ix.root, seen: Default::default() },
+            _reading: reading,
+        })
     }
 
     /// The definition the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`
@@ -50,11 +62,23 @@ impl<'a> Names<'a> {
         self.rv.resolve_at(path, line, col, name)
     }
 
+    /// Whether the text of `path` the resolver reads starts with a byte order mark, which its
+    /// columns on the first line count.
+    pub fn starts_with_bom(&mut self, path: &str) -> bool {
+        self.rv.file(path).src.starts_with('\u{FEFF}')
+    }
+
     /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
     pub fn references(&mut self, name: &str, max_results: u64) -> Result<Resolved> {
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
-        let q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
+        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
+        // a name defined in a language that ignores case is looked for in any case, and kept in
+        // another case only in a file of such a language
+        let any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
+        if any_case {
+            q.pattern.case = crate::instant::Case::Insensitive;
+        }
         let walk = crate::files::repository_files(&s.ix.root);
         // the text index, when it holds the files as the last look found them, says which can match
         let files = crate::stores::grep_files(&s.ix, &q, &walk);
@@ -74,14 +98,64 @@ impl<'a> Names<'a> {
         truncated |= total as u64 > max_results;
         for h in hits {
             let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
-            for &(a, b) in h.spans.iter().take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
+            let folds = !any_case || self.langs.folds(&h.path, "function");
+            let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
+            for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
                 let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
                 // the occurrence as this file spells it
                 let resolution = self.rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
                 occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
             }
         }
+        // a file that imports the name under an alias uses it under the alias too; the import
+        // statement's own alias is listed already, through the name it imports. A file whose
+        // import never spells the name (`const h = require("./m")`) is found as callers finds it.
+        let mut importing: BTreeSet<String> = occurrences.iter().map(|o| o.path.clone()).collect();
         let mut definitions: Vec<ChunkRow> = s.ix.definitions(bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, bare)).collect();
+        let defs: Vec<Hit> = definitions.iter().map(|d| Hit::from_row(d, false)).collect();
+        let langs = Langs { root: &s.ix.root, seen: Default::default() };
+        importing.extend(self.aliases_of(&defs, &langs)?.into_iter().map(|(_, f)| f));
+        // `super()` in a JavaScript or TypeScript subclass constructor calls the class it extends
+        let def_ids: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
+        let classes = definitions.iter().any(|d| d.kind == "class" && matches!(langs.id(&d.path), Some("javascript" | "typescript" | "tsx")));
+        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        for path in importing {
+            let mut aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
+            let sites: HashSet<usize> = aliases.iter().flat_map(|(_, _, s)| s.iter().copied()).collect();
+            if classes {
+                aliases.push(("super".into(), bare.to_string(), Vec::new()));
+            }
+            let fi = self.rv.file(&path);
+            // where names ignore case (PHP), `PF()` is a use of the alias `pf`; ASCII lower case
+            // keeps every byte where it is
+            let folds = self.langs.folds(&path, "function");
+            let mut line_start = 0;
+            for (i, line) in fi.src.split_inclusive('\n').enumerate() {
+                let start = line_start;
+                line_start += line.len();
+                let line = line.trim_end_matches('\n');
+                let hay = if folds { std::borrow::Cow::Owned(line.to_ascii_lowercase()) } else { std::borrow::Cow::Borrowed(line) };
+                for local in aliases.iter().map(|(l, _, _)| l) {
+                    let needle = if folds { local.to_ascii_lowercase() } else { local.clone() };
+                    for (col, _) in hay.match_indices(needle.as_str()) {
+                        if ident(line[..col].chars().next_back()) || ident(line[col + local.len()..].chars().next()) || sites.contains(&(start + col)) {
+                            continue;
+                        }
+                        // the alias spelled in a string or bound again locally (`const g = ..`) is no
+                        // use of these definitions; only a `super(..)` call names the class
+                        let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, &line[col..col + local.len()]);
+                        let called = line[col + local.len()..].trim_start().starts_with('(');
+                        if !matches!(resolution, Ok((id, _)) if def_ids.contains(&id)) || local == "super" && !called {
+                            continue;
+                        }
+                        let text = line.trim_end_matches('\r').into();
+                        occurrences.push(Occurrence { path: path.clone(), line: i as u64 + 1, column: col as u64 + 1, text, at: col, resolution });
+                        truncated |= occurrences.len() as u64 > max_results;
+                    }
+                }
+            }
+        }
+        occurrences.truncate(max_results as usize);
         let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         for o in &occurrences {
             if let Ok((id, _)) = o.resolution {
@@ -125,15 +199,19 @@ impl<'a> Names<'a> {
         let first = (start.max(1) - 1) as usize;
         let from = starts.get(first).copied().unwrap_or(src.len());
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let methods = crate::resolve::methods_only(path);
+        let methods = crate::resolve::methods_only(self.langs.id(path));
+        // ASCII lowercase keeps every byte where it is, so the columns hold
+        let any_case = self.langs.folds(path, "function") && name.is_ascii();
+        let wanted = if any_case { name.to_ascii_lowercase() } else { name.to_string() };
         let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
         let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
         for (i, line) in src[from..].lines().enumerate().map(|(i, l)| (i + first, l)).take((end - start + 1).max(0) as usize) {
-            for (col, _) in line.match_indices(name) {
+            let low = if any_case { std::borrow::Cow::Owned(line.to_ascii_lowercase()) } else { std::borrow::Cow::Borrowed(line) };
+            for (col, _) in low.match_indices(wanted.as_str()) {
                 if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
                     continue;
                 }
-                match self.rv.resolve_at(path, i as u64 + 1, col, name) {
+                match self.rv.resolve_at(path, i as u64 + 1, col, &line[col..col + name.len()]) {
                     // the name of a definition is not a call of it
                     Ok((_, "definition")) => {}
                     Ok((id, why)) => {
@@ -191,6 +269,10 @@ impl<'a> Names<'a> {
         if !made_by_new.is_empty() {
             names.insert("new");
         }
+        // `super()` in a JavaScript or TypeScript constructor calls the base class
+        if targets.iter().any(|t| t.kind == "class" && matches!(langs.id(&t.path), Some("javascript" | "typescript" | "tsx"))) {
+            names.insert("super");
+        }
         let owners: HashSet<&str> =
             targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
         let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
@@ -206,6 +288,12 @@ impl<'a> Names<'a> {
             // with another definition of the name about, the likeliest call sites are asked first
             let rivals = rows.iter().any(|r| !ids.contains(&r.id) && fits(&r.path));
             let mut sites = s.ix.callers_of(n)?;
+            // a call in a language that ignores case may spell the name in another case
+            if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind)) {
+                for other in self.other_cases(n)? {
+                    sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| langs.folds(&r.path, "function")));
+                }
+            }
             sites.retain(|r| fits(&r.path) && seen.insert(r.id));
             if n == "new" && !targets.iter().any(|t| t.name == "new") {
                 sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));
@@ -216,8 +304,13 @@ impl<'a> Names<'a> {
             for row in sites {
                 let uses = self.uses(&row.path, (row.start, row.end), n);
                 let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.dispatched.is_disjoint(&overridden);
+                // a `super` the resolver does not tie to a target is some other class's
+                if n == "super" && uses.got.is_disjoint(&ids) {
+                    continue;
+                }
                 if uses.got.is_disjoint(&ids) {
-                    // with no other definition of the name, a call the resolver cannot place is this one's
+                    // with no other definition of the name, a call in a language the resolver does not
+                    // read is this one's
                     if unsure && rivals {
                         let mine = |r: &&Symbol| own((&row.path, &row.qualname), &r.path, &r.kind, &r.qualname);
                         let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.id).collect();
@@ -230,6 +323,11 @@ impl<'a> Names<'a> {
                         }
                     } else if !unsure {
                         continue;
+                    } else if crate::resolve::reads(&s.ix.root, &row.path) {
+                        // the resolver read the call and could not place it (`tx.foo.update()`, an
+                        // untyped parameter): only its name ties it, so it is undecided
+                        unsure_rows.push(row);
+                        continue;
                     }
                 }
                 out.push(Hit::from_row(&row, true));
@@ -238,10 +336,68 @@ impl<'a> Names<'a> {
                 }
             }
         }
+        for (local, file) in self.aliases_of(&targets, &langs)? {
+            let mut sites = s.ix.callers_of(&local)?;
+            // `use function Lib\phpfn as pf` is called `PF()` too where names ignore case
+            if langs.folds(&file, "function") {
+                for other in self.other_cases(&local)? {
+                    sites.extend(s.ix.callers_of(&other)?);
+                }
+            }
+            sites.retain(|r| r.path == file && seen.insert(r.id));
+            for row in sites {
+                if !self.uses(&row.path, (row.start, row.end), &local).got.is_disjoint(&ids) {
+                    out.push(Hit::from_row(&row, true));
+                    if out.len() >= limit {
+                        return Ok((out, 0, false));
+                    }
+                }
+            }
+        }
         unsure_rows.sort_by_cached_key(&likely);
         let undecided = unsure_rows.len().min(limit - out.len());
         out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
         Ok((out, undecided, true))
+    }
+
+    /// The names the targets are imported under elsewhere, each with the one file that does so:
+    /// `from util import helper as h` in `app.py` gives ("h", "app.py"). A call there is stored
+    /// under the alias.
+    fn aliases_of(&mut self, targets: &[Hit], langs: &Langs) -> Result<Vec<(String, String)>> {
+        let targets: Vec<&Hit> = targets.iter().filter(|t| crate::resolve::may_alias(langs.id(&t.path))).collect();
+        let names: HashSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+        // an import names the item (Rust's `use a::helper as h`) or the module that holds it
+        let stem = |p: &'_ str| p.rsplit_once('.').map_or(p, |(s, _)| s).to_string();
+        let mut needles: BTreeSet<String> = names.iter().map(|n| n.to_string()).collect();
+        needles.extend(targets.iter().map(|t| module_name(&stem(&t.path)).to_string()));
+        let (mut files, mut asked) = (BTreeSet::new(), BTreeSet::new());
+        // a file that imports a target under its own name re-exports it (`pkg/__init__.py`): an
+        // import of that file's module may alias it too, a few re-exports deep
+        for _ in 0..3 {
+            let fresh: Vec<String> = needles.difference(&asked).cloned().collect();
+            if fresh.is_empty() {
+                break;
+            }
+            asked.extend(fresh.iter().cloned());
+            // past a few names one pass over every import is cheaper than one search per name
+            let rows: Vec<(String, String)> = if fresh.len() <= 16 {
+                fresh.iter().map(|n| self.s.ix.imports_holding(n)).collect::<Result<Vec<_>>>()?.concat()
+            } else {
+                self.s.ix.imports()?.into_iter().map(|(path, _, module)| (path, module)).collect()
+            };
+            for (path, module) in rows {
+                let names_it = module.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|seg| fresh.contains(&seg.to_string()));
+                let kept = names_it && targets.iter().any(|t| langs.same_family(&t.path, &path)) && files.insert(path.clone());
+                if kept && names.iter().any(|n| self.rv.imports_as(&path, n)) {
+                    needles.insert(module_name(&stem(&path)).to_string());
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for f in files {
+            out.extend(self.rv.aliases(&f).into_iter().filter(|(_, item)| names.contains(item.as_str())).map(|(local, _)| (local, f.clone())));
+        }
+        Ok(out)
     }
 
     /// The definitions whose code calls the name of `gone`, a definition the tree no longer has,
@@ -310,7 +466,25 @@ impl<'a> Names<'a> {
         let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
         let mut out = Vec::new();
         for n in s.ix.callees_of(d.id)? {
-            let rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
+            let mut rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
+            // a call in a language that ignores case reaches a definition so named in any case
+            if langs.folds(&d.path, "function") {
+                let other_case = |r: &ChunkRow| r.name != n && langs.folds(&r.path, &r.kind);
+                rows.extend(s.ix.named_of_kinds_any_case(&n, &kinds)?.into_iter().filter(|r| other_case(r) && callable(&d.path, r)));
+            }
+            // an import alias names what it imports: `h` of `from util import helper as h`
+            let folds = langs.folds(&d.path, "function");
+            if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n || folds && local.eq_ignore_ascii_case(&n)) {
+                rows.extend(s.ix.named_of_kinds(&item, &kinds)?.into_iter().filter(|r| callable(&d.path, r)));
+            }
+            // `super(..)`, PHP `new self()` / `static()` / `parent()`: no definition has the name, it
+            // stands for the class the resolver ties it to
+            let class_word = n == "super" || matches!(n.to_ascii_lowercase().as_str(), "self" | "static" | "parent") && langs.id(&d.path) == Some("php");
+            if class_word && rows.is_empty() {
+                for id in self.uses(&d.path, (d.start, d.end), &n).got {
+                    rows.extend(s.ix.chunk(id)?);
+                }
+            }
             if rows.is_empty() {
                 out.push((n, Vec::new(), false));
                 continue;
@@ -338,6 +512,15 @@ impl<'a> Names<'a> {
             out.push((n, picked, is_tied));
         }
         Ok(out)
+    }
+
+    /// The spellings other than `name` that calls in the index give `name` in another case.
+    fn other_cases(&mut self, name: &str) -> Result<Vec<String>> {
+        if self.callee_cases.is_none() {
+            self.callee_cases = Some(self.s.ix.callees_by_lowercase()?);
+        }
+        let all = self.callee_cases.as_ref().and_then(|m| m.get(&name.to_ascii_lowercase())).cloned().unwrap_or_default();
+        Ok(all.into_iter().filter(|c| c != name).collect())
     }
 
     /// The definitions under `under` (a directory or file, or all) that nothing in the repository
@@ -599,16 +782,7 @@ impl<'a> Names<'a> {
         let dotted: String = stem.replace('/', ".");
         let dotted_pkg =
             dotted.strip_suffix(".__init__").or_else(|| dotted.strip_suffix(".index")).or_else(|| dotted.strip_suffix(".mod")).map(|s| s.to_string());
-        // the last name of the module the file is: `a/b.py` -> `b`, `a/b/__init__.py` -> `b`
-        let own = {
-            let mut parts = stem.rsplit('/');
-            let last = parts.next().unwrap_or(stem);
-            if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") {
-                parts.next().unwrap_or(last)
-            } else {
-                last
-            }
-        };
+        let own = module_name(stem);
         let target_dir = target.rsplit_once('/').map_or("", |(d, _)| d);
         let (mut out, mut unsure) = (Vec::new(), 0);
         let mut prev = String::new();
@@ -736,12 +910,14 @@ impl Langs<'_> {
         if let Some(id) = self.seen.borrow().get(path) {
             return *id;
         }
-        let lower = path.to_lowercase();
-        let shared = crate::langs::BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e));
-        let text = shared.then(|| crate::resolve::repo_text(self.root, path)).flatten();
-        let id = crate::langs::detect(path, text.as_deref()).map(|s| s.id);
+        let id = crate::langs::detect_at(self.root, path).map(|s| s.id);
         self.seen.borrow_mut().insert(path.to_string(), id);
         id
+    }
+
+    /// Whether a definition of `path` is named in any case (`langs::ignores_case`).
+    fn folds(&self, path: &str, kind: &str) -> bool {
+        crate::langs::ignores_case(self.id(path), kind)
     }
 
     /// A file of no known language may call or be called by any.
@@ -789,6 +965,18 @@ fn package(path: &str) -> &str {
     match path.strip_prefix("src/").map(|_| 0).or_else(|| path.find("/src/")) {
         Some(i) => &path[..i],
         None => path.split_once('/').map_or("", |(top, _)| top),
+    }
+}
+
+/// The last name of the module a file is, from its path without the extension: `a/b` -> `b`,
+/// `a/b/__init__` -> `b`.
+fn module_name(stem: &str) -> &str {
+    let mut parts = stem.rsplit('/');
+    let last = parts.next().unwrap_or(stem);
+    if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") {
+        parts.next().unwrap_or(last)
+    } else {
+        last
     }
 }
 

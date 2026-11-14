@@ -248,3 +248,178 @@ fn the_dead_code_tool_gives_the_text_of_the_command() {
     assert!(tool["inputSchema"]["properties"]["path"].is_object());
     assert_eq!(by_id(3)["result"]["content"][0]["text"].as_str().unwrap().trim_end(), cli.trim_end());
 }
+
+#[test]
+fn ruby_methods_the_runtime_calls_are_entry_points() {
+    let rb = "class Proxy\n  def initialize(s)\n    @s = s\n  end\n\n  def method_missing(name, *args)\n    @s.send(name, *args)\n  end\n\n  def respond_to_missing?(name, all = false)\n    true\n  end\n\n  def <=>(other)\n    0\n  end\n\n  def coerce(n)\n    [n, 1]\n  end\n\n  def to_str\n    @s\n  end\n\n  def self.inherited(k)\n    super\n  end\n\n  def really_unused\n    1\n  end\nend\n\nputs Proxy.new(\"abc\").upcase\n";
+    let r = Repo::new("ruby_hooks", &[("p.rb", rb)]);
+    let v = r.json(&["dead"]);
+    assert_eq!(names(&v, "dead"), ["p.rb Proxy.really_unused"], "{v:#}");
+}
+
+/// The names `callers NAME` prints, as `path qualname`.
+fn callers(r: &Repo, name: &str) -> Vec<String> {
+    let (_, out) = r.run(&["callers", name]);
+    out.lines().filter_map(|l| Some(format!("{} {}", l.split(':').next()?, l.split("] ").nth(1)?))).collect()
+}
+
+#[test]
+fn a_language_that_ignores_case_uses_a_name_in_any_case() {
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork();\nend;\n\nbegin\n  Run();\nend.\n";
+    let r = Repo::new("pascal_case", &[("p.pas", pas)]);
+    assert!(!names(&r.json(&["dead"]), "dead").contains(&"p.pas DoWork".to_string()));
+    assert_eq!(callers(&r, "DoWork"), ["p.pas Run"]);
+
+    let adb = "procedure Main is\n   procedure Do_It is\n   begin\n      null;\n   end Do_It;\nbegin\n   do_it;\nend Main;\n";
+    let r = Repo::new("ada_case", &[("a.adb", adb)]);
+    assert_eq!(names(&r.json(&["dead"]), "dead"), Vec::<String>::new());
+    assert_eq!(callers(&r, "Do_It"), ["a.adb Main"]);
+
+    let php = "<?php\nfunction formatPrice($p) { return $p; }\n\nfunction show() { return FormatPrice(3); }\n\nshow();\n";
+    let r = Repo::new("php_case", &[("f.php", php), ("g.py", "def formatprice():\n    return 1\n")]);
+    assert_eq!(names(&r.json(&["dead"]), "dead"), ["g.py formatprice"], "a case-sensitive language keeps its case");
+    assert_eq!(callers(&r, "formatPrice"), ["f.php show"]);
+
+    let r = Repo::new("py_case", &[("h.py", "def Helper():\n    return 1\n\n\ndef run():\n    return helper()\n")]);
+    assert_eq!(names(&r.json(&["dead"]), "dead"), ["h.py Helper", "h.py run"], "Python names keep their case");
+}
+
+#[cfg(feature = "extra-langs")]
+#[test]
+fn fortran_uses_a_name_in_any_case() {
+    let r = Repo::new(
+        "fortran_case",
+        &[
+            ("m.f90", "subroutine Compute_Total(x)\n  real :: x\nend subroutine Compute_Total\n"),
+            ("main.f90", "subroutine driver()\n  real :: y\n  call compute_total(y)\nend subroutine driver\n"),
+        ],
+    );
+    assert!(!names(&r.json(&["dead"]), "dead").contains(&"m.f90 Compute_Total".to_string()));
+    assert_eq!(callers(&r, "Compute_Total"), ["main.f90 driver"]);
+}
+
+#[test]
+fn callees_in_a_language_that_ignores_case_reach_a_name_in_any_case() {
+    let callees = |r: &Repo, name: &str| {
+        let (_, out) = r.run(&["callees", name]);
+        out.lines().filter_map(|l| Some(format!("{} {}", l.split(':').next()?, l.split("] ").nth(1)?))).collect::<Vec<_>>()
+    };
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork();\nend;\n\nbegin\n  Run();\nend.\n";
+    let r = Repo::new("pascal_callees", &[("p.pas", pas)]);
+    assert_eq!(callees(&r, "Run"), ["p.pas DoWork"]);
+    let php = "<?php\nfunction formatPrice($p) { return $p; }\n\nfunction show() { return FormatPrice(3); }\n";
+    let r = Repo::new("php_callees", &[("f.php", php), ("g.py", "def formatprice():\n    return 1\n\n\ndef run():\n    return FormatPrice()\n")]);
+    assert_eq!(callees(&r, "show"), ["f.php formatPrice"]);
+    let (_, out) = r.run(&["callees", "run"]);
+    assert!(out.contains("external: FormatPrice"), "Python keeps case: {out}");
+}
+
+#[test]
+fn refs_in_a_language_that_ignores_case_finds_a_name_in_any_case() {
+    // (path:line, the file it resolves to or "-") of every occurrence `refs NAME --json` lists
+    let refs = |r: &Repo, name: &str| {
+        let v = r.json(&["refs", name])["result"].clone();
+        let mut out = Vec::new();
+        for d in v["definitions"].as_array().unwrap_or_else(|| panic!("{v}")) {
+            for o in d["references"].as_array().unwrap() {
+                out.push(format!("{}:{} {}", o["path"].as_str().unwrap(), o["line"], d["path"].as_str().unwrap()));
+            }
+        }
+        for o in v["unresolved"].as_array().unwrap() {
+            out.push(format!("{}:{} -", o["path"].as_str().unwrap(), o["line"]));
+        }
+        out.sort();
+        out
+    };
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork();\nend;\n\nbegin\n  Run();\nend.\n";
+    let r = Repo::new("pascal_refs", &[("p.pas", pas)]);
+    assert!(refs(&r, "DoWork").iter().any(|o| o.starts_with("p.pas:9 ")), "{:?}", refs(&r, "DoWork"));
+    let php = "<?php\nfunction formatPrice($p) { return $p; }\n\nfunction show() { return FormatPrice(3); }\n";
+    let r = Repo::new("php_refs", &[("f.php", php), ("g.py", "def run():\n    return formatprice()\n")]);
+    let got = refs(&r, "formatPrice");
+    assert!(got.contains(&"f.php:4 f.php".to_string()), "{got:?}");
+    assert!(!got.iter().any(|o| o.starts_with("g.py")), "Python keeps case: {got:?}");
+}
+
+#[test]
+fn a_pascal_call_without_parentheses_is_a_call() {
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Tidy;\nbegin\nend;\n\nprocedure Run;\nvar x: integer;\nbegin\n  dowork;\n  x := 1;\n  if x > 0 then Obj.Tidy;\nend;\n\nbegin\n  Run;\nend.\n";
+    let r = Repo::new("pascal_bare_call", &[("p.pas", pas)]);
+    assert_eq!(callers(&r, "DoWork"), ["p.pas Run"]);
+    assert_eq!(callers(&r, "Tidy"), ["p.pas Run"]);
+    let (_, out) = r.run(&["callees", "Run"]);
+    assert!(out.contains("DoWork") && out.contains("Tidy") && !out.contains("external: x"), "{out}");
+    assert!(names(&r.json(&["dead"]), "dead").is_empty(), "{:?}", r.json(&["dead"]));
+}
+
+#[test]
+fn a_pascal_unit_in_a_pp_file_ignores_case_too() {
+    let pp = "unit U;\n\ninterface\n\nprocedure DoWork;\nprocedure Run;\n\nimplementation\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork;\n  dowork();\nend;\n\nend.\n";
+    let r = Repo::new("pascal_pp_case", &[("u.pp", pp)]);
+    assert_eq!(callers(&r, "DoWork"), ["u.pp Run"]);
+    assert!(!names(&r.json(&["dead"]), "dead").iter().any(|n| n.ends_with("DoWork")), "{:?}", r.json(&["dead"]));
+}
+
+/// An Objective-C header (`.h`, which C and C++ share) is not read by the resolver's C rules: a
+/// use in a C file among 16 header lines that name the same function is still asked about.
+#[test]
+fn an_objective_c_header_is_read_in_its_own_language() {
+    let mut files: Vec<(String, String)> = (0..16)
+        .map(|i| {
+            (
+                format!("A{i:02}.h"),
+                format!("#import <Foundation/Foundation.h>\n@interface S{i:02} : NSObject\n@end\nstatic inline int w{i:02}(void) {{ return helper(); }}\n"),
+            )
+        })
+        .collect();
+    files.push(("main.c".into(), "int helper(void);\nint main(void) { return helper(); }\n".into()));
+    files.push(("util.c".into(), "int helper(void) { return 1; }\n".into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let r = Repo::new("objc_header", &refs);
+    let v = r.json(&["dead"]);
+    for group in ["dead", "undecided"] {
+        assert!(!names(&v, group).contains(&"util.c helper".to_string()), "util.c helper is called from main.c: {v:#}");
+    }
+}
+
+/// A Free Pascal unit starts with compiler directives (`{$mode objfpc}{$H+}`, the Lazarus default):
+/// their `$` is no Puppet variable, and the unit is parsed as Pascal.
+#[test]
+fn a_free_pascal_unit_with_directives_in_a_pp_file_is_pascal() {
+    let pp = "unit unit1;\n\n{$mode objfpc}{$H+}\n\ninterface\n\nfunction Add(a, b: Integer): Integer;\n\nimplementation\n\nfunction Add(a, b: Integer): Integer;\nbegin\n  Result := a + b;\nend;\n\nend.\n";
+    let r = Repo::new("fpc_unit", &[("unit1.pp", pp), ("site.pp", "class site {\n  $port = 80\n}\n")]);
+    let (code, out) = r.run(&["outline", "unit1.pp"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.lines().any(|l| l.split_whitespace().eq(["11-14", "function", "Add"])), "{out}");
+    let (_, out) = r.run(&["outline", "site.pp"]);
+    assert!(out.contains("site") && !out.contains("function"), "Puppet stays Puppet: {out}");
+}
+
+/// A C++ header with a Doxygen `@class` in a comment is C++: only a line that starts with an
+/// Objective-C keyword makes a `.h` Objective-C.
+#[test]
+fn a_doxygen_class_tag_in_a_comment_leaves_a_cpp_header_cpp() {
+    let h = "namespace ui {\n/** @class Widget\n *  Draws itself. */\ntemplate <typename T> class Widget {\n  void draw();\n};\n}\n";
+    let objc = "#import <Foundation/Foundation.h>\n@interface Shim : NSObject\n- (int)count;\n@end\n";
+    let r = Repo::new("doxygen_class", &[("widget.h", h), ("shim.h", objc)]);
+    let (code, out) = r.run(&["outline", "widget.h"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("draw"), "parsed as C++: {out}");
+    let (_, out) = r.run(&["outline", "shim.h"]);
+    assert!(out.contains("Shim"), "Objective-C stays Objective-C: {out}");
+}
+
+/// A definition named with its owner (Pascal's `procedure TFoo.Tidy`) is used where its own name
+/// is (`o.Tidy`), and a Ruby writer (`def label=`) where it is assigned (`v.label = "x"`).
+#[test]
+fn a_method_named_with_its_owner_or_as_a_writer_is_used_where_it_is_called_or_assigned() {
+    let pas = "unit u;\n\ninterface\n\ntype\n  TFoo = class\n    procedure Tidy;\n    procedure Unused;\n  end;\n\nprocedure DoWork(o: TFoo);\n\nimplementation\n\nprocedure TFoo.Tidy;\nbegin\nend;\n\nprocedure TFoo.Unused;\nbegin\nend;\n\nprocedure DoWork(o: TFoo);\nbegin\n  o.Tidy;\nend;\n\nend.\n";
+    // `@size` read in `show` is no use of `size=`, and `send(:color=, 1)` is one of `color=`
+    let rb = "class Box\n  def label=(v)\n    @label = v\n  end\n\n  def size=(v)\n    @size = v\n  end\n\n  def color=(v)\n    @color = v\n  end\n\n  def show\n    puts @size\n  end\nend\n\nb = Box.new\nb.label = \"x\"\nb.send(:color=, 1)\nb.show\n";
+    let r = Repo::new("owner_and_writer", &[("u.pas", pas), ("a.rb", rb)]);
+    let v = r.json(&["dead"]);
+    let dead = names(&v, "dead");
+    assert!(!dead.iter().any(|d| d.ends_with("Tidy") || d.ends_with("label=") || d.ends_with("color=")), "{v:#}");
+    // the declaration in the class and the body name each other, and nothing else names them
+    assert!(dead.contains(&"a.rb Box.size=".to_string()) && dead.contains(&"u.pas TFoo.Unused".to_string()), "{v:#}");
+}

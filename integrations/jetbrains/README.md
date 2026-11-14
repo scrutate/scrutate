@@ -31,6 +31,11 @@ the project directory and its results are links. The other three answer from the
 repository-relative paths, which the IDE does not link; the language server below navigates
 those.
 
+On Windows, put the binary's full path in **Program** (`C:\Users\me\.cargo\bin\scrutate.exe`)
+and in the server command below. When the IDE does not find `scrutate` on its `PATH`, Windows
+also looks in the IDE's own current folder, so an IDE started from inside a project
+(`idea64.exe .`) would run a `scrutate.exe` that the repository holds.
+
 ## Language server through LSP4IJ
 
 The [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin (Red Hat, free) connects
@@ -40,7 +45,7 @@ Go to Symbol and the Structure view from the Scrutate index.
 1. Install LSP4IJ from *Settings → Plugins → Marketplace* and restart the IDE.
 2. Open *Settings → Languages & Frameworks → Language Servers* and click **+**.
 3. On the **Server** tab: name `Scrutate`, command `scrutate lsp` (use the full path to the
-   binary if it is not on the IDE's `PATH`).
+   binary if it is not on the IDE's `PATH`, and always on Windows, as above).
 4. On the **Mappings** tab, under **File name patterns**, add the files to answer for, such as
    `*.py`, `*.rs`, `*.go`, `*.ts`, each with a language id (`python`, `rust`, ...). The server
    ignores the id; any value works.

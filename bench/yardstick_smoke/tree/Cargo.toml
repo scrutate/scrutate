@@ -1,0 +1,10 @@
+[package]
+name = "smoke"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+# its own workspace: the repository's Cargo.toml above does not list it
+[workspace]

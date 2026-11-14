@@ -292,6 +292,30 @@ pub fn name_key(name: &str) -> String {
     fold(&name.nfc().filter(|c| *c != '_').collect::<String>())
 }
 
+/// Paths of code a repository holds but did not write: dependency directories and minified
+/// files. A subset of GitHub linguist's `lib/linguist/vendor.yml` (commit befd3af, 2026-09-03;
+/// MIT, Copyright (c) 2017 GitHub, Inc.), plus CocoaPods' `Pods/` and `jspm_packages/`, which it
+/// lacks. Its broad patterns (`dist/`, `deps/`, `cache/`, `extern/`, `testdata/`, `.d.ts`,
+/// framework file names) are left out: they are often the project's own code.
+const VENDORED: &[&str] = &[
+    r"(^|/)vendors?/",
+    r"(^|/)[Vv]+endor/",
+    r"(3rd|[Tt]hird)[-_]?[Pp]arty/",
+    r"(^|/)node_modules/",
+    r"(^|/)bower_components/",
+    r"(^|/)Godeps/_workspace/",
+    r"(^|/)Carthage/",
+    r"(\.|-)min\.(js|css)$",
+    r"(^|/)Pods/",
+    r"(^|/)jspm_packages/",
+];
+
+/// Whether `path` is vendored code (`VENDORED`): search ranks it below the project's own.
+pub fn is_vendored_path(path: &str) -> bool {
+    static SET: LazyLock<regex::RegexSet> = LazyLock::new(|| regex::RegexSet::new(VENDORED).expect("vendored patterns"));
+    SET.is_match(&path.replace('\\', "/"))
+}
+
 const TEST_PARTS: &[&str] = &["test", "tests", "testing", "__tests__", "spec", "specs", "e2e", "fixtures", "mocks"];
 
 pub fn is_test_path(path: &str) -> bool {
@@ -433,6 +457,33 @@ pub fn query_words(q: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vendored_path_is_a_dependency_directory_or_a_minified_file() {
+        let yes = [
+            "vendor/bundle/ruby/3.3.0/gems/rack/lib/rack.rb",
+            "app/vendor/lib.go",
+            "Vendor/x.m",
+            "Pods/AFNetworking/AFURLSession.m",
+            "Carthage/Checkouts/x.swift",
+            "third_party/zlib/inflate.c",
+            "src/third-party/x.js",
+            "web/node_modules/left-pad/index.js",
+            "bower_components/x/x.js",
+            "jspm_packages/x.js",
+            "Godeps/_workspace/src/x.go",
+            "static/app.min.js",
+            "static/site-min.css",
+        ];
+        for p in yes {
+            assert!(is_vendored_path(p), "{p}");
+        }
+        // linguist's broad patterns are left out: these are often the project's own code
+        let no = ["src/vendors.rs", "src/vendor.rs", "lib/party/x.py", "deps/x.c", "src/dist/x.rs", "cache/x.py", "external/x.c", "x.d.ts", "src/minimal.js"];
+        for p in no {
+            assert!(!is_vendored_path(p), "{p}");
+        }
+    }
 
     #[test]
     fn a_test_file_is_told_by_its_directory_or_its_name() {

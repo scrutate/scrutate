@@ -8,7 +8,7 @@
 //!
 //! | Operation | Looks for changes | Keeps current |
 //! |---|---|---|
-//! | `index` | every file; waits for another writer | code index, text index (built when missing) |
+//! | `index` | every file; waits for another writer, up to 10 minutes or a cancel | code index, text index (built when missing) |
 //! | `index --no-text` | every file; waits | code index |
 //! | `index --text` | every file; waits | text index (built when missing) |
 //! | `grep --index --update` | every file; waits | text index (built when missing) |
@@ -160,11 +160,23 @@ pub struct Repo {
     models: Arc<ModelSet>,
     /// held by every write this repository makes; shared with the ones `another` opened
     writer: Arc<Mutex<()>>,
+    /// the custom languages of `root` as its last operation read them
+    customs: Option<Arc<crate::custom::Customs>>,
 }
 
 /// The writer lock, also after a panic in a write that held it: the stores commit whole or not at all.
 fn hold(writer: &Mutex<()>) -> MutexGuard<'_, ()> {
     writer.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// The writer lock when no write of this process holds it: a read does not wait for one, which may
+/// itself be waiting for another process's lock (`serve --watch`).
+fn hold_if_free(writer: &Mutex<()>) -> Option<MutexGuard<'_, ()>> {
+    match writer.try_lock() {
+        Ok(g) => Some(g),
+        Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
 }
 
 impl Repo {
@@ -175,7 +187,7 @@ impl Repo {
 
     fn around(searcher: Searcher, writer: Arc<Mutex<()>>) -> Repo {
         let (root, models) = (searcher.ix.root.clone(), Arc::clone(&searcher.ix.models));
-        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer }
+        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer, customs: None }
     }
 
     /// Another open repository on the same index, to read beside this one: a connection of its
@@ -316,7 +328,14 @@ impl Repo {
     /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
         let writer = Arc::clone(&self.writer);
-        let _w = hold(&writer);
+        let Some(_w) = hold_if_free(&writer) else {
+            // a write of this process runs: answer from the committed index, as against another
+            // process's writer, unless nothing is committed yet
+            return match &self.searcher {
+                Some(s) if s.ix.has_files()? => Ok(None),
+                _ => Err(index::BeingBuilt.into()),
+            };
+        };
         self.reopened()?;
         match self.ix.refresh_or_fail(min_interval) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
@@ -353,6 +372,14 @@ impl Repo {
     /// waits for the next scan. A damaged database is rebuilt and the operation run again. A
     /// `reindex` brings every store up to date (`Writer::Reindex`).
     pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
+        // under this repository's custom languages, whichever another one in the process loaded
+        // last (`impact` parses files itself)
+        let customs = crate::custom::of_root(&self.root, self.customs.as_ref())?;
+        self.customs = Some(Arc::clone(&customs));
+        crate::custom::with(&customs, || self.run_scoped(op))
+    }
+
+    fn run_scoped(&mut self, op: &ops::Op) -> Result<ops::Answer> {
         if let ops::Op::Reindex { force } = op {
             let up = self.update_stores(Writer::Reindex, &Changes::All, *force)?;
             return Ok(ops::Answer::Reindexed(up.code.unwrap_or_default()));
@@ -379,7 +406,7 @@ impl Repo {
         }
         let updated = {
             let writer = Arc::clone(&self.writer);
-            let _w = hold(&writer);
+            let Some(_w) = hold_if_free(&writer) else { return first };
             match self.ix.update_paths(&stale, false) {
                 Err(e) if index::error_is_corruption(&e) => self.rebuild_unless_rebuilt(&e).map(|_| true),
                 // another writer holds the lock, or the index cannot be written: answer as it is
@@ -532,10 +559,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_operation_reads_one_commit_while_a_writer_commits_another() {
+        let root = std::env::temp_dir().join(format!("scrutate_ops_snapshot_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("f.py"), "def needle_alpha():\n    return 1\n").unwrap();
+        std::fs::write(root.join("g.py"), "def other():\n    return 2\n").unwrap();
+        let mut ix = crate::index::Index::open(&root, ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let mut repo = Repo::around(Searcher::new(ix), Arc::default());
+        // another process rewrites f.py and commits after the search picked its rows, before it reads them
+        let r = root.clone();
+        crate::index::BEFORE_CHUNKS.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                std::fs::write(r.join("f.py"), "def needle_alpha():\n    return 3\n").unwrap();
+                crate::index::Index::open(&r, crate::models::ModelSet::none()).unwrap().update(false).unwrap();
+            }))
+        });
+        let ops::Answer::Hits { hits, .. } = repo.run_as_is(&ops::Op::Search { query: "needle_alpha".into(), alt: Vec::new(), k: 5, snippets: false }).unwrap()
+        else {
+            panic!("a search answers hits")
+        };
+        assert!(crate::index::BEFORE_CHUNKS.with(|h| h.borrow().is_none()), "the writer ran");
+        // the row of the commit the search started on, which the writer has since deleted
+        let row = repo.ix.chunk(hits.iter().find(|h| h.name == "needle_alpha").map(|h| h.id).unwrap_or(-1)).unwrap();
+        assert!(hits.iter().any(|h| h.name == "needle_alpha"), "{hits:?}");
+        assert!(row.is_none(), "the writer's commit replaced the row");
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default() };
+        let mut repo =
+            Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default(), customs: None };
         let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
         repo.set_cancel(Arc::default());
         assert!(repo.update(false).is_err());

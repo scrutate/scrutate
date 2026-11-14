@@ -58,7 +58,7 @@ impl Rules for Java {
     }
 
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, _path: &str, _qualname: &str) -> Option<i64> {
-        r.java_inherited(id, name, depth, &mut HashMap::new())
+        r.inherited_through(id, name, depth, |r, id| r.java_bases(id).iter().filter_map(|b| b.ok()).collect())
     }
 
     fn bases(r: &mut Resolver, id: i64, _path: &str, _fi: &FileInfo, _d: &Def, _lang: Lang) -> Vec<std::result::Result<i64, &'static str>> {
@@ -88,37 +88,17 @@ impl Rules for Java {
 }
 
 impl Resolver<'_> {
-    /// `name` as a member a Java type `id` inherits: its bases in header order, each with its own bases first.
-    fn java_inherited(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
-        if depth >= 8 || self.nest > 32 {
-            return None;
-        }
-        self.nest += 1;
-        let mut found = None;
-        for b in self.java_bases(id).iter() {
-            match *b {
-                Ok(bid) if bid != id && !java_seen(seen, bid, depth + 1) => {
-                    found = self.declared_member(bid, name).or_else(|| self.java_inherited(bid, name, depth + 1, seen));
-                    if found.is_some() {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        self.nest -= 1;
-        found
-    }
-}
-
-impl Resolver<'_> {
     /// The nearest local variable or parameter named `name` that `node` sees, in the method around
     /// it and the methods around that (an anonymous class or a lambda sees the locals around it).
     fn java_local<'t>(&mut self, node: Node<'t>, name: &str, src: &str) -> Option<Node<'t>> {
         const SCOPES: &[&str] =
             &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
         let at = node.start_byte();
-        let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
+        // an instance initializer is a block directly in a class body, or in an enum's after its constants
+        let scope = |n: &Node| {
+            SCOPES.contains(&n.kind()) || n.kind() == "block" && n.parent().is_some_and(|p| matches!(p.kind(), "class_body" | "enum_body_declarations"))
+        };
+        let top = std::iter::successors(node.parent(), |n| n.parent()).filter(scope).last()?;
         // per binder: its scope and its span
         let rows = self.found_in(top, "java binders", name, || {
             let binds = |n: Node| n.kind() == "identifier" && text(n, src) == name && java_binder(n);
@@ -144,8 +124,39 @@ impl Resolver<'_> {
                 before.checked_sub(1).map(|i| (rows[i][1], n))
             })
             .max_by_key(|&((start, _), _)| start)
+            // a field of a class body between the binder's scope and the use hides the binder
+            .filter(|&(_, scope)| {
+                !std::iter::successors(node.parent(), |n| n.parent())
+                    .take_while(|n| n.id() != scope.id())
+                    .any(|n| n.kind() == "class_body" && java_declares_field(n, name, src))
+            })
             .and_then(|((start, end), n)| n.descendant_for_byte_range(start, end))
     }
+}
+
+/// The field `name` the body of anonymous class `anon` declares.
+fn java_anon_field(fi: &FileInfo, anon: Node, name: &str) -> Option<i64> {
+    let mut cur = anon.walk();
+    let body = anon.named_children(&mut cur).find(|c| c.kind() == "class_body")?;
+    if !java_declares_field(body, name, &fi.src) {
+        return None;
+    }
+    let (s, e) = (body.start_position().row as i64 + 1, body.end_position().row as i64 + 1);
+    fi.defs.iter().find(|d| d.name == name && d.kind == "field" && s <= d.start && d.end <= e).map(|d| d.id)
+}
+
+/// Whether class body `body` declares a field `name`.
+fn java_declares_field(body: Node, name: &str, src: &str) -> bool {
+    let mut cur = body.walk();
+    for d in body.named_children(&mut cur).filter(|d| d.kind() == "field_declaration") {
+        let mut c2 = d.walk();
+        for v in d.children_by_field_name("declarator", &mut c2) {
+            if v.child_by_field_name("name").is_some_and(|x| text(x, src) == name) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ------------------------------------------------------------------------- Java
@@ -467,13 +478,15 @@ impl<'a> Resolver<'a> {
             if self.java_local(node, name, src).is_some() {
                 return Err("local variable");
             }
-            if self.java_is_field(fi, node, name) {
-                let found = java_classes(fi, node).into_iter().find_map(|c| match c {
-                    JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new()) => Some(self.java_field_def(id, name, 0, &mut HashMap::new())),
-                    _ => None,
-                });
+            // the innermost class that has the field, an anonymous class's own fields included
+            let found = java_classes(fi, node).into_iter().find_map(|c| match c {
+                JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new()) => Some(self.java_field_def(id, name, 0, &mut HashMap::new())),
+                JClass::Anon(a) => java_anon_field(fi, a, name).map(Some),
+                _ => None,
+            });
+            if let Some(found) = found {
                 let why = if java_field_site(node) { "definition" } else { "field" };
-                return found.flatten().map(|f| (f, why)).ok_or("field or key");
+                return found.map(|f| (f, why)).ok_or("field or key");
             }
         }
         match self.java_type(fi, node, name) {
@@ -577,7 +590,8 @@ impl<'a> Resolver<'a> {
                     None => self.java_field_def(c, name, 0, &mut HashMap::new()).map(|f| (f, "field")).ok_or("field or key"),
                 }
             }
-            Ty::Foreign(t, _) if call && (self.extended(&t, name) || self.trait_member(name)) => Err("receiver"),
+            // a class this default-package file cannot see is from the classpath, whatever extends a namesake
+            Ty::Foreign(t, _) if call && !self.java_unseen(fi, &t) && (self.extended(&t, name) || self.trait_member(name)) => Err("receiver"),
             Ty::Foreign(..) => Err("external"),
         }
     }
@@ -588,6 +602,10 @@ impl<'a> Resolver<'a> {
         let src = fi.src.as_str();
         if q.kind() == "this" {
             return self.container_at(fi, q.start_position().row as i64 + 1).ok_or("receiver");
+        }
+        // `Outer.this` is the instance of the enclosing class `Outer`
+        if q.kind() == "field_access" && q.child_by_field_name("field").is_some_and(|f| f.kind() == "this") {
+            return self.java_owner(path, fi, q.child_by_field_name("object").ok_or("receiver")?);
         }
         let mut segs = Vec::new();
         if !java_segments(q, &mut segs) {
@@ -602,6 +620,8 @@ impl<'a> Resolver<'a> {
             Ok(id) => id,
             Err("type parameter") => return Err("receiver"),
             Err("external") if segs.len() == 1 && self.java_package_files(hname).is_some() => return Err("package"),
+            // not one of the repository's same-named classes, which a foreign type may otherwise be
+            Err("external") if segs.len() == 1 && self.java_unseen(fi, hname) => return Err("external"),
             Err(e) if segs.len() == 1 => return if e == "external" { Ok(Ty::Foreign(hname.to_string(), Vec::new())) } else { Err(e) },
             Err(_) => {
                 let full = segs.iter().map(|s| text(*s, src)).collect::<Vec<_>>().join(".");
@@ -659,7 +679,7 @@ impl<'a> Resolver<'a> {
 
     /// The field or constant `name` of class `id`, inherited ones included.
     fn java_field_def(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
-        if java_seen(seen, id, depth) {
+        if seen_at(seen, id, depth) {
             return None;
         }
         if let Some(f) = self.declared_field(id, name) {
@@ -675,7 +695,7 @@ impl<'a> Resolver<'a> {
     /// Whether class `id` extends or implements a type from outside the repository, and whether
     /// one of the types it extends could not be found, at any depth.
     fn java_base_state(&mut self, id: i64, depth: usize, seen: &mut HashMap<i64, usize>) -> (bool, bool) {
-        if java_seen(seen, id, depth) {
+        if seen_at(seen, id, depth) {
             return (false, false);
         }
         let (mut outside, mut unknown) = (false, false);
@@ -778,7 +798,14 @@ impl<'a> Resolver<'a> {
         if let Some(b) = fi.bindings.iter().find(|b| b.local == name && b.item.is_some()) {
             return self.java_binding(b);
         }
-        if let Some(files) = self.java_package_files(&java_package(&fi.src)) {
+        let pkg = java_package(&fi.src);
+        if let Some(mut files) = self.java_package_files(&pkg) {
+            // the default package is one per directory, not one for the whole repository
+            if pkg.is_empty() {
+                if let Some(dir) = fi.defs.iter().find_map(|d| self.def_row(d.id)).map(|(p, _)| dir_of(&p).to_string()) {
+                    files.retain(|f| dir_of(f) == dir);
+                }
+            }
             if let Some(id) = self.java_top(&files, name) {
                 return Ok(id);
             }
@@ -793,7 +820,14 @@ impl<'a> Resolver<'a> {
             }
         }
         // `java.lang` and the packages a `*` imports from outside
-        Err(if self.defined_anywhere(name) { "not found" } else { "external" })
+        Err(if self.defined_anywhere(name) && !self.java_unseen(fi, name) { "not found" } else { "external" })
+    }
+
+    /// Whether `name`, defined somewhere in the repository, is out of sight of `fi`: a file of the
+    /// default package with no `*` import sees only its own directory, so such a class is from the
+    /// classpath.
+    fn java_unseen(&mut self, fi: &FileInfo, name: &str) -> bool {
+        java_package(&fi.src).is_empty() && !fi.bindings.iter().any(|b| b.local == "*") && self.defined_anywhere(name)
     }
 
     /// The class a Java type expression names (`T`, `a.b.T`, `Outer.Inner<X>`).
@@ -848,11 +882,14 @@ impl<'a> Resolver<'a> {
 
     /// Whether `name` is a field of a class around `node`, inherited ones included.
     fn java_is_field(&mut self, fi: &FileInfo, node: Node, name: &str) -> bool {
-        java_classes(fi, node).into_iter().any(|c| matches!(c, JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new())))
+        java_classes(fi, node).into_iter().any(|c| match c {
+            JClass::Named(id) => self.java_has_field(id, name, 0, &mut HashMap::new()),
+            JClass::Anon(a) => java_anon_field(fi, a, name).is_some(),
+        })
     }
 
     fn java_has_field(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> bool {
-        if java_seen(seen, id, depth) {
+        if seen_at(seen, id, depth) {
             return false;
         }
         if self.java_field_names(id).contains(name) {
@@ -884,7 +921,7 @@ impl<'a> Resolver<'a> {
     /// The declared type of the field `name` of class `id`, inherited ones included; an enum
     /// constant has the type of its enum.
     fn java_field_ty(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<Ty> {
-        if java_seen(seen, id, depth) {
+        if seen_at(seen, id, depth) {
             return None;
         }
         let (path, _) = self.def_row(id)?;
@@ -908,16 +945,6 @@ impl<'a> Resolver<'a> {
         }
         None
     }
-}
-
-/// Whether a walk over base types already came to `id` at `depth` or less, whose answer stands
-/// for this visit too; marks it otherwise. A type reached by many paths is read once per depth.
-fn java_seen(seen: &mut HashMap<i64, usize>, id: i64, depth: usize) -> bool {
-    if seen.get(&id).is_some_and(|&d| d <= depth) {
-        return true;
-    }
-    seen.insert(id, depth);
-    false
 }
 
 /// The fields a Java class declaration holds directly: (name, declared type; None for an enum constant).

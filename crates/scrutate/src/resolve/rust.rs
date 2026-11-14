@@ -30,6 +30,9 @@ impl Rules for Rust {
 
     fn occurrence(r: &mut Resolver, path: &str, fi: &FileInfo, node: Node, name: &str, line: i64) -> Option<Resolution> {
         if node.parent().is_some_and(|p| p.kind() == "token_tree") {
+            if node.prev_sibling().is_some_and(|p| p.kind() == "::") {
+                return Some(macro_path(r, path, fi, node, name, line));
+            }
             if let Some(why) = macro_token(node, &fi.src) {
                 return Some(Err(why));
             }
@@ -42,6 +45,35 @@ impl Rules for Rust {
             }
         }
         None
+    }
+
+    // `self::x` and `super::x` inside inline `mod a { }` blocks count from those blocks first
+    #[allow(clippy::too_many_arguments)]
+    fn qualified(r: &mut Resolver, path: &str, fi: &FileInfo, lang: Lang, q: Node, node: Node, name: &str, line: i64) -> Resolution {
+        let qt: String = text(q, &fi.src).chars().filter(|c| !c.is_whitespace()).collect();
+        let segs: Vec<&str> = qt.split("::").collect();
+        let ups = segs.iter().take_while(|s| **s == "super").count();
+        let mods: Vec<Node> =
+            std::iter::successors(node.parent(), |n| n.parent()).filter(|n| n.kind() == "mod_item" && n.child_by_field_name("body").is_some()).collect();
+        if mods.is_empty() || !(segs[0] == "self" || ups > 0) || ups > mods.len() {
+            return r.walk_qualified(path, fi, lang, q, node, name, line);
+        }
+        let module = |m: Node| {
+            let row = m.start_position().row as i64 + 1;
+            fi.defs.iter().find(|d| d.kind == "module" && d.start == row).map(|d| d.id)
+        };
+        let rest = &segs[if ups == 0 { 1 } else { ups }..];
+        let mut cur = match mods.get(ups) {
+            Some(&m) => Some(module(m).ok_or("not found")?),
+            None => None,
+        };
+        for seg in rest.iter().copied().chain(std::iter::once(name)) {
+            cur = Some(match cur {
+                None => top_level(fi, seg).map(|d| d.id).ok_or("not found")?,
+                Some(id) => r.member(id, seg, 0).ok_or("not found")?,
+            });
+        }
+        cur.map(|id| (id, "qualified")).ok_or("not found")
     }
 
     fn is_receiver(_q: Node, qt: &str, node: Node) -> bool {
@@ -100,11 +132,28 @@ impl Rules for Rust {
     }
 
     // impl blocks may live in another file of the crate
-    fn inherited(r: &mut Resolver, _id: i64, name: &str, _depth: usize, path: &str, qualname: &str) -> Option<i64> {
+    fn inherited(r: &mut Resolver, id: i64, name: &str, _depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let want = format!("{}.{name}", strip_generics(qualname));
         let rows = r.ix.named(name).ok()?;
         let common = |p: &str| p.split('/').zip(path.split('/')).take_while(|(a, b)| a == b).count();
-        rows.into_iter().filter(|r| strip_generics(&r.qualname) == want).max_by_key(|r| common(&r.path)).map(|r| r.id)
+        if let Some(own) = rows.into_iter().filter(|r| strip_generics(&r.qualname) == want).max_by_key(|r| common(&r.path)) {
+            return Some(own.id);
+        }
+        // a default method of a trait the type implements (`impl Greet for S {}`, also
+        // `impl Greet for inner::S` outside S's module): an impl block whose type is this one
+        let owner = strip_generics(qualname);
+        let bare = owner.rsplit('.').next().unwrap_or(&owner).to_string();
+        let mut impls: Vec<Symbol> = r.ix.named(&bare).ok()?.into_iter().filter(|s| s.kind == "impl").collect();
+        impls.retain(|s| strip_generics(&s.qualname) == owner || rust_impl_of(r, s, id));
+        impls.sort_by_key(|s| std::cmp::Reverse(common(&s.path)));
+        for s in impls {
+            for t in r.bases(s.id) {
+                if let Some(m) = r.declared_member(t, name) {
+                    return Some(m);
+                }
+            }
+        }
+        None
     }
 
     fn module_of_chain(r: &mut Resolver, path: &str, fi: &FileInfo, segs: &[&str]) -> Option<Vec<String>> {
@@ -126,6 +175,20 @@ impl Rules for Rust {
         r.rust_module(from, &segs)
     }
 
+    // the longest prefix of the path a file holds, then the inline modules down to the item
+    fn unfiled_item(r: &mut Resolver, from: &str, module: &str, item: &str) -> Option<i64> {
+        let segs: Vec<&str> = module.split("::").filter(|s| !s.is_empty()).collect();
+        let filed = (1..segs.len()).rev().find_map(|k| r.rust_module(from, &segs[..k]).map(|files| (k, files)));
+        // no file prefix: an inline module of `from` itself (`use other::work`)
+        let own = || (!matches!(*segs.first()?, "crate" | "self" | "super")).then(|| (0, vec![from.to_string()]));
+        let (k, files) = filed.or_else(own)?;
+        let mut cur = r.lookup_top(&files, segs[k], 0)?;
+        for seg in &segs[k + 1..] {
+            cur = r.member(cur, seg, 0)?;
+        }
+        r.member(cur, item, 0)
+    }
+
     fn import_files(r: &mut Resolver, from: &str, fi: &FileInfo, line: i64, module: &str) -> Option<Vec<String>> {
         let mut out = Vec::new();
         for b in statement_bindings(fi, line, &["use_declaration"]) {
@@ -143,6 +206,29 @@ impl Rules for Rust {
         }
         Some(out)
     }
+}
+
+/// Whether impl block `s` is one of type `id`: its `for` type resolves to `id`.
+fn rust_impl_of(r: &mut Resolver, s: &Symbol, id: i64) -> bool {
+    let fi = r.file(&s.path);
+    let Some(tree) = fi.tree.as_ref() else { return false };
+    // an impl block has no name of its own for def_node to match: it is the impl_item on its line
+    let row = (s.start - 1).max(0) as usize;
+    let mut stack = vec![tree.root_node()];
+    let mut item = None;
+    while let Some(n) = stack.pop() {
+        if n.start_position().row > row || n.end_position().row < row {
+            continue;
+        }
+        if n.kind() == "impl_item" && n.start_position().row == row {
+            item = Some(n);
+            break;
+        }
+        let mut cur = n.walk();
+        stack.extend(n.named_children(&mut cur));
+    }
+    let Some(leaf) = item.and_then(|n| n.child_by_field_name("type")).and_then(type_name) else { return false };
+    matches!(r.type_leaf(&s.path, &fi, Lang::Rust, leaf, s.start), Ok((t, _)) if t == id)
 }
 
 /// Standard Rust types whose methods a call reaches through `Deref` to the type they hold.
@@ -594,6 +680,23 @@ fn macro_plain(n: Node, src: &str) -> bool {
         }
     }
     false
+}
+
+/// `a::b::name` in a macro's tokens, resolved as the same path outside a macro; a path that does
+/// not start with a plain segment (`::a::name`, `Vec::<u8>::name`) is not decided.
+fn macro_path(r: &mut Resolver, path: &str, fi: &FileInfo, n: Node, name: &str, line: i64) -> Resolution {
+    let mut segs = Vec::new();
+    let mut sep = n.prev_sibling();
+    while let Some(s) = sep.filter(|s| s.kind() == "::") {
+        let Some(seg) = s.prev_sibling().filter(|p| matches!(p.kind(), "identifier" | "crate" | "self" | "super")) else {
+            return Err("macro argument");
+        };
+        segs.push(seg);
+        sep = seg.prev_sibling();
+    }
+    segs.reverse();
+    let qt = segs.iter().map(|s| text(*s, &fi.src)).collect::<Vec<_>>().join("::");
+    r.walk_path(path, fi, Lang::Rust, segs[0], &qt, segs[0], n, name, line)
 }
 
 /// Whether a name in a Rust macro argument is bound in the tokens before it: a parameter of a

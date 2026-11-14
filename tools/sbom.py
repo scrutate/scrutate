@@ -4,6 +4,7 @@
 Uses `cargo metadata` (the authoritative, locked graph) so the SBOM lists exactly what the binary
 was built from: name, version, license expression, source registry and purl for every crate, and
 one `data` component per data file from outside the project (`third_party_notices.data_files`).
+The timestamp is SOURCE_DATE_EPOCH when that is set, else now; the serial number is new each run.
 
 usage: sbom.py [--out FILE] [--package scrutate]
 """
@@ -12,12 +13,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 import uuid
 
-from third_party_notices import data_files
+from third_party_notices import data_files, graph, ships
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,20 +27,12 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--package", default="scrutate")
     a = ap.parse_args()
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=os.path.join(HERE, ".."), capture_output=True, text=True, check=True).stdout)
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch and not epoch.isdigit():
+        sys.exit(f"SOURCE_DATE_EPOCH must be whole seconds since 1970, got {epoch!r}")
+    meta, seen, root_id = graph(a.package)
     by_id = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
-    root_id = next(p["id"] for p in meta["packages"] if p["name"] == a.package)
-    # transitive closure of normal + build dependencies (dev dependencies are not shipped)
-    seen, stack = set(), [root_id]
-    while stack:
-        nid = stack.pop()
-        if nid in seen:
-            continue
-        seen.add(nid)
-        for dep in nodes[nid]["deps"]:
-            if any(k["kind"] in (None, "build") for k in dep["dep_kinds"]):
-                stack.append(dep["pkg"])
     comps = []
     for nid in sorted(seen - {root_id}, key=lambda i: (by_id[i]["name"], by_id[i]["version"])):
         p = by_id[nid]
@@ -78,7 +70,7 @@ def main() -> int:
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch) if epoch else None)),
             "tools": [{"name": "scrutate/tools/sbom.py", "version": root["version"]}],
             "component": {"type": "application", "bom-ref": f"pkg:cargo/{root['name']}@{root['version']}", "name": root["name"], "version": root["version"],
                           "licenses": [{"expression": root["license"]}] if root.get("license") else []},
@@ -86,8 +78,8 @@ def main() -> int:
         "components": comps,
         "dependencies": [
             {"ref": f"pkg:cargo/{by_id[nid]['name']}@{by_id[nid]['version']}",
-             "dependsOn": sorted({f"pkg:cargo/{by_id[d['pkg']]['name']}@{by_id[d['pkg']]['version']}" for d in nodes[nid]["deps"] if d["pkg"] in seen})}
-            for nid in sorted(seen, key=lambda i: by_id[i]["name"])
+             "dependsOn": sorted({f"pkg:cargo/{by_id[d['pkg']]['name']}@{by_id[d['pkg']]['version']}" for d in nodes[nid]["deps"] if d["pkg"] in seen and ships(d)})}
+            for nid in sorted(seen, key=lambda i: (by_id[i]["name"], by_id[i]["version"]))
         ],
     }
     text = json.dumps(bom, indent=1)

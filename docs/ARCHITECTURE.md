@@ -272,7 +272,11 @@ as a Python one starts at its decorators.
 
 A `[[language]]` table adds a language without a build (`custom.rs`,
 [CLI](CLI.md#custom-languages)), parsed as the keyword tier parses. The tables in effect are
-process-wide, loaded by each command and each index update for the root. A custom-language file's
+process-wide, loaded by each command and each index update for the root. Where one process
+serves several roots (the Python module's `Repo`s), each `Repo` call and index update runs under
+its own root's tables (`custom::of_root`, then `custom::with` on the threads that parse), and
+`grep(types=)` carries the tables of the index it starts in (`Files::customs`), so a second root
+cannot swap them midway. A custom-language file's
 artifact key holds its language's signature, and the index's meta keeps every extension's
 signature (`languages`), so a changed table rereads only the files of the extensions it changed.
 
@@ -391,7 +395,9 @@ NFC with final sigma folded.
   as a copy of the main checkout's index of the same schema, parsing rules and vector model: the
   database read with `VACUUM INTO` in one snapshot and the segments it lists copied, each of which
   must open (a segment the main checkout removed meanwhile fails the seed, and the index is built
-  as usual). The first update reads and hashes every file and
+  as usual). Copied segments are never deleted by a seed that lost or failed: several first opens
+  at once share them, and the one whose database lands first lists them; an unlisted copy goes
+  with the segment collection. The first update reads and hashes every file and
   parses only those that differ. Content an update has not seen is looked up in this checkout's
   store, then the main checkout's, read-only in one snapshot per update. Nothing of the other
   checkout is written (review in docs/SECURITY.md). Two plain clones do not find each other.
@@ -404,9 +410,14 @@ NFC with final sigma folded.
     (`GetFileInformationByName`, Windows 11 24H2 and later) or else by a handle opened for its
     attributes only, as CPython's `os.stat` does (`index::Listed`, `index::change_time`);
     SHA-1 verification;
-  - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory and
-    renamed (the name is taken inside that transaction, so a directory already under it was left
+  - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory,
+    each file and the directory flushed to disk, and renamed before the database names them, so
+    a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
     by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
+  - one read snapshot per operation (`ops::run`, each language server request): its reads see
+    one commit, and a commit meanwhile shows in the next operation; after an update the log is
+    cut to nothing once the readers on older commits finish, waited for about a second, else
+    by the next update, and a cut log keeps at most 4 MB of its file;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a
@@ -506,7 +517,7 @@ time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per
-generation, then swap `manifest.json` atomically. More than four segments merges all but the
+generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges all but the
 largest by a streaming k-way merge, so the small segments a watch adds do not rewrite the whole
 index; more than 30% dead documents merges all of them. A merge checks the segments it reads
 first, and a damaged one rebuilds the index. A file over 64 MB is read in 1 MB pieces, never
@@ -551,7 +562,7 @@ is added there alone.
 
 | Operation | Looks for changes | Keeps current |
 |---|---|---|
-| `index` | every file; waits for another writer | code index, text index (built when missing) |
+| `index` | every file; waits for another writer, up to 10 minutes or a cancel | code index, text index (built when missing) |
 | `index --no-text` | every file; waits | code index |
 | `index --text` | every file; waits | text index (built when missing) |
 | `grep --index --update` | every file; waits | text index (built when missing) |
@@ -659,7 +670,7 @@ definitions and their nesting come from the index's `chunks` rows. A file whose 
 overflow the stack or make a request take minutes; a name's binders and assignments are found once
 per scope, so a function of thousands of uses resolves in linear time. The rules (scopes, method
 resolution order, qualifiers and declared types, Java packages and overloads, import paths and
-re-exports, followed to a depth limit; Rust `crate`/`self`/`super` paths among them) are in
+re-exports, followed up to 6 import hops deep; Rust `crate`/`self`/`super` paths among them) are in
 [CLI](CLI.md#refs). Java overloads share one qualified name in the index.
 Inherited methods are kept per class, and the Java walks
 over base types read a type reached by many paths once per depth, so a diamond of interfaces costs
@@ -931,7 +942,7 @@ without its lock when locking is unsupported (one process sees the files), and t
 names of the answer cache, the frecency state and a seeded index leave the process id out.
 PCRE2's JIT has no wasm backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
-compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` checks that build,
+compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` runs that build,
 and runs clippy on the native build without `pcre2`, on every push.
 
 ## Models (`crates/scrutate/models/`, `models.rs`)

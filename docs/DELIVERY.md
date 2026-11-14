@@ -21,7 +21,7 @@ The fifteen items of the mission (section 11) and where each lives.
 | 6 | Installation and usage | docs/INSTALL.md, docs/CLI.md, README.md, integrations/*/README.md |
 | 7 | Automated test results | docs/TEST_RESULTS.md (generated), bench/results/platforms/ (per-platform logs, wheel matrices, musl checks, reproducible build), bench/results/fuzz/ |
 | 8 | Security assessment | docs/SECURITY.md |
-| 9 | Reproducible competitive benchmarks | docs/LEADERBOARD.md (generated), bench/leaderboard.py, bench/indexed.py, bench/corpora.py (pinned corpora), bench/results/ (raw JSON and logs) |
+| 9 | Reproducible competitive benchmarks | docs/LEADERBOARD.md (generated), bench/leaderboard.py, bench/indexed.py, bench/yardstick.py with bench/rivals/ (every workload against its rivals, rivals pinned by bench/competitors/install_rivals.sh), bench/corpora.py (pinned corpora), bench/results/ (raw JSON and logs) |
 | 10 | Performance and memory | docs/LEADERBOARD.md (wall time, CPU time, peak memory per benchmark and tool; indexed latency percentiles, index time and size), docs/BENCHMARKS.md (start-up, concurrency, Engine B index metrics) |
 | 11 | Documentation | docs/ (release checklist in docs/RELEASING.md, first questions in docs/FAQ.md), README.md, CHANGELOG.md, CONTRIBUTING.md, GLOSSARY.md, CITATION.cff |
 | 12 | Remaining defects and incomplete requirements | docs/RELEASE_READINESS.md, docs/TRACEABILITY.md (PARTIAL, FAIL and BLOCKED rows) |

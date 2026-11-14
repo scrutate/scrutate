@@ -98,8 +98,8 @@ Engine A (instant search) needs none of this: it searches every readable file, i
 | yaml | `.yaml .yml` | key | no | no | no | `tests/samples/sample.yaml` |
 | zig | `.zig .zon` | function, type | yes | yes | no | `tests/samples/sample.zig` |
 
-A `.h` file is read as objc when it holds `@interface`, `@protocol`, `@implementation`, `@class `, else as cpp when a line matches `(?m)^[ \t]*(?:namespace\b[^;]*\{|namespace\s+\w[\w:]*\s*$|class\s+\w+|template\s*<|using\s+namespace\b|(?:public|private|protected)\s*:|extern\s+"C\+\+"|#\s*include\s*<[a-z_]+>)`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).
-A `.m` file is read as objc when its first 4000 bytes hold `@interface`, `@implementation`, `#import`, `@end`, `@protocol`, else as matlab. A `.pp` file is read as pascal when it holds `procedure `, `function `, `begin`, `end;`, `unit `, `program ` and its first 4000 bytes hold no `$`, else as puppet.
+A `.h` file is read as objc when a line matches `(?m)^[ \t]*@(?:interface|protocol|implementation|class)\b`, else as cpp when a line matches `(?m)^[ \t]*(?:namespace\b[^;]*\{|namespace\s+\w[\w:]*\s*$|class\s+\w+|template\s*<|using\s+namespace\b|(?:public|private|protected)\s*:|extern\s+"C\+\+"|#\s*include\s*<[a-z_]+>)`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).
+A `.m` file is read as objc when its first 4000 bytes hold `@interface`, `@implementation`, `#import`, `@end`, `@protocol`, else as matlab. A `.pp` file is read as pascal when a line of its first 4000 bytes matches `(?im)^[ \t]*(?:unit|program|library)[ \t]+[\w.]+[ \t]*;` (a unit, program or library header), or when it holds `procedure `, `function `, `begin`, `end;`, `unit `, `program ` and its first 4000 bytes hold no `$`; else as puppet.
 
 61 grammars in the default build, 13 more with `--features extra-langs`; 74 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
 

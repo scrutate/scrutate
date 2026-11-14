@@ -216,7 +216,8 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     // -U holds the whole member, so a limit would refuse large members that are fine
     let limit = (src.expands() && !o.pattern.multiline).then_some(crate::archive::MAX_LINE);
     let mut searcher = if src.expands() {
-        w.member.get_or_insert_with(|| make_searcher(o, BinaryDetection::quit(0), limit, true))
+        let binary = if named { BinaryDetection::convert(0) } else { BinaryDetection::quit(0) };
+        w.member.get_or_insert_with(|| make_searcher(o, binary, limit, true))
     } else if named {
         w.named.get_or_insert_with(|| make_searcher(o, BinaryDetection::convert(0), None, true))
     } else {

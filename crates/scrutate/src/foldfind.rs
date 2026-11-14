@@ -45,7 +45,7 @@ fn positions(hir: &Hir, out: &mut Vec<Forms>) -> Option<()> {
         HirKind::Literal(lit) => out.extend(lit.0.iter().map(|&b| Some(vec![vec![b]]))),
         HirKind::Class(Class::Unicode(c)) => {
             let chars: Vec<char> = c.iter().flat_map(|r| r.start()..=r.end()).take(5).collect();
-            if chars.len() > 4 {
+            if chars.is_empty() || chars.len() > 4 {
                 out.push(None);
             } else {
                 let forms: Vec<Vec<u8>> = chars.iter().map(|ch| ch.to_string().into_bytes()).collect();
@@ -54,7 +54,7 @@ fn positions(hir: &Hir, out: &mut Vec<Forms>) -> Option<()> {
         }
         HirKind::Class(Class::Bytes(c)) => {
             let bytes: Vec<u8> = c.iter().flat_map(|r| r.start()..=r.end()).take(5).collect();
-            out.push((bytes.len() <= 4).then(|| bytes.iter().map(|&b| vec![b]).collect()));
+            out.push((1..=4).contains(&bytes.len()).then(|| bytes.iter().map(|&b| vec![b]).collect()));
         }
         HirKind::Concat(xs) => xs.iter().try_for_each(|x| positions(x, out))?,
         _ => return None,
@@ -204,5 +204,14 @@ mod tests {
         assert!(FoldFinder::new("ks").is_none());
         assert!(FoldFinder::new("a+b").is_none());
         assert!(FoldFinder::new("ab").is_some());
+    }
+
+    #[test]
+    fn a_class_that_matches_nothing_is_no_position_to_scan_for() {
+        for empty in [r"ab[^\s\S]", r"(?-u)ab[^\x00-\xff]"] {
+            if let Some(f) = FoldFinder::new(empty) {
+                assert_eq!(f.find(b"xxab"), Some(2), "{empty}");
+            }
+        }
     }
 }

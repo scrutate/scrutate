@@ -26,7 +26,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from leaderboard import argv, bad_exit, group_argv, structural_argv, suite  # noqa: E402
+from leaderboard import argv, bad_exit, drop_scrutate_settings, group_argv, structural_argv, suite  # noqa: E402
 
 
 def command(b, binary, cdir):
@@ -65,6 +65,7 @@ def _selfcheck():
 
 
 def main() -> int:
+    drop_scrutate_settings()
     _selfcheck()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpora", required=True)

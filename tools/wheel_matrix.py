@@ -69,6 +69,7 @@ def main() -> int:
                 if free:
                     row["checks"]["free-threaded wheel chosen"] = "t-" in row["wheel"]
                 rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, "pytest"])
+                row["checks"]["pytest installed"] = rc == 0
             if rc == 0:
                 probe = "import sys, scrutate; print(getattr(sys, '_is_gil_enabled', lambda: True)())"
                 rc, out = sh([exe, "-W", "error", "-c", probe])
@@ -84,7 +85,7 @@ def main() -> int:
             ok_all &= row["ok"]
             rows.append(row)
     host = f"{platform.system()} {platform.machine()}"
-    print(f"| Platform | Python | Wheel | Checks | Result |\n|---|---|---|---|---|")
+    print("| Platform | Python | Wheel | Checks | Result |\n|---|---|---|---|---|")
     for r in rows:
         host = r.get("platform", host)
         checks = ", ".join(f"{k}: {'yes' if v else 'NO'}" for k, v in r.get("checks", {}).items()) or r.get("error", "")

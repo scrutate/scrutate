@@ -358,3 +358,32 @@ fn outside_git_and_with_a_bad_revision_it_says_so_and_exits_2() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("git is not installed or not on PATH"));
 }
+
+/// The impact tool of one repository parses with that repository's custom languages, whichever
+/// repository of the process loaded its own last (two Python `Repo`s side by side).
+#[test]
+fn the_impact_tool_parses_with_its_own_repository_s_languages() {
+    let (a, b) = (Tree::new("own_langs_a"), Tree::new("own_langs_b"));
+    for (t, word) in [(&a, "fn"), (&b, "def")] {
+        t.write(
+            ".scrutate.toml",
+            &format!(
+                "[[language]]\nname = \"twolang\"\nextensions = [\"twl\"]\ndefinitions = [\n  {{ kind = \"function\", pattern = '^{word}\\s+([a-z]+)' }},\n]\n"
+            ),
+        );
+    }
+    a.write("x.twl", "fn alpha\n  1\nend\n");
+    a.git(&["init", "-q"]);
+    a.commit("one");
+    a.write("x.twl", "fn alpha\n  2\nend\n");
+    // checked when opened, then not again for an hour: the call parses with whatever tables are in effect
+    let every = scrutate::session::Every::given(Some(3600.0));
+    let sa = scrutate::session::Session::open(&a.root, every).unwrap();
+    let call = |tool: &str, args: serde_json::Value| scrutate::mcp::call_tool(&sa, tool, &args, &scrutate::mcp::Settings::new(None), &Default::default());
+    // the first build has ended once a call answers
+    assert!(call("outline", serde_json::json!({"path": "x.twl"})).text.contains("alpha"));
+    scrutate::custom::load(&b.root).unwrap();
+    let c = call("impact", serde_json::json!({}));
+    // read with b's table the old copy of x.twl holds no definition, and alpha would be "added"
+    assert!(!c.is_error && c.text.contains("alpha  (edited)"), "{}", c.text);
+}

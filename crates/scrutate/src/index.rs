@@ -23,7 +23,7 @@ pub const SCHEMA_VERSION: u32 = 14;
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
 /// revision is read as it is and never updated.
-pub const CONTENT_REVISION: u32 = 3;
+pub const CONTENT_REVISION: u32 = 8;
 pub use crate::models::REVISION as MODEL_REVISION;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
@@ -678,8 +678,9 @@ fn segment_name(n: &str) -> bool {
 /// A new index of a linked git work tree starts as a copy of its main checkout's index of this
 /// schema, parsing rules and vector model: the database read in one snapshot (`VACUUM INTO`, which
 /// leaves the other one as it is) and the segments it lists copied. The first update then reads
-/// and hashes every file and parses only those whose content differs. When anything fails no file
-/// is left and the index is built as usual. -> whether it was seeded.
+/// and hashes every file and parses only those whose content differs. When anything fails no
+/// database is left and the index is built as usual; copied segments stay, since a process that
+/// seeded at the same time may list them. -> whether it was seeded.
 fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
     let Some(main) = crate::files::main_checkout(root) else { return false };
     let Ok(main_dir) = crate::files::index_dir(&main) else { return false };
@@ -694,7 +695,6 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
     #[cfg(target_os = "wasi")]
     let tag = format!("seed-{nanos}");
     let tmp = dir.join(format!("index.db.{tag}"));
-    let mut made = Vec::new();
     let copied = (|| -> Result<()> {
         let db = Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.busy_timeout(Duration::from_secs(1))?;
@@ -718,39 +718,32 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
             if !segment_name(n) {
                 bail!("a segment name this program does not write");
             }
-            if copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)? {
-                made.push(seg_dir.join(n));
-            }
+            copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)?;
         }
         // the main checkout removes a segment it replaced right after its commit, so one the
         // snapshot lists may be gone, or half gone while it was copied: every one must open
         for n in &names {
             crate::lex::Segment::open(&seg_dir.join(n))?;
         }
-        // another process that made one first wins
+        // another process that made one first wins; segment copies are kept either way, as its
+        // database may name them (an unlisted one goes with gc_segments)
         std::fs::hard_link(&tmp, dir.join("index.db"))?;
         Ok(())
     })();
     let _ = std::fs::remove_file(&tmp);
-    if copied.is_err() {
-        for d in &made {
-            let _ = std::fs::remove_dir_all(d);
-        }
-    }
     copied.is_ok()
 }
 
 /// The files of the segment directory `from` copied into `seg_dir/name` (a copy of the same
-/// name that is there already is the same segment: names are never reused); true when this call
-/// made it.
-fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<bool> {
+/// name that is there already is the same segment: names are never reused).
+fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()> {
     let dest = seg_dir.join(name);
     if dest.exists() {
-        return Ok(false);
+        return Ok(());
     }
     let tmp = seg_dir.join(format!("{name}.{tag}"));
     std::fs::create_dir(&tmp)?;
-    let copied = (|| -> Result<bool> {
+    let copied = (|| -> Result<()> {
         for e in std::fs::read_dir(from)? {
             let e = e?;
             if !e.file_type()?.is_file() {
@@ -759,12 +752,12 @@ fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<bo
             std::fs::copy(e.path(), tmp.join(e.file_name()))?;
         }
         std::fs::rename(&tmp, &dest)?;
-        Ok(true)
+        Ok(())
     })();
     if copied.is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
-    copied.or_else(|e| if dest.is_dir() { Ok(false) } else { Err(e) })
+    copied.or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
 }
 
 /// The hash of a file's bytes the index records for it.
@@ -856,6 +849,16 @@ pub fn rename_settled(from: &Path, to: &Path) -> std::io::Result<()> {
             r => return r,
         }
     }
+}
+
+/// The directory's entries written to disk (Unix; Windows has no handle to a directory to flush,
+/// and NTFS journals its entries).
+pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
 }
 
 /// `.gitignore` of the index directory, unless something is there already.
@@ -993,6 +996,69 @@ pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
     std::fs::canonicalize(&full).ok()?.starts_with(root).then_some(md)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Run once at the next `Index::chunks`: a test's writer commits between a query's reads.
+    pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    /// Run once right after an update loads its root's custom languages.
+    pub static AFTER_LANGUAGES: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+}
+
+/// Whether this process has opened an index, the code index or the text index, so a panic may
+/// come from one.
+pub static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long SQLite's busy handler waits for a lock before a statement fails with SQLITE_BUSY;
+/// short in this crate's own tests, so a wait past it takes seconds there.
+const BUSY: Duration = if cfg!(test) { Duration::from_secs(2) } else { Duration::from_secs(30) };
+
+/// A flag a front end sets to stop (`watch`'s Ctrl-C), which ends every wait for a lock.
+static STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
+
+/// Make `flag` end every wait of this process for a lock another process holds.
+pub fn stop_waits_on(flag: Arc<std::sync::atomic::AtomicBool>) {
+    let _ = STOP.set(flag);
+}
+
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(f, _) if matches!(f.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked))
+}
+
+/// Whether the front end asked every wait and update to stop (`stop_waits_on`, Ctrl-C under
+/// `watch`).
+pub(crate) fn stopped() -> bool {
+    STOP.get().is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Whether an operation with this `cancel` flag should stop: the flag, or `stopped`.
+pub(crate) fn stopping(cancel: &std::sync::atomic::AtomicBool) -> bool {
+    cancel.load(std::sync::atomic::Ordering::Relaxed) || stopped()
+}
+
+/// Run `f` again while another connection holds a lock it needs (SQLITE_BUSY or LOCKED), up to
+/// 10 minutes or until `cancel` or the front end's stop (`stop_waits_on`) is set: every write of
+/// the index that waits for another writer waits here. Each try waits at most half a second in
+/// SQLite's busy handler, so a stop is seen within that.
+fn wait_busy<T>(db: &Connection, cancel: &std::sync::atomic::AtomicBool, mut f: impl FnMut(&Connection) -> rusqlite::Result<T>) -> Result<T> {
+    let t0 = Instant::now();
+    db.busy_timeout(Duration::from_millis(500))?;
+    let r = loop {
+        match f(db) {
+            Err(e) if is_busy(&e) => {
+                if stopping(cancel) {
+                    break Err(anyhow::anyhow!("cancelled"));
+                }
+                if t0.elapsed() > Duration::from_secs(600) {
+                    break Err(anyhow::anyhow!("another process has held the index write lock for 10 minutes"));
+                }
+            }
+            r => break r.map_err(Into::into),
+        }
+    };
+    db.busy_timeout(BUSY)?;
+    r
+}
+
 /// Run `f` again while it fails with SQLITE_BUSY/LOCKED (statements the busy handler does not cover,
 /// such as the journal-mode switch of a brand-new database opened by several processes at once).
 fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
@@ -1000,8 +1066,7 @@ fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result
     loop {
         match f() {
             Err(rusqlite::Error::SqliteFailure(e, _))
-                if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked)
-                    && t0.elapsed() < Duration::from_secs(30) =>
+                if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked) && t0.elapsed() < BUSY =>
             {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -1057,6 +1122,9 @@ impl FileCount {
 
 pub struct Index {
     pub root: PathBuf,
+    /// the root as the caller spelled it, made absolute (through a link, macOS's `/tmp`): a path
+    /// spelled through it is a path under `root`
+    pub given: PathBuf,
     pub dir: PathBuf,
     pub seg_dir: PathBuf,
     pub models: Arc<ModelSet>,
@@ -1069,6 +1137,10 @@ pub struct Index {
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
     /// the files updates read, for the progress a front end reports
     pub count: Arc<FileCount>,
+    /// a read snapshot (`begin_read`) is open on `db`
+    reading: bool,
+    /// the last update could not truncate the log: the next one tries first
+    log_left: bool,
     lex: Option<LexStore>,
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
@@ -1116,7 +1188,9 @@ fn file_id(path: &Path) -> Option<(u64, u64)> {
 
 impl Index {
     pub fn open(root: &Path, models: Arc<ModelSet>) -> Result<Index> {
+        OPENED.store(true, std::sync::atomic::Ordering::Relaxed);
         crate::files::index_dir(root)?;
+        let given = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
         let root = std::fs::canonicalize(root).with_context(|| format!("open {}", root.display()))?;
         let dir = crate::files::make_index_dir(&root)?;
         let seg_dir = dir.join("seg");
@@ -1136,21 +1210,32 @@ impl Index {
             Self::wipe(&dir, &seg_dir);
         }
         std::fs::create_dir_all(&seg_dir)?;
-        let setup = |db: &Connection| -> rusqlite::Result<()> {
-            db.busy_timeout(Duration::from_secs(30))?;
-            retry_busy(|| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
+        // a lock another process took first (even before the database had its WAL) is waited for
+        let never = std::sync::atomic::AtomicBool::new(false);
+        let setup = |db: &Connection| -> Result<()> {
+            wait_busy(db, &never, |db| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
             // WAL + NORMAL: durable against process crashes, consistent after power loss (at worst the
-            // last transaction rolls back); one fsync per checkpoint instead of per transaction
-            retry_busy(|| db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;"))
+            // last transaction rolls back); one fsync per checkpoint instead of per transaction; a
+            // log cut back at a checkpoint keeps at most 4 MB of its file
+            wait_busy(db, &never, |db| {
+                db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000; PRAGMA journal_size_limit=4194304;")
+            })
         };
+        let schema = |db: &Connection| wait_busy(db, &never, |db| db.execute_batch(SCHEMA).and_then(|()| add_art(db)));
+        let read_only = |e: &anyhow::Error| matches!(e.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly);
         let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
         let db = match setup(&db) {
-            Ok(()) => retry_busy(|| db.execute_batch(SCHEMA)).and_then(|()| add_art(&db)).map(|()| db),
-            Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly && matches!(triage, Triage::Reuse) => {
+            Ok(()) => match schema(&db) {
+                Ok(()) => Ok(db),
+                // a database that refuses the schema is garbage; a wait that ran out is no damage
+                Err(e) if e.downcast_ref::<rusqlite::Error>().is_some() => Err(e),
+                Err(e) => return Err(e),
+            },
+            Err(e) if read_only(&e) && matches!(triage, Triage::Reuse) => {
                 drop(db);
                 Ok(Self::open_immutable(&db_path, &sem_sig)?)
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
         let db = match db {
             Ok(db) => db,
@@ -1161,8 +1246,7 @@ impl Index {
                 std::fs::create_dir_all(&seg_dir)?;
                 let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
                 setup(&db)?;
-                retry_busy(|| db.execute_batch(SCHEMA))?;
-                add_art(&db)?;
+                schema(&db)?;
                 db
             }
         };
@@ -1170,6 +1254,7 @@ impl Index {
         db.set_prepared_statement_cache_capacity(64);
         let mut ix = Index {
             root,
+            given,
             dir,
             seg_dir,
             models,
@@ -1185,6 +1270,8 @@ impl Index {
             #[cfg(test)]
             trees_peak: 0,
             cancel: Arc::default(),
+            reading: false,
+            log_left: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1222,17 +1309,22 @@ impl Index {
     pub fn another(&self) -> Result<Index> {
         let db_path = self.dir.join("index.db");
         let opened = Connection::open(&db_path).and_then(|db| {
-            db.busy_timeout(Duration::from_secs(30))?;
+            db.busy_timeout(BUSY)?;
             // a page cache of 2 MB: with 32 MB each, eight readers held 77 MB more under eight
             // calls, and the system's file cache serves the pages they share as fast
             db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-2000;")?;
             db.query_row("SELECT count(*) FROM meta", [], |_| Ok(()))?;
             Ok(db)
         });
-        let Ok(db) = opened else { return Index::open(&self.root, Arc::clone(&self.models)) };
+        let Ok(db) = opened else {
+            let mut fresh = Index::open(&self.root, Arc::clone(&self.models))?;
+            fresh.given.clone_from(&self.given);
+            return Ok(fresh);
+        };
         db.set_prepared_statement_cache_capacity(64);
         Ok(Index {
             root: self.root.clone(),
+            given: self.given.clone(),
             dir: self.dir.clone(),
             seg_dir: self.seg_dir.clone(),
             models: Arc::clone(&self.models),
@@ -1248,6 +1340,8 @@ impl Index {
             #[cfg(test)]
             trees_peak: 0,
             cancel: Arc::default(),
+            reading: false,
+            log_left: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1291,24 +1385,7 @@ impl Index {
         let done = |db: &Connection| stamp_for.is_some() && Self::rebuild_reason(db).is_none();
         self.lex = None;
         self.lex_ver = None;
-        self.db.busy_timeout(Duration::ZERO)?;
-        let t0 = Instant::now();
-        let locked = loop {
-            if done(&self.db) {
-                break Ok(false);
-            }
-            match self.db.execute_batch("BEGIN IMMEDIATE") {
-                Err(rusqlite::Error::SqliteFailure(e, _))
-                    if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked)
-                        && t0.elapsed() < Duration::from_secs(30) =>
-                {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-                r => break r.map(|()| true),
-            }
-        };
-        self.db.busy_timeout(Duration::from_secs(30))?;
-        if !locked? {
+        if !self.begin_waiting(done)? {
             return Ok(());
         }
         if done(&self.db) {
@@ -1344,7 +1421,7 @@ impl Index {
             Ok(c) => c,
             Err(e) => return if is_corruption(&e) { Triage::Garbage("cannot open") } else { Triage::Reuse },
         };
-        let _ = con.busy_timeout(Duration::from_secs(30));
+        let _ = con.busy_timeout(BUSY);
         // a damaged header or a foreign file fails the first real read (NOTADB / CORRUPT)
         if let Err(e) = con.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
             return if is_corruption(&e) { Triage::Garbage("not a database") } else { Triage::Reuse };
@@ -1496,25 +1573,71 @@ impl Index {
         fresh.progress = self.progress;
         fresh.cancel = Arc::clone(&self.cancel);
         fresh.count = Arc::clone(&self.count);
+        fresh.given.clone_from(&self.given);
+        let reading = self.reading;
         *self = fresh;
+        if reading {
+            self.begin_read()?;
+        }
         Ok(())
+    }
+
+    /// Start a read snapshot: every read until `end_read` sees one commit, which a writer's later
+    /// commits do not change (WAL: the writer goes on; the log is not truncated past the snapshot
+    /// until it ends). -> false when a transaction is open already (an update), which is left alone.
+    pub fn begin_read(&mut self) -> Result<bool> {
+        if !self.db.is_autocommit() {
+            return Ok(false);
+        }
+        self.db.execute_batch("BEGIN")?;
+        self.reading = true;
+        Ok(true)
+    }
+
+    /// End the snapshot `begin_read` started.
+    pub fn end_read(&mut self) {
+        if std::mem::take(&mut self.reading) {
+            let _ = self.db.execute_batch("COMMIT");
+        }
+    }
+
+    /// The names of the segments the store holds open, when it is open.
+    pub fn held_segments(&self) -> Option<&[String]> {
+        self.lex.as_ref().map(|l| l.names.as_slice())
+    }
+
+    /// Close the segment store unless it holds `names`: an index kept idle then holds no file a
+    /// writer has replaced (on Unix its disk space is freed, on Windows it can be removed).
+    pub fn release_segments_other_than(&mut self, names: &[String]) {
+        if self.held_segments().is_some_and(|held| held != names) {
+            self.lex = None;
+            self.lex_ver = None;
+        }
+    }
+
+    /// What is wrong with the vectors of `store`, in an index whose chunks have them.
+    fn vector_damage(&self, store: &LexStore) -> Option<&'static str> {
+        let sig = self.meta("model_sig").filter(|s| s != "none")?;
+        if store.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) {
+            return Some("a segment has no vectors");
+        }
+        // the width is known when the model that wrote them is the one loaded
+        let k = (sig == self.sig).then(|| self.models.semantic().ok().flatten().map(|m| m.k)).flatten()?;
+        store.segs.iter().any(|g| g.vec.is_some() && g.k != k).then_some("a segment's vectors are not as wide as the model's")
     }
 
     /// The segment store, with statistics for the chunks that are alive right now.
     pub fn lex(&mut self) -> Result<&mut LexStore> {
         self.reopen_if_replaced()?;
-        let ver = self.meta("data_version").unwrap_or_else(|| "0".into());
+        let mut ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let names = self.segments();
         if self.lex.as_ref().map(|l| l.names != names).unwrap_or(true) {
-            let vectors = self.meta("model_sig").is_some_and(|s| s != "none");
             let mut names = names;
             let mut attempt = 0;
             let store = loop {
-                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| {
-                    if vectors && s.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) {
-                        return Err(Damaged("a segment has no vectors").into());
-                    }
-                    Ok(s)
+                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| match self.vector_damage(&s) {
+                    Some(why) => Err(Damaged(why).into()),
+                    None => Ok(s),
                 });
                 match opened {
                     Ok(s) => break s,
@@ -1523,6 +1646,12 @@ impl Index {
                         // segments that are gone. Re-read it a few times before calling it damage.
                         attempt += 1;
                         std::thread::sleep(Duration::from_millis(20 * attempt));
+                        // a snapshot names the segments of its commit, which a writer may have
+                        // replaced and removed since: a later snapshot names the ones there now
+                        if self.reading {
+                            self.db.execute_batch("COMMIT; BEGIN")?;
+                            ver = self.meta("data_version").unwrap_or_else(|| "0".into());
+                        }
                         let again = self.segments();
                         if again != names && attempt <= 5 {
                             names = again;
@@ -1608,6 +1737,23 @@ impl Index {
         self.db.prepare_cached("SELECT 1 FROM pragma_table_info('files') WHERE name='ctime_ns'").and_then(|mut q| q.exists([])).unwrap_or(false)
     }
 
+    /// BEGIN IMMEDIATE, waiting for another writer as long as it writes, up to 10 minutes, or
+    /// until cancelled; every write path that waits takes the lock here. -> false, with no lock
+    /// taken, once `needless` holds (another process did the work meanwhile).
+    fn begin_waiting(&self, needless: impl Fn(&Connection) -> bool) -> Result<bool> {
+        wait_busy(&self.db, &self.cancel, |db| if needless(db) { Ok(false) } else { db.execute_batch("BEGIN IMMEDIATE").map(|()| true) })
+    }
+
+    /// Copy the log into the database and cut it to nothing, waiting about a second for readers
+    /// on an older commit (an operation's snapshot lasts that long at most, mostly far less).
+    /// -> whether it was done; when not, the next update tries again first.
+    fn truncate_log(&self) -> bool {
+        let _ = self.db.busy_timeout(Duration::from_secs(1));
+        let done = self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)).is_ok_and(|busy| busy == 0);
+        let _ = self.db.busy_timeout(BUSY);
+        done
+    }
+
     /// `update`; with `wait` false a write lock held by another process is an error at once.
     fn update_with(&mut self, force: bool, wait: bool, look: Look) -> Result<UpdateStats> {
         let only = match look {
@@ -1636,13 +1782,16 @@ impl Index {
         if !self.db.is_autocommit() {
             let _ = self.db.execute_batch("ROLLBACK");
         }
+        if self.log_left {
+            self.log_left = !self.truncate_log();
+        }
         // one writer at a time; readers keep working (WAL)
         if wait {
-            retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+            self.begin_waiting(|_| false)?;
         } else {
             self.db.busy_timeout(Duration::ZERO)?;
             let r = self.db.execute_batch("BEGIN IMMEDIATE");
-            self.db.busy_timeout(Duration::from_secs(30))?;
+            self.db.busy_timeout(BUSY)?;
             match r {
                 Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::DatabaseBusy => return Err(Busy.into()),
                 r => r?,
@@ -1708,7 +1857,7 @@ impl Index {
                 }
                 Ok(()) => {}
             }
-            let _ = self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+            self.log_left = !self.truncate_log();
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
@@ -1775,7 +1924,12 @@ impl Index {
         let reparse = !only && self.meta("content_rev").as_deref() != Some(rev.as_str());
         let force = force || reparse;
         // the files of a custom language whose table changed are read again; their artifact keys hold the table
-        let lang_stamp = crate::custom::load(&self.root)?.stamp();
+        let customs = crate::custom::load(&self.root)?;
+        #[cfg(test)]
+        if let Some(f) = AFTER_LANGUAGES.with(|h| h.borrow_mut().take()) {
+            f();
+        }
+        let lang_stamp = customs.stamp();
         let old_stamp = self.meta("languages").unwrap_or_else(|| "{}".into());
         let relang = if only { Vec::new() } else { crate::custom::changed(&old_stamp, &lang_stamp) };
         let relang_file = |rel: &str| !relang.is_empty() && relang.iter().any(|e| crate::parse::basename(rel).to_lowercase().ends_with(e.as_str()));
@@ -1881,7 +2035,7 @@ impl Index {
                 .par_iter()
                 .map(|(rel, kh)| {
                     let t = Instant::now();
-                    let r = read_file(&root, rel, kh.as_deref());
+                    let r = crate::custom::with(&customs, || read_file(&root, rel, kh.as_deref()));
                     prof::add(&prof::READ, t);
                     r
                 })
@@ -1904,7 +2058,7 @@ impl Index {
                 .zip(found)
                 .zip(prevs)
                 .map(|((((rel, _), read), found), prev)| {
-                    let mut res = process(rel, read, found, model, prev);
+                    let mut res = crate::custom::with(&customs, || process(rel, read, found, model, prev));
                     if let Processed::New(.., tree, _, _) = &mut res {
                         let n = tree.as_ref().map_or(0, |t| t.source_len() as isize);
                         if room.fetch_sub(n, std::sync::atomic::Ordering::Relaxed) < n {
@@ -2097,7 +2251,8 @@ impl Index {
             let vectors = if model.is_some() { crate::lex::Vectors::Made(k, &of) } else { crate::lex::Vectors::Dropped };
             let dest = self.new_segment_name()?;
             seg_names.push(dest.clone());
-            crate::lex::merge_segments_with(&self.seg_dir.join(&dest), &[&seg], &[&alive], vectors)?;
+            let cancel = Arc::clone(&self.cancel);
+            crate::lex::merge_segments_with(&|| stopping(&cancel), &self.seg_dir.join(&dest), &[&seg], &[&alive], vectors)?;
             names.push(dest);
         }
         todo.extend(again);
@@ -2127,7 +2282,8 @@ impl Index {
     fn flush_segment(&mut self, builder: SegmentBuilder, seg_names: &mut Vec<String>) -> Result<()> {
         let t = Instant::now();
         let name = self.new_segment_name()?;
-        builder.write(&self.seg_dir.join(&name))?;
+        let cancel = Arc::clone(&self.cancel);
+        builder.write(&|| stopping(&cancel), &self.seg_dir.join(&name))?;
         prof::add(&prof::SEGMENT, t);
         let mut names = self.segments();
         names.push(name.clone());
@@ -2231,18 +2387,19 @@ impl Index {
         }
         let mut new_names: Vec<String> = live.iter().filter(|i| !merge.contains(i)).map(|&i| names[i].clone()).collect();
         if !merge.is_empty() {
-            retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+            self.begin_waiting(|_| false)?;
             let dest = self.new_segment_name()?;
             retry_busy(|| self.db.execute_batch("COMMIT"))?;
             {
                 let store = self.lex.as_ref().unwrap();
                 let segs: Vec<&crate::lex::Segment> = merge.iter().map(|&i| &store.segs[i]).collect();
                 let al: Vec<&[bool]> = merge.iter().map(|&i| alive[i].as_slice()).collect();
-                merge_segments(&self.seg_dir.join(&dest), &segs, &al)?;
+                let cancel = Arc::clone(&self.cancel);
+                merge_segments(&|| stopping(&cancel), &self.seg_dir.join(&dest), &segs, &al)?;
             }
             new_names.push(dest);
         }
-        retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+        self.begin_waiting(|_| false)?;
         if self.segments() != names {
             // another writer changed the manifest while we were merging: our plan is stale. Drop the
             // merged segment (nothing refers to it) and let the next update compact again.
@@ -2414,6 +2571,10 @@ impl Index {
 
     /// The chunks of these ids, by id.
     pub fn chunks(&self, ids: &[i64]) -> Result<HashMap<i64, ChunkRow>> {
+        #[cfg(test)]
+        if let Some(f) = BEFORE_CHUNKS.with(|h| h.borrow_mut().take()) {
+            f();
+        }
         let mut by_id = HashMap::with_capacity(ids.len());
         for part in ids.chunks(500) {
             let ph = vec!["?"; part.len()].join(",");
@@ -2484,10 +2645,24 @@ impl Index {
         Ok(rows)
     }
 
+    /// The definitions named `name` in any ASCII case.
+    pub fn named_any_case(&self, name: &str) -> Result<Vec<Symbol>> {
+        let mut st = self.db.prepare_cached("SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE name_key=?1")?;
+        let rows: Vec<Symbol> = st.query_map([name_key(name)], Symbol::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows.into_iter().filter(|r| r.name.eq_ignore_ascii_case(name)).collect())
+    }
+
     /// Whether a chunk of one of these kinds is named exactly `name`.
     pub fn defines(&self, name: &str, kinds: &[&str]) -> Result<bool> {
         let mut st = self.db.prepare_cached(&format!("SELECT EXISTS(SELECT 1 FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({}))", quoted(kinds)))?;
         Ok(st.query_row(params![name_key(name), name], |r| r.get(0))?)
+    }
+
+    /// `named_of_kinds` with the name in any ASCII case.
+    pub fn named_of_kinds_any_case(&self, name: &str, kinds: &[&str]) -> Result<Vec<ChunkRow>> {
+        let mut st = self.db.prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind IN ({}) ORDER BY is_test", quoted(kinds)))?;
+        let rows: Vec<ChunkRow> = st.query_map(params![name_key(name)], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows.into_iter().filter(|r| r.name.eq_ignore_ascii_case(name)).collect())
     }
 
     /// The definitions of these kinds named exactly `name`, those outside tests first.
@@ -2594,6 +2769,17 @@ impl Index {
         Ok(rows)
     }
 
+    /// Every name a call records, by its ASCII lowercase form.
+    pub fn callees_by_lowercase(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut st = self.db.prepare_cached("SELECT DISTINCT callee FROM refs")?;
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        for c in st.query_map([], |r| r.get::<_, String>(0))? {
+            let c = c?;
+            out.entry(c.to_ascii_lowercase()).or_default().push(c);
+        }
+        Ok(out)
+    }
+
     /// The names chunk `id` calls, each once, sorted.
     pub fn callees_of(&self, id: i64) -> Result<Vec<String>> {
         let mut st = self.db.prepare_cached("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
@@ -2633,6 +2819,13 @@ impl Index {
     pub fn imports_of(&self, path: &str) -> Result<Vec<(i64, String)>> {
         let mut st = self.db.prepare_cached("SELECT line, module FROM imports WHERE path=?1 ORDER BY line")?;
         let rows = st.query_map([path], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The (path, module) of each recorded import whose module text holds `needle`.
+    pub fn imports_holding(&self, needle: &str) -> Result<Vec<(String, String)>> {
+        let mut st = self.db.prepare_cached("SELECT DISTINCT path, module FROM imports WHERE instr(module, ?1) > 0 ORDER BY path")?;
+        let rows = st.query_map([needle], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
@@ -2733,13 +2926,22 @@ impl Index {
                         r.problems.push(format!("segment {name}: {e}"));
                     }
                 }
+                if let Some(why) = self.vector_damage(&store) {
+                    r.segments_ok = false;
+                    r.problems.push(format!("segments: {why}"));
+                }
                 let mut live: Vec<i64> = Vec::new();
                 let mut st = self.db.prepare("SELECT id FROM chunks ORDER BY id")?;
                 for id in st.query_map([], |row| row.get::<_, i64>(0))? {
                     live.push(id?);
                 }
-                store.prepare(Some(&live))?;
-                r.chunks_alive = store.n_alive as i64;
+                match store.prepare(Some(&live)) {
+                    Ok(()) => r.chunks_alive = store.n_alive as i64,
+                    Err(e) => {
+                        r.segments_ok = false;
+                        r.problems.push(format!("segments: {e:#}"));
+                    }
+                }
                 // every chunk in the database must have a row in exactly one segment
                 let in_segments: usize = store.segs.iter().map(|s| s.ids().iter().filter(|id| live.binary_search(id).is_ok()).count()).sum();
                 if in_segments as i64 != r.chunks_db {
@@ -2898,6 +3100,204 @@ mod tests {
         assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
         drop((ix, other));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_update_waits_for_a_writer_past_thirty_seconds_and_stops_when_cancelled() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_wait_writer_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        std::fs::write(root.join("b.py"), "def beta():\n    return 2\n").unwrap();
+        let db = ix.dir.join("index.db");
+        let hold = |secs: u64| {
+            let db = db.clone();
+            let (locked, done) = std::sync::mpsc::channel();
+            let t = std::thread::spawn(move || {
+                let other = rusqlite::Connection::open(db).unwrap();
+                other.execute_batch("BEGIN IMMEDIATE").unwrap();
+                locked.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_secs(secs));
+                other.execute_batch("ROLLBACK").unwrap();
+            });
+            done.recv().unwrap();
+            t
+        };
+        let writer = hold(34);
+        let t0 = std::time::Instant::now();
+        ix.update(false).unwrap();
+        assert!(t0.elapsed().as_secs() >= 30, "{:?}", t0.elapsed());
+        assert_eq!(ix.files().unwrap().len(), 2);
+        writer.join().unwrap();
+
+        let writer = hold(8);
+        let cancel = std::sync::Arc::clone(&ix.cancel);
+        let t0 = std::time::Instant::now();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        assert!(ix.update(false).is_err());
+        assert!(t0.elapsed().as_secs() < 4, "{:?}", t0.elapsed());
+        writer.join().unwrap();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_rebuild_for_another_schema_waits_for_a_writer_past_thirty_seconds() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_clear_wait_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        ix.set_meta("schema_version", "0").unwrap();
+        let db = ix.dir.join("index.db");
+        drop(ix);
+        let (locked, done) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let other = rusqlite::Connection::open(db).unwrap();
+            other.execute_batch("BEGIN IMMEDIATE").unwrap();
+            locked.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(34));
+            other.execute_batch("ROLLBACK").unwrap();
+        });
+        done.recv().unwrap();
+        let t0 = std::time::Instant::now();
+        let ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        assert!(t0.elapsed().as_secs() >= 30, "{:?}", t0.elapsed());
+        assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
+        writer.join().unwrap();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_first_open_waits_for_a_lock_held_before_it_and_keeps_the_holders_data() {
+        for wal in [false, true] {
+            let root = std::env::temp_dir().join(format!("scrutate_ix_lock_first_{wal}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join(".scrutate")).unwrap();
+            std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+            let db = root.join(".scrutate/index.db");
+            let (locked, done) = std::sync::mpsc::channel();
+            let holder = {
+                let db = db.clone();
+                std::thread::spawn(move || {
+                    let other = rusqlite::Connection::open(db).unwrap();
+                    if wal {
+                        other.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())).unwrap();
+                    }
+                    other.execute_batch("BEGIN IMMEDIATE; CREATE TABLE held(x); INSERT INTO held VALUES (7);").unwrap();
+                    locked.send(()).unwrap();
+                    std::thread::sleep(super::BUSY + std::time::Duration::from_secs(2));
+                    other.execute_batch("COMMIT").unwrap();
+                })
+            };
+            done.recv().unwrap();
+            let t0 = std::time::Instant::now();
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            assert!(t0.elapsed() > super::BUSY, "wal {wal}: {:?}", t0.elapsed());
+            holder.join().unwrap();
+            ix.update(false).unwrap();
+            assert_eq!(ix.files().unwrap(), ["a.py"], "wal {wal}");
+            let held: i64 = rusqlite::Connection::open(&db).unwrap().query_row("SELECT x FROM held", [], |r| r.get(0)).unwrap();
+            assert_eq!(held, 7, "wal {wal}: the holder's table is kept");
+            drop(ix);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn an_open_that_must_add_to_the_schema_waits_for_a_writer_and_never_wipes() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_old_writer_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let db = ix.dir.join("index.db");
+        drop(ix);
+        // what an older version left: no artifacts column, and it is writing now
+        let old = rusqlite::Connection::open(&db).unwrap();
+        old.execute_batch("DROP INDEX files_art; ALTER TABLE files DROP COLUMN art;").unwrap();
+        let before = super::file_id(&db);
+        let (locked, done) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            old.execute_batch("BEGIN IMMEDIATE; UPDATE meta SET value=value WHERE key='schema_version';").unwrap();
+            locked.send(()).unwrap();
+            std::thread::sleep(super::BUSY + std::time::Duration::from_secs(2));
+            old.execute_batch("COMMIT").unwrap();
+        });
+        done.recv().unwrap();
+        let ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        writer.join().unwrap();
+        assert_eq!(super::file_id(&db), before, "the database was replaced");
+        assert_eq!(ix.files().unwrap(), ["a.py"]);
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn check_and_a_search_find_a_segment_whose_vectors_are_gone_or_of_another_width() {
+        let models = crate::models::ModelSet::from_env();
+        if !models.semantic_enabled() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("scrutate_ix_vectors_{}", std::process::id()));
+        for case in ["gone", "wide"] {
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n").unwrap();
+            let mut ix = super::Index::open(&root, std::sync::Arc::clone(&models)).unwrap();
+            ix.update(false).unwrap();
+            let seg = ix.seg_dir.join(&ix.segments()[0]);
+            // Windows refuses to replace or remove a file while a map of it is open
+            drop(ix);
+            if case == "gone" {
+                std::fs::remove_file(seg.join("vec.npy")).unwrap();
+                std::fs::remove_file(seg.join("vscale.npy")).unwrap();
+            } else {
+                // twice the model's width, the rows padded with zeros
+                let (n, k) = {
+                    let v = crate::npy::Npy::open(&seg.join("vec.npy")).unwrap();
+                    (v.shape[0], v.shape[2])
+                };
+                crate::npy::save(&seg.join("vec.npy"), &vec![0i8; n * 2 * 2 * k], &[n, 2, 2 * k]).unwrap();
+            }
+            let mut ix = super::Index::open(&root, std::sync::Arc::clone(&models)).unwrap();
+            let report = ix.check(false).unwrap();
+            assert!(!report.ok(), "{case}: check said OK");
+            let e = ix.lex().err().unwrap_or_else(|| panic!("{case}: the segment opened"));
+            assert!(super::error_is_corruption(&e), "{case}: {e:#}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_update_parses_under_its_own_root_s_languages_while_another_root_s_are_loaded() {
+        let base = std::env::temp_dir().join(format!("scrutate_ix_two_roots_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (a, b) = (base.join("a"), base.join("b"));
+        for (root, word) in [(&a, "fn"), (&b, "def")] {
+            std::fs::create_dir_all(root.join(".git")).unwrap();
+            let table = format!(
+                "[[language]]\nname = \"twolang\"\nextensions = [\"twl\"]\ndefinitions = [\n  {{ kind = \"function\", pattern = '^{word}\\s+([a-z]+)' }},\n]\n"
+            );
+            std::fs::write(root.join(".scrutate.toml"), table).unwrap();
+        }
+        std::fs::write(a.join("x.twl"), "fn alpha\n  1\nend\n").unwrap();
+        let other = b.clone();
+        super::AFTER_LANGUAGES.with(|h| *h.borrow_mut() = Some(Box::new(move || drop(crate::custom::load(&other).unwrap()))));
+        let mut ix = super::Index::open(&a, crate::models::ModelSet::from_env()).unwrap();
+        ix.update(false).unwrap();
+        let names: Vec<String> =
+            ix.db.prepare("SELECT name FROM chunks WHERE kind = 'function'").unwrap().query_map([], |r| r.get(0)).unwrap().map(|n| n.unwrap()).collect();
+        assert_eq!(names, ["alpha"]);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

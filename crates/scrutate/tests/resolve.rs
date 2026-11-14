@@ -195,6 +195,207 @@ fn rust_two_areas() {
 }
 
 #[test]
+fn rust_a_path_in_a_macro_argument_is_resolved_as_a_path() {
+    let r = Repo::new(
+        "rs_macro_path",
+        &[
+            ("Cargo.toml", "[package]\nname = \"mp\"\nversion = \"0.1.0\"\n"),
+            ("src/util.rs", "pub fn work() -> i32 {\n    1\n}\n"),
+            ("src/other.rs", "pub fn work() -> i32 {\n    2\n}\n"),
+            (
+                "src/main.rs",
+                "mod util;\nmod other;\nuse other::work;\n\nfn caller() {\n    println!(\"{}\", util::work());\n    let v = vec![crate::util::work()];\n    mymac!(util::work);\n    work();\n}\n",
+            ),
+        ],
+    );
+    let (u, o, m) = ("src/util.rs", "src/other.rs", "src/main.rs");
+    assert_eq!(r.resolved("work"), expect(&[(u, 1, u), (o, 1, o), (m, 3, o), (m, 6, u), (m, 7, u), (m, 8, u), (m, 9, o)]));
+}
+
+#[test]
+fn javascript_a_shorthand_property_is_a_use_of_the_name() {
+    let r = Repo::new(
+        "js_shorthand",
+        &[
+            ("lib.js", "export function helper() {\n  return 1;\n}\n"),
+            ("main.js", "import { helper } from './lib.js';\nconst table = { helper };\nconst other = { helper: 2 };\ntable.helper();\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "lib.js:1"), ["lib.js:1", "main.js:1", "main.js:2"]);
+}
+
+#[test]
+fn javascript_the_name_of_a_function_expression_is_its_own_inside_it() {
+    let r = Repo::new("js_fn_expr", &[("s.js", "function load() {\n  return 1;\n}\nvar h = function load() {\n  return load();\n};\nload();\n")]);
+    assert_eq!(r.refs_of("load", "s.js:1"), ["s.js:1", "s.js:7"]);
+}
+
+#[test]
+fn javascript_the_name_of_a_generator_or_class_expression_is_its_own_inside_it() {
+    let r = Repo::new(
+        "js_gen_class_expr",
+        &[(
+            "s.js",
+            "function load() {\n  return 1;\n}\nvar g = function* load() {\n  yield load();\n};\nclass Box {}\nvar C = class Box {\n  m() {\n    return new Box();\n  }\n};\nload();\nnew Box();\nvar p = function* (load) {\n  yield load;\n};\n",
+        )],
+    );
+    assert_eq!(r.refs_of("load", "s.js:1"), ["s.js:1", "s.js:13"]);
+    assert_eq!(r.refs_of("Box", "s.js:7"), ["s.js:14", "s.js:7"]);
+}
+
+#[test]
+fn javascript_refs_list_a_use_under_an_alias_in_a_file_that_never_spells_the_name() {
+    let r = Repo::new(
+        "js_alias_refs",
+        &[
+            ("lib/m.js", "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n"),
+            ("lib/e.js", "export default function shout() {\n  return 2;\n}\n"),
+            ("lib/main.js", "const h = require(\"./m\");\nimport s from \"./e\";\n\nfunction start() {\n  return h() + s();\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "lib/m.js:1"), ["lib/m.js:1", "lib/m.js:4", "lib/main.js:5"]);
+    assert_eq!(r.refs_of("shout", "lib/e.js:1"), ["lib/e.js:1", "lib/main.js:5"]);
+}
+
+#[test]
+fn rust_a_use_of_an_inline_module_item_is_that_item() {
+    let r = Repo::new(
+        "rs_inline_mod",
+        &[
+            ("Cargo.toml", "[package]\nname = \"im\"\nversion = \"0.1.0\"\n"),
+            (
+                "src/main.rs",
+                "mod util {\n    pub fn work() -> i32 {\n        1\n    }\n}\nmod other {\n    pub fn work() -> i32 {\n        2\n    }\n}\nuse other::work;\n\nfn caller() -> i32 {\n    work() + util::work()\n}\n",
+            ),
+        ],
+    );
+    let m = "src/main.rs";
+    assert_eq!(r.refs_of("work", "src/main.rs:7"), [format!("{m}:11"), format!("{m}:14"), format!("{m}:7")]);
+    assert_eq!(r.refs_of("work", "src/main.rs:2"), [format!("{m}:14"), format!("{m}:2")]);
+    assert!(r.reasons("work", m).is_empty());
+}
+
+#[test]
+fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
+    let r = Repo::new(
+        "rs_trait_default",
+        &[
+            ("Cargo.toml", "[package]\nname = \"td\"\nversion = \"0.1.0\"\n"),
+            ("src/lib.rs", "pub trait Greet {\n    fn hello(&self) -> u8 {\n        1\n    }\n}\npub struct S;\nimpl Greet for S {}\n\npub fn run(s: S) -> u8 {\n    s.hello()\n        + S.hello()\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("hello", "src/lib.rs:2"), ["src/lib.rs:10", "src/lib.rs:11", "src/lib.rs:2"]);
+}
+
+#[test]
+fn go_a_method_promoted_through_an_embedded_struct_is_found() {
+    let r = Repo::new(
+        "go_promoted",
+        &[
+            ("go.mod", "module ex\n\ngo 1.22\n"),
+            (
+                "main.go",
+                "package main\n\ntype Base struct{}\n\nfunc (b Base) Hello() int {\n\treturn 1\n}\n\ntype Wrap struct {\n\t*Base\n}\n\ntype Outer struct {\n\tWrap\n}\n\nfunc main() {\n\tv := Wrap{}\n\tv.Hello()\n\tv.Base.Hello()\n\to := Outer{}\n\to.Hello()\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("Hello", "main.go:5"), ["main.go:19", "main.go:20", "main.go:22", "main.go:5"]);
+}
+
+#[test]
+fn javascript_a_member_of_require_a_dynamic_import_and_ts_import_require_bind_names() {
+    let r = Repo::new(
+        "js_require_forms",
+        &[
+            ("lib/n.js", "export function x() {\n  return 1;\n}\nexport function other() {\n  return 2;\n}\n"),
+            ("lib/lazy.js", "export function later() {\n  return 3;\n}\n"),
+            (
+                "main.js",
+                "const x = require('./lib/n').x;\nasync function go() {\n  const { later } = await import('./lib/lazy');\n  return x() + later();\n}\n",
+            ),
+            ("app.ts", "import m = require('./lib/n');\nm.other();\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("x", "lib/n.js:1"), ["lib/n.js:1", "main.js:1", "main.js:1", "main.js:4"]);
+    assert_eq!(r.refs_of("later", "lib/lazy.js:1"), ["lib/lazy.js:1", "main.js:3", "main.js:4"]);
+    assert_eq!(r.refs_of("other", "lib/n.js:4"), ["app.ts:2", "lib/n.js:4"]);
+}
+
+#[test]
+fn go_a_method_promoted_from_another_package_s_type_is_that_type_s() {
+    let r = Repo::new(
+        "go_promoted_pkg",
+        &[
+            ("go.mod", "module ex\n\ngo 1.22\n"),
+            ("base/base.go", "package base\n\ntype Base struct{}\n\nfunc (b Base) Hello() int {\n\treturn 1\n}\n"),
+            (
+                "main.go",
+                "package main\n\nimport \"ex/base\"\n\ntype Base struct{}\n\nfunc (b Base) Hello() int {\n\treturn 2\n}\n\ntype Ext struct {\n\tbase.Base\n}\n\nfunc run(e Ext) int {\n\treturn e.Hello()\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("Hello", "base/base.go:5"), ["base/base.go:5", "main.go:16"]);
+    assert_eq!(r.refs_of("Hello", "main.go:7"), ["main.go:7"]);
+}
+
+#[test]
+fn rust_a_trait_default_method_is_found_on_a_type_in_a_module() {
+    let r = Repo::new(
+        "rs_trait_default_mod",
+        &[
+            ("Cargo.toml", "[package]\nname = \"tdm\"\nversion = \"0.1.0\"\n"),
+            (
+                "src/lib.rs",
+                "pub trait Greet {\n    fn hello(&self) -> u8 {\n        1\n    }\n}\npub mod inner {\n    pub struct T;\n    pub struct U;\n    impl super::Greet for U {}\n}\nimpl Greet for inner::T {}\n\npub fn run(t: inner::T, u: inner::U) -> u8 {\n    t.hello()\n        + u.hello()\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("hello", "src/lib.rs:2"), ["src/lib.rs:14", "src/lib.rs:15", "src/lib.rs:2"]);
+}
+
+#[test]
+fn refs_through_an_alias_keep_only_uses_of_the_aliased_definition() {
+    let r = Repo::new(
+        "js_alias_shadow",
+        &[
+            ("u.js", "export function jsfn() { return 1; }\n"),
+            (
+                "m.js",
+                "import { jsfn as g } from \"./u\";\nexport function caller() { return g(); }\nexport function shadowed() { const g = () => 2; return g(); }\n",
+            ),
+        ],
+    );
+    let v = r.json(&["refs", "jsfn", "--json"]);
+    let groups: Vec<String> = v["definitions"].as_array().unwrap().iter().map(|d| format!("{}:{}", d["path"].as_str().unwrap(), d["start"])).collect();
+    assert_eq!(groups, ["u.js:1"], "{v}");
+    assert_eq!(r.refs_of("jsfn", "u.js:1"), ["m.js:1", "m.js:2", "u.js:1"]);
+}
+
+#[test]
+fn python_a_class_attribute_hides_an_import_in_the_class_body_only() {
+    let r = Repo::new(
+        "py_class_attr",
+        &[
+            ("util.py", "def helper():\n    return 1\n"),
+            (
+                "k.py",
+                "from util import helper as h\n\nclass K:\n    h = 5\n    j = h + 1\n\n    def m(self):\n        return h()\n\ndef use():\n    return h()\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "util.py:1"), ["k.py:1", "k.py:11", "k.py:8", "util.py:1"]);
+    assert_eq!(r.reasons("h", "k.py"), ["4 local variable", "5 local variable"]);
+}
+
+#[test]
+fn python_class_body_bindings_follow_the_order_and_scopes_python_runs_them_in() {
+    let r = Repo::new("py_class_scopes", &[("util.py", "def helper():\n    return 1\n"), ("k.py", "from util import helper as h\n\nclass A:\n    if True:\n        h = 5\n    a = h\n\nclass B:\n    h, x = 1, 2\n    b = h\n\nclass C:\n    def h(self):\n        return 1\n    c = h\n\nclass D:\n    h = h\n\nclass E:\n    h = 5\n    e = [h for _ in range(2)]\n\nclass F:\n    for h in range(2):\n        pass\n    f = h\n\nclass G:\n    h: int = 5\n    g = h\n")]);
+    // the import is read by `h = h`'s right side (line 18) and inside a comprehension (line 22);
+    // every other `h` is bound in its class body first: in an `if`, a tuple, a `for`, an annotation
+    assert_eq!(r.refs_of("helper", "util.py:1"), ["k.py:1", "k.py:18", "k.py:22", "util.py:1"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",
@@ -344,4 +545,13 @@ fn a_std_method_on_a_call_result_is_external_and_a_macro_argument_is_undecided()
     let why: Vec<(u64, &str)> = v["unresolved"].as_array().unwrap().iter().map(|u| (u["line"].as_u64().unwrap(), u["reason"].as_str().unwrap())).collect();
     assert_eq!(why, [(8, "macro argument")], "{v}");
     assert_eq!(r.resolved("text").get(&("src/user.rs".to_string(), 9)).map(String::as_str), Some("src/report.rs"));
+}
+
+#[test]
+fn javascript_this_in_a_method_under_a_quoted_key_is_the_object_literal() {
+    let r = Repo::new(
+        "js_quoted_key",
+        &[("a.js", "const api = {\n  \"get\": function () {\n    return this.put();\n  },\n  \"del\"() {\n    return this.put();\n  },\n  put() {\n    return 1;\n  },\n};\n")],
+    );
+    assert_eq!(r.refs_of("put", "a.js:8"), ["a.js:3", "a.js:6", "a.js:8"]);
 }

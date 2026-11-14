@@ -556,3 +556,29 @@ fn the_store_collected_while_a_reader_holds_it_leaves_the_reader_its_snapshot() 
     assert!(held.iter().any(|k| !now.contains(k)), "the update collected some of what the reader held");
     same(&dump(ix), &fresh(&t.0, Arc::clone(&models)));
 }
+
+#[test]
+fn first_opens_of_a_new_work_tree_at_once_leave_an_index_that_checks() {
+    let models = ModelSet::none();
+    let t = Tmp::new("seed_race");
+    let (main, wt) = linked(&t.0);
+    open(&main, &models).update(false).unwrap();
+    for round in 0..8 {
+        let _ = fs::remove_dir_all(wt.join(".scrutate"));
+        let gate = Arc::new(std::sync::Barrier::new(3));
+        let opens: Vec<_> = (0..3)
+            .map(|_| {
+                let (wt, models, gate) = (wt.clone(), Arc::clone(&models), Arc::clone(&gate));
+                std::thread::spawn(move || {
+                    gate.wait();
+                    drop(Index::open(&wt, models).unwrap());
+                })
+            })
+            .collect();
+        for o in opens {
+            o.join().unwrap();
+        }
+        let report = open(&wt, &models).check(true).unwrap();
+        assert!(report.ok(), "round {round}: {:?}", report.problems);
+    }
+}

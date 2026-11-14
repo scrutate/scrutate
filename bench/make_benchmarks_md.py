@@ -180,6 +180,9 @@ def main() -> int:
         w("| Corpus | Tool | matches | median wall ms | peak RSS MB |")
         w("|---|---|---|---|---|")
         for r in d["structural"]:
+            if r.get("status", "ok") != "ok":
+                w(f"| {r['corpus']} | {r['tool']} | {r['status']} | - | - |")
+                continue
             w(f"| {r['corpus']} | {r['tool']} | {r['matches']:,} | {fmt_ms(r['wall_median_ms'])} | {r['maxrss_mb']:.0f} |")
         w("")
         same = all(r.get("agrees", True) for r in d["structural"])

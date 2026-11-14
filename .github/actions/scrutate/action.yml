@@ -5,7 +5,7 @@ inputs:
     description: release tag to install (e.g. v0.1.0)
     required: true
   args:
-    description: arguments passed to scrutate (e.g. dupes --json --limit 20); quote an argument that has spaces or an apostrophe; none runs no command
+    description: arguments passed to scrutate (e.g. dupes --json --limit 20); quote an argument that has spaces or an apostrophe; a backslash is kept as written, except before a blank, a quote or a backslash, which it escapes; none runs no command
     required: false
     default: ''
   comment:
@@ -59,7 +59,20 @@ runs:
       run: |
         code_file=$RUNNER_TEMP/scrutate-exit-code
         rm -f "$code_file"
-        printf '%s\n' "$ARGS" | xargs sh -c 'scrutate "$@"; echo $? > "$0"' "$code_file"
+        # xargs drops a backslash outside quotes (\bTODO\b, C:\repo): double each one that is not
+        # before a blank, a quote or a backslash, so xargs' own escapes (foo\ bar, don\'t) still work
+        kept='' q=''
+        for ((i = 0; i < ${#ARGS}; i++)); do
+          c=${ARGS:i:1}
+          if [ -n "$q" ]; then [ "$c" != "$q" ] || q=''
+          elif [ "$c" = "'" ] || [ "$c" = '"' ]; then q=$c
+          elif [ "$c" = "\\" ]; then
+            n=${ARGS:i+1:1}
+            case $n in [[:blank:]\'\"\\]) c+=$n; i=$((i + 1)) ;; *) c="\\\\" ;; esac
+          fi
+          kept+=$c
+        done
+        printf '%s\n' "$kept" | xargs sh -c 'scrutate "$@"; echo $? > "$0"' "$code_file"
         code=$(cat "$code_file")
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         [ "$code" -lt 2 ]

@@ -136,16 +136,6 @@ class SemanticModel:
         n = float(np.linalg.norm(z))
         return (z / n).astype(np.float32) if n > 0 else None
 
-    def neighbors(self, term: str, n: int = 8, space: str = "a"):
-        """Nearest vocabulary terms (for inspection)."""
-        vocab, M = (self.va, self.U) if space == "a" else (self.vb, self.V)
-        if term not in vocab:
-            return []
-        Mn = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
-        sims = Mn @ Mn[vocab[term]]
-        inv = {i: t for t, i in vocab.items()}
-        return [(inv[i], float(sims[i])) for i in np.argsort(-sims)[1 : n + 1]]
-
     # ------------------------------------------------------------------- io
     def save(self, path: str) -> None:
         inv_a = sorted(self.va, key=self.va.get)

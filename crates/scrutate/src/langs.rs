@@ -353,7 +353,7 @@ const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
     Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
 /// `a.b.c` of a member expression made of names only (no `this` or call), `a["b"]` read as `a.b`.
-fn js_member_path(node: Node, src: &[u8]) -> Option<String> {
+pub(crate) fn js_member_path(node: Node, src: &[u8]) -> Option<String> {
     let key = match node.kind() {
         "identifier" => return Some(text(src, node.start_byte(), node.end_byte())),
         "member_expression" => node.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?,
@@ -1102,7 +1102,8 @@ const CORE: &[LangSpec] = &[
             // a class is a `declType` whose value is a `declClass`, which has no name of its own
             d("declType", "type", N),
         ],
-        calls: &[c("exprCall", "")],
+        // a statement that is a name alone calls it: `DoWork;`, `Obj.Tidy;`
+        calls: &[c("exprCall", ""), c("statement", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -2229,6 +2230,15 @@ pub fn by_id(id: &str) -> Option<&'static LangSpec> {
     LANGS.iter().find(|s| s.id == id).copied()
 }
 
+/// A line Objective-C starts with a keyword of its own; a Doxygen `@class` in a C++ comment is
+/// not one.
+static OBJC_HEADER: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^[ \t]*@(?:interface|protocol|implementation|class)\b").unwrap());
+
+/// The first statement of a Pascal unit, program or library: `unit unit1;`.
+static PASCAL_HEADER: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?im)^[ \t]*(?:unit|program|library)[ \t]+[\w.]+[ \t]*;").unwrap());
+
 /// Extensions shared by several languages are decided by looking at the text.
 /// Lines only C++ writes: what tells a C++ header named `.h` from a C one.
 static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -2285,7 +2295,7 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
             "matlab"
         }
     } else if lower.ends_with(".h") {
-        if ["@interface", "@protocol", "@implementation", "@class "].iter().any(|k| source.contains(k)) {
+        if OBJC_HEADER.is_match(source) {
             "objc"
         } else if CPP_HEADER.is_match(source) {
             "cpp"
@@ -2293,7 +2303,10 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
             return None;
         }
     } else if lower.ends_with(".pp") {
-        if ["procedure ", "function ", "begin", "end;", "unit ", "program "].iter().any(|k| source.contains(k)) && !head.contains("$") {
+        // a unit or program header is Pascal whatever directives follow (`{$mode objfpc}`); else
+        // a `$` is taken for a Puppet variable
+        let pascal_words = ["procedure ", "function ", "begin", "end;", "unit ", "program "].iter().any(|k| source.contains(k));
+        if PASCAL_HEADER.is_match(head) || (pascal_words && !head.contains("$")) {
             "pascal"
         } else {
             "puppet"
@@ -2308,6 +2321,25 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
         return None;
     };
     by_id(id)
+}
+
+/// Whether a definition in language `lang` is named in any case: Fortran, Pascal and Ada names,
+/// and PHP functions, methods, classes, interfaces, traits and enums (not constants or properties).
+pub fn ignores_case(lang: Option<&str>, kind: &str) -> bool {
+    match lang {
+        Some("fortran" | "pascal" | "ada") => true,
+        Some("php") => matches!(kind, "function" | "method" | "class" | "interface" | "trait" | "enum"),
+        _ => false,
+    }
+}
+
+/// The grammar of the repository file `rel` as the parser takes it: by its name, and by its text
+/// where its extension is shared by several languages (`.pp`, `.h`, `.m`, `.cls`).
+pub fn detect_at(root: &std::path::Path, rel: &str) -> Option<&'static LangSpec> {
+    let lower = rel.to_lowercase();
+    let shared = BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e));
+    let text = shared.then(|| crate::resolve::repo_text(root, rel)).flatten();
+    detect(rel, text.as_deref())
 }
 
 /// The grammar of `path`: by its name, and by `text` where the extension is shared by several
@@ -2336,8 +2368,4 @@ pub fn spec_for(path: &str) -> Option<&'static LangSpec> {
     }
     // case-sensitive extensions (.R vs .r, .S vs .s) are the same grammar here, so lowercase is fine
     best.map(|(s, _)| s)
-}
-
-pub fn language_ids() -> Vec<&'static str> {
-    LANGS.iter().map(|s| s.id).collect()
 }

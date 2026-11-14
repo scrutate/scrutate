@@ -91,6 +91,39 @@ exports.run = async function () {
     await vscode.commands.executeCommand("scrutate.symbol");
     assert.strictEqual(at(), "src/geo.py:6", "symbol takes the word under the cursor");
 
+    const onNorm = new vscode.Position(12, 14); // `norm` in `return p.norm()`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(geo))).selection = new vscode.Selection(onNorm, onNorm);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/geo.py:2", "the word under the cursor stops at a dot");
+
+    // an R name keeps its dots: the dotted run is asked first
+    const rFile = vscode.Uri.joinPath(root, "src/r.R");
+    fs.writeFileSync(rFile.fsPath, "is.ready <- function(x) x\nuse <- function() is.ready(1)\n");
+    // a query answers from the last committed index; this waits for the server's update to commit
+    await vscode.commands.executeCommand("scrutate.index");
+    const onReady = new vscode.Position(1, 22); // `ready` in `is.ready(1)`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(rFile))).selection = new vscode.Selection(onReady, onReady);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/r.R:1", "a name with dots is asked whole first");
+
+    // a word is alphabetic characters and digits of any script, as the server reads one
+    const uFile = vscode.Uri.joinPath(root, "src/umlaut.py");
+    fs.writeFileSync(uFile.fsPath, "def größe(x):\n    return x\n\n\ndef nutze():\n    return größe(2)\n");
+    await vscode.commands.executeCommand("scrutate.index");
+    const onEszett = new vscode.Position(5, 14); // `ß` in `return größe(2)`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uFile))).selection = new vscode.Selection(onEszett, onEszett);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/umlaut.py:1", "a word with letters outside ASCII");
+
+    // vowel signs are Alphabetic but not letters (\p{L}); the server keeps them in the word
+    const hFile = vscode.Uri.joinPath(root, "src/hindi.py");
+    fs.writeFileSync(hFile.fsPath, "def हिंदी(x):\n    return x\n\n\ndef नया():\n    return हिंदी(2)\n");
+    await vscode.commands.executeCommand("scrutate.index");
+    const onHa = new vscode.Position(5, 11); // `ह` in `return हिंदी(2)`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(hFile))).selection = new vscode.Selection(onHa, onHa);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/hindi.py:1", "a word with vowel signs");
+
     await onTheCall();
     want = (item) => item.description.startsWith("src/geo.py:");
     await vscode.commands.executeCommand("scrutate.callers");

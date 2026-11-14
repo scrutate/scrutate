@@ -44,6 +44,21 @@ def test_grep_streams_and_matches_cli(repo):
         assert cli == got
 
 
+
+def test_grep_types_are_the_custom_languages_of_the_index_it_starts_in(tmp_path, monkeypatch):
+    # another Repo of the process loaded its own tables last: a custom -t still names this tree's
+    a, b = tmp_path / "a", tmp_path / "b"
+    for d in (a, b):
+        (d / ".git").mkdir(parents=True)
+    (a / ".scrutate.toml").write_text('[[language]]\nname = "onlya"\nextensions = ["oa"]\n')
+    (a / "x.oa").write_text("needle\n")
+    (a / "y.txt").write_text("needle\n")
+    (b / "z.py").write_text("x = 1\n")
+    scrutate.Repo(str(b)).symbol("x")
+    monkeypatch.chdir(a)
+    found = [m.path for m in scrutate.grep("needle", ["."], types=["onlya"])]
+    assert len(found) == 1 and found[0].endswith("x.oa"), found
+
 def test_grep_modes_and_errors(repo):
     assert len(list(scrutate.grep(r"def make_widget_\d+", [str(repo)]))) == 20
     # identifier mode: one spelling finds every casing of the whole identifier (def + call in m3.py)
@@ -116,8 +131,11 @@ def test_paths_and_locations_read_as_the_mcp_tools_read_them(repo):
     assert want
     for target in ["pkg/../pkg/m3.py:6", "./pkg/m3.py:6", os.path.join(str(repo), "pkg", "m3.py") + ":6"]:
         assert similar(target) == want, target
+    # a path that leaves the root and comes back by its parts is read from the root; one that
+    # leaves and stays out is not looked at
+    assert similar(f"../{repo.name}/pkg/m3.py:6") == want
     with pytest.raises(RuntimeError, match="no symbol or location matches"):
-        r.similar(f"../{repo.name}/pkg/m3.py:6")
+        r.similar(f"../{repo.name}_elsewhere/pkg/m3.py:6")
     # an outside path answers the same whether or not a file is there, a missing one inside differently
     with pytest.raises(ValueError):
         r.read("../no_such_file_outside_the_repo")
@@ -231,6 +249,51 @@ def test_grep_argument_errors_at_call_time(repo):
 def test_grep_sort_gives_path_and_line_order(repo):
     got = [(m.path, m.line) for m in scrutate.grep("e", [str(repo)], sort=True)]
     assert len(got) > 100 and got == sorted(got)
+
+
+def test_grep_sort_compares_paths_part_by_part(tmp_path):
+    # as `rg --sort path` and the CLI: a/b.txt before a-b.txt, though "-" sorts before "/"
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "b.txt").write_text("x\n")
+    (tmp_path / "a-b.txt").write_text("x\n")
+    got = [m.path.replace("\\", "/") for m in scrutate.grep("x", [str(tmp_path)], sort=True)]
+    assert got == ["a/b.txt", "a-b.txt"]
+
+
+def test_grep_sort_with_max_results_is_the_first_in_path_order(tmp_path):
+    for i in range(300):
+        (tmp_path / f"f{i:03}.txt").write_text("needle\n")
+    want = [f"f{i:03}.txt" for i in range(5)]
+    for _ in range(10):
+        got = [m.path for m in scrutate.grep("needle", [str(tmp_path)], sort=True, max_results=5, threads=8)]
+        assert got == want
+
+
+def test_cancel_lets_other_python_threads_run(tmp_path):
+    # one big file with no match: the search checks for a stop only between files and at matches
+    words = ["alpha", "beta", "gamma", "delta", "omega", "sigma", "kappa", "lambda"]
+    line = " ".join(words) + " " + " ".join(reversed(words)) + "\n"
+    (tmp_path / "big.txt").write_text(line * (10 * 2**20 // len(line)))
+    it = scrutate.grep(r"zqxjvkwpyhgb\w+", [str(tmp_path)], mode="fuzzy_regex", fuzzy_edits=3, threads=1)
+    turns, stop = [0], threading.Event()
+
+    def spin():
+        while not stop.is_set():
+            turns[0] += 1
+
+    t = threading.Thread(target=spin)
+    s0 = time.perf_counter()
+    t.start()
+    time.sleep(0.05)
+    before, t0 = turns[0], time.perf_counter()
+    it.cancel()
+    took, during = time.perf_counter() - t0, turns[0] - before
+    stop.set()
+    t.join()
+    if took < 0.05:
+        pytest.skip(f"the search ended before cancel() had to wait ({took:.3f} s)")
+    expected = before / (t0 - s0) * took
+    assert during >= 0.2 * expected, f"cancel() took {took:.3f} s; the other thread ran {during} turns of {expected:.0f}"
 
 
 def _interrupt_latency(call, delay):

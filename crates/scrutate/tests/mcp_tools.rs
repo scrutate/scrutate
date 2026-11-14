@@ -873,10 +873,10 @@ fn similar_code_reads_a_location_as_the_other_tools_read_it() {
         assert_eq!(r.ok("similar_code", json!({"target": target})), want, "{target}");
         assert!(!r.call("find_symbol", json!({"name": target})).0, "{target}");
     }
-    // a path that leaves the root is not looked at, though it comes back to the same file
+    // a path that leaves the root by its parts and comes back is read from the root, as the
+    // other tools read it
     let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
-    let (failed, text) = r.call("similar_code", json!({"target": format!("../{name}/src/geo.py:1")}));
-    assert!(failed && text.contains("no symbol or location matches"), "{text}");
+    assert_eq!(r.ok("similar_code", json!({"target": format!("../{name}/src/geo.py:1")})), want);
 }
 
 #[cfg(unix)]
@@ -1075,4 +1075,79 @@ fn a_large_answer_pages_its_structured_items_to_the_end_in_both_forms() {
         assert!(pages.len() > 2, "{tool}: {} pages", pages.len());
         assert_eq!(flat(pages), items(tool, textual, &whole["result"]), "{tool}");
     }
+}
+
+#[test]
+fn repo_map_and_dead_code_take_an_absolute_directory_and_refuse_a_missing_one() {
+    let mut r = Repo::new("abs_dir", &[("src/a.py", "def used():\n    return 1\n\n\ndef unused():\n    return used()\n"), ("top.py", "X = 1\n")]);
+    let abs = r.root.join("src").to_string_lossy().into_owned();
+    for tool in ["repo_map", "dead_code"] {
+        let plain = r.ok(tool, json!({"path": "src"}));
+        assert!(plain.contains("a.py"), "{tool}: {plain}");
+        assert_eq!(r.ok(tool, json!({"path": abs})), plain, "{tool}");
+        assert!(r.err(tool, json!({"path": "nope"})).contains("no such file or directory"), "{tool}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn grep_code_takes_a_path_whose_name_holds_a_backslash() {
+    let mut r = Repo::new("backslash_dir", &[("x\\ty/f.txt", "needle\n"), ("other.txt", "needle\n")]);
+    let text = r.ok("grep_code", json!({"pattern": "needle", "path": "x\\ty"}));
+    assert!(text.contains("f.txt") && !text.contains("other.txt"), "{text}");
+}
+
+/// A server started on a root spelled through a symbolic link (`--root <dir>/link`, or macOS's
+/// `/tmp` for `/private/tmp`) takes paths spelled through it.
+#[cfg(unix)]
+#[test]
+fn paths_through_the_root_as_the_server_was_given_it_name_its_files() {
+    let base = std::env::temp_dir().join(format!("scrutate_mcp_tools_linkroot_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(base.join("real/src")).unwrap();
+    fs::write(base.join("real/src/a.py"), "def used():\n    return 1\n\n\ndef unused():\n    return used()\n").unwrap();
+    let link = base.join("link");
+    std::os::unix::fs::symlink(base.join("real"), &link).unwrap();
+    let s = session(&link, 0.0);
+    let text = |tool: &str, args: Value| {
+        let c = call_tool(&s, tool, &args);
+        assert!(!c.is_error, "{tool} {args}: {}", c.text);
+        c.text
+    };
+    let through = link.join("src").to_string_lossy().into_owned();
+    for tool in ["repo_map", "dead_code"] {
+        assert_eq!(text(tool, json!({"path": through})), text(tool, json!({"path": "src"})), "{tool}");
+    }
+    assert_eq!(text("read_code", json!({"path": format!("{through}/a.py")})), text("read_code", json!({"path": "src/a.py"})));
+    assert_eq!(text("grep_code", json!({"pattern": "used", "path": through})), text("grep_code", json!({"pattern": "used", "path": "src"})));
+    drop(s);
+    let _ = fs::remove_dir_all(&base);
+}
+
+/// A concise page that would pass max_bytes is the detailed page, which says how to go on: no
+/// item is cut and none is lost between pages.
+#[test]
+fn a_concise_page_too_long_for_max_bytes_still_says_how_to_go_on() {
+    let files: Vec<(String, String)> = (0..400).map(|i| (format!("d{i}/a.py"), format!("x{i} = 1\n"))).collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let mut r = Repo::new("concise_page", &refs);
+    let text = r.ok("find_files", json!({"query": "a.py", "limit": 400, "max_bytes": 1000, "response_format": "concise"}));
+    assert!(text.len() <= 1000, "{}", text.len());
+    assert!(!text.contains("this item is cut"), "{text}");
+    assert!(text.contains("call again with offset="), "{text}");
+}
+
+/// A tool's path that leaves the repository and comes back into it names the repository's
+/// directory, as the same path without the detour does.
+#[test]
+fn a_tool_path_that_leaves_the_repository_and_comes_back_names_its_directory() {
+    let mut r = Repo::new("out_and_back", &[("pkg/a.py", "def used():\n    return 1\n\ndef dead_one():\n    return used()\n")]);
+    let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
+    let detour = format!("../{name}/pkg");
+    for tool in ["dead_code", "repo_map"] {
+        let plain = r.ok(tool, json!({"path": "pkg"}));
+        assert_eq!(r.ok(tool, json!({"path": detour})), plain, "{tool}");
+    }
+    let plain = r.ok("grep_code", json!({"pattern": "return", "path": "pkg"}));
+    assert_eq!(r.ok("grep_code", json!({"pattern": "return", "path": detour})), plain);
 }

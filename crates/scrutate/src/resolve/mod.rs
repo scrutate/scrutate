@@ -105,6 +105,8 @@ trait Rules {
     const EMBEDDED_FIELDS: bool = false;
     /// A constant bound to `require(..)` is an import of a module.
     const REQUIRE: bool = false;
+    /// A method is named in any case (PHP); fields and constants are not.
+    const MEMBERS_ANY_CASE: bool = false;
 
     /// Adds the bindings of import statement `n` to `out`; false when `n` is none.
     fn bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool;
@@ -253,6 +255,11 @@ trait Rules {
     /// The files of `module` as an import of `from` names it.
     fn module_files(r: &mut Resolver, from: &str, module: &str) -> Option<Vec<String>>;
 
+    /// The definition `item` of a `module` no file holds (a Rust inline `mod`), as `from` names it.
+    fn unfiled_item(_r: &mut Resolver, _from: &str, _module: &str, _item: &str) -> Option<i64> {
+        None
+    }
+
     /// Whether the resolver maps an import recorded as `module`; the generic mapping of paths
     /// onto files takes the others, without a parse.
     fn reads_import(_module: &str) -> bool {
@@ -268,19 +275,25 @@ fn lang_of(spec_id: &str) -> Option<Lang> {
     LANGS.into_iter().find(|&l| rules!(l, R => R::GRAMMARS.contains(&spec_id)))
 }
 
-/// The language the resolver reads `path` in; the content sniff decides only between others.
-fn path_lang(path: &str) -> Option<Lang> {
-    lang_of(crate::langs::detect(path, None)?.id)
+/// The language the resolver reads a file of language `id` in (`langs::detect_at` decides `id`,
+/// from the text where an extension is shared, as the parser does).
+fn lang_of_id(id: Option<&str>) -> Option<Lang> {
+    lang_of(id?)
 }
 
-/// Whether the resolver reads the language of `path`.
-pub(crate) fn reads(path: &str) -> bool {
-    path_lang(path).is_some()
+/// Whether the resolver reads the repository file `rel`.
+pub(crate) fn reads(root: &std::path::Path, rel: &str) -> bool {
+    lang_of_id(crate::langs::detect_at(root, rel).map(|l| l.id)).is_some()
 }
 
-/// Whether `x.f()` in `path` calls a method, never a free function `f`.
-pub(crate) fn methods_only(path: &str) -> bool {
-    path_lang(path).is_some_and(|l| rules!(l, R => R::METHODS_ONLY))
+/// Whether an import in language `id` can bind a name under another (`import a as b`).
+pub(crate) fn may_alias(id: Option<&str>) -> bool {
+    matches!(lang_of_id(id), Some(Lang::Python | Lang::Js | Lang::Rust | Lang::Php))
+}
+
+/// Whether `x.f()` in language `id` calls a method, never a free function `f`.
+pub(crate) fn methods_only(id: Option<&str>) -> bool {
+    lang_of_id(id).is_some_and(|l| rules!(l, R => R::METHODS_ONLY))
 }
 
 /// Definition chosen for an occurrence and how it was found, or why none was.
@@ -336,6 +349,8 @@ pub struct Resolver<'a> {
     ix: &'a Index,
     files: HashSet<String>,
     cache: HashMap<String, Rc<FileInfo>>,
+    /// the language each file asked about is read in
+    langs: std::cell::RefCell<HashMap<String, Option<Lang>>>,
     parsers: HashMap<&'static str, Parser>,
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
@@ -489,6 +504,7 @@ const FUNCTION_NODES: &[&str] = &[
     "lambda",
     "function_declaration",
     "generator_function_declaration",
+    "generator_function",
     "function_expression",
     "function",
     "arrow_function",
@@ -534,6 +550,10 @@ const LOCAL_BINDERS: &[(&str, &str)] = &[
     ("rest_pattern", ""),
     ("catch_clause", "parameter"),
     ("arrow_function", "parameter"),
+    // a JavaScript function expression binds its name inside itself only (binder_reach)
+    ("function_expression", "name"),
+    ("function", "name"),
+    ("generator_function", "name"),
     ("named_expression", "name"),
     ("splat_pattern", ""),
     // C and C++: `int x = 1, *p;`, parameters, `T &r`, `auto [a, b]`
@@ -747,6 +767,16 @@ fn bindings_by<R: Rules>(path: &str, root: Node, src: &str) -> Vec<Binding> {
 
 // ------------------------------------------------------------------------- resolver
 impl<'a> Resolver<'a> {
+    /// The language the resolver reads `path` in, as the parser takes the file.
+    fn path_lang(&self, path: &str) -> Option<Lang> {
+        if let Some(l) = self.langs.borrow().get(path) {
+            return *l;
+        }
+        let l = lang_of_id(crate::langs::detect_at(&self.ix.root, path).map(|l| l.id));
+        self.langs.borrow_mut().insert(path.to_string(), l);
+        l
+    }
+
     /// `names::Names` builds the one resolver of a request.
     pub(crate) fn new(ix: &'a Index) -> Result<Resolver<'a>> {
         let files = ix.files()?.into_iter().collect();
@@ -754,6 +784,7 @@ impl<'a> Resolver<'a> {
             ix,
             files,
             cache: HashMap::new(),
+            langs: Default::default(),
             parsers: HashMap::new(),
             crates: None,
             go_dirs: None,
@@ -795,6 +826,34 @@ impl<'a> Resolver<'a> {
         let fi = Rc::new(self.load(path));
         self.cache.insert(path.to_string(), Rc::clone(&fi));
         fi
+    }
+
+    /// The names `path` imports under a local name of its own, as (local, name of the definition
+    /// it reaches, else the imported name): `from util import helper as h` is ("h", "helper"), and
+    /// so is `const h = require("./util")` when util sets `module.exports = helper`.
+    pub(crate) fn aliases(&mut self, path: &str) -> Vec<(String, String)> {
+        self.alias_sites(path).into_iter().map(|(local, item, _)| (local, item)).collect()
+    }
+
+    /// Whether `path` imports a name as `name` from another module (`from .util import helper`).
+    pub(crate) fn imports_as(&mut self, path: &str, name: &str) -> bool {
+        self.file(path).bindings.iter().any(|b| b.local == name && !b.module.is_empty())
+    }
+
+    /// `aliases`, each with the start bytes of the import statement's identifiers that name it.
+    pub(crate) fn alias_sites(&mut self, path: &str) -> Vec<(String, String, Vec<usize>)> {
+        // a lookup cut at the depth limit is no answer for a lookup that starts here
+        self.looked_up.clear();
+        let fi = self.file(path);
+        let Some(lang) = fi.lang else { return Vec::new() };
+        let mut out = Vec::new();
+        for b in fi.bindings.iter().filter(|b| !b.module.is_empty()) {
+            let reached = self.resolve_binding(path, lang, b, 0).and_then(|id| self.ix.symbol(id).ok().flatten()).map(|d| d.name);
+            if let Some(item) = reached.or_else(|| b.item.clone()).filter(|i| *i != b.local) {
+                out.push((b.local.clone(), item, b.sites.clone()));
+            }
+        }
+        out
     }
 
     /// Drops the loaded copy of `path`; a later use loads it again.
@@ -853,7 +912,7 @@ impl<'a> Resolver<'a> {
     /// A match at bytes `a..b` of `line` as Engine A reads `path` -> the same span in the decoded
     /// line Engine A prints, and the column `resolve_at` takes, which counts a BOM on line 1.
     pub(crate) fn decoded_span(&mut self, path: &str, line: u64, (a, b): (usize, usize)) -> ((usize, usize), usize) {
-        if path_lang(path).is_none() {
+        if self.path_lang(path).is_none() {
             return ((a, b), a);
         }
         let fi = self.file(path);
@@ -935,7 +994,7 @@ impl<'a> Resolver<'a> {
     /// Resolve the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`.
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
         self.looked_up.clear();
-        if path_lang(path).is_none() {
+        if self.path_lang(path).is_none() {
             // whether a grammar exists does not depend on the content the sniff reads
             return Err(if crate::langs::detect(path, Some("")).is_some() { UNREAD } else { "no grammar" });
         }
@@ -984,7 +1043,7 @@ impl<'a> Resolver<'a> {
         if let Some(q) = qualifier(node) {
             return self.resolve_qualified(path, &fi, lang, q, node, name, line);
         }
-        if matches!(node.kind(), "property_identifier" | "field_identifier" | "shorthand_property_identifier") {
+        if matches!(node.kind(), "property_identifier" | "field_identifier") {
             return Err("field or key");
         }
         self.resolve_bare(path, &fi, lang, node, name, line)
@@ -1061,7 +1120,14 @@ impl<'a> Resolver<'a> {
     /// its head names, or of the type of the value `q` is.
     #[allow(clippy::too_many_arguments)]
     fn walk_qualified(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, node: Node, name: &str, line: i64) -> Resolution {
-        let qt = text(q, &fi.src).trim();
+        let head = if q.kind() == "identifier" || q.named_child_count() == 0 { q } else { first_leaf(q) };
+        self.walk_path(path, fi, lang, q, text(q, &fi.src).trim(), head, node, name, line)
+    }
+
+    /// `walk_qualified` of a qualifier written `qt` whose first segment is `head`, also where no
+    /// node spans it (a path in a Rust macro's tokens).
+    #[allow(clippy::too_many_arguments)]
+    fn walk_path(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, qt: &str, head: Node, node: Node, name: &str, line: i64) -> Resolution {
         if rules!(lang, R => R::is_super(q, &fi.src)) {
             return self.super_member(path, fi, lang, q, name, line);
         }
@@ -1105,7 +1171,6 @@ impl<'a> Resolver<'a> {
             return hit.map(|id| (id, "qualified")).ok_or("not found");
         }
         // `Class.N`, `Type::N`: the head names a definition
-        let head = if q.kind() == "identifier" || q.named_child_count() == 0 { q } else { first_leaf(q) };
         let Ok((mut cur, _)) = self.resolve_bare(path, fi, lang, head, segs[0], line) else {
             let imported = fi.bindings.iter().any(|b| b.local == segs[0]) || matches!(segs[0], "std" | "core" | "alloc");
             if imported {
@@ -1609,8 +1674,12 @@ impl<'a> Resolver<'a> {
     fn declared(&mut self, id: i64, name: &str, field: bool) -> Option<i64> {
         let (path, qualname) = self.def_row(id)?;
         let want = format!("{}.{name}", strip_generics(&qualname));
-        let wanted = |d: &&Def| d.name == name && (d.kind == "field" || field && d.kind == "constant") == field && strip_generics(&d.qualname) == want;
-        self.file(&path).defs.iter().find(wanted).map(|d| d.id)
+        let fi = self.file(&path);
+        let fold = !field && fi.lang.is_some_and(|l| rules!(l, R => R::MEMBERS_ANY_CASE));
+        let same = |a: &str, b: &str| if fold { a.eq_ignore_ascii_case(b) } else { a == b };
+        let wanted =
+            |d: &&Def| same(&d.name, name) && (d.kind == "field" || field && d.kind == "constant") == field && same(&strip_generics(&d.qualname), &want);
+        fi.defs.iter().find(wanted).map(|d| d.id)
     }
 
     fn member_inner(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
@@ -1695,11 +1764,7 @@ impl<'a> Resolver<'a> {
         for b in named {
             let Some(leaf) = type_name(b) else { continue };
             let leaf_name = text(leaf, &fi.src);
-            let found = match qualifier(leaf) {
-                Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, leaf_name, d.start),
-                None => self.resolve_bare(path, fi, lang, leaf, leaf_name, d.start),
-            };
-            let found = match found {
+            let found = match self.type_leaf(path, fi, lang, leaf, d.start) {
                 Err("not found") if !self.defined_anywhere(leaf_name) => Err("external"),
                 f => f,
             };
@@ -1715,6 +1780,16 @@ impl<'a> Resolver<'a> {
             }
         }
         out
+    }
+
+    /// The definition a type name `leaf` written on `line` stands for: through its qualifier
+    /// (`base.Base`, `a::T`) when it has one, else as a plain name in scope.
+    fn type_leaf(&mut self, path: &str, fi: &FileInfo, lang: Lang, leaf: Node, line: i64) -> Resolution {
+        let name = text(leaf, &fi.src);
+        match qualifier(leaf) {
+            Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, name, line),
+            None => self.resolve_bare(path, fi, lang, leaf, name, line),
+        }
     }
 
     /// Container `id` and the classes it inherits from, in Python's method resolution order (C3,
@@ -1857,11 +1932,16 @@ impl<'a> Resolver<'a> {
     }
 
     fn lookup_top_inner(&mut self, files: &[String], name: &str, depth: usize) -> Option<i64> {
+        // `depth` counts the imports followed from one file into another: 6 hops at most
         if depth > 6 {
             return None;
         }
         for f in files {
-            if let Some(d) = top_level(&self.file(f), name) {
+            let fi = self.file(f);
+            // `const helper = require('./m')` is a constant and an import: the import says what it is
+            let required =
+                |d: &&Def| fi.lang.is_some_and(|l| rules!(l, R => R::REQUIRE)) && d.kind == "constant" && fi.bindings.iter().any(|b| b.local == name);
+            if let Some(d) = top_level(&fi, name).filter(|d| !required(d)) {
                 return Some(d.id);
             }
         }
@@ -1869,7 +1949,7 @@ impl<'a> Resolver<'a> {
             let fi = self.file(f);
             let Some(lang) = fi.lang else { continue };
             for b in fi.bindings.iter().filter(|b| b.local == name) {
-                if let Some(id) = self.resolve_binding(f, lang, b, depth + 1) {
+                if let Some(id) = self.resolve_binding(f, lang, b, depth) {
                     return Some(id);
                 }
             }
@@ -1901,8 +1981,16 @@ impl<'a> Resolver<'a> {
         if b.module.is_empty() && b.local == item {
             return None; // `export {a}` names the file's own `a`, already looked up
         }
-        let files = if b.module.is_empty() { vec![from.to_string()] } else { self.module_files(from, lang, &b.module)? };
-        self.lookup_top(&files, item, depth + 1)
+        let files = if b.module.is_empty() {
+            vec![from.to_string()]
+        } else {
+            match self.module_files(from, lang, &b.module) {
+                Some(files) => files,
+                None => return rules!(lang, R => R::unfiled_item(self, from, &b.module, item)),
+            }
+        };
+        // a name the file binds from itself (`module.exports = helper`) is no hop
+        self.lookup_top(&files, item, depth + usize::from(!b.module.is_empty()))
     }
 
     /// Files of the module a qualifier chain (`nx.utils`, `crate::a`, `pkg`) names, if it is one.
@@ -1931,7 +2019,7 @@ impl<'a> Resolver<'a> {
     /// the files `refs` would look its names up in. None when the resolver does not read the
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
-        if !rules!(path_lang(from)?, R => R::reads_import(module)) {
+        if !rules!(self.path_lang(from)?, R => R::reads_import(module)) {
             return None;
         }
         let fi = self.file(from);
@@ -2038,7 +2126,33 @@ impl Resolver<'_> {
     /// the locals of the function it is written in) hides outer definitions; one bound in a nested
     /// function, block or comprehension that does not hold `node` does not.
     fn shadowed(&mut self, lang: Lang, node: Node, name: &str, src: &str) -> bool {
+        // a JavaScript class expression binds its name inside the class only
+        if lang == Lang::Js
+            && std::iter::successors(node.parent(), |n| n.parent())
+                .any(|c| c.kind() == "class" && c.child_by_field_name("name").is_some_and(|x| text(x, src) == name))
+        {
+            return true;
+        }
         let at = node.start_byte();
+        // a Python class body is a scope of its own for code directly in it, not for its methods or
+        // comprehensions (save the first iterable of one, which runs in the class body)
+        if lang == Lang::Python {
+            let around = std::iter::successors(Some(node), |n| n.parent())
+                .zip(std::iter::successors(node.parent(), |n| n.parent()))
+                .find(|(_, p)| FUNCTION_NODES.contains(&p.kind()) || p.kind() == "class_definition" || PY_COMPREHENSIONS.contains(&p.kind()));
+            let in_body = around.filter(|(child, p)| {
+                !PY_COMPREHENSIONS.contains(&p.kind()) || python_first_iterable(*p).is_some_and(|it| it.byte_range().contains(&child.start_byte()))
+            });
+            if let Some((_, p)) = in_body {
+                // the first iterable of a comprehension: its class body, if there is one around
+                let class = std::iter::successors(Some(p), |n| n.parent()).find(|n| FUNCTION_NODES.contains(&n.kind()) || n.kind() == "class_definition");
+                if let Some(body) = class.filter(|c| c.kind() == "class_definition").and_then(|c| c.child_by_field_name("body")) {
+                    if python_class_binds(body, name, src, node) {
+                        return true;
+                    }
+                }
+            }
+        }
         let Some(mut func) = enclosing_function(node) else { return false };
         // a Rust `fn` item does not see the locals of the function around it
         while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
@@ -2097,7 +2211,7 @@ fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
     let blocks = block_scoped(lang, b);
     let mut n = b.parent();
     // the name of a function or class binds around it; that of a function expression only inside
-    if let Some(d) = n.filter(|&d| names_definition(d, b) && !matches!(d.kind(), "function_expression" | "function" | "class")) {
+    if let Some(d) = n.filter(|&d| names_definition(d, b) && !matches!(d.kind(), "function_expression" | "function" | "generator_function" | "class")) {
         n = d.parent();
     }
     while let Some(p) = n.filter(|p| p.id() != scope.id()) {
@@ -2112,6 +2226,77 @@ fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
 /// Whether `n` is the name of the function or class `d`.
 fn names_definition(d: Node, n: Node) -> bool {
     (FUNCTION_NODES.contains(&d.kind()) || CLASS_NODES.contains(&d.kind())) && d.child_by_field_name("name").is_some_and(|x| x.id() == n.id())
+}
+
+/// The Python nodes whose names do not see a class body's: comprehensions.
+const PY_COMPREHENSIONS: &[&str] = &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"];
+
+/// The iterable of a comprehension's first `for`, which runs in the scope around it.
+fn python_first_iterable(c: Node) -> Option<Node> {
+    let mut cur = c.walk();
+    let first = c.named_children(&mut cur).find(|n| n.kind() == "for_in_clause");
+    first?.child_by_field_name("right")
+}
+
+/// The names a Python assignment or `for` target binds: `h`, `h, x`, `[a, (b, *c)]`.
+fn python_targets(t: Node) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut stack = vec![t];
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "identifier" => out.push(n),
+            "pattern_list" | "tuple_pattern" | "list_pattern" | "parenthesized_expression" | "list_splat_pattern" => {
+                let mut cur = n.walk();
+                stack.extend(n.named_children(&mut cur));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether Python class body `body` has bound `name` when `use_` runs: a binding (an assignment,
+/// a tuple or `for` target, a walrus, a `def` or `class`) anywhere in the body's own statements
+/// that is done by then. `h = h` reads the outer `h` on its right side; a nested function, class,
+/// lambda or comprehension binds nothing here.
+fn python_class_binds(body: Node, name: &str, src: &str, use_: Node) -> bool {
+    let at = use_.start_byte();
+    let targets = python_targets;
+    let named = |ns: &[Node]| ns.iter().any(|t| text(*t, src) == name);
+    let target_is_use = |ns: &[Node]| ns.iter().any(|t| t.id() == use_.id());
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        let done = n.end_byte() <= at;
+        let bound = match n.kind() {
+            // `h: int` alone binds nothing
+            "assignment" if n.child_by_field_name("right").is_some() => {
+                let ts = n.child_by_field_name("left").map(targets).unwrap_or_default();
+                named(&ts) && (done || target_is_use(&ts))
+            }
+            "augmented_assignment" => {
+                let ts = n.child_by_field_name("left").map(targets).unwrap_or_default();
+                named(&ts) && (done || target_is_use(&ts))
+            }
+            // the target is bound before the body runs
+            "for_statement" => {
+                let ts = n.child_by_field_name("left").map(targets).unwrap_or_default();
+                let after_iter = n.child_by_field_name("right").is_some_and(|r| r.end_byte() <= at);
+                named(&ts) && (after_iter || target_is_use(&ts))
+            }
+            "named_expression" => n.child_by_field_name("name").is_some_and(|x| text(x, src) == name && (done || x.id() == use_.id())),
+            "function_definition" | "class_definition" => n.child_by_field_name("name").is_some_and(|x| text(x, src) == name && done),
+            _ => false,
+        };
+        if bound {
+            return true;
+        }
+        // a nested scope binds nothing in the class body; a decorated definition is its definition
+        if n.id() == body.id() || !(FUNCTION_NODES.contains(&n.kind()) || PY_COMPREHENSIONS.contains(&n.kind()) || n.kind() == "class_definition") {
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+    }
+    false
 }
 
 /// The innermost function around `node`.
@@ -2158,6 +2343,44 @@ impl Resolver<'_> {
             vec![id]
         }
     }
+}
+
+impl Resolver<'_> {
+    /// `name` as a member type `id` inherits, by `bases` (Java, C#, C++): its bases in header
+    /// order, each with its own bases first, at most 8 deep. A type the walk came to before at
+    /// that depth or less is not walked again, so a diamond of many paths reads each type once
+    /// per depth.
+    pub(crate) fn inherited_through(&mut self, id: i64, name: &str, depth: usize, bases: fn(&mut Resolver, i64) -> Vec<i64>) -> Option<i64> {
+        self.inherited_walk(id, name, depth, bases, &mut HashMap::new())
+    }
+
+    fn inherited_walk(&mut self, id: i64, name: &str, depth: usize, bases: fn(&mut Resolver, i64) -> Vec<i64>, seen: &mut HashMap<i64, usize>) -> Option<i64> {
+        if depth >= 8 || self.nest > 32 {
+            return None;
+        }
+        self.nest += 1;
+        let mut found = None;
+        for bid in bases(self, id) {
+            if bid != id && !seen_at(seen, bid, depth + 1) {
+                found = self.declared_member(bid, name).or_else(|| self.inherited_walk(bid, name, depth + 1, bases, seen));
+                if found.is_some() {
+                    break;
+                }
+            }
+        }
+        self.nest -= 1;
+        found
+    }
+}
+
+/// Whether a walk over base types already came to `id` at `depth` or less, whose answer stands
+/// for this visit too; marks it otherwise. A type reached by many paths is read once per depth.
+pub(crate) fn seen_at(seen: &mut HashMap<i64, usize>, id: i64, depth: usize) -> bool {
+    if seen.get(&id).is_some_and(|&d| d <= depth) {
+        return true;
+    }
+    seen.insert(id, depth);
+    false
 }
 
 // ------------------------------------------------------------------------- refs

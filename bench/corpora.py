@@ -3,7 +3,7 @@
 
 usage: corpora.py --root DIR [--only NAME...] [--verify]
 
-Real corpora are shallow clones of release tags. Paths that differ only by letter case are removed
+Real corpora are shallow clones of release tags; a tag given with its commit must still name it. Paths that differ only by letter case are removed
 (and the removal committed locally) so every tool sees the same files on case-insensitive file
 systems. Generated corpora are built deterministically from the Linux tree and a seeded generator.
 `manifest.json` records, per corpus, its source, commit, file count, bytes and tree checksum
@@ -24,6 +24,8 @@ REAL = {
     "linux": ("https://github.com/torvalds/linux.git", "v7.3"),
     "llvm": ("https://github.com/llvm/llvm-project.git", "llvmorg-23.1.5"),
     "ripgrep": ("https://github.com/BurntSushi/ripgrep.git", "15.2.0"),
+    # a Go tree for gopls (bench/yardstick.py W4, W5); a third value is the commit the tag must name
+    "hugo": ("https://github.com/gohugoio/hugo.git", "v0.170.0", "f7aa05f0f521611aa960b2da56e1870ea04f57b2"),
 }
 GENERATED = ["bigfile", "smallfiles", "binheavy", "patho", "rgbuilt", "linux-nodot", "startup"]
 
@@ -69,11 +71,13 @@ def tree_hash(root):
 
 
 def fetch_real(root, name):
-    url, tag = REAL[name]
+    url, tag, *pinned = REAL[name]
     d = os.path.join(root, name)
     if not os.path.isdir(d):
         subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", tag, url, d], check=True)
     tagged = sh(["git", "rev-list", "-n", "1", tag], cwd=d).strip()
+    if pinned and tagged != pinned[0]:
+        sys.exit(f"{name}: tag {tag} names {tagged}, not the pinned {pinned[0]}")
     tracked = sh(["git", "ls-files", "-z"], cwd=d).split("\0")
     seen, coll = {}, set()
     for p in tracked:

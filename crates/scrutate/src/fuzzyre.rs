@@ -29,14 +29,29 @@ pub struct FuzzyRegex {
     k: usize,
     /// state sets before any text byte, per number of errors (deletions from the start)
     init: Vec<u64>,
-    /// bytes of the longest string the pattern matches, plus k inserted characters (bounds where a
-    /// match can start)
-    span: Option<usize>,
+    /// the reversed pattern, which finds where a match that ends at a known byte starts
+    rev: Option<Box<FuzzyRegex>>,
 }
 
 struct Build {
     classes: Vec<Ranges>,
     follow: Vec<u64>,
+}
+
+/// `h` matching the reversed strings: a concatenation and each literal read back to front.
+fn reversed(h: &Hir) -> Hir {
+    use regex_syntax::hir::Repetition;
+    match h.kind() {
+        HirKind::Literal(lit) => match std::str::from_utf8(&lit.0) {
+            Ok(t) => Hir::literal(t.chars().rev().collect::<String>().into_bytes()),
+            Err(_) => h.clone(),
+        },
+        HirKind::Capture(cap) => reversed(&cap.sub),
+        HirKind::Concat(items) => Hir::concat(items.iter().rev().map(reversed).collect()),
+        HirKind::Alternation(items) => Hir::alternation(items.iter().map(reversed).collect()),
+        HirKind::Repetition(r) => Hir::repetition(Repetition { min: r.min, max: r.max, greedy: r.greedy, sub: Box::new(reversed(&r.sub)) }),
+        _ => h.clone(),
+    }
 }
 
 /// (nullable, first, last) of a sub-expression, positions added to `b`.
@@ -131,8 +146,14 @@ impl FuzzyRegex {
             .build()
             .parse(pattern)
             .with_context(|| format!("invalid pattern {pattern:?}"))?;
+        let mut m = Self::of(&hir, max_edits)?;
+        m.rev = Some(Box::new(Self::of(&reversed(&hir), max_edits)?));
+        Ok(m)
+    }
+
+    fn of(hir: &Hir, max_edits: u8) -> Result<FuzzyRegex> {
         let mut b = Build { classes: Vec::new(), follow: Vec::new() };
-        let (nullable, first, last) = glushkov(&hir, &mut b)?;
+        let (nullable, first, last) = glushkov(hir, &mut b)?;
         if nullable {
             bail!("a fuzzy regex must not match the empty string (every line would match)");
         }
@@ -168,8 +189,7 @@ impl FuzzyRegex {
             }
         }
         let k = max_edits as usize;
-        let span = hir.properties().maximum_len().map(|n| n + 4 * k);
-        let mut m = FuzzyRegex { ascii, cuts, wide, follow, first, last, k, init: Vec::new(), span };
+        let mut m = FuzzyRegex { ascii, cuts, wide, follow, first, last, k, init: Vec::new(), rev: None };
         // deleting j pattern characters before any text is read
         let mut d = 0u64;
         for _ in 0..=k {
@@ -190,6 +210,57 @@ impl FuzzyRegex {
             out |= self.follow[c][((d >> (8 * c)) & 0xff) as usize];
         }
         out
+    }
+
+    /// The positions reachable in one move from `d`, the start among them when `start` holds.
+    fn step_from(&self, d: u64, start: bool) -> u64 {
+        let mut out = if start { self.first } else { 0 };
+        for c in 0..8 {
+            out |= self.follow[c][((d >> (8 * c)) & 0xff) as usize];
+        }
+        out
+    }
+
+    /// The positions whose class holds the character at `hay[i]`, which is not a line end, and
+    /// its length in bytes.
+    fn unit(&self, hay: &[u8], i: usize) -> (u64, usize) {
+        match hay[i] {
+            c @ 0..0x80 => (self.ascii[c as usize], 1),
+            _ => {
+                let (c, n) = crate::instant::wide_char(hay, i);
+                (c.map_or(0, |c| self.wide[self.cuts.partition_point(|&s| s <= c as u32) - 1]), n)
+            }
+        }
+    }
+
+    /// Of a reversed pattern: the first byte of the longest text of `hay[from..end]` that ends at
+    /// `end` and is within `d` edits of a string the pattern (read forward) matches.
+    fn start_before(&self, hay: &[u8], from: usize, end: usize, d: usize) -> Option<usize> {
+        let mut starts = Vec::new();
+        let mut i = from;
+        while i < end {
+            starts.push(i);
+            i += self.unit(hay, i).1;
+        }
+        let mut r = self.init[..=d.min(self.k)].to_vec();
+        let mut next = r.clone();
+        let mut best = None;
+        // anchored at `end`: the start stays reachable at `t` characters in only with `t` insertions
+        for (t, &u) in starts.iter().rev().enumerate() {
+            let bc = self.unit(hay, u).0;
+            next[0] = self.step_from(r[0], t == 0) & bc;
+            for j in 1..r.len() {
+                next[j] = (self.step_from(r[j], t <= j) & bc) | r[j - 1] | self.step_from(r[j - 1], t < j) | self.step_from(next[j - 1], t + 1 < j);
+            }
+            std::mem::swap(&mut r, &mut next);
+            if r.iter().any(|&s| s & self.last != 0) {
+                best = Some(u);
+            }
+            if t >= r.len() && r.iter().all(|&s| s == 0) {
+                break;
+            }
+        }
+        best
     }
 
     /// End (exclusive) and number of errors of the first match in `hay[at..]`.
@@ -232,18 +303,9 @@ impl Matcher for FuzzyRegex {
     type Error = NoError;
 
     fn find_at(&self, haystack: &[u8], at: usize) -> Result<Option<Match>, NoError> {
-        let Some((end, _)) = self.first_end(haystack, at) else { return Ok(None) };
+        let Some((end, errors)) = self.first_end(haystack, at) else { return Ok(None) };
         let line_start = haystack[at..end].iter().rposition(|&b| b == b'\n').map(|i| at + i + 1).unwrap_or(at);
-        let mut start = match self.span {
-            Some(n) => end.saturating_sub(n).max(line_start),
-            None => line_start,
-        };
-        // back to the first byte of a character
-        for _ in 0..3 {
-            if start > line_start && haystack[start] & 0xC0 == 0x80 {
-                start -= 1;
-            }
-        }
+        let start = self.rev.as_ref().and_then(|r| r.start_before(haystack, line_start, end, errors)).unwrap_or(line_start);
         Ok(Some(Match::new(start, end)))
     }
 
@@ -310,6 +372,64 @@ mod tests {
             let re = regex::Regex::new(pat).unwrap();
             let want: Vec<usize> = text.lines().enumerate().filter(|(_, l)| re.is_match(l)).map(|(i, _)| i).collect();
             assert_eq!(lines(&fr, &text), want, "{pat}");
+        }
+    }
+
+    #[test]
+    fn a_match_starts_where_the_matched_text_starts() {
+        let at = |pat: &str, k: u8, hay: &str| {
+            let m = FuzzyRegex::new(pat, k, false).unwrap().find_at(hay.as_bytes(), 0).unwrap().unwrap();
+            (m.start(), m.end())
+        };
+        assert_eq!(at("a[0-9]*b", 0, "zzz a12b"), (4, 8));
+        assert_eq!(at("a[0-9]*b", 0, "aa12b"), (1, 5));
+        // the longest text within the match's edits, as --fuzzy highlights it
+        assert_eq!(at("abcd", 1, "zzzz abxd"), (5, 9));
+        assert_eq!(at("é[0-9]+", 0, "xé12"), (1, 4));
+        // a match on a later line starts on that line
+        assert_eq!(at("a[0-9]*b", 0, "a1\nzz a2b"), (6, 9));
+    }
+
+    #[test]
+    fn match_starts_agree_with_the_regex_engine_and_with_edit_distance() {
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut next = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let word = |len: u64, next: &mut dyn FnMut(u64) -> u64| (0..len).map(|_| b"abc_"[next(4) as usize] as char).collect::<String>();
+        let lev = |a: &[u8], b: &[u8]| {
+            let mut row: Vec<usize> = (0..=b.len()).collect();
+            for (i, &x) in a.iter().enumerate() {
+                let mut prev = row[0];
+                row[0] = i + 1;
+                for (j, &y) in b.iter().enumerate() {
+                    let cur = row[j + 1];
+                    row[j + 1] = (prev + usize::from(x != y)).min(row[j] + 1).min(cur + 1);
+                    prev = cur;
+                }
+            }
+            row[b.len()]
+        };
+        for _ in 0..400 {
+            let hay = word(1 + next(14), &mut next);
+            // exact: the longest match that ends where the first match ends, by the regex engine
+            for pat in ["a[bc]*_", "(ab|c)+_?b", "b_*a"] {
+                let Some(m) = FuzzyRegex::new(pat, 0, false).unwrap().find_at(hay.as_bytes(), 0).unwrap() else { continue };
+                let re = regex::Regex::new(&format!("(?:{pat})$")).unwrap();
+                assert_eq!(re.find(&hay[..m.end()]).map(|r| r.start()), Some(m.start()), "{pat} on {hay}");
+            }
+            // with edits: the farthest start within the match's edits of a literal
+            let lit = word(3 + next(3), &mut next);
+            for k in 1..=2u8 {
+                let fr = FuzzyRegex::new(&lit, k, false).unwrap();
+                let Some(m) = fr.find_at(hay.as_bytes(), 0).unwrap() else { continue };
+                let d = (0..=m.end()).map(|s| lev(&hay.as_bytes()[s..m.end()], lit.as_bytes())).min().unwrap();
+                let want = (0..=m.end()).find(|&s| lev(&hay.as_bytes()[s..m.end()], lit.as_bytes()) <= d).unwrap();
+                assert_eq!(m.start(), want, "{lit} k={k} on {hay}");
+            }
         }
     }
 }

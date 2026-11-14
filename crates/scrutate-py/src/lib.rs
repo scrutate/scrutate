@@ -150,9 +150,10 @@ pub struct GrepIter {
 }
 
 impl GrepIter {
-    fn finish(&mut self) {
+    /// Join the search thread with the GIL released: in a slow file it stops only at its next check.
+    fn finish(&mut self, py: Python<'_>) {
         if let Some(h) = self.handle.take() {
-            match h.join() {
+            match py.detach(|| h.join()) {
                 Ok(Ok((st, notes))) => {
                     self.stats = Some(st);
                     self.notes = notes;
@@ -190,7 +191,7 @@ impl GrepIter {
             }
             None => {
                 this.rx = None;
-                this.finish();
+                this.finish(py);
                 if let Some(e) = this.error.take() {
                     return Err(err(e));
                 }
@@ -200,11 +201,11 @@ impl GrepIter {
     }
 
     /// Stop the search; remaining results are discarded.
-    fn cancel(&mut self) {
+    fn cancel(&mut self, py: Python<'_>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.rx = None;
         self.buf.clear();
-        self.finish();
+        self.finish(py);
     }
 
     /// Statistics of a finished search (files searched/matched, matches, bytes, elapsed ms,
@@ -213,7 +214,7 @@ impl GrepIter {
         if self.rx.is_some() {
             return Ok(None); // still running
         }
-        self.finish();
+        self.finish(py);
         match &self.stats {
             None => Ok(None),
             Some(st) => {
@@ -245,8 +246,8 @@ impl Drop for GrepIter {
 ///
 /// mode: "regex" (default), "literal", "identifier" (every casing of an identifier) or "fuzzy"
 /// (within `fuzzy_edits` edits). Returns an iterator of `Match`, in the order the files are
-/// searched, or in path and line order with `sort=True` (the first match then waits for the
-/// whole search).
+/// searched, or with `sort=True` in the order of `rg --sort path` (the first match then waits for
+/// the whole search); `sort=True` with `max_results=N` gives the first N matches in that order.
 #[pyfunction]
 #[pyo3(signature = (pattern, paths=vec![".".to_string()], *, mode="regex", case="sensitive", word=false, multiline=false,
                     invert=false, hidden=false, no_ignore=false, follow_links=false, globs=vec![], types=vec![],
@@ -288,6 +289,7 @@ fn grep(
         invert,
         max_count,
         max_results,
+        first_in_path_order: sort,
         before,
         after,
         want_spans: true,
@@ -300,7 +302,7 @@ fn grep(
     let Some(first) = roots.first().cloned() else {
         return Err(PyValueError::new_err("no paths to search"));
     };
-    let f = Files {
+    let mut f = Files {
         hidden,
         no_ignore,
         follow_links,
@@ -311,6 +313,15 @@ fn grep(
         threads,
         ..Files::walk(roots)
     };
+    // a custom type is the one of the index this search starts in, as on the command line,
+    // whichever Repo of the process loaded its tables last
+    if !f.types.is_empty() {
+        let here = std::env::current_dir().map_err(|e| PyValueError::new_err(e.to_string()))?;
+        f.customs = Some(
+            scrutate::custom::for_search(&here)
+                .map_err(|e| PyValueError::new_err(format!("{e:#}")))?,
+        );
+    }
     instant::overrides(&first, &f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
     // an unknown type is the call's error, not the first next()'s
     instant::file_types(&f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
@@ -341,21 +352,12 @@ fn grep(
                         notes.push((path.to_string(), text.clone()));
                     }
                     batch.extend(Match::of(r));
-                    if !sort && batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err()
-                    {
+                    if batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err() {
                         c3.store(true, Ordering::Relaxed); // consumer gone
                     }
                 }),
             );
-            if sort {
-                batch.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-                let mut it = batch.into_iter().peekable();
-                while it.peek().is_some() {
-                    if tx.send(it.by_ref().take(256).collect()).is_err() {
-                        break;
-                    }
-                }
-            } else if !batch.is_empty() {
+            if !batch.is_empty() {
                 let _ = tx.send(batch);
             }
             st.map(|st| (st, notes))
@@ -788,7 +790,9 @@ fn version() -> &'static str {
 ///   reader of its own, and its writes one at a time;
 /// * `GrepIter` methods take `&mut self`: PyO3's borrow checker rejects concurrent mutable access
 ///   with an exception instead of racing; the channel receiver is additionally behind a `Mutex`;
-/// * the module holds no other global mutable state.
+/// * the module holds no other global mutable state; the crate's custom language tables are
+///   read per use: each `Repo` call and index update under its own root's, and `grep(types=)`
+///   under those of the index the current directory is in, as on the command line.
 #[pymodule(gil_used = false)]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Match>()?;

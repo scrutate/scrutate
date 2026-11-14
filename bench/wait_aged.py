@@ -21,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from leaderboard import boot_ratio, hyperfine  # noqa: E402
+from leaderboard import boot_ratio, drop_scrutate_settings, hyperfine  # noqa: E402
 
 
 def settled(rounds):
@@ -33,6 +33,7 @@ def settled(rounds):
 
 
 def main() -> int:
+    drop_scrutate_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("bin")
     ap.add_argument("--cap", type=float, default=3600)

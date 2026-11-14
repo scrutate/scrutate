@@ -272,7 +272,8 @@ impl Lines<'_> {
                 None if inside => crate::resolve::repo_text(self.root, rel).unwrap_or_default(),
                 None => String::new(),
             };
-            self.cache.insert(rel.to_string(), split_lines(&text));
+            // an editor shows no byte order mark, and counts columns without it
+            self.cache.insert(rel.to_string(), split_lines(text.strip_prefix('\u{FEFF}').unwrap_or(&text)));
         }
         &self.cache[rel]
     }
@@ -320,6 +321,12 @@ struct Server {
     saves: Option<mpsc::Sender<()>>,
     initialized: bool,
     shutdown: bool,
+    /// how long a request waits for the first build before it is answered that the index is
+    /// still being built (`session::BUILD_WAIT`)
+    build_wait: std::time::Duration,
+    /// when a request last waited out `build_wait`: the ones read right after it were queued behind
+    /// it, and are answered at once
+    waited_out: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 type Reply = std::result::Result<Value, (i64, String)>;
@@ -335,9 +342,7 @@ impl Server {
         if !same_share(&slashed(&p), &slashed(&self.root), cfg!(windows)) {
             return None;
         }
-        let p = std::fs::canonicalize(&p).unwrap_or(p);
-        let r = p.strip_prefix(&self.root).ok()?;
-        Some(crate::instant::slashed(r.to_string_lossy()))
+        crate::ops::repo_rel(&self.root, &p)
     }
 
     fn lines(&self) -> Lines<'_> {
@@ -480,10 +485,18 @@ impl Server {
             return Ok(Value::Null);
         }
         let session = self.session.clone();
+        // read within a second of a request that waited out the build: queued behind it
+        let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
+        let build_wait = if queued { std::time::Duration::ZERO } else { self.build_wait };
         let run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
             let session = session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
             let never = Arc::new(AtomicBool::new(false));
-            session.wait_built(&never, None, |_| {});
+            // the one thread that reads requests must not wait out a long first build: a cancel,
+            // a change and shutdown come in behind it; ContentModified asks the editor to ask again
+            if !session.wait_built(&never, Some(build_wait), |_| {}) {
+                self.waited_out.set(Some(std::time::Instant::now()));
+                return Err((-32801, "the index is still being built".to_string()));
+            }
             // a damaged index is built again and the request answered from the new one
             session
                 .read(&never, true, |s| {
@@ -491,7 +504,7 @@ impl Server {
                     if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
                         return Err(newer.into());
                     }
-                    f(s)
+                    crate::ops::in_snapshot(s, &mut *f)
                 })
                 .map_err(|e| (-32603, format!("{e:#}")))
         };
@@ -528,7 +541,9 @@ impl Server {
     fn resolved_at(&self, names: &mut Names, p: &Value, ident: &str, before: &str) -> Option<i64> {
         let rel = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u))?;
         let line = p["position"]["line"].as_u64().unwrap_or(0);
-        names.at(&rel, line + 1, before.len(), ident).ok().map(|(id, _)| id)
+        // the resolver's column counts the byte order mark on the first line; the editor's does not
+        let bom = if line == 0 && names.starts_with_bom(&rel) { '\u{FEFF}'.len_utf8() } else { 0 };
+        names.at(&rel, line + 1, before.len() + bom, ident).ok().map(|(id, _)| id)
     }
 
     fn definition(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
@@ -572,11 +587,16 @@ impl Server {
                 let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
                 out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
             }
-            let width = ident.encode_utf16().count() as u64;
             for o in r.of(def_id) {
                 if matches!(o.resolution, Ok((_, "definition"))) {
                     continue;
                 }
+                // an alias (`h` for `helper`) spans what the line writes, not the name asked for
+                let written = o.text.get(o.at..).unwrap_or("");
+                let word = |c: &char| c.is_alphanumeric() || *c == '_' || *c == '$';
+                // the name as asked for, whole: `helper2` starts with `helper` but is another word
+                let whole = written.strip_prefix(ident.as_str()).is_some_and(|rest| !rest.chars().next().is_some_and(|c| word(&c)));
+                let width = if whole { ident.encode_utf16().count() } else { written.chars().take_while(word).map(char::len_utf16).sum() } as u64;
                 let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
                 out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
             }
@@ -626,8 +646,8 @@ impl Server {
         let mut lines = self.lines();
         // rows come by start line, enclosing symbols first: a stack of open symbols nests them
         let mut roots: Vec<Value> = Vec::new();
-        let mut stack: Vec<(i64, Value, Vec<Value>)> = Vec::new();
-        let pop = |stack: &mut Vec<(i64, Value, Vec<Value>)>, roots: &mut Vec<Value>| {
+        let mut stack: Vec<(&ChunkRow, Value, Vec<Value>)> = Vec::new();
+        let pop = |stack: &mut Vec<(&ChunkRow, Value, Vec<Value>)>, roots: &mut Vec<Value>| {
             let (_, mut v, children) = stack.pop().unwrap();
             if !children.is_empty() {
                 v["children"] = Value::Array(children);
@@ -637,11 +657,23 @@ impl Server {
                 None => roots.push(v),
             }
         };
+        // lines an earlier definition starts or ends on
+        let mut taken: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for r in &rows {
-            while stack.last().is_some_and(|top| top.0 < r.end) {
+            // one that starts on the first or last line of the open one, and is not named inside
+            // it, is its sibling (`function b() {} function c() {}`, `} function c() {`)
+            let sibling = |top: &ChunkRow| (top.start == r.start || top.end == r.start) && !named_inside(&r.qualname, &top.qualname);
+            while stack.last().is_some_and(|top| top.0.end < r.end || sibling(top.0)) {
                 pop(&mut stack, &mut roots);
             }
-            stack.push((r.end, document_symbol(&mut lines, &rel, r), Vec::new()));
+            let mut v = document_symbol(&mut lines, &rel, r);
+            // the index keeps lines, not columns: a definition on a line another one starts or
+            // ends on starts at its name
+            if taken.contains(&r.start) {
+                v["range"]["start"] = v["selectionRange"]["start"].clone();
+            }
+            taken.extend([r.start, r.end]);
+            stack.push((r, v, Vec::new()));
         }
         while !stack.is_empty() {
             pop(&mut stack, &mut roots);
@@ -678,6 +710,11 @@ fn definitions(s: &mut Searcher, name: &str) -> Result<Vec<crate::search::Hit>> 
     Ok(hits)
 }
 
+/// Whether the qualified name `inner` is a name inside `outer` (`b.c` inside `b`).
+fn named_inside(inner: &str, outer: &str) -> bool {
+    inner.strip_prefix(outer).is_some_and(|rest| rest.starts_with('.'))
+}
+
 fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {
     let (l, a, b) = lines.name_pos(rel, r.start, r.end, &r.name);
     let last = (r.end.max(r.start).max(1) - 1) as usize;
@@ -697,7 +734,17 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     if cfg!(target_os = "wasi") {
         bail!("lsp is not in the wasi build: it needs threads");
     }
-    let mut srv = Server { root: root.to_path_buf(), root_given, session: None, docs: HashMap::new(), saves: None, initialized: false, shutdown: false };
+    let mut srv = Server {
+        root: root.to_path_buf(),
+        root_given,
+        session: None,
+        docs: HashMap::new(),
+        saves: None,
+        initialized: false,
+        shutdown: false,
+        build_wait: crate::session::BUILD_WAIT,
+        waited_out: Default::default(),
+    };
     let mut input = std::io::stdin().lock();
     while let Some(body) = read_message(&mut input)? {
         let msg: Value = match serde_json::from_slice(&body) {
@@ -733,6 +780,67 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_during_the_first_build_is_answered_once_the_wait_runs_out() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_building_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let session = Arc::new(Session::open(&root, crate::session::Every::given(None)).unwrap());
+        // a first build is running and does not end
+        session.building();
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            session: Some(session),
+            docs: HashMap::new(),
+            saves: None,
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_millis(300),
+            waited_out: Default::default(),
+        };
+        let t0 = std::time::Instant::now();
+        let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5), "{:?}", t0.elapsed());
+        assert_eq!(r.map_err(|e| e.0), Err(-32801));
+        // shutdown is answered at once whatever the build does
+        assert!(srv.request("shutdown", &Value::Null).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Requests queued behind one that waited out the first build are answered at once, so a
+    /// shutdown behind them is not kept waiting a build wait per request; one that comes later
+    /// waits again.
+    #[test]
+    fn requests_queued_behind_a_build_wait_do_not_wait_again() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_queued_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let session = Arc::new(Session::open(&root, crate::session::Every::given(None)).unwrap());
+        session.building();
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            session: Some(session),
+            docs: HashMap::new(),
+            saves: None,
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_secs(2),
+            waited_out: Default::default(),
+        };
+        let t0 = std::time::Instant::now();
+        for _ in 0..4 {
+            assert_eq!(srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).map_err(|e| e.0), Err(-32801));
+        }
+        assert!(srv.request("shutdown", &Value::Null).is_ok());
+        let took = t0.elapsed();
+        assert!(took < std::time::Duration::from_millis(3500), "{took:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[cfg(unix)]
     #[test]

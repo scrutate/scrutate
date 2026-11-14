@@ -62,6 +62,7 @@ regex-syntax = "0.8"
 regex-automata = "0.4"
 rusqlite = { version = "0.41", features = ["bundled"] }
 rust-stemmers = "1"
+same-file = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 tar = "0.4"
@@ -153,6 +154,16 @@ notify = { version = "=9.0.0-rc.8", default-features = false }
 # event types, and watch.rs loads FSEvents itself while `watch` runs
 [target.'cfg(target_os = "macos")'.dependencies]
 notify = { version = "=9.0.0-rc.8", default-features = false, features = ["macos_kqueue"] }
+
+# a write goes through directories opened one by one, never through a link (already in the
+# tree through tar)
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "fs"] }
+
+# the same on Windows: opens and a rename relative to a directory handle (NtCreateFile,
+# NtSetInformationFile), already in the tree through other crates
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [dev-dependencies]
 proptest = "1"

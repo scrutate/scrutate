@@ -110,20 +110,25 @@ class Hit:
         self.name = h["name"].rsplit(".", 1)[-1]
 
 
+def extract(root: str) -> None:
+    """The frozen corpus, written under `root`."""
+    with tarfile.open(FROZEN) as tar:
+        for m in tar.getmembers():
+            # the archive is this repository's own, but a path that leaves the folder is still refused
+            if not m.isfile() or m.name.startswith("/") or ".." in m.name.split("/"):
+                sys.exit(f"{FROZEN}: unexpected member {m.name!r}")
+            os.makedirs(os.path.dirname(os.path.join(root, m.name)), exist_ok=True)
+            with open(os.path.join(root, m.name), "wb") as f:
+                f.write(tar.extractfile(m).read())
+
+
 def measure(binary: str) -> dict:
     with open(QUERIES) as f:
         qs = json.load(f)
     work = tempfile.mkdtemp(prefix="scrutate_quality_")
     try:
         root = os.path.join(work, "corpus")
-        with tarfile.open(FROZEN) as tar:
-            for m in tar.getmembers():
-                # the archive is this repository's own, but a path that leaves the folder is still refused
-                if not m.isfile() or m.name.startswith("/") or ".." in m.name.split("/"):
-                    sys.exit(f"{FROZEN}: unexpected member {m.name!r}")
-                os.makedirs(os.path.dirname(os.path.join(root, m.name)), exist_ok=True)
-                with open(os.path.join(root, m.name), "wb") as f:
-                    f.write(tar.extractfile(m).read())
+        extract(root)
         t0 = time.time()
         env = {k: v for k, v in os.environ.items() if not k.startswith("SCRUTATE_")}
         ix = subprocess.run([binary, "--root", root, "index", "--no-text"], capture_output=True, text=True, env=env)

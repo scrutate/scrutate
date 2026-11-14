@@ -670,17 +670,57 @@ fn every_use_on_one_long_line_is_counted_up_to_max_results() {
     assert!(short["references"].as_array().unwrap().iter().all(|o| o["path"] != "lib.js" || o.get("cut").is_none()), "{short}");
 }
 
-/// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each) fails if the larger costs 10x
-/// or more, where linear work gives 4x and quadratic 16x; `want(n)` is the count it must print.
+/// The child `c` runs to its end: its standard output, and the CPU time it used, which a busy
+/// machine does not stretch as it stretches wall time (wall time where it cannot be read).
+// wait4 reaps the child where it returns early
+#[allow(clippy::zombie_processes)]
+fn run_timed(c: &mut Command) -> (String, Duration) {
+    use std::io::Read;
+    let t = Instant::now();
+    let mut child = c.stdin(Stdio::null()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut out = String::new();
+    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_pointer_width = "64"))]
+    {
+        #[repr(C)]
+        struct Timeval {
+            sec: i64,
+            #[cfg(target_os = "macos")]
+            usec: i32,
+            #[cfg(not(target_os = "macos"))]
+            usec: i64,
+        }
+        #[repr(C)]
+        struct Rusage {
+            user: Timeval,
+            system: Timeval,
+            rest: [i64; 14],
+        }
+        extern "C" {
+            fn wait4(pid: i32, status: *mut i32, options: i32, usage: *mut Rusage) -> i32;
+        }
+        let zero = || Timeval { sec: 0, usec: 0 };
+        let mut ru = Rusage { user: zero(), system: zero(), rest: [0; 14] };
+        let mut status = 0;
+        // reaps the child itself, so `child` is not waited for again
+        if unsafe { wait4(child.id() as i32, &mut status, 0, &mut ru) } == child.id() as i32 {
+            let us = |t: &Timeval| t.sec as u64 * 1_000_000 + t.usec as u64;
+            return (out, Duration::from_micros(us(&ru.user) + us(&ru.system)));
+        }
+    }
+    child.wait().unwrap();
+    (out, t.elapsed())
+}
+
+/// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each, in CPU time) fails if the
+/// larger costs 10x or more, where linear work gives 4x and quadratic 16x; `want(n)` is the count
+/// it must print.
 fn assert_refs_scale_linearly(file: &str, other: (&str, &str), name: &str, n: usize, make: impl Fn(usize) -> String, want: impl Fn(usize) -> String) {
     let best = |k: usize| {
         let r = Repo::new("refs_scale", &[other, (file, &make(k))]);
         (0..3)
             .map(|_| {
-                let t = Instant::now();
-                let out = Command::new(BIN).args(["refs", name, "--max-results", "50000"]).current_dir(&r.root).output().unwrap();
-                let took = t.elapsed();
-                let out = String::from_utf8_lossy(&out.stdout).into_owned();
+                let (out, took) = run_timed(Command::new(BIN).args(["refs", name, "--max-results", "50000"]).current_dir(&r.root));
                 assert!(out.contains(&want(k)), "{}", out.lines().next().unwrap_or(""));
                 took
             })
@@ -1381,6 +1421,76 @@ fn deps_and_rdeps_resolve_python_names_imported_from_a_package() {
 }
 
 #[test]
+fn a_call_through_an_import_alias_is_a_call_of_the_imported_definition() {
+    let r = Repo::new(
+        "alias_calls",
+        &[
+            ("util.py", "def helper():\n    return 1\n"),
+            ("app.py", "from util import helper as h\n\n\ndef run():\n    return h()\n"),
+            ("other.py", "def h():\n    return 2\n\n\ndef unrelated():\n    return h()\n"),
+            ("u.js", "function lone() {\n  return 1;\n}\nmodule.exports = { lone };\n"),
+            ("m.js", "const { lone: l } = require(\"./u\");\n\nfunction go() {\n  return l();\n}\n"),
+        ],
+    );
+    let lib = r.lib();
+    let callers = |n: &str| lib.callers(n, 50).unwrap().into_iter().map(|h| format!("{}:{}", h.path, h.qualname)).collect::<Vec<_>>();
+    let callees = |n: &str| lib.callees(n, 50).unwrap().0.into_iter().map(|h| format!("{}:{}", h.path, h.qualname)).collect::<Vec<_>>();
+    assert_eq!(callers("helper"), ["app.py:run"]);
+    assert_eq!(callees("run"), ["util.py:helper"]);
+    assert_eq!(callers("h"), ["other.py:unrelated"], "the alias is not the other file's h");
+    assert_eq!(callers("lone"), ["m.js:go"]);
+    assert_eq!(callees("go"), ["u.js:lone"]);
+    assert!(r.resolved("helper").contains(&("app.py:5".to_string(), "util.py".to_string())), "{:?}", r.resolved("helper"));
+}
+
+/// Interfaces 9 deep, each extending all 6 of the next level, and a call of a member none has:
+/// each type is walked once per depth, not once per path (6^8 of them).
+#[test]
+fn a_base_type_walk_over_a_diamond_of_many_paths_takes_linear_time() {
+    let (levels, wide) = (9, 6);
+    let mut cs = String::new();
+    let mut java = String::new();
+    for l in 0..levels {
+        for w in 0..wide {
+            let next: Vec<String> = if l + 1 < levels { (0..wide).map(|v| format!("I{}x{v}", l + 1)).collect() } else { Vec::new() };
+            let ext = if next.is_empty() { String::new() } else { format!(" : {}", next.join(", ")) };
+            cs.push_str(&format!("interface I{l}x{w}{ext} {{ }}\n"));
+            let ext = if next.is_empty() { String::new() } else { format!(" extends {}", next.join(", ")) };
+            java.push_str(&format!("interface I{l}x{w}{ext} {{ }}\n"));
+        }
+    }
+    cs.push_str("class Use {\n    void Run(I0x0 t) { t.Missing(); }\n    void Missing() { }\n}\n");
+    java.push_str("class Use {\n    void run(I0x0 t) { t.missing(); }\n    void missing() { }\n}\n");
+    let r = Repo::new("diamond", &[("a.cs", cs.as_str()), ("A.java", java.as_str())]);
+    let lib = r.lib();
+    for name in ["Use.Missing", "Use.missing"] {
+        let t0 = std::time::Instant::now();
+        lib.callers(name, 50).unwrap();
+        assert!(t0.elapsed() < std::time::Duration::from_secs(3), "{name}: {:?}", t0.elapsed());
+    }
+}
+
+#[test]
+fn an_alias_and_the_name_on_one_line_are_both_references() {
+    let r = Repo::new(
+        "alias_same_line",
+        &[("util.py", "def helper(f):\n    return f\n"), ("app.py", "from util import helper as h\n\n\ndef run():\n    return h(helper)\n")],
+    );
+    let v = r.json(&["refs", "helper", "--json"]);
+    let cols: Vec<(u64, u64)> = v["definitions"][0]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["path"] == "app.py")
+        .map(|o| (o["line"].as_u64().unwrap(), o["column"].as_u64().unwrap()))
+        .collect();
+    assert!(cols.contains(&(5, 12)), "the alias h on the line that also names helper: {cols:?} in {v}");
+    assert_eq!(cols.iter().filter(|(l, _)| *l == 1).count(), 1, "the import line once: {cols:?}");
+    // `helper` itself is no name app.py has: unresolved, as before
+    assert!(v["unresolved"].as_array().unwrap().iter().any(|o| o["line"] == 5 && o["column"] == 14), "{v}");
+}
+
+#[test]
 fn deps_and_rdeps_resolve_typescript_esm_names_and_declaration_files() {
     let r = Repo::new(
         "deps_ts",
@@ -1857,6 +1967,140 @@ fn a_function_set_on_this_and_a_default_export_are_symbols_callers_and_callees_f
     }
     let (code, out) = r.run(&["search", "paint", "-k", "20"]);
     assert!(code == 0 && out.contains("Widget.render"), "search: {out}");
+}
+
+#[test]
+fn a_default_export_called_under_a_local_name_of_its_own_has_that_caller() {
+    let m = "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n";
+    let named = "module.exports = function named() {\n  return 2;\n};\n";
+    let esm = "export default function shout() {\n  return 3;\n}\n";
+    let main = "import s from \"./esm\";\nconst h = require(\"./m\");\nconst n = require(\"./named\");\n\nfunction start() {\n  return h() + n() + s();\n}\n";
+    let r = Repo::new("cjs_named_default", &[("lib/m.js", m), ("lib/named.js", named), ("lib/esm.js", esm), ("lib/main.js", main)]);
+    assert_eq!(callee_names(&r, "start"), ["helper", "named", "shout"]);
+    for (def, caller) in [("lib/m.js:1", "start"), ("lib/named.js:1", "start"), ("lib/esm.js:1", "start")] {
+        let (code, out) = r.run(&["callers", def]);
+        assert!(code == 0 && out.lines().any(|l| l.ends_with(caller)), "callers {def}: {out}");
+    }
+}
+
+#[test]
+fn an_alias_of_a_name_a_package_init_re_exports_is_a_caller() {
+    let r = Repo::new(
+        "py_reexport_alias",
+        &[
+            ("pkg/util.py", "def helper():\n    return 1\n"),
+            ("pkg/__init__.py", "from .util import helper\n"),
+            ("app.py", "from pkg import helper as h\n\n\ndef main():\n    return h()\n"),
+        ],
+    );
+    let (code, out) = r.run(&["callers", "helper"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with(" main")), "callers helper: {out}");
+}
+
+#[test]
+fn a_default_export_re_exported_through_require_reaches_the_definition() {
+    let m = "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n";
+    let re = "const helper = require(\"./m\");\nmodule.exports = helper;\n";
+    let main = "const k = require(\"./r\");\n\nfunction start() {\n  return k();\n}\n";
+    let r = Repo::new("cjs_reexport", &[("lib/m.js", m), ("lib/r.js", re), ("lib/main.js", main)]);
+    assert_eq!(callee_names(&r, "start"), ["helper"]);
+    let v = r.json(&["callees", "start", "--json"]);
+    assert_eq!(v["resolved"][0]["path"], "lib/m.js", "{v}");
+}
+
+#[test]
+fn a_php_function_alias_called_in_another_case_is_a_call_of_the_function() {
+    let app = "<?php\nnamespace App;\nuse function Lib\\phpfn as pf;\nfunction upper() { return PF(); }\nfunction lower() { return pf(); }\n";
+    let lib = "<?php\nnamespace Lib;\nfunction phpfn() { return 1; }\n";
+    let r = Repo::new("php_alias_case", &[("app.php", app), ("lib.php", lib)]);
+    let (code, out) = r.run(&["callers", "phpfn"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with(" upper")) && out.lines().any(|l| l.ends_with(" lower")), "callers phpfn: {out}");
+    assert_eq!(callee_names(&r, "upper"), ["phpfn"]);
+}
+
+#[test]
+fn a_name_re_exported_under_another_name_is_a_caller_and_a_callee() {
+    let u = "function jsfn() { return 1; }\nexport { jsfn as reexp };\n";
+    let n = "import { reexp } from \"./u\";\nexport function via() { return reexp(); }\n";
+    let r = Repo::new("js_export_as", &[("u.js", u), ("n.ts", n)]);
+    let (code, out) = r.run(&["callers", "jsfn"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with(" via")), "callers jsfn: {out}");
+    assert_eq!(callee_names(&r, "via"), ["jsfn"]);
+}
+
+#[test]
+fn a_call_only_its_name_ties_to_a_definition_is_an_undecided_caller() {
+    let profile = "export class ProviderProfile {\n  update(x: number) {\n    return x;\n  }\n}\nexport function update(x: number) {\n  return x;\n}\n";
+    let svc = "import { update } from './profile';\nexport class Svc {\n  rename(tx) {\n    return tx.providerProfile.update(1);\n  }\n}\nexport function direct() {\n  return update(2);\n}\n";
+    let r = Repo::new("by_name_only", &[("lib/profile.ts", profile), ("lib/svc.ts", svc)]);
+    // the call through an untyped `tx` is tied by its name only, however the target is named
+    assert_eq!(split_callers(&r, "update"), (strs(&["direct"]), strs(&["Svc.rename"])));
+    assert_eq!(split_callers(&r, "ProviderProfile.update"), (strs(&[]), strs(&["Svc.rename"])));
+}
+
+#[test]
+fn a_super_call_in_a_class_expression_is_a_call_of_its_base() {
+    let base = "export class Base {\n  constructor() {}\n}\n";
+    let kid = "import { Base } from './base.js';\nexport const Kid = class extends Base {\n  constructor() {\n    super();\n  }\n};\n";
+    let r = Repo::new("js_super_class_expr", &[("lib/base.js", base), ("lib/kid.js", kid)]);
+    let (code, out) = r.run(&["refs", "Base"]);
+    assert!(code == 0 && out.contains("lib/kid.js:4:"), "refs Base: {out}");
+    let (code, out) = r.run(&["callers", "Base"]);
+    assert!(code == 0 && out.contains("lib/kid.js"), "callers Base: {out}");
+}
+
+#[test]
+fn a_require_chain_is_followed_six_import_hops_deep_by_refs_and_callees_alike() {
+    // main -> r_n -> .. -> r1 -> m: n + 1 import hops
+    let chain = |n: usize| {
+        let mut files = vec![("lib/m.js".to_string(), "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n".to_string())];
+        for i in 1..=n {
+            let from = if i == 1 { "./m".to_string() } else { format!("./r{}", i - 1) };
+            files.push((format!("lib/r{i}.js"), format!("const helper = require('{from}');\nmodule.exports = helper;\n")));
+        }
+        files.push(("lib/main.js".to_string(), format!("const k = require('./r{n}');\nfunction start() {{\n  return k();\n}}\n")));
+        files
+    };
+    for (n, reached) in [(3, true), (5, true), (6, false)] {
+        let files = chain(n);
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let r = Repo::new(&format!("cjs_chain_{n}"), &refs);
+        let callees = callee_names(&r, "start");
+        let (_, out) = r.run(&["refs", "k"]);
+        let tied = out.lines().take_while(|l| !l.starts_with("unresolved")).any(|l| l.contains("lib/main.js:3:"));
+        assert_eq!((callees == ["helper"], tied), (reached, reached), "{n} re-exports: callees {callees:?}, refs k: {out}");
+    }
+}
+
+#[test]
+fn php_new_self_static_and_parent_are_calls_of_the_class() {
+    let php = "<?php\nclass Base\n{\n    public function __construct() {}\n}\nclass Kid extends Base\n{\n    public static function make() { return new self(); }\n    public static function late() { return new STATIC(); }\n    public static function up() { return new parent(); }\n}\n";
+    let r = Repo::new("php_new_self", &[("a.php", php)]);
+    for (f, class) in [("Kid.make", "Kid"), ("Kid.late", "Kid"), ("Kid.up", "Base")] {
+        let v = r.json(&["callees", f, "--json"]);
+        let names: Vec<&str> = v["resolved"].as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap()).collect();
+        assert_eq!((names, v["external"].as_array().unwrap().len()), (vec![class], 0), "{f}: {v}");
+    }
+}
+
+#[test]
+fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
+    let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
+    let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
+    let r = Repo::new("js_super_ctor", &[("lib/base.js", base), ("lib/kid.js", kid)]);
+    let (code, out) = r.run(&["callers", "Base"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with("Kid.constructor")), "callers Base: {out}");
+    assert_eq!(callee_names(&r, "Kid.constructor"), ["Base"]);
+}
+
+#[test]
+fn refs_of_a_base_class_list_the_super_call_of_a_subclass() {
+    let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\nexport class Other {}\n";
+    let kid = "import { Base, Other } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\nexport class Far extends Other {\n  constructor() {\n    super();\n  }\n}\n";
+    let r = Repo::new("js_super_refs", &[("lib/base.js", base), ("lib/kid.js", kid)]);
+    let (code, out) = r.run(&["refs", "Base"]);
+    assert!(code == 0 && out.contains("lib/kid.js:4:"), "refs Base: {out}");
+    assert!(!out.contains("lib/kid.js:9:"), "Far's super is Other's: {out}");
 }
 
 #[test]

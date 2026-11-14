@@ -8,6 +8,8 @@ use anyhow::{bail, Result};
 /// One file the rewrite changes.
 pub struct FileChange {
     pub path: PathBuf,
+    /// where it was under the root when read, with no link on the way
+    inside: PathBuf,
     /// the path as `tsquery` prints it
     pub shown: String,
     /// the bytes read, which must still be on disk when the file is written
@@ -22,6 +24,8 @@ pub struct FileChange {
 /// What a rewrite would do: the files it changes, in path order, and why it leaves the others
 /// and some matches alone.
 pub struct Plan {
+    /// the root as the plan opened it
+    root: Dir,
     pub files: Vec<FileChange>,
     /// a file left alone, as `PATH: why`
     pub left: Vec<String>,
@@ -93,6 +97,9 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
     let names = q.capture_names();
     let pieces = template(template_text, names)?;
     let outer = names.iter().position(|n| *n == "match");
+    // opened before its name is resolved: a swap after this point changes neither what is read
+    // nor where it is written
+    let dir = Dir::root(root)?;
     let top = std::fs::canonicalize(root)?;
     let files = crate::intel::query_files(spec, paths, true);
     let results: Vec<(Option<FileChange>, Option<String>, Vec<String>)> = files
@@ -109,13 +116,15 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 if !*ok {
                     return alone("the parser did not load", skipped);
                 }
-                if !std::fs::canonicalize(&f.path).is_ok_and(|p| p.starts_with(&top)) {
+                let Some(inside) = std::fs::canonicalize(&f.path).ok().and_then(|p| p.strip_prefix(&top).ok().map(Path::to_path_buf)) else {
                     return alone("outside the root", skipped);
-                }
-                if !std::fs::symlink_metadata(&f.path).is_ok_and(|m| m.file_type().is_file()) {
+                };
+                let (parent, name) = split(&inside);
+                let Ok(at) = dir.below(parent) else { return alone("could not be read", skipped) };
+                if !at.regular(name).is_ok_and(|p| p.is_some()) {
                     return alone("not a regular file", skipped);
                 }
-                let Ok(raw) = std::fs::read(&f.path) else { return alone("could not be read", skipped) };
+                let Ok(raw) = at.read(name) else { return alone("could not be read", skipped) };
                 let ours = |src: &str| crate::parse::spec_for(&f.rel, src).map(|s| s.id) == Some(spec.id);
                 let src = match crate::index::decode_source(&raw) {
                     Some(std::borrow::Cow::Borrowed(s)) if ours(s) => s,
@@ -182,12 +191,12 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 if !parsed.is_some_and(|t| !spans.iter().any(|s| broken(t.root_node(), s.2, s.3))) {
                     return alone("the rewritten text does not parse", skipped);
                 }
-                let change = FileChange { path: f.path.clone(), shown: f.shown.clone(), replaced: kept.len(), new: new.into_bytes(), read: raw, spans };
+                let change = FileChange { path: f.path.clone(), inside, shown: f.shown.clone(), replaced: kept.len(), new: new.into_bytes(), read: raw, spans };
                 (Some(change), None, skipped)
             },
         )
         .collect();
-    let mut plan = Plan { files: Vec::new(), left: Vec::new(), skipped: Vec::new() };
+    let mut plan = Plan { root: dir, files: Vec::new(), left: Vec::new(), skipped: Vec::new() };
     for (change, left, skipped) in results {
         plan.files.extend(change);
         plan.left.extend(left);
@@ -210,40 +219,269 @@ impl Plan {
     /// Write each changed file whole by rename, only while its bytes on disk are those read.
     /// Returns, per file in order, why it was left alone (`PATH: why, left alone`) or nothing.
     pub fn write(&self) -> Vec<Option<String>> {
-        self.files.iter().map(|f| write_one(f).err().map(|why| format!("{}: {why}, left alone", f.shown))).collect()
+        self.files.iter().map(|f| write_one(&self.root, f).err().map(|why| format!("{}: {why}, left alone", f.shown))).collect()
     }
 }
 
-fn write_one(f: &FileChange) -> Result<(), String> {
-    use std::io::Write;
-    let md = std::fs::symlink_metadata(&f.path).map_err(|e| e.to_string())?;
-    if !md.file_type().is_file() {
-        return Err("not a regular file".into());
+/// A directory of the repository, opened to read and write the files in it by name: a handle.
+/// The root is opened once when the plan starts, and each directory below it one name at a time,
+/// never through a link (`O_NOFOLLOW` on Unix, `FILE_OPEN_REPARSE_POINT` on Windows, where a
+/// junction is refused too), so a directory swapped for a link afterwards (the root included) is
+/// never followed.
+struct Dir(
+    #[cfg(unix)] rustix::fd::OwnedFd,
+    #[cfg(windows)] std::os::windows::io::OwnedHandle,
+    // shortcut: goes by path where neither openat nor NtCreateFile is used (wasi); upgrade if
+    // rewrite runs there on a tree others can change
+    #[cfg(not(any(unix, windows)))] PathBuf,
+);
+
+#[cfg(unix)]
+const DIR_FLAGS: rustix::fs::OFlags = rustix::fs::OFlags::RDONLY.union(rustix::fs::OFlags::DIRECTORY).union(rustix::fs::OFlags::CLOEXEC);
+
+#[cfg(windows)]
+use windows_sys::{
+    Wdk::Storage::FileSystem::{FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN},
+    Win32::Storage::FileSystem::{
+        DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_TRAVERSE,
+    },
+};
+
+/// The two NT calls the Windows `Dir` needs: an open and a rename relative to a directory handle.
+#[cfg(windows)]
+mod nt {
+    use std::ffi::OsStr;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FileRenameInformation, NtCreateFile, NtSetInformationFile, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Foundation::{RtlNtStatusToDosError, HANDLE, OBJ_CASE_INSENSITIVE, UNICODE_STRING};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE};
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    /// `name` as UTF-16 and its length in bytes.
+    fn wide(name: &OsStr) -> std::io::Result<(Vec<u16>, u16)> {
+        let w: Vec<u16> = std::os::windows::ffi::OsStrExt::encode_wide(name).collect();
+        let bytes = u16::try_from(w.len() * 2).map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        Ok((w, bytes))
     }
-    let name = f.path.file_name().ok_or("no file name")?.to_string_lossy();
-    let tmp = f.path.with_file_name(format!(".{name}.scrutate-{}.tmp", std::process::id()));
+
+    /// `name`, one name, opened in `dir`; the name itself is never followed, a link or junction
+    /// opening as itself.
+    pub(super) fn open(dir: &OwnedHandle, name: &OsStr, access: u32, disposition: u32, options: u32) -> std::io::Result<OwnedHandle> {
+        let (mut w, bytes) = wide(name)?;
+        let object = UNICODE_STRING { Length: bytes, MaximumLength: bytes, Buffer: w.as_mut_ptr() };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: dir.as_raw_handle() as HANDLE,
+            ObjectName: &object,
+            Attributes: OBJ_CASE_INSENSITIVE,
+            SecurityDescriptor: std::ptr::null(),
+            SecurityQualityOfService: std::ptr::null(),
+        };
+        let (mut handle, mut io): (HANDLE, IO_STATUS_BLOCK) = (std::ptr::null_mut(), IO_STATUS_BLOCK::default());
+        let options = options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT;
+        // SAFETY: every pointer is to a local alive for the call (the name, its UNICODE_STRING,
+        // the attributes, the status block), and a handle returned on success is new and ours alone
+        unsafe {
+            let status = NtCreateFile(
+                &mut handle,
+                access | SYNCHRONIZE,
+                &attributes,
+                &mut io,
+                std::ptr::null(),
+                FILE_ATTRIBUTE_NORMAL,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                disposition,
+                options,
+                std::ptr::null(),
+                0,
+            );
+            if status < 0 {
+                return Err(std::io::Error::from_raw_os_error(RtlNtStatusToDosError(status) as i32));
+            }
+            Ok(OwnedHandle::from_raw_handle(handle as _))
+        }
+    }
+
+    /// The file `from` holds renamed to `to`, one name in `dir`, over a file of that name.
+    pub(super) fn rename(from: &OwnedHandle, dir: &OwnedHandle, to: &OsStr) -> std::io::Result<()> {
+        let (w, bytes) = wide(to)?;
+        let at = std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName);
+        let len = (at + usize::from(bytes)).max(size_of::<FILE_RENAME_INFORMATION>());
+        // zeroed, and aligned for the struct (its widest field is a pointer)
+        let mut buf = vec![0u64; len.div_ceil(8)];
+        let mut io = IO_STATUS_BLOCK::default();
+        // SAFETY: buf holds len bytes, at least the struct, 8-byte aligned; the name's bytes go
+        // from FileName's offset and end within len; the call reads len bytes of buf
+        unsafe {
+            let info = buf.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+            (*info).Anonymous.ReplaceIfExists = true;
+            (*info).RootDirectory = dir.as_raw_handle() as HANDLE;
+            (*info).FileNameLength = u32::from(bytes);
+            std::ptr::copy_nonoverlapping(w.as_ptr(), buf.as_mut_ptr().cast::<u8>().add(at).cast::<u16>(), w.len());
+            let status = NtSetInformationFile(from.as_raw_handle() as HANDLE, &mut io, buf.as_ptr().cast(), len as u32, FileRenameInformation);
+            if status < 0 {
+                return Err(std::io::Error::from_raw_os_error(RtlNtStatusToDosError(status) as i32));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `h` unless it is a link or junction (opened as itself).
+#[cfg(windows)]
+fn not_a_link(h: std::os::windows::io::OwnedHandle) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::MetadataExt;
+    let f = std::fs::File::from(h);
+    if f.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(std::io::Error::other("a link or junction"));
+    }
+    Ok(f)
+}
+
+impl Dir {
+    fn root(root: &Path) -> std::io::Result<Dir> {
+        #[cfg(unix)]
+        return Ok(Dir(rustix::fs::openat(rustix::fs::CWD, root, DIR_FLAGS, rustix::fs::Mode::empty())?));
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let f = std::fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS).open(root)?;
+            Ok(Dir(f.into()))
+        }
+        #[cfg(not(any(unix, windows)))]
+        return Ok(Dir(root.to_path_buf()));
+    }
+
+    /// The directory `below` (names under this one) is, opened one name at a time.
+    fn below(&self, below: &Path) -> std::io::Result<Dir> {
+        #[cfg(unix)]
+        {
+            use rustix::fs::{openat, Mode, OFlags};
+            let mut d = openat(&self.0, ".", DIR_FLAGS, Mode::empty())?;
+            for c in below.components() {
+                d = openat(&d, c.as_os_str(), DIR_FLAGS | OFlags::NOFOLLOW, Mode::empty())?;
+            }
+            Ok(Dir(d))
+        }
+        #[cfg(windows)]
+        {
+            let mut d = self.0.try_clone()?;
+            for c in below.components() {
+                d = not_a_link(nt::open(&d, c.as_os_str(), FILE_TRAVERSE | FILE_READ_ATTRIBUTES, FILE_OPEN, FILE_DIRECTORY_FILE)?)?.into();
+            }
+            Ok(Dir(d))
+        }
+        #[cfg(not(any(unix, windows)))]
+        return Ok(Dir(self.0.join(below)));
+    }
+
+    /// The permissions of `name` when it is a regular file, not a link.
+    fn regular(&self, name: &std::ffi::OsStr) -> std::io::Result<Option<std::fs::Permissions>> {
+        #[cfg(unix)]
+        {
+            use rustix::fs::{statat, AtFlags, FileType};
+            use std::os::unix::fs::PermissionsExt;
+            let st = statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW)?;
+            let file = FileType::from_raw_mode(st.st_mode as _) == FileType::RegularFile;
+            Ok(file.then(|| std::fs::Permissions::from_mode(st.st_mode as u32 & 0o7777)))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            let md = std::fs::File::from(nt::open(&self.0, name, FILE_READ_ATTRIBUTES, FILE_OPEN, 0)?).metadata()?;
+            Ok((md.is_file() && md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0).then(|| md.permissions()))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let md = std::fs::symlink_metadata(self.0.join(name))?;
+            Ok(md.file_type().is_file().then(|| md.permissions()))
+        }
+    }
+
+    fn read(&self, name: &std::ffi::OsStr) -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        let mut out = Vec::new();
+        #[cfg(unix)]
+        {
+            use rustix::fs::{openat, Mode, OFlags};
+            std::fs::File::from(openat(&self.0, name, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?).read_to_end(&mut out)?;
+        }
+        #[cfg(windows)]
+        not_a_link(nt::open(&self.0, name, FILE_GENERIC_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE)?)?.read_to_end(&mut out)?;
+        #[cfg(not(any(unix, windows)))]
+        std::fs::File::open(self.0.join(name))?.read_to_end(&mut out)?;
+        Ok(out)
+    }
+
+    /// A new file, never one already there (so nothing planted under that name is opened).
+    fn create_new(&self, name: &str) -> std::io::Result<std::fs::File> {
+        #[cfg(unix)]
+        {
+            use rustix::fs::{openat, Mode, OFlags};
+            let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            Ok(std::fs::File::from(openat(&self.0, name, flags, Mode::RUSR | Mode::WUSR)?))
+        }
+        #[cfg(windows)]
+        return Ok(nt::open(&self.0, name.as_ref(), FILE_GENERIC_WRITE, FILE_CREATE, FILE_NON_DIRECTORY_FILE)?.into());
+        #[cfg(not(any(unix, windows)))]
+        return std::fs::OpenOptions::new().write(true).create_new(true).open(self.0.join(name));
+    }
+
+    fn rename(&self, from: &str, to: &std::ffi::OsStr) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return Ok(rustix::fs::renameat(&self.0, from, &self.0, to)?);
+        #[cfg(windows)]
+        return nt::rename(&nt::open(&self.0, from.as_ref(), DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE)?, &self.0, to);
+        #[cfg(not(any(unix, windows)))]
+        return std::fs::rename(self.0.join(from), self.0.join(to));
+    }
+
+    fn remove(&self, name: &str) {
+        #[cfg(unix)]
+        let _ = rustix::fs::unlinkat(&self.0, name, rustix::fs::AtFlags::empty());
+        // a link named so is removed itself, never what it points to
+        #[cfg(windows)]
+        let _ = nt::open(&self.0, name.as_ref(), DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_DELETE_ON_CLOSE);
+        #[cfg(not(any(unix, windows)))]
+        let _ = std::fs::remove_file(self.0.join(name));
+    }
+}
+
+/// The directory of `inside` (a path under the root) and its file name.
+fn split(inside: &Path) -> (&Path, &std::ffi::OsStr) {
+    (inside.parent().unwrap_or(Path::new("")), inside.file_name().unwrap_or_default())
+}
+
+/// The file is written through its directory as `Dir` opens it: the temporary file, the check
+/// that the bytes are those read, and the rename all go by name in that directory.
+fn write_one(root: &Dir, f: &FileChange) -> Result<(), String> {
+    use std::io::Write;
+    let (parent, name) = split(&f.inside);
+    let dir = root.below(parent).map_err(|e| e.to_string())?;
+    let perm = dir.regular(name).map_err(|e| e.to_string())?.ok_or("not a regular file")?;
+    let tmp = format!(".{}.scrutate-{}.tmp", name.to_string_lossy(), std::process::id());
     let written = (|| -> std::io::Result<bool> {
-        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        let mut out = dir.create_new(&tmp)?;
         out.write_all(&f.new)?;
+        out.set_permissions(perm)?;
         out.sync_all()?;
         drop(out);
-        std::fs::set_permissions(&tmp, md.permissions())?;
-        if std::fs::read(&f.path)? != f.read {
+        if dir.read(name)? != f.read {
             return Ok(false);
         }
-        std::fs::rename(&tmp, &f.path)?;
+        dir.rename(&tmp, name)?;
         Ok(true)
     })();
+    if !matches!(written, Ok(true)) {
+        dir.remove(&tmp);
+    }
     match written {
         Ok(true) => Ok(()),
-        Ok(false) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err("changed since it was read".into())
-        }
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e.to_string())
-        }
+        Ok(false) => Err("changed since it was read".into()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -303,4 +541,48 @@ fn unified(path: &str, old: &str, new: &str, spans: &[(usize, usize, usize, usiz
         r = last + 1;
     }
     out
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Every step of a write names its entry by handle with FILE_OPEN_REPARSE_POINT: each one
+    /// meets a junction to a directory outside the root as itself, and never touches what it
+    /// points to.
+    #[test]
+    fn each_operation_meets_a_junction_as_itself() {
+        let base = std::env::temp_dir().join(format!("scrutate_dir_junction_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, outside) = (base.join("root"), base.join("outside"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("x.py"), "print(secret)\n").unwrap();
+        std::fs::write(root.join("a.py"), "print(x)\n").unwrap();
+        let out = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(root.join("j")).arg(&outside).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+        let dir = Dir::root(&root).unwrap();
+        let j = std::ffi::OsStr::new("j");
+        assert!(dir.below(Path::new("j")).is_err(), "below");
+        assert!(dir.regular(j).unwrap().is_none(), "regular");
+        assert!(dir.read(j).is_err(), "read");
+        assert!(dir.create_new("j").is_err(), "create_new");
+        assert!(dir.rename("j", std::ffi::OsStr::new("k")).is_err(), "rename from it");
+        let mut tmp = dir.create_new("t.tmp").unwrap();
+        std::io::Write::write_all(&mut tmp, b"log(x)\n").unwrap();
+        drop(tmp);
+        assert!(dir.rename("t.tmp", j).is_err(), "rename over it");
+        dir.remove("j");
+        assert!(root.join("j").exists(), "remove");
+        // the junction's target, untouched by every step
+        let there: Vec<_> = std::fs::read_dir(&outside).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(there, ["x.py"]);
+        assert_eq!(std::fs::read_to_string(outside.join("x.py")).unwrap(), "print(secret)\n");
+        // a plain file still goes through each step
+        assert!(dir.regular(std::ffi::OsStr::new("a.py")).unwrap().is_some());
+        dir.rename("t.tmp", std::ffi::OsStr::new("a.py")).unwrap();
+        assert_eq!(dir.read(std::ffi::OsStr::new("a.py")).unwrap(), b"log(x)\n");
+        std::fs::remove_dir(root.join("j")).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

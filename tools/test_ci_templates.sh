@@ -8,7 +8,7 @@ kind=$1 bin=$(realpath "$2") runner=$3
 top=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 repo=$work/repo
-v=0.1.0
+v=$(sed -n 's/^version = "\(.*\)"/\1/p' "$top/crates/scrutate/Cargo.toml" | head -1)
 name=scrutate-$v-x86_64-unknown-linux-musl
 g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 

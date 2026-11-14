@@ -52,6 +52,11 @@ def compare(pairs, tolerance, paired=False):
             print(f"FAIL       {bid}: answer is {n.get('status')}")
             bad += 1
             continue
+        if b.get("status") == "ok" and len(b.get("times", [])) >= MIN_RUNS and len(n.get("times", [])) < MIN_RUNS:
+            # leaderboard.py cuts a tool more than 20x slower than the fastest to one run
+            print(f"FAIL       {bid}: {len(n.get('times', []))} run(s) against the base's {len(b['times'])}: {n.get('note', 'too slow to time')}")
+            bad += 1
+            continue
         if b.get("status") != "ok" or len(b.get("times", [])) < MIN_RUNS or len(n.get("times", [])) < MIN_RUNS:
             print(f"skip       {bid}: not enough runs to compare (base {b.get('status')}, {len(b.get('times', []))} runs)")
             continue
