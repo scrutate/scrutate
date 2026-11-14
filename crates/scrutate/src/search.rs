@@ -164,7 +164,7 @@ impl QueryInfo {
                 }
             }
         }
-        let dotted_re = Regex::new(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+").unwrap();
+        let dotted_re = Regex::new(r"[\p{XID_Start}_]\p{XID_Continue}*(?:\.[\p{XID_Start}_]\p{XID_Continue}*)+").unwrap();
         let mut dotted = Vec::new();
         let mut dseen = HashSet::new();
         for m in dotted_re.find_iter(text) {

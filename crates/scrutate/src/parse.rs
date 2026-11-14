@@ -887,7 +887,7 @@ fn asm_block<'t>(label: Node<'t>, siblings: &[Node<'t>], at: usize, src: &[u8], 
 }
 
 /// `$(call g,1)` or `${call g}` in text the Make grammar leaves unparsed.
-static MAKE_CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$[({]call\s+([A-Za-z_][\w-]*)").unwrap());
+static MAKE_CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$[({]call\s+([\p{XID_Start}_][\p{XID_Continue}-]*)").unwrap());
 
 /// The callee of a Jsonnet `suffix_apply`, which follows its callee as a sibling: `g` of `g(x)`,
 /// `method` of `obj.method(x)`.
@@ -2184,8 +2184,13 @@ const MODIFIERS: &[&str] = &[
     "data",
     "case",
 ];
-static DEF_LINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[ \t]*(?:[A-Za-z_@][\w@.()<>\[\]]*[ \t]+){0,4}?([A-Za-z_]\w*)[ \t]+([A-Za-z_][\w.:$'!?-]*)").unwrap());
+static DEF_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+            r"^[ \t]*(?:[\p{XID_Start}_@][\p{XID_Continue}@.()<>\[\]]*[ \t]+){0,4}?([\p{XID_Start}_]\p{XID_Continue}*)[ \t]+([\p{XID_Start}_][\p{XID_Continue}.:$'!?-]*)",
+        )
+        .unwrap()
+});
+// a POSIX shell function name is a POSIX "Name": ASCII letters, digits and `_`
 static SHELL_FN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ \t]*([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\)[ \t]*\{?[ \t]*$").unwrap());
 static LISP_DEF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ \t]*\((def[a-z!*-]*|define(?:-[a-z-]+)?)[ \t]+\(?([^\s()]+)").unwrap());
 static SQL_DEF: LazyLock<Regex> = LazyLock::new(|| {

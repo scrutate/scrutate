@@ -57,8 +57,11 @@ mod tests {
 
     #[test]
     fn no_hand_written_name_rule_in_the_source() {
-        // the one rule that splits module paths, where `-` stays inside a package name
-        const ALLOWED: &[(&str, &str)] = &[("names.rs", "c == '-'")];
+        // the one rule that splits module paths, where `-` stays inside a package name, and the
+        // regexes of POSIX shell names, which are ASCII by spec
+        const ALLOWED: &[(&str, &str)] = &[("names.rs", "c == '-'"), ("parse.rs", "BASH_NAME"), ("parse.rs", "SHELL_FN")];
+        // a name class in a regex that starts ASCII-only (split so this line does not match itself)
+        let ascii_class = ["[A-Z", "a-z_"].concat();
         let rule = regex::Regex::new(r"is_alphanumeric\(\)\s*\|\|\s*\w+\s*==\s*'_'|is_alphabetic\(\)\s*\|\|\s*\w+\s*==\s*'_'").unwrap();
         let mut found = Vec::new();
         let mut dirs = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
@@ -70,7 +73,9 @@ mod tests {
                 } else if p.extension().is_some_and(|x| x == "rs") {
                     let file = p.file_name().unwrap().to_string_lossy().to_string();
                     for (i, line) in std::fs::read_to_string(&p).unwrap().lines().enumerate() {
-                        if rule.is_match(line) && !ALLOWED.iter().any(|(f, s)| *f == file && line.contains(s)) {
+                        let ascii_regex =
+                            line.contains(&ascii_class) && (line.contains("r\"") || line.contains("r#\"")) && !line.trim_start().starts_with("//");
+                        if (rule.is_match(line) || ascii_regex) && !ALLOWED.iter().any(|(f, s)| *f == file && line.contains(s)) {
                             found.push(format!("{}:{}", p.display(), i + 1));
                         }
                     }

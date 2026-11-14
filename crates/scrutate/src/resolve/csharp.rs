@@ -29,7 +29,7 @@ const CS_SCOPES: &[&str] = &[
 ];
 
 static CS_FILE_NAMESPACE: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^\s*namespace\s+([A-Za-z_][\w.]*)\s*;").unwrap());
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^\s*namespace\s+([\p{XID_Start}_][\p{XID_Continue}.]*)\s*;").unwrap());
 
 impl Rules for CSharp {
     const GRAMMARS: &'static [&'static str] = &["csharp"];

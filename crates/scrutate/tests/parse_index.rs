@@ -207,6 +207,9 @@ fn the_heuristic_parser_reads_past_modifiers_and_skips_prose() {
     let got = symbols("shape.cr", cr);
     assert!(got.contains(&("class".into(), "Shape".into())), "{got:?}");
     assert!(got.contains(&("function".into(), "area".into())), "{got:?}");
+    // a name may start outside ASCII
+    let got = symbols("ära.cr", "class Ära\n  def übersetzen\n    0\n  end\nend\n");
+    assert!(got.contains(&("class".into(), "Ära".into())) && got.contains(&("function".into(), "übersetzen".into())), "{got:?}");
     if scrutate::langs::by_id("ocaml").is_none() {
         assert_eq!(symbols("m.ml", "let add x y =\n  x + y\n\nlet limit = 5\n"), vec![("function".to_string(), "add".to_string())]);
     }

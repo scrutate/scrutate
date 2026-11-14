@@ -501,7 +501,7 @@ pub fn query_wholes(query: &str) -> Vec<String> {
 
 static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""([^"]+)"|'([^']+)'|`([^`]+)`"#).unwrap());
 static QUOTED_ANY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]*"|'[^']*'|`[^`]*`"#).unwrap());
-static LIT_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z_][\w.]*[\w]").unwrap());
+static LIT_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\p{XID_Start}_][\p{XID_Continue}.]*\p{XID_Continue}").unwrap());
 
 /// Python's `str.isupper()`: at least one cased character and no lowercase ones.
 fn py_isupper(s: &str) -> bool {
@@ -710,6 +710,7 @@ mod tests {
     fn literals() {
         assert_eq!(literal_candidates("where is send_request called, see 'foo bar' and Server.add"), vec!["foo bar", "send_request", "Server.add"]);
         assert_eq!(literal_candidates("MAX_SIZE and ABC and Ab"), vec!["MAX_SIZE", "ABC"]);
+        assert_eq!(literal_candidates("where is ünder_score"), vec!["ünder_score"]);
     }
 }
 
