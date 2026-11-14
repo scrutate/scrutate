@@ -1308,8 +1308,8 @@ impl Form {
 /// One line of a concise answer: text, paths and locations. A line that ends with `/` names a
 /// directory, and a path without `/` after it is in that directory (`./` is the root); a
 /// location without a path (`:start-end`, `:line`, `:line:column`) is in the file of the location
-/// before it, and a section's head ends that, so the first location of a section names its file.
-/// A directory
+/// before it, and a section's head ends that and the directory, so the first location of a
+/// section names its file below a directory line of its own. A directory
 /// line comes before a line whose first path is in another directory; another path of that line
 /// in another directory is written whole, and a file at the root as `./name`.
 #[derive(Default)]
@@ -1392,7 +1392,11 @@ impl Brief {
                     }
                     line.push_str(place);
                 }
-                Piece::Head => page.file.clear(),
+                Piece::Head => {
+                    page.file.clear();
+                    // no directory holds a NUL, so the next location writes its directory line
+                    page.dir = "\0".to_string();
+                }
             }
         }
         push_line(out, &line);
