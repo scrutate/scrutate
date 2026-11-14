@@ -584,8 +584,8 @@ incompatible index by itself, and that is never breaking.
   recorded, so `callers` and `callees` missed it, and the language server cut `हिन्दी` at its
   virama. The same holds for definitions read line by line in languages without a grammar, GNU
   make's `$(call NAME)`, a C# file-scoped `namespace`, and the dotted names and literal words a
-  `search` query is ranked by. The content revision goes up so an older index reads its files again
-  ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
+  `search` query is ranked by, and R's dotted names. The content revision goes up so an older index
+  reads its files again ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - The GitHub Action keeps a backslash in `args` as written: `grep -c \bTODO\b .` searched for
   `bTODOb` and `--root C:\repo` named `C:repo`, so a gate could pass on the wrong search.
 - Python `grep(sort=True)` gives the CLI's `--sort` order (`a/b` before `a-b`), and with

@@ -23,7 +23,7 @@ pub const SCHEMA_VERSION: u32 = 15;
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
 /// revision is read as it is and never updated.
-pub const CONTENT_REVISION: u32 = 12;
+pub const CONTENT_REVISION: u32 = 13;
 pub use crate::models::REVISION as MODEL_REVISION;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment

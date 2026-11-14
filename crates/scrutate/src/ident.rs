@@ -32,6 +32,38 @@ pub fn is_continue_in(lang: &str, c: char) -> bool {
 mod tests {
     use super::*;
 
+    /// Whether `line` holds a regex (a raw string, not in a comment) with a character class that
+    /// spells out ASCII letters, in any order (`[A-Za-z_]`, `[_a-zA-Z]`): a name rule by hand.
+    fn ascii_letter_class(line: &str) -> bool {
+        static CLASS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            let (lo, up) = (["a", "-z"].concat(), ["A", "-Z"].concat());
+            regex::Regex::new(&format!(r"\[[^\]]*(?:{lo}[^\]]*{up}|{up}[^\]]*{lo})[^\]]*\]")).unwrap()
+        });
+        (line.contains("r\"") || line.contains("r#\"")) && !line.trim_start().starts_with("//") && CLASS.is_match(line)
+    }
+
+    #[test]
+    fn an_ascii_letter_class_is_caught_in_every_spelling() {
+        for hand in [
+            r#"Regex::new(r"^[A-Za-z_]\w*")"#,
+            r#"Regex::new(r"[a-zA-Z_][\w$]*")"#,
+            r#"Regex::new(r"[_a-zA-Z]")"#,
+            r#"Regex::new(r"[A-Z_a-z]")"#,
+            r#"Regex::new(r"[a-zA-Z$_]")"#,
+        ] {
+            assert!(ascii_letter_class(hand), "{hand}");
+        }
+        for fine in [
+            r#"Regex::new(r"[\p{XID_Start}_]")"#,
+            r#"Regex::new(r"[a-z]+")"#,
+            r#"Regex::new(r"[0-9a-fA-F]")"#,
+            "// [A-Za-z_] in a comment",
+            r#""[A-Za-z_]" not raw"#,
+        ] {
+            assert!(!ascii_letter_class(fine), "{fine}");
+        }
+    }
+
     fn word(s: &str) -> bool {
         s.chars().next().is_some_and(is_start) && s.chars().all(is_continue)
     }
@@ -57,11 +89,10 @@ mod tests {
 
     #[test]
     fn no_hand_written_name_rule_in_the_source() {
-        // the one rule that splits module paths, where `-` stays inside a package name, and the
-        // regexes of POSIX shell names, which are ASCII by spec
-        const ALLOWED: &[(&str, &str)] = &[("names.rs", "c == '-'"), ("parse.rs", "BASH_NAME"), ("parse.rs", "SHELL_FN")];
-        // a name class in a regex that starts ASCII-only (split so this line does not match itself)
-        let ascii_class = ["[A-Z", "a-z_"].concat();
+        // the one rule that splits module paths, where `-` stays inside a package name, the
+        // regexes of POSIX shell names, which are ASCII by spec, and the secret detectors, whose
+        // token formats are ASCII as their issuers define them
+        const ALLOWED: &[(&str, &str)] = &[("names.rs", "c == '-'"), ("parse.rs", "BASH_NAME"), ("parse.rs", "SHELL_FN"), ("secrets.rs", "")];
         let rule = regex::Regex::new(r"is_alphanumeric\(\)\s*\|\|\s*\w+\s*==\s*'_'|is_alphabetic\(\)\s*\|\|\s*\w+\s*==\s*'_'").unwrap();
         let mut found = Vec::new();
         let mut dirs = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
@@ -70,12 +101,10 @@ mod tests {
                 let p = e.path();
                 if p.is_dir() {
                     dirs.push(p);
-                } else if p.extension().is_some_and(|x| x == "rs") {
+                } else if p.extension().is_some_and(|x| x == "rs") && p.file_name().is_some_and(|f| f != "ident.rs") {
                     let file = p.file_name().unwrap().to_string_lossy().to_string();
                     for (i, line) in std::fs::read_to_string(&p).unwrap().lines().enumerate() {
-                        let ascii_regex =
-                            line.contains(&ascii_class) && (line.contains("r\"") || line.contains("r#\"")) && !line.trim_start().starts_with("//");
-                        if (rule.is_match(line) || ascii_regex) && !ALLOWED.iter().any(|(f, s)| *f == file && line.contains(s)) {
+                        if (rule.is_match(line) || ascii_letter_class(line)) && !ALLOWED.iter().any(|(f, s)| *f == file && line.contains(s)) {
                             found.push(format!("{}:{}", p.display(), i + 1));
                         }
                     }

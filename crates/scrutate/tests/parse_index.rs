@@ -1373,6 +1373,7 @@ fn a_call_records_the_name_its_definition_has() {
             &["helper!", "update!"],
         ),
         ("m.r", "is.ready <- function(x) {\n  x\n}\ngo <- function(x) {\n  is.ready(x)\n  base::is.ready(x)\n}\n", &["is.ready"], "go", &["is.ready"]),
+        ("n.r", "ärger.neu <- function(x) {\n  x\n}\ngo <- function(x) {\n  ärger.neu(x)\n}\n", &["ärger.neu"], "go", &["ärger.neu"]),
         (
             "m.sh",
             "ns::helper() {\n  echo hi\n}\nlib.load() {\n  :\n}\ngo() {\n  ns::helper\n  lib.load\n}\n",

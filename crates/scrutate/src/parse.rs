@@ -853,7 +853,7 @@ pub(crate) fn name_rule(lang: &str) -> &'static Regex {
 // the name characters some languages allow past a plain identifier, as their definitions keep them
 static PREDICATE_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_]\p{XID_Continue}*[?!]?").unwrap());
 static BANG_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_]\p{XID_Continue}*!?").unwrap());
-static R_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z.][\w.]*").unwrap());
+static R_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}.][\p{XID_Continue}.]*").unwrap());
 // a POSIX shell name is ASCII
 static BASH_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][\w$]*(?:(?:-|::|\.)[A-Za-z_]\w*)*").unwrap());
 static PRIMED_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_][\p{XID_Continue}']*(?:-[\p{XID_Start}_][\p{XID_Continue}']*)*").unwrap());
