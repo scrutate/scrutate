@@ -83,6 +83,7 @@ def tool_defs(a):
     lg_idx = os.path.join(a.work, "livegrep.idx")
     return {
         "scrutate": {
+            "bins": [(S, "cargo build --release -p scrutate")],
             "index": [S, "index", "--text", "--force"],
             "update": [S, "index", "--text"],
             "size_dir": os.path.join(a.corpus, ".scrutate", "text"),
@@ -91,6 +92,7 @@ def tool_defs(a):
             "version": lb.version("scrutate"),
         },
         "zoekt": {
+            "bins": [(os.path.join(ZOEKT, b), "bench/competitors/linux_bench.sh") for b in ("zoekt-index", "zoekt")],
             "index": [os.path.join(ZOEKT, "zoekt-index"), "-disable_ctags", "-file_limit", str(1 << 40), "-max_trigram_count", str(1 << 30),
                       "-parallelism", str(cores), "-ignore_dirs", ".git,.hg,.svn,.scrutate", "-index", idx, "."],
             "update": None,  # zoekt-index has no incremental mode for a directory: an update re-runs the build
@@ -100,6 +102,8 @@ def tool_defs(a):
             "version": "zoekt " + zoekt_version(),
         },
         "livegrep": {
+            "bins": [(a.livegrep_bin + "/codesearch", "bench/competitors/build_livegrep.sh"),
+                     (a.livegrep_bin + "/lgq", "bench/competitors/livegrep_query/build.sh")],
             # limits raised so it indexes every line and returns every match, like the other tools
             "index": [a.livegrep_bin + "/codesearch", "-line_limit", "1048576", "-index_only", "-dump_index", lg_idx, os.path.join(a.work, "livegrep.json")],
             "update": None,
@@ -113,6 +117,11 @@ def tool_defs(a):
             "version": "livegrep " + (open(a.livegrep_bin + "/REVISION").read().strip() if os.path.exists(a.livegrep_bin + "/REVISION") else "?"),
         },
     }
+
+
+def missing_binaries(defs, names) -> list[str]:
+    """Each tool binary `names` need that is not an executable file, with what builds it."""
+    return [f"{n}: {b} ({how} builds it)" for n in names for b, how in defs[n]["bins"] if not (os.path.isfile(b) and os.access(b, os.X_OK))]
 
 
 def zoekt_version():
@@ -276,6 +285,9 @@ def main() -> int:
     files = livegrep_config(a.corpus, a.work)
     names = a.tools.split(",")
     defs = tool_defs(a)
+    # the index phase takes most of an hour: a binary missing later would throw it away
+    if missing := missing_binaries(defs, names):
+        raise SystemExit("missing tool binaries:\n  " + "\n  ".join(missing))
     res = {"environment": lb.environment(), "corpus": a.corpus, "settings": vars(a) | {"queries": len(QUERIES)}, "tools": {n: {"version": defs[n]["version"]} for n in names}}
     save = lambda: json.dump(res, open(a.out, "w"), indent=1)
     # ---- indexing: full builds, size, peak memory
