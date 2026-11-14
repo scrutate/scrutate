@@ -532,6 +532,7 @@ impl Repo {
                 hits,
                 undecided,
                 stopped,
+                ..
             } => {
                 let out = results(py, hits_py(hits), stopped)?;
                 out.setattr("undecided", undecided)?;
