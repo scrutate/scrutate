@@ -153,14 +153,15 @@ pub fn path_to_uri(p: &Path) -> String {
     uri_of(&crate::instant::slashed(p.to_string_lossy()))
 }
 
-/// The `file:` URI of a path written with `/`. A share (`//server/share/x`, or the
-/// `//?/UNC/server/share/x` that `canonicalize` gives on Windows) has its machine as the host.
+/// The `file:` URI of a path written with `/`, as `slashed` gives it: a share
+/// (`//server/share/x`) has its machine as the host.
 fn uri_of(path: &str) -> String {
-    let (head, path) = match path.strip_prefix("//?/UNC/") {
-        Some(share) => ("file://", share),
-        None if path.starts_with("//") => ("file:", path),
-        None if path.starts_with('/') => ("file://", path),
-        None => ("file:///", path),
+    let head = if path.starts_with("//") {
+        "file:"
+    } else if path.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
     };
     let mut out = String::from(head);
     for b in path.bytes() {
@@ -1048,7 +1049,8 @@ mod tests {
         assert_eq!(path_of_uri("file://server/share/x", false), None, "another machine's file is no path here");
         assert_eq!(path_of_uri("https://x/y", true), None);
         // and back: what `canonicalize` gives for a share is written with its host
-        assert_eq!(uri_of("//?/UNC/server/share/repo/a b.py"), "file://server/share/repo/a%20b.py");
+        // a verbatim share as `slashed` prints it on Windows
+        assert_eq!(uri_of(&crate::paths::plain_on(r"\\?\UNC\server\share\repo/a b.py", true).replace('\\', "/")), "file://server/share/repo/a%20b.py");
         assert_eq!(uri_of("//server/share/a.py"), "file://server/share/a.py");
         assert_eq!(uri_of("C:/x/a.py"), "file:///C:/x/a.py");
         assert_eq!(uri_of("/home/u/a.py"), "file:///home/u/a.py");

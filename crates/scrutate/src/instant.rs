@@ -3204,14 +3204,9 @@ pub fn slashed(s: std::borrow::Cow<'_, str>) -> String {
     }
 }
 
-/// A Windows path as it is printed: `/` between its parts. A verbatim drive path (`\\?\C:\x`,
-/// what `canonicalize` gives) takes no forward slashes, so it is printed in its plain form.
+/// A Windows path as it is printed: plain (crate::paths), `/` between its parts.
 fn windows_form(s: &str) -> String {
-    let s = s.replace('\\', "/");
-    match s.strip_prefix("//?/") {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
-        _ => s,
-    }
+    crate::paths::plain_on(s, true).replace('\\', "/")
 }
 
 pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
@@ -3854,7 +3849,7 @@ mod tests {
         assert_eq!(windows_form(r"\\?\C:\Users\x\a.txt"), "C:/Users/x/a.txt");
         assert_eq!(windows_form(r"dir\a.txt"), "dir/a.txt");
         assert_eq!(windows_form(r"\\server\share\a.txt"), "//server/share/a.txt");
-        assert_eq!(windows_form(r"\\?\UNC\server\share\a.txt"), "//?/UNC/server/share/a.txt");
+        assert_eq!(windows_form(r"\\?\UNC\server\share\a.txt"), "//server/share/a.txt");
     }
 
     #[test]
