@@ -35,8 +35,15 @@ named, or every file.
   config file, a directory that came or went, a directory without a watch, a rule file outside
   every watch that changed, watches set again on Linux, more than 10,000 events since the last
   read, a cookie that took over a second. `SCRUTATE_SESSION_DEBUG=1` names the reason.
-- Every session the MCP server, the language server and the Python bindings open runs a watch.
-  A watch that cannot start leaves the walk.
+- Every session the MCP server, the language server and the Python bindings open runs a watch,
+  on a local disk only (`watch::local`: Linux `statfs` network types, macOS `MNT_LOCAL`, Windows
+  `GetDriveTypeW`); inotify(7) reports no event for a change made over a network. A tree on a
+  network disk, a watch that cannot start, and the wasi build leave the walk
+  (`fresh::for_session` chooses).
+- A safety walk off the read path finds the changes no event reports (a write through a memory
+  map, a bind mount that does not pass events on): every 60 s, or 50 times its own cost when that
+  is longer, it compares a look at the tree with its last one and feeds the difference in as
+  events. Such a change shows within that bound.
 
 The other choice was to read inotify and ReadDirectoryChangesW ourselves until they have nothing
 queued. The `notify` crate owns those handles, so that meant replacing its backends on two

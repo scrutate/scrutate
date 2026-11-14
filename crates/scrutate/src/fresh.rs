@@ -61,14 +61,17 @@ impl Watching {
 }
 
 /// The freshness a session of `root` (canonical) reads with, and the watch that feeds it: a
-/// watch's notes where this target has a watcher, the walk elsewhere. The one place that chooses.
+/// watch's notes where this target has a watcher and `root` is on a local disk (`watch::local`),
+/// the walk elsewhere. The one place that chooses.
 pub fn for_session(root: &Path) -> (Box<dyn Freshness>, Option<Watching>) {
     #[cfg(not(target_os = "wasi"))]
-    {
+    if crate::watch::local(root) {
         let notes = crate::watch::Notes::new(root);
-        (Box::new(notes.clone()), Some(notes))
+        return (Box::new(notes.clone()), Some(notes));
     }
-    #[cfg(target_os = "wasi")]
+    if cfg!(not(target_os = "wasi")) && std::env::var_os("SCRUTATE_SESSION_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+        eprintln!("[scrutate] session: {} is not on a local disk; every read walks the tree", root.display());
+    }
     (Box::new(Walk::new(root)), None)
 }
 

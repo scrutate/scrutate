@@ -3121,22 +3121,28 @@ fn pseudo_roots(_roots: &[PathBuf]) -> Vec<PathBuf> {
 /// and return a page or less per read.
 #[cfg(target_os = "linux")]
 fn on_pseudo_fs(p: &Path) -> bool {
+    // proc, sysfs, debugfs, tracefs, securityfs, configfs, cgroup, cgroup2
+    fs_type(p).is_some_and(|t| matches!(t, 0x9fa0 | 0x6265_6572 | 0x6462_6720 | 0x7472_6163 | 0x7363_6673 | 0x6265_6570 | 0x0027_e0eb | 0x6367_7270))
+}
+
+/// The `f_type` of the file system `p` is on (`statfs`).
+#[cfg(target_os = "linux")]
+pub(crate) fn fs_type(p: &Path) -> Option<u32> {
     use std::os::unix::ffi::OsStrExt;
     extern "C" {
         fn statfs(path: *const std::ffi::c_char, buf: *mut u64) -> std::ffi::c_int;
     }
-    let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else { return false };
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
     // larger than `struct statfs` on every Linux ABI; `f_type` is its first field
     let mut buf = [0u64; 32];
     if unsafe { statfs(c.as_ptr(), buf.as_mut_ptr()) } != 0 {
-        return false;
+        return None;
     }
     #[cfg(target_arch = "s390x")]
     let f_type = (buf[0] >> 32) as u32;
     #[cfg(not(target_arch = "s390x"))]
     let f_type = unsafe { *(buf.as_ptr() as *const std::ffi::c_long) } as u32;
-    // proc, sysfs, debugfs, tracefs, securityfs, configfs, cgroup, cgroup2
-    matches!(f_type, 0x9fa0 | 0x6265_6572 | 0x6462_6720 | 0x7472_6163 | 0x7363_6673 | 0x6265_6570 | 0x0027_e0eb | 0x6367_7270)
+    Some(f_type)
 }
 
 /// How a file found under `roots` is reported (see `Files::paths_as_given`).

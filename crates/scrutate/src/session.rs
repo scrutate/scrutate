@@ -167,7 +167,10 @@ impl Session {
     /// Start the watch of a session `open_watched` opened; with `apply` (`serve --watch`) each
     /// burst also brings the stores up to date.
     pub fn watch(self: &Arc<Self>, apply: bool) -> Result<()> {
-        let Some(notes) = self.notes.clone() else { return Ok(()) };
+        let notes = self.notes.clone();
+        if notes.is_none() && !apply {
+            return Ok(());
+        }
         let (session, stop, root) = (Arc::downgrade(self), Arc::clone(&self.unwatch), self.root().to_path_buf());
         std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
             let update = |changes: &Changes| match (apply, session.upgrade()) {
@@ -181,7 +184,12 @@ impl Session {
             };
             // the session's writer lock orders a burst's update with its other writes; the index's
             // own locks order it with other processes
-            match notes.run(&root, &stop, ready, update) {
+            // reads that walk (a network file system) leave `serve --watch` its plain watch
+            let r = match &notes {
+                Some(n) => n.run(&root, &stop, ready, update),
+                None => crate::watch::run(&root, &stop, ready, update),
+            };
+            match r {
                 Err(e) if apply => eprintln!("[scrutate] watching stopped: {e:#}"),
                 Err(e) => debug(&format!("the watch stopped ({e:#}); reads walk the tree")),
                 Ok(()) => {}
@@ -1198,7 +1206,8 @@ mod tests {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1 }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
-            assert_eq!(st.files_looked, 1, "write {i}: {st:?}");
+            // a safety walk that lands in the run also names the probe `watched` wrote
+            assert!(st.files_looked == 1 || st.files_looked == 2, "write {i}: {st:?}");
         }
         let _ = std::fs::remove_dir_all(root);
     }

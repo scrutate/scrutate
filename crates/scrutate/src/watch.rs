@@ -644,6 +644,123 @@ impl Poll {
 const POLL_MIN: Duration = Duration::from_secs(1);
 const POLL_MAX: Duration = Duration::from_secs(30);
 
+/// Whether `root` is on a disk of this machine, where every change makes an event. Over a network
+/// (NFS, SMB, 9p, FUSE such as sshfs) a change made on another machine makes none, so a session
+/// there walks the tree (inotify(7): no events for network file systems).
+pub fn local(root: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // NFS, SMB, CIFS, SMB2, FUSE (sshfs, virtiofs), 9p, AFS, Ceph, Coda, NCP, GFS2, OCFS2,
+        // Lustre, GPFS, OrangeFS, VirtualBox and Parallels shared folders, WSL 1's drvfs
+        const REMOTE: [u32; 18] = [
+            0x6969,
+            0x517b,
+            0xff53_4d42,
+            0xfe53_4d42,
+            0x6573_5546,
+            0x0102_1997,
+            0x5346_414f,
+            0x00c3_6400,
+            0x7375_7245,
+            0x564c,
+            0x0116_1970,
+            0x7461_636f,
+            0x0bd0_0bd0,
+            0x4750_4653,
+            0x1366_1366,
+            0x786f_4256,
+            0x7c7c_6673,
+            0x5346_4846,
+        ];
+        crate::instant::fs_type(root).is_some_and(|t| !REMOTE.contains(&t))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        extern "C" {
+            #[cfg_attr(target_arch = "x86_64", link_name = "statfs$INODE64")]
+            fn statfs(path: *const std::ffi::c_char, buf: *mut u32) -> std::ffi::c_int;
+        }
+        const MNT_LOCAL: u32 = 0x1000;
+        let Ok(c) = std::ffi::CString::new(root.as_os_str().as_bytes()) else { return false };
+        // larger than `struct statfs` (2,168 bytes); `f_flags` is at byte 64
+        let mut buf = [0u32; 600];
+        // SAFETY: a nul-terminated path and a buffer larger than the struct the call fills
+        (unsafe { statfs(c.as_ptr(), buf.as_mut_ptr()) } == 0) && buf[16] & MNT_LOCAL != 0
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        extern "system" {
+            fn GetDriveTypeW(root: *const u16) -> u32;
+        }
+        const DRIVE_REMOTE: u32 = 4;
+        let s = root.as_os_str().to_string_lossy();
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        // a share named \\server\share, or \\?\UNC\server\share
+        if s.starts_with(r"\\") || s.starts_with(r"UNC\") {
+            return false;
+        }
+        let Some(drive) = s.get(..3).filter(|d| d.ends_with(":\\")) else { return false };
+        let wide: Vec<u16> = std::ffi::OsStr::new(drive).encode_wide().chain([0]).collect();
+        // SAFETY: a nul-terminated drive root
+        unsafe { GetDriveTypeW(wide.as_ptr()) != DRIVE_REMOTE }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = root;
+        false
+    }
+}
+
+/// The least time between two safety walks, and the share of the time they may take at most.
+const SAFETY_EVERY: Duration = Duration::from_secs(60);
+const SAFETY_SHARE: u32 = 50;
+
+/// A walk off the read path that finds the changes no event reported (a bind mount that does not
+/// pass events on, a write through a memory map): what differs from its last walk joins the
+/// notes and the next burst as the events a watch would have sent.
+struct Safety {
+    root: PathBuf,
+    seen: HashMap<String, Option<crate::index::Stat>>,
+    at: Instant,
+    pause: Duration,
+}
+
+impl Safety {
+    fn new(root: &Path) -> Safety {
+        let mut s = Safety { root: root.to_path_buf(), seen: HashMap::new(), at: Instant::now(), pause: SAFETY_EVERY };
+        s.seen = s.look();
+        s
+    }
+
+    fn look(&self) -> HashMap<String, Option<crate::index::Stat>> {
+        let text = has_text_index(&self.root);
+        crate::files::look(&self.root, text).unwrap_or_default().into_iter().filter(|f| f.code || f.text).map(|f| (f.path, f.stat)).collect()
+    }
+
+    /// The changes since the last walk, once the pause is over; none before.
+    fn check(&mut self) -> Vec<notify::Result<Event>> {
+        if self.at.elapsed() < self.pause {
+            return Vec::new();
+        }
+        self.check_now()
+    }
+
+    fn check_now(&mut self) -> Vec<notify::Result<Event>> {
+        let t0 = Instant::now();
+        let now = self.look();
+        let event = |kind, rel: &str| Ok(Event::new(kind).add_path(self.root.join(rel)));
+        let mut out: Vec<_> =
+            now.iter().filter(|(p, s)| self.seen.get(*p) != Some(s)).map(|(p, _)| event(EventKind::Modify(ModifyKind::Data(DataChange::Any)), p)).collect();
+        out.extend(self.seen.keys().filter(|p| !now.contains_key(*p)).map(|p| event(EventKind::Remove(RemoveKind::Any), p)));
+        self.seen = now;
+        self.pause = (t0.elapsed() * SAFETY_SHARE).max(SAFETY_EVERY);
+        self.at = Instant::now();
+        out
+    }
+}
+
 fn root_present(root: &Path) -> Result<()> {
     if !root.is_dir() {
         anyhow::bail!("{} is gone: the watched directory was removed or moved", root.display());
@@ -811,6 +928,7 @@ pub fn run_noting(
         n.watching(&walked);
     }
     let mut poll = Poll::new(&walked);
+    let mut safety = notes.map(|_| Safety::new(&root));
     on_change(&Changes::All)?;
     on_ready();
     let debug = debug();
@@ -822,6 +940,12 @@ pub fn run_noting(
         let mut burst = Burst { full: failed, ..Burst::default() };
         let mut wanted = retry_at.is_some_and(|t| Instant::now() >= t);
         for ev in poll.check() {
+            wanted |= burst.note(&root, &walked, &ev);
+        }
+        for ev in safety.as_mut().map(Safety::check).unwrap_or_default() {
+            if let Some(n) = notes {
+                n.note(&ev);
+            }
             wanted |= burst.note(&root, &walked, &ev);
         }
         if !wanted {
@@ -1128,6 +1252,32 @@ mod fsevents {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_safety_walk_finds_the_changes_since_the_last_one() {
+        let root = tree("safety");
+        std::fs::write(root.join("src/gone.py"), "x\n").unwrap();
+        let mut safety = Safety::new(&root);
+        assert!(safety.check().is_empty(), "nothing before the pause is over");
+        std::fs::write(root.join("src/a.py"), "a longer body\n").unwrap();
+        std::fs::write(root.join("src/deep/new.py"), "y\n").unwrap();
+        std::fs::remove_file(root.join("src/gone.py")).unwrap();
+        let mut named: Vec<(String, bool)> = safety
+            .check_now()
+            .into_iter()
+            .map(|e| e.unwrap())
+            .map(|e| (e.paths[0].strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"), matches!(e.kind, EventKind::Remove(_))))
+            .collect();
+        named.sort();
+        assert_eq!(named, [("src/a.py".to_string(), false), ("src/deep/new.py".into(), false), ("src/gone.py".into(), true)]);
+        assert!(safety.check_now().is_empty(), "the next walk starts from this one");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_temporary_directory_is_on_a_local_disk() {
+        assert!(local(&std::fs::canonicalize(std::env::temp_dir()).unwrap()));
+    }
     use notify::event::{CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode};
 
     /// A repository with a text index (its manifest is enough for the walks).

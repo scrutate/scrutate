@@ -761,10 +761,14 @@ When the watch cannot vouch for fewer files (it is not in place yet, it lost eve
 error, an ignore rule or a directory changed, the cookie's event took more than a second, or on
 Linux the watches were set again) the call looks at every file instead, at once. The one
 exception is a `--refresh-interval` you give: it holds that walk back as below, so a new directory
-or a changed ignore rule can wait up to that interval before calls see it. That is the only case
-in which a write finished before a call is not in its answer, and only by your choice.
-`SCRUTATE_SESSION_DEBUG=1` says why on stderr. A watch that cannot start (the inotify watch limit,
-a file system without events) leaves every call looking at every file, as follows. Without
+or a changed ignore rule can wait up to that interval before calls see it. The other case is a
+change that makes no event at all (a write through a memory map, a bind mount that does not pass
+events on): a walk in the background, off the calls' path, finds those within 60 s, or within 50
+times what one walk of the tree takes when that is longer. `SCRUTATE_SESSION_DEBUG=1` says why a
+call looked at every file. A tree on a network disk (NFS, SMB, 9p, a FUSE file system such as
+sshfs, a virtual machine's shared folder) gets no watch, since a change made on another machine
+makes no event here, and neither does a watch that cannot start (the inotify watch limit): every
+call there looks at every file, as follows. Without
 `--refresh-interval`, scans are at most a second apart, closer when a scan is cheap; with
 `--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S seconds after
 the last. With `--watch`, each watcher update counts as a scan. A scan that could not run because

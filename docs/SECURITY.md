@@ -441,6 +441,10 @@ as before (mode 0700 on Unix).
     function), which `watch::Notes` holds under a lock and drops before the stream is torn down.
     `watch::tests` starts a stream and receives a file's event, every `tests/watch_files.rs` test
     runs on it, and the session tests flush it 1,000 times;
+  - `watch.rs` `local` (macOS and Windows): `statfs` (`statfs$INODE64` on Intel macOS) of a
+    nul-terminated path into a buffer larger than `struct statfs`, read as `u32` words for
+    `f_flags`; `GetDriveTypeW` of a nul-terminated drive root. `watch::tests` asks both about
+    the temporary directory;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
     (`tests/intel_refs.rs`, its CPU time) with arguments they own, `std::env::set_var` in
@@ -469,7 +473,7 @@ as before (mode 0700 on Unix).
   | `crates/scrutate/src/session.rs` | 5 |
   | `crates/scrutate/src/shellhook.rs` | 4 |
   | `crates/scrutate/src/text.rs` | 1 |
-  | `crates/scrutate/src/watch.rs` | 23 |
+  | `crates/scrutate/src/watch.rs` | 25 |
   | `crates/scrutate/tests/cli.rs` | 1 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 1 |

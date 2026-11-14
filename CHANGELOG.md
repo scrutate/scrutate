@@ -146,7 +146,8 @@ incompatible index by itself, and that is never breaking.
   schema is 15, so an older index is built again once; the keys make the index larger and a full
   index slower (measured by hand for the change, in its commit message: no script in `bench/`
   reruns it).
-- The MCP server, the language server and the Python bindings watch the tree, and each call looks
+- The MCP server, the language server and the Python bindings watch a tree on a local disk, and
+  a walk in the background finds within 60 s a change that makes no event; each call looks
   only at the files the watch says changed since the last call, one `stat` each, where it looked
   at every file of the tree. A cookie file the call writes and waits for keeps every write made
   before the call in its answer; when the watch cannot vouch for fewer files, or cannot start, the

@@ -648,7 +648,8 @@ does not scan again.
 What a scan looks at is the **change set** since the token of the last one applied
 (`fresh::Freshness::changes_since`, [ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)).
 `fresh::for_session` is the one place that picks the adapter. The walk adapter (`fresh::Walk`, a
-session with no watch, every session of the wasi build) always answers every file. The watch's
+session with no watch: a tree on a network disk (`watch::local`), every session of the wasi build)
+always answers every file. The watch's
 adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own that neither the
 burst's debounce nor a running update holds up. A read first writes a cookie file under
 `.scrutate/cookies/` and waits for its event (on macOS after `FSEventStreamFlushSync`): events
@@ -663,7 +664,9 @@ every watch that changed, the watches set (the first time, and on Linux each tim
 file written while they were set may have no event), more than 10,000 events since the last read,
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
 floor the user gave. A named file costs one `stat` (`UpdateStats::files_looked`
-counts them) and a read with nothing named costs no lock.
+counts them) and a read with nothing named costs no lock. A safety walk on the watch's thread
+(`watch::Safety`, every 60 s or 50 times its own cost) feeds in, as events, what changed with no
+event since its last walk.
 
 A command line call may use the session `serve` runs on its root ([CLI](CLI.md#serve-mcp): which
 commands, the settings `SCRUTATE_SESSION_WAIT_MS`, `SCRUTATE_SESSION_DEBUG=1`,
