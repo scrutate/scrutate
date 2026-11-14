@@ -339,7 +339,9 @@ impl Repo {
         let writer = Arc::clone(&self.writer);
         let Some(_w) = hold_if_free(&writer) else {
             // a write of this process runs: answer from the committed index, as against another
-            // process's writer, unless nothing is committed yet
+            // process's writer, unless nothing is committed yet; stale, so a change set this
+            // refresh was to apply is asked for again
+            self.stale = true;
             return match &self.searcher {
                 Some(s) if s.ix.has_files()? => Ok(None),
                 _ => Err(index::BeingBuilt.into()),

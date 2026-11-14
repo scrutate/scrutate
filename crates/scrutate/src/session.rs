@@ -1304,6 +1304,28 @@ mod tests {
     }
 
     #[test]
+    fn a_change_set_a_write_of_this_process_held_back_is_applied_by_the_next_read() {
+        let (root, s) = watched("held_back", 1, Every::given(Some(3600.0)));
+        std::fs::write(root.join("src/d0/h.py"), "def held_back():\n    return 1\n").unwrap();
+        let op = Op::Symbol { name: "held_back".into(), limit: 1 };
+        let writer = lock(&s.seed).writer();
+        let (held, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        std::thread::scope(|sc| {
+            sc.spawn(move || {
+                let _w = writer.lock().unwrap();
+                held.0.send(()).unwrap();
+                let _ = release.1.recv_timeout(Duration::from_secs(20));
+            });
+            held.1.recv().unwrap();
+            let _ = s.run(&op, &Arc::default());
+            release.0.send(()).unwrap();
+        });
+        let a = s.run(&op, &Arc::default()).unwrap();
+        assert!(!a.is_empty(), "the file a held-back read named is in the next read's answer");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_command_line_call_scans_every_file_first() {
         let (root, s) = fixture("scanned");
         let op = Op::Symbol { name: "brand_new".into(), limit: 5 };

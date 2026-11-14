@@ -1179,7 +1179,8 @@ running `serve` or `lsp` answers each request with that refusal as an error and 
 command that reads the index never waits for a writer: it answers from the last committed index
 and says so in one stderr line. In `serve`, `lsp` and the Python module a read also skips the
 process's own update while it runs (a `serve --watch` update, perhaps waiting for another
-process's lock) and answers from the last committed index, with no stderr line. The one exception is another process's first build, with nothing
+process's lock) and answers from the last committed index, with no stderr line; the files its
+change set named are applied by the next read. The one exception is another process's first build, with nothing
 committed to answer from: the command fails with "the index is being built by another process"
 (exit 2), and a `serve` tool call waits up to 20 seconds, then answers that the index is still
 being built. `scrutate index` (and `--force`) waits for the writer, at most 10 minutes: then it
