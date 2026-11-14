@@ -43,3 +43,9 @@ def test_an_insertion_after_a_doc_and_its_attribute_or_with_its_own_doc_is_caugh
 
 def test_a_file_that_is_not_rust_is_left_alone():
     assert C.shifted(doc_diff(" /// a", "+fn b() {}").replace("x.rs", "x.py")) == []
+
+
+def test_an_edited_documented_item_with_a_new_item_after_it_passes():
+    # the documented `A` edited in place, then `B` added after a blank line: A keeps its doc
+    edit_then_add = doc_diff(" /// The limit.", "-const A: u8 = 1;", "+const A: u8 = 2;", " ", "+const B: u8 = 3;", " fn main() {}")
+    assert C.shifted(edit_then_add) == []

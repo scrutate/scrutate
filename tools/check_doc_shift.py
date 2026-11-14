@@ -35,9 +35,12 @@ def shifted(diff: str) -> list[str]:
     found, path, new_line, ctx, block = [], None, 0, [], []
 
     def close():
+        nonlocal ctx
         if not block or not path or not path.endswith(".rs"):
             return
-        above = [c for c in ctx if c.strip() and not c.strip().startswith("#[")]
+        # what the new file holds above the next block: this block's added lines count too
+        before, ctx = ctx, (ctx + [t for kind, _, t in block if kind == "+"])[-20:]
+        above = [c for c in before if c.strip() and not c.strip().startswith("#[")]
         if not above or not above[-1].lstrip().startswith("///"):
             return
         added = [(n, t, item(t)) for kind, n, t in block if kind == "+" and item(t)]
