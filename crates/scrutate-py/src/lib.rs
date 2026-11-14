@@ -425,12 +425,11 @@ impl Repo {
         let root = PathBuf::from(root);
         let r2 = root.clone();
         let s = py
-            .detach(move || Session::open(&r2, Every::given(None)))
+            .detach(move || Session::open_watched(&r2, Every::given(None)))
             .map_err(err)?;
-        Ok(Repo {
-            root,
-            session: Arc::new(s),
-        })
+        // a watch that cannot start leaves calls walking the tree
+        let _ = s.watch(false);
+        Ok(Repo { root, session: s })
     }
 
     #[getter]

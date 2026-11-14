@@ -263,10 +263,16 @@ fn an_explicit_refresh_interval_is_a_floor() {
     assert!(floor.text(1, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
     let mut default = Session::start(&r, &["serve"], &[]);
     assert!(default.text(1, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
+    // the watch names a file of a directory it knows: no interval holds that back
     fs::write(r.root.join("pkg/late.py"), "def arrived_late():\n    return 1\n").unwrap();
+    assert!(floor.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "a named file within the interval");
+    assert!(default.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"));
+    // a new directory needs a walk of every file, which the floor holds back
+    fs::create_dir_all(r.root.join("pkg/new_dir")).unwrap();
+    fs::write(r.root.join("pkg/new_dir/later.py"), "def arrived_later():\n    return 1\n").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(!floor.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "no scan within the interval");
-    assert!(default.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "a cheap scan is not held back by default");
+    assert!(!floor.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "no walk within the interval");
+    assert!(default.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "a walk the watch asks for comes at once by default");
 }
 
 #[test]

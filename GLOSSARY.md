@@ -168,9 +168,15 @@ current around it.
 bindings and `watch` are its adapters. A command line call may use the session a running `serve`
 offers on `.scrutate/session.sock`.
 
+**[Change set](docs/ARCHITECTURE.md#sessions-sessionrs)**: the Repository files that changed
+since a **token** (`stores::Changes`), as the freshness module (`fresh::Freshness`) answers it:
+the files named, or every file when nothing can vouch for fewer. A session's reads ask it before
+each call; the walk adapter always says every file, a watch's (`watch::Notes`) names the files
+its events touched.
+
 **[Stores](docs/ARCHITECTURE.md#keeping-the-stores-current-storesrs)**: the derived data under
 `.scrutate/` and the one module that keeps them current (`stores.rs`). A caller names a **change
-set** (`stores::Changes`) and what it does (`stores::Writer`), never a store.
+set** (`stores::Changes`, see Change set) and what it does (`stores::Writer`), never a store.
 
 **[Model set](docs/ARCHITECTURE.md#models-cratesscrutatemodels-modelsrs)**: the vector model, the ranker and the
 feature list the ranker reads (`models::ModelSet`), each loaded on first use.

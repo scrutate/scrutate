@@ -23,9 +23,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::fresh::{Freshness, Token};
 use crate::index::{self, FileCount, UpdateStats};
 use crate::ops::{Answer, Op};
 use crate::search::Searcher;
+use crate::stores::Changes;
 use crate::Repo;
 
 /// How long a call waits for an index another process is building before it gives that answer
@@ -99,6 +101,19 @@ pub struct Session {
     writing: AtomicUsize,
     /// the files the writes of `seed` read, the first build's among them
     written: Arc<FileCount>,
+    fresh: Box<dyn Freshness>,
+    /// the token of the newest change set applied
+    applied: Mutex<Token>,
+    /// what `watch` keeps for the reads, from `open_watched`
+    notes: Option<crate::watch::Notes>,
+    /// ends that watch when the session is dropped
+    unwatch: Arc<AtomicBool>,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.unwatch.store(true, Ordering::Relaxed);
+    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -116,6 +131,7 @@ impl Session {
         let written = Arc::new(FileCount::default());
         seed.set_count(Arc::clone(&written));
         let max_readers = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
+        let fresh = Box::new(crate::fresh::Walk::new(&seed.ix.root));
         Ok(Session {
             root: seed.ix.root.clone(),
             every,
@@ -130,7 +146,64 @@ impl Session {
             scanning: Mutex::new(()),
             writing: AtomicUsize::new(0),
             written,
+            fresh,
+            applied: Mutex::default(),
+            notes: None,
+            unwatch: Arc::default(),
         })
+    }
+
+    /// `open`, with reads told what changed by the events of a watch (`watch::Notes`) once
+    /// `watch` starts it; until then, and when the watch cannot start or stops, reads walk the
+    /// tree as without one.
+    pub fn open_watched(root: &Path, every: Every) -> Result<Arc<Session>> {
+        let s = Session::open(root, every)?;
+        let notes = crate::watch::Notes::new(s.root());
+        let mut s = s.with_freshness(Box::new(notes.clone()));
+        s.notes = Some(notes);
+        Ok(Arc::new(s))
+    }
+
+    /// Start the watch of a session `open_watched` opened; with `apply` (`serve --watch`) each
+    /// burst also brings the stores up to date.
+    pub fn watch(self: &Arc<Self>, apply: bool) -> Result<()> {
+        let Some(notes) = self.notes.clone() else { return Ok(()) };
+        let (session, stop, root) = (Arc::downgrade(self), Arc::clone(&self.unwatch), self.root().to_path_buf());
+        std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
+            let update = |changes: &Changes| match (apply, session.upgrade()) {
+                (true, Some(s)) => s.write(|repo| repo.update_stores(crate::stores::Writer::Watch, changes, false)).map(|_| ()),
+                _ => Ok(()),
+            };
+            let ready = || {
+                if apply {
+                    eprintln!("[scrutate] watching {}", root.display())
+                }
+            };
+            // the session's writer lock orders a burst's update with its other writes; the index's
+            // own locks order it with other processes
+            match crate::watch::run_noting(&root, &stop, Some(&notes), ready, update) {
+                Err(e) if apply => eprintln!("[scrutate] watching stopped: {e:#}"),
+                Err(e) => debug(&format!("the watch stopped ({e:#}); reads walk the tree")),
+                Ok(()) => {}
+            }
+        })?;
+        Ok(())
+    }
+
+    /// This session, told what changed by `fresh` instead of a walk.
+    pub fn with_freshness(mut self, fresh: Box<dyn Freshness>) -> Session {
+        self.fresh = fresh;
+        self.applied = Mutex::default();
+        self
+    }
+
+    fn changes(&self) -> (Changes, Token) {
+        self.fresh.changes_since(*lock(&self.applied))
+    }
+
+    fn applied_up_to(&self, t: Token) {
+        let mut a = lock(&self.applied);
+        *a = (*a).max(t);
     }
 
     /// The canonical root.
@@ -269,11 +342,19 @@ impl Session {
                     }
                 };
                 let t = Instant::now();
-                st = repo.refresh(0.0)?.unwrap_or_default();
+                let (changes, token) = self.changes();
+                st = match &changes {
+                    Changes::Named(n) if n.code.is_empty() => UpdateStats::default(),
+                    Changes::Named(n) => repo.refresh_named(&n.code)?.unwrap_or_default(),
+                    Changes::All => repo.refresh(0.0)?.unwrap_or_default(),
+                };
                 if repo.is_stale() {
                     return Ok(None);
                 }
-                self.scanned(t, true);
+                self.applied_up_to(token);
+                if changes == Changes::All {
+                    self.scanned(t, true);
+                }
                 drop(scanning);
             }
             Ok(Some((st, repo.run_as_is(op))))
@@ -377,19 +458,40 @@ impl Session {
         }
     }
 
-    /// The scan before a read, when the refresh interval has passed since the last one.
+    /// The scan before a read: the files of the change set, or, when it is every file, a walk once
+    /// the refresh interval has passed since the last one.
     fn scan_if_due(&self, repo: &mut Repo) -> Result<()> {
-        if !self.due() {
+        let (changes, token) = self.changes();
+        let Changes::Named(n) = changes else { return self.walk_if_due(repo, token) };
+        if !n.code.is_empty() {
+            repo.refresh_named(&n.code)?;
+            if repo.is_stale() {
+                return Ok(()); // not applied: the next call asks for these files again
+            }
+        }
+        self.applied_up_to(token);
+        Ok(())
+    }
+
+    /// A watch that asks for a walk gets it at once, unless the interval is a floor the user gave.
+    fn walk_if_due(&self, repo: &mut Repo, token: Token) -> Result<()> {
+        let asked = self.fresh.watching() && !self.every.floor;
+        if !asked && !self.due() {
             return Ok(());
         }
         let _scanning = lock(&self.scanning);
-        if !self.due() {
+        let walked_meanwhile = asked && *lock(&self.applied) >= token;
+        if walked_meanwhile || !asked && !self.due() {
             return Ok(());
         }
         let t = Instant::now();
         let r = repo.refresh(0.0);
+        let walked = r.is_ok() && !repo.is_stale();
+        if walked {
+            self.applied_up_to(token);
+        }
         // a scan that could not run does not start a floor's interval: the next call tries again
-        self.scanned(t, r.is_ok() && !repo.is_stale() || !self.every.floor);
+        self.scanned(t, walked || !self.every.floor);
         r.map(|_| ())
     }
 
@@ -420,7 +522,6 @@ pub fn wanted() -> bool {
     std::env::var_os("SCRUTATE_NO_SESSION").is_none_or(|v| v.is_empty() || v == "0")
 }
 
-#[cfg(unix)]
 fn debug(what: &str) {
     if std::env::var_os("SCRUTATE_SESSION_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
         eprintln!("[scrutate] session: {what}");
@@ -1032,6 +1133,114 @@ mod tests {
         assert_eq!(std::env::current_dir().unwrap().canonicalize().unwrap(), moved.canonicalize().unwrap());
         std::env::set_current_dir(std::env::temp_dir()).unwrap();
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A freshness that names the files a test tells it, then nothing.
+    struct Told(Arc<Mutex<Vec<String>>>);
+
+    impl crate::fresh::Freshness for Told {
+        fn changes_since(&self, t: crate::fresh::Token) -> (crate::stores::Changes, crate::fresh::Token) {
+            let code = std::mem::take(&mut *lock(&self.0));
+            (crate::stores::Changes::Named(crate::stores::Named { code, text: Vec::new() }), t.next())
+        }
+        fn files(&self, text: bool) -> Result<Vec<crate::files::Found>> {
+            crate::files::look(&std::env::temp_dir(), text)
+        }
+    }
+
+    #[test]
+    fn a_scan_applies_the_change_set_and_looks_at_no_other_file() {
+        let (root, s) = fixture("change_set");
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let s = s.with_freshness(Box::new(Told(Arc::clone(&told))));
+        std::fs::write(root.join("src/named.py"), "def brand_new():\n    return 3\n").unwrap();
+        std::fs::write(root.join("src/unnamed.py"), "def not_named():\n    return 4\n").unwrap();
+        *lock(&told) = vec!["src/named.py".into()];
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "brand_new".into(), limit: 5 }).unwrap();
+        assert_eq!((st.files_looked, st.files_changed), (1, 1), "{st:?}");
+        assert!(a.is_ok_and(|a| !a.is_empty()));
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "not_named".into(), limit: 5 }).unwrap();
+        assert_eq!(st.files_looked, 0, "{st:?}");
+        assert!(a.is_ok_and(|a| a.is_empty()), "a file the change set does not name is not looked at");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A built session of `files` files under `name` whose reads the watch already tells.
+    fn watched(name: &str, files: usize, every: Every) -> (PathBuf, Arc<Session>) {
+        let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for i in 0..files {
+            let dir = root.join(format!("src/d{}", i % 20));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("m{i}.py")), format!("def made_{i}():\n    return {i}\n")).unwrap();
+        }
+        std::fs::create_dir_all(root.join("src/d0")).unwrap();
+        let s = Session::open_watched(&root, every).unwrap();
+        s.build().unwrap();
+        s.watch(false).unwrap();
+        let t0 = Instant::now();
+        for k in 0.. {
+            std::fs::write(root.join("src/d0/probe.py"), format!("def probe_{k}():\n    return 0\n")).unwrap();
+            let (st, _) = s.run_scanned(&Op::Symbol { name: format!("probe_{k}"), limit: 1 }).unwrap();
+            if st.files_looked == 1 {
+                break;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never told a read what changed");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        (root, s)
+    }
+
+    #[test]
+    fn a_file_written_just_before_a_call_is_in_its_answer_every_time() {
+        let (root, s) = watched("barrier", 1, Every::given(Some(3600.0)));
+        for i in 0..1000 {
+            std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
+            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1 }).unwrap();
+            assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
+            assert_eq!(st.files_looked, 1, "write {i}: {st:?}");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_read_looks_at_the_changed_files_alone_and_a_walk_at_all() {
+        let (root, s) = watched("o_changed", 2000, Every::given(Some(3600.0)));
+        std::fs::write(root.join("src/d7/m7.py"), "def edited():\n    return 7\n").unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "edited".into(), limit: 1 }).unwrap();
+        assert_eq!((st.files_looked, st.files_changed), (1, 1), "{st:?}");
+        assert!(a.is_ok_and(|a| !a.is_empty()));
+        drop(s);
+        let walk = Session::open(&root, Every::given(Some(3600.0))).unwrap();
+        let (st, _) = walk.run_scanned(&Op::Symbol { name: "edited".into(), limit: 1 }).unwrap();
+        assert_eq!(st.files_looked, 2001, "every file and the probe: {st:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lost_events_make_the_next_read_walk_and_its_answer_holds_the_change() {
+        let (root, s) = watched("lost", 10, Every::given(Some(3600.0)));
+        s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
+        std::fs::write(root.join("src/d3/m3.py"), "def after_loss():\n    return 3\n").unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "after_loss".into(), limit: 1 }).unwrap();
+        assert_eq!(st.files_looked, 11, "a walk: {st:?}");
+        assert!(a.is_ok_and(|a| !a.is_empty()));
+        std::fs::write(root.join("src/d3/m3.py"), "def after_walk():\n    return 3\n").unwrap();
+        let (st, _) = s.run_scanned(&Op::Symbol { name: "after_walk".into(), limit: 1 }).unwrap();
+        assert_eq!(st.files_looked, 1, "named again after the walk: {st:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_walk_the_watch_asks_for_comes_at_once_unless_the_user_gave_a_floor() {
+        for (floor, seen) in [(None, true), (Some(3600.0), false)] {
+            let (root, s) = watched(&format!("asked_{seen}"), 10, Every::given(floor));
+            s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
+            std::fs::write(root.join("src/d3/m3.py"), "def after_loss():\n    return 3\n").unwrap();
+            let a = s.run(&Op::Symbol { name: "after_loss".into(), limit: 1 }, &Arc::default()).unwrap();
+            assert_eq!(!a.is_empty(), seen, "interval {floor:?}");
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
 
     #[test]

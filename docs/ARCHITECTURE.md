@@ -575,8 +575,8 @@ is added there alone.
 | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 | an index command, `batch` | every file before the first operation; never waits | code index |
-| an MCP tool call, a bindings call, a language server request | every file, at most once per refresh interval of the session; never waits | code index |
-| an index command a running `serve` answers | every file, in that session, before the operation; never waits (else the command does the work itself) | code index |
+| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; never waits | code index |
+| an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); never waits (else the command does the work itself) | code index |
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
@@ -625,12 +625,13 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 
 | `Session` | What it does |
 |---|---|
-| `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) |
+| `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) for the walk of every file |
+| `open_watched(root, Every)`, `watch(apply)` | `open` with reads told the change set by a watch (`watch::Notes`), which `watch` starts once nothing else needs the process to itself; with `apply` (`serve --watch`) each burst also updates the stores. The MCP server, the language server and the Python bindings open this way |
 | `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()`, `build_count()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through; the files it has read and has to read |
-| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` |
+| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` |
 | `read(cancel, refresh, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
-| `run_scanned(op)` | a command line call: every file first, then the operation; nothing when it would have to wait |
+| `run_scanned(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing when it would have to wait |
 | `hold_writes()` | at exit: the first build is waited for and no write starts after it |
 
 Every call gets its own cancel flag, and a panic stays inside it: the call gets the error
@@ -644,13 +645,29 @@ its last commit (WAL, one transaction per update, the segment manifest swapped i
 transaction). The scan before a read is a write, and a call that waited for another call's scan
 does not scan again.
 
+What a scan looks at is the **change set** since the token of the last one applied
+(`fresh::Freshness::changes_since`, [ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)).
+The walk adapter (`fresh::Walk`, a session with no watch) always answers every file. The watch's
+adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own that neither the
+burst's debounce nor a running update holds up. A read first writes a cookie file under
+`.scrutate/cookies/` and waits for its event (on macOS after `FSEventStreamFlushSync`): events
+arrive in order, so every change made before the read started is then noted. The events since the
+read's token, read by the same rules a burst uses (`Burst::note`, `Burst::files`), name the files.
+Anything those rules cannot vouch for is every file: lost events or a watcher error, an ignore or
+config file, a directory that came or went, a directory left without a watch, a rule file outside
+every watch that changed, the watches set (the first time, and on Linux each time again, since a
+file written while they were set may have no event), more than 10,000 events since the last read,
+a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
+floor the user gave. A named file costs one `stat` (`UpdateStats::files_looked`
+counts them) and a read with nothing named costs no lock.
+
 A command line call may use the session `serve` runs on its root ([CLI](CLI.md#serve-mcp): which
 commands, the settings `SCRUTATE_SESSION_WAIT_MS`, `SCRUTATE_SESSION_DEBUG=1`,
 `SCRUTATE_NO_SESSION=1`, the fallbacks). The session listens on a Unix socket at
 `.scrutate/session.sock` (mode 0600, the peer's user checked before a byte is read) from the
 server's start to its exit. An index command sends its operation (`ops::Op`, as JSON) with its
-printing options (`--json`, the byte limit and offset, a search's `--why`); the session scans
-every file, runs it and prints the answer with the command line's own function, and the command
+printing options (`--json`, the byte limit and offset, a search's `--why`); the session applies
+the change set (every file when it says so), runs it and prints the answer with the command line's own function, and the command
 line writes those bytes and exits with that code. The command line first checks that the socket
 file is a socket this user owns, the peer is this user, and the greeting names the same executable
 (device, inode, size and time), index schema and content revisions, models, `SCRUTATE_*` settings

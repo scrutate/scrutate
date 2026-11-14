@@ -8,8 +8,9 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
@@ -19,6 +20,7 @@ use notify::{Event, EventKind};
 use notify::{RecursiveMode, Watcher};
 
 use crate::files::{CodeWalk, INDEX_DIR};
+use crate::fresh::{Freshness, Token};
 use crate::stores::{Changes, Named};
 
 /// A burst of events ends after this much quiet.
@@ -286,6 +288,231 @@ impl Burst {
     }
 }
 
+/// Where a read drops the cookie whose event says every event before it is in, under the index
+/// directory.
+pub const COOKIES: &str = "cookies";
+/// How long a read waits for its cookie's event before it walks the tree instead.
+const BARRIER: Duration = Duration::from_secs(1);
+/// Events kept for reads at most; past this the next read walks the tree.
+const MOST_NOTED: usize = 10_000;
+
+/// What a watch saw, for the reads of a session (`fresh::Freshness`): every event as it arrives,
+/// so a read waits for no burst and no update. A read writes a cookie file and waits for its
+/// event (as Watchman's sync queries do), so a file written before the read started is noted;
+/// then the events since the read's token, as `Burst` reads them, are its change set. Whatever
+/// the events cannot vouch for (lost events, an error, a rule file, a directory that came or
+/// went, the watches set again, no watch at all) makes the change set every file.
+#[derive(Clone)]
+pub struct Notes(Arc<Shared>);
+
+struct Shared {
+    root: PathBuf,
+    cookies: PathBuf,
+    code: CodeWalk,
+    next_cookie: AtomicU64,
+    noted: Mutex<Noted>,
+    arrived: Condvar,
+    #[cfg(target_os = "macos")]
+    flush: Mutex<Option<fsevents::Flush>>,
+}
+
+#[derive(Default)]
+struct Noted {
+    /// the generation of the newest entry
+    gen: u64,
+    events: Vec<(u64, Event)>,
+    /// a read that applied less than this walks the tree
+    walk_below: u64,
+    why: &'static str,
+    /// the watches' last walk; None until the watch is in place, and after it stops
+    walked: Option<Arc<Walked>>,
+    /// the rule files no watch covers, as they were at that walk
+    polled: Vec<(PathBuf, Option<Seen>)>,
+    cookies: HashSet<std::ffi::OsString>,
+}
+
+impl Noted {
+    fn walk_all(&mut self, why: &'static str) {
+        self.gen += 1;
+        self.walk_below = self.gen;
+        self.why = why;
+        self.events.clear();
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn seen(p: &Path) -> Option<Seen> {
+    std::fs::symlink_metadata(p).ok().map(|m| Seen::of(&m))
+}
+
+impl Notes {
+    /// Notes for the watch of `root` (canonical), with its cookie directory made and emptied.
+    pub fn new(root: &Path) -> Notes {
+        let cookies = root.join(INDEX_DIR).join(COOKIES);
+        let _ = std::fs::create_dir_all(&cookies);
+        for e in std::fs::read_dir(&cookies).into_iter().flatten().flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+        Notes(Arc::new(Shared {
+            root: root.to_path_buf(),
+            cookies,
+            code: CodeWalk::new(root),
+            next_cookie: AtomicU64::new(0),
+            noted: Mutex::default(),
+            arrived: Condvar::new(),
+            #[cfg(target_os = "macos")]
+            flush: Mutex::default(),
+        }))
+    }
+
+    /// Note `raw`'s events as they arrive and pass them on: -> what the watch loop reads instead.
+    fn record(&self, raw: Receiver<notify::Result<Event>>) -> Receiver<notify::Result<Event>> {
+        let (tx, rx) = mpsc::channel();
+        let notes = self.clone();
+        let spawned = std::thread::Builder::new().name("scrutate-notes".into()).spawn(move || {
+            for ev in raw {
+                notes.note(&ev);
+                if tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        });
+        if spawned.is_err() {
+            lock(&self.0.noted).walked = None;
+        }
+        rx
+    }
+
+    pub(crate) fn note(&self, ev: &notify::Result<Event>) {
+        let mut n = lock(&self.0.noted);
+        match ev {
+            Err(_) => n.walk_all("the watcher reported an error"),
+            Ok(e) if e.need_rescan() => n.walk_all("the watcher lost events"),
+            Ok(Event { kind: EventKind::Access(_), .. }) => {}
+            Ok(e) => {
+                let index = self.0.root.join(INDEX_DIR);
+                let mut arrived = false;
+                for p in e.paths.iter().filter(|p| p.parent().is_some_and(|d| d.file_name() == Some(COOKIES.as_ref()) && d.parent() == Some(&index))) {
+                    arrived |= n.cookies.insert(p.file_name().unwrap_or_default().to_os_string());
+                }
+                if arrived {
+                    self.0.arrived.notify_all();
+                }
+                if e.paths.iter().all(|p| p.starts_with(&index)) {
+                    return;
+                }
+                if n.events.len() >= MOST_NOTED {
+                    n.walk_all("too many changes since the last read");
+                    return;
+                }
+                n.gen += 1;
+                let g = n.gen;
+                n.events.push((g, e.clone()));
+            }
+        }
+    }
+
+    /// The watches are set from `walked`: a read that applied less walks the tree, since a file
+    /// written while they were being set may have no event. Only Linux sets them again later, one
+    /// per directory; elsewhere one watch covers the tree from the first.
+    fn watching(&self, walked: &Arc<Walked>) {
+        let mut n = lock(&self.0.noted);
+        if n.walked.is_none() || cfg!(target_os = "linux") {
+            n.walk_all("the watches were set");
+        }
+        n.polled = walked.poll_files.iter().map(|p| (p.clone(), seen(p))).collect();
+        n.walked = Some(Arc::clone(walked));
+    }
+
+    fn stopped(&self) {
+        lock(&self.0.noted).walked = None;
+        #[cfg(target_os = "macos")]
+        {
+            *lock(&self.0.flush) = None;
+        }
+    }
+
+    /// Wait until the events of every change made before this call are noted.
+    fn barrier(&self) -> std::result::Result<(), &'static str> {
+        let name = format!("cookie-{}-{}", std::process::id(), self.0.next_cookie.fetch_add(1, Ordering::Relaxed));
+        let path = self.0.cookies.join(&name);
+        std::fs::write(&path, b"").map_err(|_| "no cookie could be written")?;
+        #[cfg(target_os = "macos")]
+        if let Some(f) = lock(&self.0.flush).as_ref() {
+            f.flush();
+        }
+        let t0 = Instant::now();
+        let mut n = lock(&self.0.noted);
+        let r = loop {
+            if n.cookies.remove(std::ffi::OsStr::new(&name)) {
+                break Ok(());
+            }
+            let Some(left) = BARRIER.checked_sub(t0.elapsed()) else { break Err("the barrier timed out") };
+            n = self.0.arrived.wait_timeout(n, left).unwrap_or_else(|p| p.into_inner()).0;
+        };
+        drop(n);
+        let _ = std::fs::remove_file(&path);
+        r
+    }
+}
+
+fn session_debug(why: &str) {
+    if std::env::var_os("SCRUTATE_SESSION_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+        eprintln!("[scrutate] session: every file, {why}");
+    }
+}
+
+impl Freshness for Notes {
+    fn changes_since(&self, t: Token) -> (Changes, Token) {
+        let all = |why: &str, now: u64| {
+            session_debug(why);
+            (Changes::All, Token::at(now))
+        };
+        if lock(&self.0.noted).walked.is_none() {
+            return all("the watch is not in place", t.get());
+        }
+        if let Err(why) = self.barrier() {
+            return all(why, t.get());
+        }
+        let mut n = lock(&self.0.noted);
+        let now = n.gen;
+        let Some(walked) = n.walked.clone() else { return all("the watch stopped", now) };
+        if t.get() < n.walk_below {
+            return all(n.why, now);
+        }
+        if !walked.poll_dirs.is_empty() {
+            return all("some directories have no watch", now);
+        }
+        if n.polled.iter().any(|(p, s)| seen(p) != *s) {
+            return all("a rule file no watch covers changed", now);
+        }
+        n.events.retain(|(g, _)| *g > t.get());
+        let mut burst = Burst::default();
+        for (_, e) in &n.events {
+            burst.note(&self.0.root, &walked, &Ok(e.clone()));
+        }
+        drop(n);
+        if burst.full {
+            return all("a rule file changed", now);
+        }
+        match burst.files(&self.0.root, &self.0.code, &walked) {
+            Some(named) => (Changes::Named(named), Token::at(now)),
+            None => all("a directory came or went", now),
+        }
+    }
+
+    fn files(&self, text: bool) -> Result<Vec<crate::files::Found>> {
+        crate::files::look(&self.0.root, text)
+    }
+
+    fn watching(&self) -> bool {
+        lock(&self.0.noted).walked.is_some()
+    }
+}
+
 /// An entry as `Poll` last saw it. A directory's own times change with each entry, which is seen
 /// on its own, so only its presence counts.
 #[derive(PartialEq)]
@@ -506,7 +733,29 @@ fn debug() -> bool {
 /// after that `on_change` runs once per debounced burst that changes what an index holds, with the
 /// burst's change set: the files it names when it does not walk the tree. An error from the first
 /// `on_change`, or the root going away, ends the watch; later update errors are reported.
-pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
+pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
+    run_noting(root, stop, None, on_ready, on_change)
+}
+
+/// Clears the notes when the watch ends, however it ends.
+struct Stopping<'a>(Option<&'a Notes>);
+
+impl Drop for Stopping<'_> {
+    fn drop(&mut self) {
+        if let Some(n) = self.0 {
+            n.stopped();
+        }
+    }
+}
+
+/// `run`, keeping `notes` of every event for a session's reads.
+pub fn run_noting(
+    root: &Path,
+    stop: &AtomicBool,
+    notes: Option<&Notes>,
+    on_ready: impl FnOnce(),
+    mut on_change: impl FnMut(&Changes) -> Result<()>,
+) -> Result<()> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let (tx, rx) = mpsc::channel();
     #[cfg(target_os = "macos")]
@@ -516,8 +765,24 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
     };
     #[cfg(not(target_os = "macos"))]
     let mut watcher = notify::recommended_watcher(tx).context("start the file watcher")?;
+    // dropped before the watcher: no flush reaches a stream that is gone
+    let _stopping = Stopping(notes);
+    #[cfg(target_os = "macos")]
+    if let Some(n) = notes {
+        *lock(&n.0.flush) = Some(watcher.flusher());
+    }
+    let rx = match notes {
+        Some(n) => n.record(rx),
+        None => rx,
+    };
     let code = CodeWalk::new(&root);
-    let mut walked = sync_watches(&mut watcher, &root, &code, None)?;
+    let mut walked = Arc::new(sync_watches(&mut watcher, &root, &code, None)?);
+    // the cookies' directory is in no walk; elsewhere the root's watch covers it
+    #[cfg(target_os = "linux")]
+    let notes = notes.filter(|n| watcher.watch(&n.0.cookies, RecursiveMode::NonRecursive).is_ok());
+    if let Some(n) = notes {
+        n.watching(&walked);
+    }
     let mut poll = Poll::new(&walked);
     on_change(&Changes::All)?;
     on_ready();
@@ -558,7 +823,10 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         }
         let named = files.filter(|_| !walked.due(&root));
         if named.is_none() {
-            walked = sync_watches(&mut watcher, &root, &code, Some(&walked))?;
+            walked = Arc::new(sync_watches(&mut watcher, &root, &code, Some(&walked))?);
+            if let Some(n) = notes {
+                n.watching(&walked);
+            }
             poll = Poll::new(&walked);
         }
         if debug {
@@ -627,8 +895,9 @@ mod fsevents {
     const ITEM_REMOVED: u32 = 0x200;
     const ITEM_RENAMED: u32 = 0x800;
     const ITEM_IS_DIR: u32 = 0x20000;
-    /// seconds the stream gathers events for before it calls back; the burst's own wait follows
-    const LATENCY: f64 = 0.05;
+    /// seconds the stream gathers events for before it calls back; the burst's own wait follows.
+    /// A session's read waits for its cookie's event, so this is short.
+    const LATENCY: f64 = 0.005;
 
     type Callback = unsafe extern "C" fn(*const c_void, *mut c_void, usize, *mut c_void, *const u32, *const u64);
     type Retain = unsafe extern "C" fn(*const c_void) -> *const c_void;
@@ -664,6 +933,7 @@ mod fsevents {
         set_queue: SetQueue,
         start: Start,
         stop: Op,
+        flush_sync: Op,
         invalidate: Op,
         release: Op,
     }
@@ -691,6 +961,7 @@ mod fsevents {
                     set_queue: std::mem::transmute::<*mut c_void, SetQueue>(sym(c"FSEventStreamSetDispatchQueue")?),
                     start: std::mem::transmute::<*mut c_void, Start>(sym(c"FSEventStreamStart")?),
                     stop: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamStop")?),
+                    flush_sync: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamFlushSync")?),
                     invalidate: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamInvalidate")?),
                     release: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamRelease")?),
                 })
@@ -748,6 +1019,29 @@ mod fsevents {
                 }
                 Some(Stream { api, stream, queue })
             }
+        }
+    }
+
+    /// What hands a started stream's pending events to its callback at once.
+    pub struct Flush {
+        f: Op,
+        stream: *mut c_void,
+    }
+
+    // SAFETY: FSEventStreamFlushSync may be called from any thread; `Notes` drops this before the
+    // stream is torn down, under the same lock a flush holds.
+    unsafe impl Send for Flush {}
+
+    impl Flush {
+        pub fn flush(&self) {
+            // SAFETY: a started stream that outlives this (see the impl of Send)
+            unsafe { (self.f)(self.stream) }
+        }
+    }
+
+    impl Stream {
+        pub fn flusher(&self) -> Flush {
+            Flush { f: self.api.flush_sync, stream: self.stream }
         }
     }
 

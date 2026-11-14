@@ -279,7 +279,7 @@ while files change.
 | `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. The JSON gives each language's extensions, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names, and every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included). A custom language follows the built-in ones: its line ends `custom: .scrutate.toml` (or `custom:` and the path of your configuration file), and its JSON has `"tier": "custom"` and `"source"`. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
-| `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured] [--short-tools]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON; `--short-tools` sends the short tool list. |
+| `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured] [--short-tools]` | MCP server on stdio (see below); `--watch` also brings the indexes up to date after each burst of file changes; `--structured` also sends each answer as JSON; `--short-tools` sends the short tool list. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config [--json]` | Show the configuration file in effect. `--json` prints `{"root": ..., "configuration_file": ...}`: the root an index command run here uses, and the configuration file (`null` when none). It builds no index; the editor plugins read it to find the root. |
 | `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints the answer's envelope with the operation's name (`{"op", "schema", "result"}`, and `stopped_at` when it stopped at its limit) or `{"op", "error"}`; a `response_format` other than `detailed` or `concise` is such an error, and either form prints the same envelope. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`) and the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`): the rows the ranker is trained on. |
@@ -752,7 +752,19 @@ Grep hook and `lsp` answer the same way. The CLI and the Python bindings print w
 hold; `SCRUTATE_REDACT=on` redacts the CLI's index answers too, and `SCRUTATE_REDACT=off` turns
 redaction off everywhere. No tool argument turns it off, so an agent cannot.
 
-Before a call the server checks the repository for changed files and updates the index. Without
+Before a call the server brings the index up to date with the files that changed since the last
+call. A watch on the tree (FSEvents on macOS, one inotify watch per directory on Linux,
+ReadDirectoryChangesW on Windows) names them, `--watch` or not: the call writes a cookie file under
+`.scrutate/cookies/` and waits for its event, so every file written before the call started is
+named, then it looks at the named files alone (one `stat` each) and indexes those that changed.
+When the watch cannot vouch for fewer files (it is not in place yet, it lost events or reported an
+error, an ignore rule or a directory changed, the cookie's event took more than a second, or on
+Linux the watches were set again) the call looks at every file instead, at once. The one
+exception is a `--refresh-interval` you give: it holds that walk back as below, so a new directory
+or a changed ignore rule can wait up to that interval before calls see it. That is the only case
+in which a write finished before a call is not in its answer, and only by your choice.
+`SCRUTATE_SESSION_DEBUG=1` says why on stderr. A watch that cannot start (the inotify watch limit,
+a file system without events) leaves every call looking at every file, as follows. Without
 `--refresh-interval`, scans are at most a second apart, closer when a scan is cheap; with
 `--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S seconds after
 the last. With `--watch`, each watcher update counts as a scan. A scan that could not run because
@@ -767,8 +779,8 @@ While it runs, the server offers its open index to command line calls of the sam
 same root: `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `outline`, `deps`, `rdeps`,
 `read`, `similar`, `dupes`, `dead`, `search` (of this repository alone: with `--also` another
 root it does its own work) and the ranked part of `find`. Not `impact`, since git runs in the
-command's own environment, nor `files`, which needs no index. Every file is looked at first as
-always, and the output is the same bytes and exit code a fresh process gives (about 12 ms in
+command's own environment, nor `files`, which needs no index. The files that changed are looked
+at first, as for a tool call (every file when the watch cannot vouch for fewer), and the output is the same bytes and exit code a fresh process gives (about 12 ms in
 place of 28 ms on a copy of this repository). The meeting point is a socket file,
 `.scrutate/session.sock` (owner only; Unix; no network port), removed when the server exits. A
 command never starts a server. When anything about the server differs from how the command would

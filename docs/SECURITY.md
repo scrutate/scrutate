@@ -429,15 +429,18 @@ as before (mode 0700 on Unix).
     process never calls `dlsym`; `tests/lazy_bind.rs` runs variadic, floating-point, callback,
     panic and `fork` calls through them;
   - `watch.rs` (macOS only, `fsevents`): `dlopen` of CoreServices by its full system path and
-    `dlsym` of eleven CoreFoundation, libdispatch and FSEvents functions (and the address of
+    `dlsym` of twelve CoreFoundation, libdispatch and FSEvents functions (and the address of
     `kCFTypeArrayCallBacks`, passed to `CFArrayCreate` as is), each function transmuted to the
     signature the macOS SDK headers declare and used only when no lookup returned null; the
     stream is created, scheduled, started and torn down (stop, invalidate, release) in the order
     FSEvents.h gives, every returned pointer checked for null; the callback reads exactly the `n`
     paths and flags FSEvents passes, as nul-terminated strings that live for the call, and its
     `info` is a boxed channel sender that the stream's release callback frees once, or the
-    caller frees when no stream was made. `watch::tests` starts a stream and receives a file's
-    event, and every `tests/watch_files.rs` test runs on it;
+    caller frees when no stream was made. A session's read calls `FSEventStreamFlushSync` from
+    its own thread through `Flush` (declared `Send`: the stream pointer is only passed to that
+    function), which `watch::Notes` holds under a lock and drops before the stream is torn down.
+    `watch::tests` starts a stream and receives a file's event, every `tests/watch_files.rs` test
+    runs on it, and the session tests flush it 1,000 times;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
     (`tests/intel_refs.rs`, its CPU time) with arguments they own, `std::env::set_var` in
@@ -466,7 +469,7 @@ as before (mode 0700 on Unix).
   | `crates/scrutate/src/session.rs` | 5 |
   | `crates/scrutate/src/shellhook.rs` | 4 |
   | `crates/scrutate/src/text.rs` | 1 |
-  | `crates/scrutate/src/watch.rs` | 21 |
+  | `crates/scrutate/src/watch.rs` | 23 |
   | `crates/scrutate/tests/cli.rs` | 1 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 1 |

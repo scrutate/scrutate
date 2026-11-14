@@ -371,9 +371,10 @@ impl Server {
             eprintln!("{why}");
             log(1, &why);
         } else {
-            match Session::open(&self.root, Every::given(None)) {
+            match Session::open_watched(&self.root, Every::given(None)) {
                 Ok(session) => {
-                    let session = Arc::new(session);
+                    // a watch that cannot start leaves requests walking the tree
+                    let _ = session.watch(false);
                     // requests wait for the index instead of seeing an empty one
                     session.building();
                     self.session = Some(Arc::clone(&session));

@@ -71,6 +71,8 @@ pub const KEPT_MIN_BYTES: i64 = 4 << 20;
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct UpdateStats {
     pub files_total: usize,
+    /// files whose `stat` the update compared with the index: every file, or the files named
+    pub files_looked: usize,
     pub files_changed: usize,
     pub files_removed: usize,
     pub chunks: i64,
@@ -1980,6 +1982,7 @@ impl Index {
                 let files: Vec<(String, Option<Stat>)> =
                     found.iter().filter(|f| f.code).map(|f| (f.path.clone(), if f.lossy { stat_of(&f.path) } else { f.stat })).collect();
                 st.files_total = files.len();
+                st.files_looked = files.len();
                 files
             }
             Look::Named(paths) => {
@@ -1989,6 +1992,7 @@ impl Index {
                         known.insert(p, k);
                     }
                 }
+                st.files_looked = paths.len();
                 paths.iter().filter(|p| file_inside(&self.root, p).is_some()).map(|p| (p.clone(), stat_of(p))).collect()
             }
         };
@@ -2325,6 +2329,15 @@ impl Index {
     /// instead of waiting, so the read can answer from the last committed index.
     pub fn refresh_or_fail(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
         self.refresh_with(min_interval, false)
+    }
+
+    /// `refresh_or_fail` of just these files, without a walk, whenever it is asked.
+    pub fn refresh_paths(&mut self, paths: &[String]) -> Result<Option<UpdateStats>> {
+        if let Some(n) = self.newer().filter(|n| n.readable) {
+            n.note();
+            return Ok(None);
+        }
+        self.update_with(false, false, Look::Named(paths)).map(Some)
     }
 
     fn refresh_with(&mut self, min_interval: f64, wait: bool) -> Result<Option<UpdateStats>> {

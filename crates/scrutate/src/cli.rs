@@ -1662,28 +1662,11 @@ pub fn run() -> Result<i32> {
             if cli.offset != 0 {
                 anyhow::bail!("--offset does nothing with serve: a tool call takes its own offset");
             }
-            let s = Arc::new(Session::open(&cli.root, crate::session::Every::given(refresh_interval))?);
+            let s = Session::open_watched(&cli.root, crate::session::Every::given(refresh_interval))?;
             // command line calls of this user may use the session until the server exits; before
             // any thread starts, as a long socket path is named from its directory
             let _listening = crate::session::listen(&s, printed);
-            if watch {
-                let s = Arc::clone(&s);
-                std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
-                    static NEVER: AtomicBool = AtomicBool::new(false);
-                    let root = s.root().to_path_buf();
-                    // the session's writer lock orders this with its other writes; the index's own
-                    // locks order it with other processes
-                    let r = crate::watch::run(
-                        &root,
-                        &NEVER,
-                        || eprintln!("[scrutate] watching {}", root.display()),
-                        |changes| s.write(|repo| repo.update_stores(Writer::Watch, changes, false)).map(|_| ()),
-                    );
-                    if let Err(e) = r {
-                        eprintln!("[scrutate] watching stopped: {e:#}");
-                    }
-                })?;
-            }
+            s.watch(watch)?;
             crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes), crate::VERSION, structured, short_tools)?;
             Ok(0)
         }

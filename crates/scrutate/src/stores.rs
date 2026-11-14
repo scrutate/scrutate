@@ -16,8 +16,8 @@
 //! | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 //! | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 //! | an index command, `batch` | every file before the first operation; never waits | code index |
-//! | an MCP tool call, a bindings call, a language server request | every file, at most once per refresh interval of the session; never waits | code index |
-//! | an index command a running `serve` answers | every file, in that session, before the operation; never waits (else the command does the work itself) | code index |
+//! | an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; never waits | code index |
+//! | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); never waits (else the command does the work itself) | code index |
 //! | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 //! | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 //! | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
@@ -327,6 +327,15 @@ impl Repo {
     /// read-only) the read answers from the last committed index, and stderr says why once. A
     /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
+        self.refreshed(|ix| ix.refresh_or_fail(min_interval))
+    }
+
+    /// `refresh` of the files a change set names alone, whenever it is asked.
+    pub fn refresh_named(&mut self, paths: &[String]) -> Result<Option<UpdateStats>> {
+        self.refreshed(|ix| ix.refresh_paths(paths))
+    }
+
+    fn refreshed(&mut self, f: impl FnOnce(&mut index::Index) -> Result<Option<UpdateStats>>) -> Result<Option<UpdateStats>> {
         let writer = Arc::clone(&self.writer);
         let Some(_w) = hold_if_free(&writer) else {
             // a write of this process runs: answer from the committed index, as against another
@@ -337,7 +346,7 @@ impl Repo {
             };
         };
         self.reopened()?;
-        match self.ix.refresh_or_fail(min_interval) {
+        match f(&mut self.ix) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
             Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
             Err(e) if e.is::<index::Newer>() => Err(e),
