@@ -467,8 +467,8 @@ fn the_impact_tool_lists_the_findings_in_both_forms_and_says_it_does() {
         "{detailed}"
     );
     let concise = call("concise");
-    // a line in the file of the line before it starts at its lines
-    assert!(concise.contains(":1-10 copy_of_unique (duplicate) of text.py:1-10\n"), "{concise}");
+    // the first line of a section names its file, though the line above it is in that file
+    assert!(concise.contains("\nfindings: 2\nfresh.py:1-10 copy_of_unique (duplicate) of text.py:1-10\n"), "{concise}");
     assert!(concise.ends_with("\nfresh.py:1-10 copy_of_unique (untested-change)"), "{concise}");
     let tools = scrutate::mcp::tools(false, 24_000, false);
     let impact = tools.as_array().unwrap().iter().find(|t| t["name"] == "impact").unwrap();

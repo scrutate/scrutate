@@ -798,7 +798,8 @@ servers on one root, the first offers the socket.
   `/` names a directory (`./` the root), and a path without `/` below it is in that directory (a
   path in another directory on the same line is written whole, a file at the root `./name`); a
   location written `:start-end` (or `:line`, `:line:column`) is in the file of the location
-  before it. With `serve --structured` the JSON is the detailed one in both forms. Any other
+  before it in the same section: the first location after a section's head (`changed:`,
+  `findings:`, `references (...)` and the like) names its file. With `serve --structured` the JSON is the detailed one in both forms. Any other
   value is an error (`response_format must be "detailed" or "concise"`). Per tool, concise gives:
 
   | Tool | Concise answer |

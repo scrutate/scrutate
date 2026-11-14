@@ -1180,14 +1180,14 @@ fn refs_brief(r: &References) -> Vec<Vec<Brief>> {
     let mut out = Vec::new();
     let mut section = |title: &str, defs: Vec<Brief>| {
         if !defs.is_empty() {
-            out.push(vec![Brief::text(title)]);
+            out.push(vec![Brief::head(title)]);
             out.extend(defs.into_iter().map(|d| vec![d]));
         }
     };
     let at = |path: &str, start: i64, end: i64, name: &str| Brief::text("  ").then_at(path, start, end).then(format!(" {}", named(name)));
     section("definitions:", r.definitions.iter().map(|d| at(&d.path, d.start, d.end, &d.qualname)).collect());
     section("callers:", r.callers.iter().map(|h| at(&h.path, h.start, h.end, &h.qualname)).collect());
-    out.push(vec![Brief::text(format!("references ({} lines in {} symbols):", r.total_lines(), r.groups.len()))]);
+    out.push(vec![Brief::head(format!("references ({} lines in {} symbols):", r.total_lines(), r.groups.len()))]);
     for g in &r.groups {
         let mut lines = group_brief(g, "  ").into_iter();
         out.push(lines.next().into_iter().collect());
@@ -1219,7 +1219,7 @@ fn resolved_brief(r: &Resolved, only: Option<i64>) -> Vec<Vec<Brief>> {
             out.push(vec![Brief::text(format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved)", unresolved.len()))]);
         }
         None => {
-            out.push(vec![Brief::text(format!("unresolved ({}):", unresolved.len()))]);
+            out.push(vec![Brief::head(format!("unresolved ({}):", unresolved.len()))]);
             out.extend(unresolved.into_iter().map(occurrence));
         }
     }
@@ -1236,9 +1236,9 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
             Brief::at(&h.path, h.start, h.end, &format!("{}{mark}", named(hit_name(h))))
         }
     };
-    let mut out = vec![vec![Brief::text(format!("changed: {}", i.changed.len()))]];
+    let mut out = vec![vec![Brief::head(format!("changed: {}", i.changed.len()))]];
     out.extend(i.changed.iter().map(|c| vec![symbol(&c.hit, &format!(" ({})", c.status))]));
-    out.push(vec![Brief::text(format!("callers: {} (depth {})", i.callers.len(), i.depth))]);
+    out.push(vec![Brief::head(format!("callers: {} (depth {})", i.callers.len(), i.depth))]);
     out.extend(i.callers.iter().map(|c| {
         let mark = if c.calls_deleted {
             " (calls deleted)"
@@ -1249,7 +1249,7 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
         };
         vec![Brief::text(format!("{} ", c.distance)).and(symbol(&c.hit, mark))]
     }));
-    out.push(vec![Brief::text(format!("tests: {}", i.tests.len()))]);
+    out.push(vec![Brief::head(format!("tests: {}", i.tests.len()))]);
     out.extend(i.tests.iter().map(|t| {
         vec![match &t.via {
             // the definition that reaches the change names the test file when it is in it
@@ -1259,7 +1259,7 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
         }]
     }));
     if !i.findings.is_empty() {
-        out.push(vec![Brief::text(format!("findings: {}", i.findings.len()))]);
+        out.push(vec![Brief::head(format!("findings: {}", i.findings.len()))]);
         for (n, f) in i.findings.iter().enumerate() {
             let mut b = Brief::at(&f.path, f.start, f.end, &format!("{} ({})", named(&f.name), f.kind()));
             for (k, (path, _, start, end)) in f.related().iter().enumerate() {
@@ -1272,7 +1272,7 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
         }
     }
     if !i.notes.is_empty() {
-        out.push(vec![Brief::text(format!("notes: {}", i.notes.len()))]);
+        out.push(vec![Brief::head(format!("notes: {}", i.notes.len()))]);
         out.extend(i.notes.iter().map(|(p, n)| vec![Brief::path(p).then(format!(" {n}"))]));
     }
     out
@@ -1308,7 +1308,8 @@ impl Form {
 /// One line of a concise answer: text, paths and locations. A line that ends with `/` names a
 /// directory, and a path without `/` after it is in that directory (`./` is the root); a
 /// location without a path (`:start-end`, `:line`, `:line:column`) is in the file of the location
-/// before it. A directory
+/// before it, and a section's head ends that, so the first location of a section names its file.
+/// A directory
 /// line comes before a line whose first path is in another directory; another path of that line
 /// in another directory is written whole, and a file at the root as `./name`.
 #[derive(Default)]
@@ -1319,6 +1320,8 @@ enum Piece {
     Path(String),
     /// a path and what follows it: `:start-end`, `:line` or `:line:column`
     At(String, String),
+    /// the line is a section's head: the next location names its file
+    Head,
 }
 
 /// The directory of the last directory line and the file of the last location of a page.
@@ -1331,6 +1334,9 @@ struct Written {
 impl Brief {
     fn text(text: impl Into<String>) -> Brief {
         Brief(vec![Piece::Text(text.into())])
+    }
+    fn head(text: impl Into<String>) -> Brief {
+        Brief(vec![Piece::Text(text.into()), Piece::Head])
     }
     fn path(path: &str) -> Brief {
         Brief::default().then_path(path)
@@ -1386,6 +1392,7 @@ impl Brief {
                     }
                     line.push_str(place);
                 }
+                Piece::Head => page.file.clear(),
             }
         }
         push_line(out, &line);
