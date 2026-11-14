@@ -127,7 +127,7 @@ impl Git {
         c.current_dir(&self.dir).args(["--no-optional-locks", "-c", "core.fsmonitor=false"]).args(args).stdin(Stdio::null());
         match &self.env {
             Env::Own(set) => {
-                c.envs(set.iter().map(|(name, value)| (name, value)));
+                c.envs(set.iter().map(|(name, value)| (name, plain_value(name, value))));
             }
             Env::Given(env) => {
                 // git reads its configuration, programs and paths from GIT_* names: none of this process's reach it
@@ -139,7 +139,7 @@ impl Git {
                 for name in PASSED_ENV {
                     c.env_remove(name);
                 }
-                c.envs(env.iter().map(|(name, value)| (name, value)));
+                c.envs(env.iter().map(|(name, value)| (name, plain_value(name, value))));
             }
         }
         c
@@ -409,13 +409,39 @@ fn first_line(b: &[u8]) -> String {
     line.strip_prefix("fatal: ").or_else(|| line.strip_prefix("error: ")).unwrap_or(line).to_string()
 }
 
-/// The root as a directory to start git in: on Windows a verbatim drive path (`\\?\C:\x`, what
-/// `canonicalize` gives) in its plain form.
+/// A path as git reads it: on Windows a verbatim path (`\\?\C:\x`, `\\?\UNC\host\share\x`, what
+/// `canonicalize` gives) in its plain form, since git does not read the verbatim one.
+fn plain(path: &str) -> std::borrow::Cow<'_, str> {
+    if cfg!(windows) {
+        if let Some(rest) = path.strip_prefix(r"\\?\") {
+            if rest.as_bytes().get(1) == Some(&b':') {
+                return rest.into();
+            }
+            if let Some(share) = rest.strip_prefix(r"UNC\") {
+                return format!(r"\\{share}").into();
+            }
+        }
+    }
+    path.into()
+}
+
+/// A value handed to git with each path in it plain; `GIT_ALTERNATE_OBJECT_DIRECTORIES` is a list.
+fn plain_value(name: &str, value: &str) -> String {
+    if cfg!(windows) && name == "GIT_ALTERNATE_OBJECT_DIRECTORIES" {
+        value.split(';').map(plain).collect::<Vec<_>>().join(";")
+    } else {
+        plain(value).into_owned()
+    }
+}
+
+/// The root as a directory to start git in, plain.
 fn plain_dir(root: &Path) -> PathBuf {
     let s = root.to_string_lossy();
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) if cfg!(windows) && rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => root.to_path_buf(),
+    let p = plain(&s);
+    if p != s {
+        PathBuf::from(p.as_ref())
+    } else {
+        root.to_path_buf()
     }
 }
 
@@ -447,11 +473,13 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
 
     const SIX: [&str; 6] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR"];
 
+    /// A new directory for a test, as a plain path, which git reads on every platform: every path a
+    /// test hands git or puts in a variable comes from here.
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("scrutate_git_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::canonicalize(dir).unwrap()
+        plain_dir(&std::fs::canonicalize(dir).unwrap())
     }
 
     /// A repository with one empty commit, made with git's own configuration only; its HEAD commit.
@@ -479,6 +507,10 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
     fn a_git_dir_handed_in_is_the_repository_git_reads() {
         let (store, work) = (scratch("store"), scratch("work"));
         let head = repo(&store);
+        let git = Git::with_env(&work, &env(&[("GIT_DIR", &store.join(".git")), ("GIT_WORK_TREE", &work)])).unwrap();
+        assert_eq!(git.commit("HEAD").unwrap(), head);
+        // canonical paths, verbatim on Windows, as a caller may hand them: Git makes them plain
+        let (store, work) = (std::fs::canonicalize(&store).unwrap(), std::fs::canonicalize(&work).unwrap());
         let git = Git::with_env(&work, &env(&[("GIT_DIR", &store.join(".git")), ("GIT_WORK_TREE", &work)])).unwrap();
         assert_eq!(git.commit("HEAD").unwrap(), head);
     }
@@ -596,6 +628,16 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let staged: Vec<(Option<String>, Option<String>)> =
             git.diff(&git.commit("HEAD").unwrap(), &New::Staged).unwrap().into_iter().map(|e| (e.old, e.new)).collect();
         assert_eq!(staged, [(None, Some("b".to_string()))]);
+    }
+
+    #[test]
+    fn a_verbatim_windows_path_reaches_git_in_its_plain_form() {
+        for (given, on_windows) in [(r"\\?\C:\x\y", r"C:\x\y"), (r"\\?\UNC\host\share\x", r"\\host\share\x"), (r"C:\x", r"C:\x"), ("/a/b", "/a/b")] {
+            assert_eq!(plain(given), if cfg!(windows) { on_windows } else { given });
+        }
+        let list = r"\\?\C:\a;\\?\UNC\h\s\b;c";
+        assert_eq!(plain_value("GIT_ALTERNATE_OBJECT_DIRECTORIES", list), if cfg!(windows) { r"C:\a;\\h\s\b;c" } else { list });
+        assert_eq!(plain_value("GIT_DIR", r"\\?\C:\r\.git"), if cfg!(windows) { r"C:\r\.git" } else { r"\\?\C:\r\.git" });
     }
 
     #[test]
