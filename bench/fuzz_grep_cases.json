@@ -1,0 +1,66 @@
+[
+ {
+  "name": "overlapping paths and a parent .ignore",
+  "why": "FUZZ-01: ripgrep before 15.2.0 searched sub/deep twice (43e2f08ede)",
+  "args": [
+   "-S",
+   "-A2",
+   "-T",
+   "rust",
+   "Foo",
+   "sub/deep",
+   "sub"
+  ],
+  "dirs": [
+   ".git"
+  ],
+  "files": {
+   ".ignore": "L3N1Yi9kZWVwLwo=",
+   "A.TXT": "Zm9vX2JhciBhLmIgRm9vDQphLmIgYS5iIHggKHgpIGJheg0KDQpGT08NCg0K",
+   "c.log": "CsOJVMOJIGZvb2JhciBmb28gYS5iCsOJVMOJIGJheiDDqXTDqSBhLmIKCg==",
+   "dir2/.h.txt": "Cg==",
+   "dir2/d.rs": "IGVuZA==",
+   "dir2/e.tmp": "Rm9vCmJhciBUb2tlbgoKRm9vIGVuZCDDqXTDqSAKw4lUw4kgYmFyICBGb28KYmF6CsOpdMOpIHggKHgpCiBmb29iYXIgRm9vIMOpdMOpCiAgZm9vX2JhcgphLmIgKHgpIGZvb2JhciBlbmQK",
+   "keep.log": "w4lUw4kgZW5kICBiYXoKZm9vYmFyIHRva2VuIEZPTwpiYXogZm9vIGZvb19iYXIgw6l0w6kgw6l0w6kKCmZvb2JhciBGT08gw4lUw4kKZm9vICBlbmQgKHgpIGJhegpmb29fYmFyIEZPTyBiYXogeCAKCmZvb2JhciDDqXTDqSBiYXoK",
+   "plain.txt": "VG9rZW4gZm9vYmFyCg==",
+   "sub/.rgignore": "KiovdG1wCg==",
+   "sub/A.TXT": "Zm9vICB0b2tlbiBiYXIgKHgpCg==",
+   "sub/d.rs": "CkZPTyBmb29fYmFyIGZvbyBmb29iYXIKCg==",
+   "sub/deep/a.txt": "w6l0w6kgw6l0w6kgVG9rZW4gIGJhegrDqXTDqSB4IGZvb19iYXIgeArDqXTDqSAoeCkgIGJhciDDiVTDiQooeCkgZm9vIGEuYgpiYXIgRm9vIGVuZCBiYXIKYmF6IMOpdMOpClRva2VuCmZvbyDDqXTDqSBmb29iYXIKZW5kICh4KSBmb29iYXIgKHgpIEZPTwogw6l0w6kgZm9vX2JhcgrDiVTDiSBlbmQgdG9rZW4=",
+   "sub/deep/b.txt": "Zm9vIGJhciBiYXogYS5iCg==",
+   "sub/deep/e.tmp": "IGZvb19iYXIgZm9vX2JhcgplbmQgCgp0b2tlbiB0b2tlbgoKIGZvb2JhciBiYXIgYS5iIGZvbw==",
+   "sub/keep.log": "//4gYmFkIMOJVMOJClRva2VuIFRva2VuCgphLmIgdG9rZW4gRm9vIGZvb2JhcgrDqXTDqSBmb29fYmFyCgogIGVuZCAKZW5kIGEuYiBGT08gRm9vIGJhcgp0b2tlbiBmb29iYXIgw6l0w6kgRk9PIGZvbwpmb29iYXIgeCDDqXTDqQpiYXIgRk9PIGZvbyBGT08gZm9vX2Jhcg==",
+   "tmp/a.txt": "ZW5kIHRva2VuIGJheiBGb28gYmFyCmJheiBmb29iYXIgZm9vIHRva2VuIHgAYmluCsOpdMOpIGJheiDDiVTDiSAgKHgpCsOJVMOJIGZvbyBmb29iYXIgZm9vYmFy",
+   "tmp/c.log": "Rk9PIGZvb19iYXIgZm9vYmFyICh4KQ==",
+   "tmp/long name.txt": "VG9rZW4gRm9vIGZvb19iYXIKCgphLmIKZm9vX2JhciBUb2tlbiDDiVTDiSB4CsOJVMOJIGEuYiDDqXTDqQp4ICh4KSBmb29fYmFyCg=="
+  }
+ },
+ {
+  "name": "a walked file with a NUL byte after a match in its first 3 bytes",
+  "why": "FUZZ-02: ripgrep prints the line its 3-byte BOM read holds",
+  "args": [
+   "--hidden",
+   "-L",
+   "-e",
+   "été",
+   "-e",
+   "x",
+   "."
+  ],
+  "dirs": [
+   ".git"
+  ],
+  "files": {
+   ".hid/c.log": "YS5iIMOpdMOpIMOpdMOpIHggeA0KZm9vIGZvb2JhciBmb28gYmF6DQpmb29fYmFyIHRva2VuDQrDqXTDqSBGT08gYS5iIHgNClRva2VuIGJheiAgZW5kIFRva2VuDQpmb29fYmFyIGJhcg0KDQoNCmJheg0KYmF6IGZvbyBUb2tlbg0Kw6l0w6kgZm9vX2JhciBmb28gYS5iIGZvb2Jhcg0KZW5kIGEuYiBhLmINCg==",
+   ".hid/d.rs": "eCBGb28gZW5kIGEuYgpmb29fYmFyCg==",
+   "A.TXT": "",
+   "c.log": "YmFyIGVuZCBiYXINCsOpdMOpIGEuYiBiYXIgVG9rZW4gVG9rZW4NCsOpdMOpIHRva2VuIGJheg0Kw6l0w6kgVG9rZW4gw6l0w6kgeA0K",
+   "dir1/.rgignore": "ZGVlcAoqKi90bXAK",
+   "dir1/a.txt": "eA0KYmFyIEZvbyBiYXogYmF6DQpmb28geA0KZm9vIMOJVMOJIFRva2VuIGJheiANClRva2VuAGJpbiBmb29fYmFyIGVuZCBlbmQgw6l0w6kNCkZPTyBGb28gdG9rZW4NCmZvbyBGb28gKHgpIGJhciA=",
+   "dir1/b.txt": "//4gYmFkIGZvb2JhciBmb28gICh4KSDDqXTDqQ0KeCBlbmQgYS5iDQo=",
+   "dir1/c.log": "Cg==",
+   "e.tmp": "Rm9vIFRva2VuIMOpdMOpIGZvb19iYXIgYS5iCkZPTwooeCkgYmFyIGJheiBhLmIK",
+   "plain.txt": "CmZvbyBGT08gRm9vIFRva2VuIGZvb19iYXIKYmF6IGJheiDDiVTDiSBGb28KZm9vYmFyIGVuZCB0b2tlbiBhLmIKZm9vIGVuZCBiYXoKeCBhLmIgZm9vYmFyIEZPTyDDiVTDiQpiYXIgeCDDqXTDqSDDqXTDqQo="
+  }
+ }
+]

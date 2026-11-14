@@ -1004,6 +1004,34 @@ fn a_reader_that_stops_reading_and_then_goes_away_ends_a_json_search() {
 }
 
 #[test]
+fn a_walked_file_with_an_early_nul_byte_is_searched_as_ripgrep_reads_it() {
+    // ripgrep reads a file's first 3 bytes on their own (its BOM check, encoding_rs_io's BomPeeker)
+    // and stops at the read that meets the NUL: a match on a line ending in those 3 bytes prints
+    let d = Dir::new("earlynul");
+    d.write("a.txt", b"x\r\nbar\r\nfoo x\r\nT\0bin\n");
+    d.write("b.txt", b"ab x\r\nfoo x\r\nT\0bin\n");
+    d.write("c.txt", b"x\nfoo x\nT\0bin\n");
+    d.write("e.txt", b"zz\nfoo x\nT\0bin\n");
+    // the fuzz case that found it (fuzz_grep.py seed 7, `--hidden -L -e été -e x .`)
+    d.write("dir1/a.txt", b"x\r\nbar Foo baz baz\r\nfoo x\r\nfoo \xc3\x89T\xc3\x89 Token baz \r\nToken\0bin foo_bar end end \xc3\xa9t\xc3\xa9\r\n");
+    let warn = |f: &str, at: u32| format!("{f}: WARNING: stopped searching binary file after match (found \"\\0\" byte around offset {at})");
+    // ripgrep 15.2.0 (`rg -n --no-heading --sort path x .`)
+    let want = [
+        "./a.txt:1:x".to_string(),
+        warn("./a.txt", 16),
+        "./c.txt:1:x".to_string(),
+        warn("./c.txt", 9),
+        "./dir1/a.txt:1:x".to_string(),
+        warn("./dir1/a.txt", 54),
+    ];
+    let (code, out, err) = d.run(&["grep", "-n", "--sort", "x", "."]);
+    assert_eq!((code, out.lines().collect::<Vec<_>>()), (0, want.iter().map(String::as_str).collect::<Vec<_>>()), "{err}");
+    // the files listed are those whose lines print, as ripgrep lists them
+    assert_eq!(sorted(&d.run(&["grep", "-l", "x", "."]).1), ["./a.txt", "./c.txt", "./dir1/a.txt"]);
+    assert_eq!(d.run(&["grep", "-c", "x", "."]).1, "", "a walked file with a NUL is left out of the counts");
+}
+
+#[test]
 fn a_walked_file_whose_search_stops_at_a_nul_byte_says_so_after_its_matches() {
     let d = Dir::new("walkstop");
     for f in ["d/a.bin", "d/b.bin", "d/c.bin", "d/e.bin"] {

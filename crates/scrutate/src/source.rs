@@ -261,8 +261,10 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
     let mut sink = Collector { convert: named, out: std::mem::take(&mut w.out), ..r.collector(Arc::clone(&rel)) };
     let res = match whole {
-        // only the stream reader turns NUL bytes into line breaks
-        Some(b) if named && memchr::memchr(0, b).is_some() => r.matcher.search_reader(searcher, b, &mut sink),
+        // a file with a NUL byte is read as ripgrep reads every file: a named one's NULs become line
+        // breaks, and a walked one stops at the read that meets the NUL, the first read being the
+        // 3 bytes of the BOM check, so a match on a line ending there still prints
+        Some(b) if memchr::memchr(0, b).is_some() => r.matcher.search_reader(searcher, b, &mut sink),
         Some(b) => r.matcher.search_slice(searcher, b, &mut sink),
         None => src.stream(r.matcher, searcher, &mut sink),
     };

@@ -18,10 +18,11 @@ in the lines of the files that got a NUL byte are excused. Runs whose arguments 
 (exit 2 with a message) are not compared; on any other exit 2 the output is. Exit status 1 when
 anything else differs, or when no compared run had any output. With --ordered, a run draws
 `--sort path` (scrutate's `--sort`) for both tools four times in ten, and then their lines are
-compared in the order printed. ripgrep is `SCRUTATE_RG` or `rg` on PATH, and must be 15.2.0 or
+compared in the order printed. Every run first replays the saved cases of bench/fuzz_grep_cases.json
+(trees and arguments that once differed), so a short run still covers them. ripgrep is `SCRUTATE_RG` or `rg` on PATH, and must be 15.2.0 or
 newer: an older one searches an ignored directory twice when path arguments overlap.
 """
-import argparse, os, random, shutil, subprocess, sys, tempfile, time
+import argparse, base64, json, os, random, shutil, subprocess, sys, tempfile, time
 from collections import Counter
 
 ap = argparse.ArgumentParser()
@@ -189,46 +190,75 @@ def only(x, y):
     return [l for l, c in left.items() if c > 0]
 
 t0, n, compared, nonempty, diffs, known, kinds = time.time(), 0, 0, 0, 0, 0, {}
+CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuzz_grep_cases.json")
+
+
+def load(case):
+    """A saved case's tree as WORK (its files, empty directories and the NUL files it holds)."""
+    shutil.rmtree(WORK, ignore_errors=True)
+    os.makedirs(WORK)
+    for d in case["dirs"]:
+        os.makedirs(os.path.join(WORK, d), exist_ok=True)
+    STATE["nul"] = set()
+    for rel, b64 in case["files"].items():
+        data = base64.b64decode(b64)
+        os.makedirs(os.path.dirname(os.path.join(WORK, rel)) or WORK, exist_ok=True)
+        with open(os.path.join(WORK, rel), "wb") as f:
+            f.write(data)
+        if b"\0" in data:
+            STATE["nul"].add(rel)
+
+
+def compare(a, label=None):
+    """Run both tools on `a` in WORK and count the outcome; a difference is kept and printed."""
+    global n, compared, nonempty, diffs, known
+    n += 1
+    r, rc, rerr = run("rg", a)
+    if rc == 2 and rerr.strip():
+        return  # rg rejects the arguments
+    s, sc, _ = run("sc", a)
+    compared += 1
+    nonempty += bool(r)
+    # ripgrep's other exit 2 is an error it met while searching: only the output is compared
+    if r == s and (rc == sc or rc == 2):
+        return
+    changed = only(r, s) + only(s, r)
+    if ("-v" in a or "^$" in a) and changed and any(x in a for x in ("-I", "--no-filename")):
+        # lines without their file's path: ask both again with it, to see which files differ
+        named = ["-H" if x in ("-I", "--no-filename") else x for x in a]
+        changed = only(run("rg", named)[0], run("sc", named)[0]) + only(run("sc", named)[0], run("rg", named)[0])
+    if ("-v" in a or "^$" in a) and changed and all(in_nul_file(l) for l in changed):
+        known += 1
+        return
+    diffs += 1
+    key = " ".join(x for x in a if x.startswith("-") and not x[1:].isdigit())
+    kinds[key] = kinds.get(key, 0) + 1
+    if kinds[key] <= 2 and diffs <= 400:
+        dst = os.path.join(KEEP, f"case{diffs}")
+        shutil.copytree(WORK, dst, symlinks=True)
+        with open(os.path.join(dst, "ARGS.txt"), "w") as f:
+            f.write(repr(a) + f"\nrg exit {rc}, scrutate exit {sc}\n")
+        print(f"DIFF case{diffs}{f' (saved: {label})' if label else ''} {a!r}: rg {len(r)} lines exit {rc}; scrutate {len(s)} lines exit {sc}")
+        for l in [x for x in r if x not in s][:2]:
+            print("    only rg:      ", l[:100])
+        for l in [x for x in s if x not in r][:2]:
+            print("    only scrutate:", l[:100])
+        sys.stdout.flush()
+
+
 shutil.rmtree(KEEP, ignore_errors=True)
 os.makedirs(KEEP, exist_ok=True)
+# the saved cases every run replays, before the random ones: differences found before
+for case in json.load(open(CASES, encoding="utf-8")):
+    load(case)
+    compare(case["args"], case["name"])
 while time.time() - t0 < SECONDS:
     make()
     for _ in range(6):
         a = paths(args())
         if ORDERED and rnd.random() < 0.4:
             a.insert(0, "--sort")
-        n += 1
-        r, rc, rerr = run("rg", a)
-        if rc == 2 and rerr.strip():
-            continue  # rg rejects the arguments
-        s, sc, _ = run("sc", a)
-        compared += 1
-        nonempty += bool(r)
-        # ripgrep's other exit 2 is an error it met while searching: only the output is compared
-        if r == s and (rc == sc or rc == 2):
-            continue
-        changed = only(r, s) + only(s, r)
-        if ("-v" in a or "^$" in a) and changed and any(x in a for x in ("-I", "--no-filename")):
-            # lines without their file's path: ask both again with it, to see which files differ
-            named = ["-H" if x in ("-I", "--no-filename") else x for x in a]
-            changed = only(run("rg", named)[0], run("sc", named)[0]) + only(run("sc", named)[0], run("rg", named)[0])
-        if ("-v" in a or "^$" in a) and changed and all(in_nul_file(l) for l in changed):
-            known += 1
-            continue
-        diffs += 1
-        key = " ".join(x for x in a if x.startswith("-") and not x[1:].isdigit())
-        kinds[key] = kinds.get(key, 0) + 1
-        if kinds[key] <= 2 and diffs <= 400:
-            dst = os.path.join(KEEP, f"case{diffs}")
-            shutil.copytree(WORK, dst, symlinks=True)
-            with open(os.path.join(dst, "ARGS.txt"), "w") as f:
-                f.write(repr(a) + f"\nrg exit {rc}, scrutate exit {sc}\n")
-            print(f"DIFF case{diffs} {a!r}: rg {len(r)} lines exit {rc}; scrutate {len(s)} lines exit {sc}")
-            for l in [x for x in r if x not in s][:2]:
-                print("    only rg:      ", l[:100])
-            for l in [x for x in s if x not in r][:2]:
-                print("    only scrutate:", l[:100])
-            sys.stdout.flush()
+        compare(a)
 shutil.rmtree(WORK, ignore_errors=True)
 print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
 if not diffs:
