@@ -529,7 +529,7 @@ pub fn ask(_root: &Path, _request: &Request) -> Result<Option<(Printed, UpdateSt
 pub struct Listening;
 
 #[cfg(not(unix))]
-pub fn listen(_session: &Arc<Session>, _answer: fn(Answer, &Request) -> Result<Printed>) -> Option<Listening> {
+pub fn listen(_session: &Arc<Session>, _answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
     None
 }
 
@@ -649,7 +649,7 @@ mod unix {
     /// it cannot (the socket path is too long, another session of this root is running, the
     /// index directory holds something else there): command line calls then do their own work.
     /// `answer` prints an answer as the command line does.
-    pub fn listen(session: &Arc<Session>, answer: fn(Answer, &Request) -> Result<Printed>) -> Option<Listening> {
+    pub fn listen(session: &Arc<Session>, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
         let path = socket_path(session.root());
         let Some(me) = Identity::here(session.root()) else {
             debug("no identity to offer");
@@ -713,14 +713,14 @@ mod unix {
         Some(Listening { path, id: (md.dev(), md.ino()) })
     }
 
-    fn serve_one(session: &Session, conn: UnixStream, hello: &str, answer: fn(Answer, &Request) -> Result<Printed>) -> Result<()> {
+    fn serve_one(session: &Session, conn: UnixStream, hello: &str, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Result<()> {
         let mut w = conn.try_clone()?;
         writeln!(w, "{hello}")?;
         conn.set_read_timeout(Some(REQUEST))?;
         let mut line = Vec::new();
         BufReader::new(std::io::Read::take(&conn, MAX_REQUEST)).read_until(b'\n', &mut line)?;
         let request: Request = serde_json::from_slice(&line)?;
-        let printed = session.run_scanned(&request.op).and_then(|(st, a)| Some((st, answer(a.ok()?, &request).ok()?)));
+        let printed = session.run_scanned(&request.op).and_then(|(st, a)| Some((st, answer(a.ok()?, &request, session.root()).ok()?)));
         let reply = match printed {
             Some((st, p)) => Reply { printed: Some(p), changed: st.files_changed, removed: st.files_removed, chunks: st.chunks, seconds: st.seconds },
             None => Reply { printed: None, changed: 0, removed: 0, chunks: 0, seconds: 0.0 },

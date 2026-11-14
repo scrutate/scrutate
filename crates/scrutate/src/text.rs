@@ -316,25 +316,35 @@ pub fn is_vendored_path(path: &str) -> bool {
     SET.is_match(&path.replace('\\', "/"))
 }
 
-/// Whether `path` is vendored code: search ranks it below the project's own. A path under a
-/// directory a repository opened in this process builds as its own package is not.
-pub fn is_vendored(path: &str) -> bool {
-    is_vendored_path(path) && !OWN.read().unwrap_or_else(|e| e.into_inner()).values().any(|dirs| owns(dirs, path))
+/// Which paths of one repository are vendored code: search ranks them lower than the project's
+/// own. A path under a directory the repository's root manifests build as its own package is not.
+pub struct Vendored {
+    own: std::sync::Arc<Vec<String>>,
 }
 
-/// By repository root: the directories its root manifests declare as its own packages.
-static OWN: LazyLock<std::sync::RwLock<HashMap<std::path::PathBuf, Vec<String>>>> = LazyLock::new(Default::default);
-
-/// Reads the root manifests of `root` once for this process, for `is_vendored`.
-pub fn learn_own_packages(root: &std::path::Path) {
-    if OWN.read().unwrap_or_else(|e| e.into_inner()).contains_key(root) {
-        return;
+impl Vendored {
+    /// The test for the repository at `root`, its manifests read once per root in this process.
+    pub fn of(root: &std::path::Path) -> Vendored {
+        static OWN: LazyLock<std::sync::Mutex<HashMap<std::path::PathBuf, std::sync::Arc<Vec<String>>>>> = LazyLock::new(Default::default);
+        let key = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let mut known = OWN.lock().unwrap_or_else(|e| e.into_inner());
+        let own = known
+            .entry(key)
+            .or_insert_with(|| {
+                let dirs = ["Cargo.toml", "go.mod", "package.json", "pnpm-workspace.yaml"]
+                    .iter()
+                    .flat_map(|m| crate::resolve::repo_text(root, m).map(|t| own_package_dirs(m, &t)).unwrap_or_default())
+                    .collect();
+                std::sync::Arc::new(dirs)
+            })
+            .clone();
+        Vendored { own }
     }
-    let dirs: Vec<String> = ["Cargo.toml", "go.mod", "package.json", "pnpm-workspace.yaml"]
-        .iter()
-        .flat_map(|m| crate::resolve::repo_text(root, m).map(|t| own_package_dirs(m, &t)).unwrap_or_default())
-        .collect();
-    OWN.write().unwrap_or_else(|e| e.into_inner()).insert(root.to_path_buf(), dirs);
+
+    /// Whether `path`, relative to the repository's root, is vendored code.
+    pub fn is(&self, path: &str) -> bool {
+        is_vendored_path(path) && !owns(&self.own, path)
+    }
 }
 
 /// The directories (globs allowed) a root manifest declares as the repository's own packages:

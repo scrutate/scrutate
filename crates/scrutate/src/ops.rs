@@ -462,8 +462,13 @@ pub fn output_schema(tool: &str) -> Value {
 }
 
 /// An answer's JSON form in the envelope every front end prints.
-pub fn envelope(mut result: Value, stopped: Option<Stop>) -> Value {
-    mark_vendored(&mut result);
+pub fn envelope(root: &std::path::Path, mut result: Value, stopped: Option<Stop>) -> Value {
+    mark_vendored(&mut result, &crate::text::Vendored::of(root));
+    wrapped(result, stopped)
+}
+
+/// `envelope` for a result whose items are marked already (each by its own repository).
+pub fn wrapped(result: Value, stopped: Option<Stop>) -> Value {
     let mut v = json!({"schema": ANSWER_SCHEMA, "result": result});
     if let Some(stop) = stopped {
         v["stopped_at"] = json!(stop.at);
@@ -471,17 +476,17 @@ pub fn envelope(mut result: Value, stopped: Option<Stop>) -> Value {
     v
 }
 
-/// Every item of an answer with a `path` of vendored code (`text::is_vendored`) gains
+/// Every item of an answer with a `path` of vendored code (`text::Vendored`) gains
 /// `"vendored": true`: the one place, so no answer can leave it out.
-fn mark_vendored(v: &mut Value) {
+pub fn mark_vendored(v: &mut Value, vendored: &crate::text::Vendored) {
     match v {
         Value::Object(m) => {
-            if m.get("path").and_then(Value::as_str).is_some_and(crate::text::is_vendored) {
+            if m.get("path").and_then(Value::as_str).is_some_and(|p| vendored.is(p)) {
                 m.insert("vendored".into(), Value::Bool(true));
             }
-            m.values_mut().for_each(mark_vendored);
+            m.values_mut().for_each(|x| mark_vendored(x, vendored));
         }
-        Value::Array(a) => a.iter_mut().for_each(mark_vendored),
+        Value::Array(a) => a.iter_mut().for_each(|x| mark_vendored(x, vendored)),
         _ => {}
     }
 }
@@ -1914,8 +1919,8 @@ impl Answer {
     /// `text_len` bytes that shows `shown` of `total` items from item `offset`: the whole JSON
     /// form when both together fit one and a half times `max_bytes`, else the JSON of the items
     /// that page shows, with where it starts, where the next one starts and how many there are.
-    pub fn structured(&self, text_len: usize, max_bytes: usize, offset: usize, shown: usize, total: usize) -> Value {
-        let mut v = self.envelope();
+    pub fn structured(&self, root: &std::path::Path, text_len: usize, max_bytes: usize, offset: usize, shown: usize, total: usize) -> Value {
+        let mut v = self.envelope(root);
         if offset == 0 && text_len + v["result"].to_string().len() <= max_bytes.saturating_add(max_bytes / 2) {
             v["complete"] = json!(true);
             return v;
@@ -1923,7 +1928,7 @@ impl Answer {
         let from = offset.min(total);
         let to = (from + shown).min(total);
         v["complete"] = json!(false);
-        v["result"] = envelope(self.page_json(from..to, total), None)["result"].take();
+        v["result"] = envelope(root, self.page_json(from..to, total), None)["result"].take();
         v["offset"] = json!(from);
         v["next_offset"] = if to < total { json!(to) } else { Value::Null };
         v["total"] = json!(total);
@@ -2026,8 +2031,8 @@ impl Answer {
 
     /// The one JSON form every front end gives: `{"schema", "result"}`, and `stopped_at` when
     /// the answer stopped at its limit with more left.
-    pub fn envelope(&self) -> Value {
-        envelope(self.json(), self.stopped())
+    pub fn envelope(&self, root: &std::path::Path) -> Value {
+        envelope(root, self.json(), self.stopped())
     }
 
     /// The limit the answer stopped at, when there were more.

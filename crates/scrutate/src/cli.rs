@@ -1417,14 +1417,17 @@ pub fn run() -> Result<i32> {
             if json && roots.len() > 1 {
                 let plain: Vec<crate::search::Hit> = hits.iter().map(|(h, _)| h.clone()).collect();
                 let mut v = hits_json(&plain);
+                // each item is vendored or not by its own repository's manifests
+                let vendored: Vec<crate::text::Vendored> = roots.iter().map(|(r, _)| crate::text::Vendored::of(r)).collect();
                 for (rec, (_, i)) in v.as_array_mut().into_iter().flatten().zip(&hits) {
+                    crate::ops::mark_vendored(rec, &vendored[*i]);
                     rec["root"] = serde_json::json!(roots[*i].1.to_string_lossy());
                 }
-                println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(v, None))?);
+                println!("{}", serde_json::to_string_pretty(&crate::ops::wrapped(v, None))?);
             } else {
                 let hits: Vec<crate::search::Hit> = hits.iter().map(|x| crate::search::Hit { path: shown(x), ..x.0.clone() }).collect();
                 if json || hits.is_empty() {
-                    print_hits(&hits, &qs, why, json)?;
+                    print_hits(&cli.root, &hits, &qs, why, json)?;
                 } else {
                     let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
                     println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", text_room(page.0), page.1));
@@ -1506,7 +1509,7 @@ pub fn run() -> Result<i32> {
                 ReviewFormat::Markdown => print!("{}", r.markdown(link.as_deref())),
                 ReviewFormat::Json => {
                     let stopped = r.impact.stopped.then_some(crate::ops::Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" });
-                    println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(r.json(), stopped))?)
+                    println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(&cli.root, r.json(), stopped))?)
                 }
                 ReviewFormat::Gitlab => println!("{}", serde_json::to_string_pretty(&r.gitlab())?),
             }
@@ -1852,7 +1855,7 @@ fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
                 (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
                 (answer, _) => answer?,
             };
-            printed(answer, &request)?
+            printed(answer, &request, root)?
         }
     };
     print!("{}", p.out);
@@ -1862,7 +1865,7 @@ fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
 
 /// An answer as `run_op` prints it: standard output, standard error and the exit code (1 when
 /// nothing was found). A session prints with this too.
-fn printed(answer: crate::ops::Answer, r: &crate::session::Request) -> Result<crate::session::Printed> {
+fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path) -> Result<crate::session::Printed> {
     use crate::ops::Answer;
     use std::fmt::Write as _;
     let mut p = crate::session::Printed::default();
@@ -1871,7 +1874,7 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request) -> Result<cr
         matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..) | Answer::Files(..));
     let why = r.outside.as_deref().filter(|_| answer.is_empty());
     if r.json {
-        writeln!(p.out, "{}", serde_json::to_string_pretty(&answer.envelope())?)?;
+        writeln!(p.out, "{}", serde_json::to_string_pretty(&answer.envelope(root))?)?;
         // standard output keeps the JSON's shape, so the stop line goes beside it
         let note = answer.stop_note();
         if !note.is_empty() {
@@ -1978,9 +1981,9 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     Ok(if report.ok() { 0 } else { 1 })
 }
 
-fn print_hits(hits: &[crate::search::Hit], qs: &[String], why: bool, json: bool) -> Result<()> {
+fn print_hits(root: &Path, hits: &[crate::search::Hit], qs: &[String], why: bool, json: bool) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(hits_json(hits), None))?);
+        println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(root, hits_json(hits), None))?);
     } else {
         let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
         println!("{}", fmt_hits(hits, &words, true, why));
@@ -2582,7 +2585,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
             // any operation, named and given arguments as an MCP tool call is
             let rec = match Op::from_tool(tool, &req).and_then(|op| s.run_as_is(&op)) {
                 Ok(answer) => {
-                    let mut rec = answer.envelope();
+                    let mut rec = answer.envelope(root);
                     rec["op"] = serde_json::json!(tool);
                     rec
                 }

@@ -320,7 +320,6 @@ fn plain(name: &str) -> String {
 
 impl Searcher {
     pub fn new(ix: Index) -> Searcher {
-        crate::text::learn_own_packages(&ix.root);
         Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default() }
     }
 
@@ -546,7 +545,8 @@ impl Searcher {
         // vendored code ranks lower by a fixed margin, so a clearly better vendored match still
         // comes first; a name only it defines, searched for as itself, keeps its place
         let whole = crate::text::name_key(c.q.text.trim());
-        let vendored: Vec<bool> = c.rows.iter().map(|r| crate::text::is_vendored(&r.path)).collect();
+        let is_vendored = crate::text::Vendored::of(&self.ix.root);
+        let vendored: Vec<bool> = c.rows.iter().map(|r| is_vendored.is(&r.path)).collect();
         let named = |r: usize| c.rows[r].kind != "window" && c.rows[r].name_key == whole;
         let project_named = (0..c.rows.len()).any(|r| !vendored[r] && named(r));
         let demoted: Vec<bool> = (0..c.rows.len()).map(|r| vendored[r] && (project_named || !named(r))).collect();

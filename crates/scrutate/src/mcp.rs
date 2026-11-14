@@ -204,7 +204,7 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
             let redact = crate::secrets::on(true);
             let mut r = crate::secrets::Redactor::default();
             let (mut text, shown, total) = answer.text_page(max_bytes, offset, form, redact.then_some(&mut r));
-            let mut structured = answer.structured(text.len(), max_bytes, offset, shown, total);
+            let mut structured = answer.structured(session.root(), text.len(), max_bytes, offset, shown, total);
             if redact {
                 let mut rj = crate::secrets::Redactor::default();
                 rj.redact_json(&mut structured);

@@ -318,6 +318,30 @@ fn search_ranks_vendored_code_below_project_code_and_marks_it() {
 }
 
 #[test]
+fn another_repositorys_manifest_does_not_decide_what_is_vendored_here() {
+    let a = Repo::new("vendored_root_a");
+    a.write("lib/app.py", b"def start():\n    return 1\n");
+    a.write("vendor/own/zq.py", b"# Parses the zqvortex frame.\ndef zqvortex_frame(b):\n    return b\n");
+    let b = Repo::new("vendored_root_b");
+    b.write("Cargo.toml", b"[workspace]\nmembers = [\"vendor/own\"]\n");
+    b.write("vendor/own/src/lib.rs", b"/// Parses the zqvortex frame.\npub fn zqvortex_frame_b(b: u8) -> u8 {\n    b\n}\n");
+    assert_eq!(b.run(&["index", "--no-text"]).0, 0);
+    let vendored = |args: &[&str]| -> Vec<(String, bool)> {
+        let (code, out, err) = a.run(args);
+        assert_eq!(code, 0, "{err}");
+        let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
+        hits.iter().map(|h| (h["path"].as_str().unwrap().to_string(), h["vendored"] == true)).collect()
+    };
+    let alone = vendored(&["search", "zqvortex frame", "-k", "3", "--json"]);
+    assert!(alone.contains(&("vendor/own/zq.py".to_string(), true)), "{alone:?}");
+    let b_root = b.root.to_string_lossy().to_string();
+    let both = vendored(&["search", "zqvortex frame", "-k", "3", "--also", &b_root, "--json"]);
+    // a's vendor/own is a's dependency; b's is b's own package
+    assert!(both.contains(&("vendor/own/zq.py".to_string(), true)), "{both:?}");
+    assert!(both.contains(&("vendor/own/src/lib.rs".to_string(), false)), "{both:?}");
+}
+
+#[test]
 fn a_qualified_name_only_vendored_code_defines_finds_it_first() {
     let r = Repo::new("vendored_qid");
     r.write(

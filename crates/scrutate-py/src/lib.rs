@@ -715,7 +715,7 @@ impl Repo {
         let op = Op::from_tool(tool, &args).map_err(value_err)?;
         let form = scrutate::ops::Form::from_tool(&args).map_err(value_err)?;
         let answer = self.run(py, op)?;
-        let mut v = answer.envelope();
+        let mut v = answer.envelope(&self.root);
         v["text"] = answer
             .text_as(max_bytes.unwrap_or(usize::MAX), offset, form)
             .into();
