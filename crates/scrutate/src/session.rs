@@ -1244,6 +1244,57 @@ mod tests {
     }
 
     #[test]
+    fn two_watched_sessions_of_one_root_in_one_process_keep_their_barriers() {
+        let (root, s1) = watched("twin", 1, Every::given(Some(3600.0)));
+        let s2 = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        s2.watch(false).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        // s2's reads write cookies whose events reach s1's watch too
+        for k in 0..200 {
+            let _ = s2.run_scanned(&Op::Symbol { name: format!("warm_{k}"), limit: 1 }).unwrap();
+        }
+        let mut missed = Vec::new();
+        for i in 0..100 {
+            std::fs::write(root.join("src/d0/w.py"), format!("def twin_{i}():\n    return {i}\n")).unwrap();
+            let (_, a) = s1.run_scanned(&Op::Symbol { name: format!("twin_{i}"), limit: 1 }).unwrap();
+            if !a.is_ok_and(|a| !a.is_empty()) {
+                missed.push(i);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(missed.is_empty(), "{} of 100 writes missed: {missed:?}", missed.len());
+    }
+
+    #[test]
+    fn an_idle_second_watched_session_costs_the_first_no_answer() {
+        let (root, s1) = watched("idle_twin", 1, Every::given(Some(3600.0)));
+        let s2 = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        s2.watch(false).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let mut missed = Vec::new();
+        for i in 0..100 {
+            std::fs::write(root.join("src/d0/w.py"), format!("def idle_{i}():\n    return {i}\n")).unwrap();
+            let (_, a) = s1.run_scanned(&Op::Symbol { name: format!("idle_{i}"), limit: 1 }).unwrap();
+            if !a.is_ok_and(|a| !a.is_empty()) {
+                missed.push(i);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(missed.is_empty(), "{} of 100 writes missed: {missed:?}", missed.len());
+    }
+
+    #[test]
+    fn a_read_leaves_no_cookie_behind() {
+        let (root, s) = watched("cookies", 1, Every::given(Some(3600.0)));
+        let notes = s.notes.clone().unwrap();
+        for i in 0..1000 {
+            let _ = s.run_scanned(&Op::Symbol { name: "made_0".into(), limit: 1 }).unwrap();
+            assert_eq!(notes.cookies_kept(), 0, "after read {i}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_command_line_call_scans_every_file_first() {
         let (root, s) = fixture("scanned");
         let op = Op::Symbol { name: "brand_new".into(), limit: 5 };

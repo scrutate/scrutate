@@ -309,6 +309,8 @@ struct Shared {
     root: PathBuf,
     cookies: PathBuf,
     code: CodeWalk,
+    /// this notes' own cookie names start with it: another session's cookies make events too
+    prefix: String,
     next_cookie: AtomicU64,
     noted: Mutex<Noted>,
     arrived: Condvar,
@@ -328,7 +330,8 @@ struct Noted {
     walked: Option<Arc<Walked>>,
     /// the rule files no watch covers, as they were at that walk
     polled: Vec<(PathBuf, Option<Seen>)>,
-    cookies: HashSet<std::ffi::OsString>,
+    /// the cookies written and not yet back: whether each one's event came
+    cookies: HashMap<std::ffi::OsString, bool>,
 }
 
 impl Noted {
@@ -351,15 +354,19 @@ fn seen(p: &Path) -> Option<Seen> {
 impl Notes {
     /// Notes for the watch of `root` (canonical), with its cookie directory made and emptied.
     pub fn new(root: &Path) -> Notes {
+        static NOTES: AtomicU64 = AtomicU64::new(0);
         let cookies = root.join(INDEX_DIR).join(COOKIES);
         let _ = std::fs::create_dir_all(&cookies);
-        for e in std::fs::read_dir(&cookies).into_iter().flatten().flatten() {
+        // left by a session that ended mid-read; a live session's cookie is never this old
+        let stale = |e: &std::fs::DirEntry| e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > 10 * BARRIER));
+        for e in std::fs::read_dir(&cookies).into_iter().flatten().flatten().filter(stale) {
             let _ = std::fs::remove_file(e.path());
         }
         Notes(Arc::new(Shared {
             root: root.to_path_buf(),
             cookies,
             code: CodeWalk::new(root),
+            prefix: format!("cookie-{}-{}-", std::process::id(), NOTES.fetch_add(1, Ordering::Relaxed)),
             next_cookie: AtomicU64::new(0),
             noted: Mutex::default(),
             arrived: Condvar::new(),
@@ -396,7 +403,11 @@ impl Notes {
                 let index = self.0.root.join(INDEX_DIR);
                 let mut arrived = false;
                 for p in e.paths.iter().filter(|p| p.parent().is_some_and(|d| d.file_name() == Some(COOKIES.as_ref()) && d.parent() == Some(&index))) {
-                    arrived |= n.cookies.insert(p.file_name().unwrap_or_default().to_os_string());
+                    // only a cookie this wrote and still waits for: not another session's, not a removal's
+                    if let Some(back) = p.file_name().and_then(|f| n.cookies.get_mut(f)) {
+                        arrived |= !*back;
+                        *back = true;
+                    }
                 }
                 if arrived {
                     self.0.arrived.notify_all();
@@ -432,6 +443,12 @@ impl Notes {
         run_noting(root, stop, Some(self), on_ready, on_change)
     }
 
+    /// The cookies this keeps a name of.
+    #[cfg(test)]
+    pub(crate) fn cookies_kept(&self) -> usize {
+        lock(&self.0.noted).cookies.len()
+    }
+
     fn stopped(&self) {
         lock(&self.0.noted).walked = None;
         #[cfg(target_os = "macos")]
@@ -442,9 +459,13 @@ impl Notes {
 
     /// Wait until the events of every change made before this call are noted.
     fn barrier(&self) -> std::result::Result<(), &'static str> {
-        let name = format!("cookie-{}-{}", std::process::id(), self.0.next_cookie.fetch_add(1, Ordering::Relaxed));
+        let name = std::ffi::OsString::from(format!("{}{}", self.0.prefix, self.0.next_cookie.fetch_add(1, Ordering::Relaxed)));
         let path = self.0.cookies.join(&name);
-        std::fs::write(&path, b"").map_err(|_| "no cookie could be written")?;
+        lock(&self.0.noted).cookies.insert(name.clone(), false);
+        if std::fs::write(&path, b"").is_err() {
+            lock(&self.0.noted).cookies.remove(&name);
+            return Err("no cookie could be written");
+        }
         #[cfg(target_os = "macos")]
         if let Some(f) = lock(&self.0.flush).as_ref() {
             f.flush();
@@ -452,12 +473,13 @@ impl Notes {
         let t0 = Instant::now();
         let mut n = lock(&self.0.noted);
         let r = loop {
-            if n.cookies.remove(std::ffi::OsStr::new(&name)) {
+            if n.cookies.get(&name) == Some(&true) {
                 break Ok(());
             }
             let Some(left) = BARRIER.checked_sub(t0.elapsed()) else { break Err("the barrier timed out") };
             n = self.0.arrived.wait_timeout(n, left).unwrap_or_else(|p| p.into_inner()).0;
         };
+        n.cookies.remove(&name);
         drop(n);
         let _ = std::fs::remove_file(&path);
         r

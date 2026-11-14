@@ -49,6 +49,8 @@ platforms, for the same guarantee the cookie gives.
 - The barrier is one file create and delete per read, plus one event's trip through the OS. The
   macOS FSEvents path is the slowest of the three.
 - The cookie directory gets its own watch on Linux; elsewhere the root's watch covers it.
+- Every session of a root sees every cookie's event, so a cookie's name holds its process id and
+  a number per session, and a session takes only the events of the cookies it still waits for.
 - A tree changing faster than reads come in falls back to a walk after 10,000 events, which is
   what every read cost before.
 - The test `session::tests::a_file_written_just_before_a_call_is_in_its_answer_every_time` writes

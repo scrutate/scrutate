@@ -652,7 +652,10 @@ session with no watch, every session of the wasi build) always answers every fil
 adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own that neither the
 burst's debounce nor a running update holds up. A read first writes a cookie file under
 `.scrutate/cookies/` and waits for its event (on macOS after `FSEventStreamFlushSync`): events
-arrive in order, so every change made before the read started is then noted. The events since the
+arrive in order, so every change made before the read started is then noted. A cookie's name
+belongs to its session alone (process id and a number per session), so two sessions of one root
+never take each other's cookie; a session keeps only the names it still waits for, and removes
+cookies over ten seconds old when it starts. The events since the
 read's token, read by the same rules a burst uses (`Burst::note`, `Burst::files`), name the files.
 Anything those rules cannot vouch for is every file: lost events or a watcher error, an ignore or
 config file, a directory that came or went, a directory left without a watch, a rule file outside
