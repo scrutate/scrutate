@@ -730,14 +730,17 @@ pub fn local(root: &Path) -> bool {
         use std::os::unix::ffi::OsStrExt;
         extern "C" {
             #[cfg_attr(target_arch = "x86_64", link_name = "statfs$INODE64")]
-            fn statfs(path: *const std::ffi::c_char, buf: *mut u32) -> std::ffi::c_int;
+            fn statfs(path: *const std::ffi::c_char, buf: *mut u64) -> std::ffi::c_int;
         }
         const MNT_LOCAL: u32 = 0x1000;
         let Ok(c) = std::ffi::CString::new(root.as_os_str().as_bytes()) else { return false };
-        // larger than `struct statfs` (2,168 bytes); `f_flags` is at byte 64
-        let mut buf = [0u32; 600];
-        // SAFETY: a nul-terminated path and a buffer larger than the struct the call fills
-        (unsafe { statfs(c.as_ptr(), buf.as_mut_ptr()) } == 0) && buf[16] & MNT_LOCAL != 0
+        // larger than `struct statfs` (2,168 bytes) and aligned as its 64-bit fields; `f_flags` is
+        // the u32 at byte 64, the first half in memory of the ninth u64
+        let mut buf = [0u64; 300];
+        // SAFETY: a nul-terminated path and an aligned buffer larger than the struct the call fills
+        let filled = unsafe { statfs(c.as_ptr(), buf.as_mut_ptr()) } == 0;
+        let flags = u32::from_ne_bytes(buf[8].to_ne_bytes()[..4].try_into().unwrap_or_default());
+        filled && flags & MNT_LOCAL != 0
     }
     #[cfg(windows)]
     {

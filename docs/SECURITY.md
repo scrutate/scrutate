@@ -552,8 +552,8 @@ on Unix).
     `watch::tests` starts a stream and receives a file's event, every `tests/watch_files.rs` test
     runs on it, and the session tests flush it 1,000 times;
   - `watch.rs` `local` (macOS and Windows): `statfs` (`statfs$INODE64` on Intel macOS) of a
-    nul-terminated path into a buffer larger than `struct statfs`, read as `u32` words for
-    `f_flags`; `GetDriveTypeW` of a nul-terminated drive root. `watch::tests` asks both about
+    nul-terminated path into a buffer larger than `struct statfs` and 8-byte aligned as its
+    64-bit fields, `f_flags` read as the four bytes at offset 64; `GetDriveTypeW` of a nul-terminated drive root. `watch::tests` asks both about
     the temporary directory;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
