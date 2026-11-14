@@ -67,9 +67,18 @@ fetch https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-a
   87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d ollama.tar.zst
 mkdir -p "$PREFIX/ollama" && tar --zstd -xf ollama.tar.zst -C "$PREFIX/ollama" && ln -sf "$PREFIX/ollama/bin/ollama" "$PREFIX/bin/ollama"
 
+# rust-analyzer needs cargo and the standard library's source, the W9 floor rustc: the repository's
+# own toolchain (rust-toolchain.toml), minimal; rustup checks each download against its manifest
+fetch https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-gnu/rustup-init \
+  b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55 rustup-init
+chmod +x rustup-init
+RUSTUP_HOME="$PREFIX/rustup" CARGO_HOME="$PREFIX/cargo" ./rustup-init -y -q --no-modify-path --profile minimal --default-toolchain 1.99.1 -c rust-src > /dev/null
+for b in rustc cargo; do ln -sf "$PREFIX/rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin/$b" "$PREFIX/bin/$b"; done
+
 cat > "$PREFIX/versions.json" << 'EOF'
 {"ripgrep": "15.2.0", "ugrep": "7.8.5", "universal-ctags": "2026.10.08+82494361bb3e", "rust-analyzer": "2026-11-09", "ast-grep": "0.51.2",
  "clangd": "23.1.0", "node": "26.13.1", "pyright": "1.1.414", "claude-context-core": "0.1.16", "go": "1.27.4", "gopls": "0.24.0",
- "zoekt": "a5a933bc043e", "ck": "0.8.1", "grepai": "1.2.0", "ollama": "0.40.16", "embedding model": "nomic-embed-text"}
+ "zoekt": "a5a933bc043e", "ck": "0.8.1", "grepai": "1.2.0", "ollama": "0.40.16", "embedding model": "nomic-embed-text",
+ "rust": "1.99.1 (minimal, rust-src)"}
 EOF
 echo "rivals installed under $PREFIX (PATH=$PREFIX/bin:\$PATH; CLAUDE_CONTEXT_DIR=$PREFIX/claude-context)"
