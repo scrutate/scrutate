@@ -431,7 +431,7 @@ pub(crate) fn js_default_export(node: Node, src: &[u8]) -> Option<&'static str> 
 }
 /// The values that make an object literal's property a method: `post: function () {}`, `put: () => 3`.
 const JS_PROPERTY_FUNCS: &[&str] = &["arrow_function", "function_expression", "function", "generator_function"];
-const JS_PROPERTY_METHOD: Def = Def { value_kinds: JS_PROPERTY_FUNCS, ..d("pair", "method", &[NameRule::ChildKind(&["property_identifier"])]) };
+const JS_PROPERTY_METHOD: Def = Def { value_kinds: JS_PROPERTY_FUNCS, ..d("pair", "method", &[NameRule::ChildKind(&["property_identifier", "string"])]) };
 const JS_DEFS: &[Def] = &[
     d("function_declaration", "function", N),
     d("generator_function_declaration", "function", N),

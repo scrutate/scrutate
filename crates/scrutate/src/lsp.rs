@@ -102,7 +102,7 @@ pub fn word_at(line: &str, at: usize) -> Option<(usize, usize)> {
 /// `a..b` widened to the name the language of `path` writes there, by the rule the parser names
 /// calls with: `valid?` in Ruby, `update!` in Julia, `step'` in Haskell, `is.ready` in R,
 /// `~Shape` and `operator==` in C++. In Rust the name of `r#type` is `type`.
-fn widen(line: &str, a: usize, b: usize, path: &str) -> (usize, usize) {
+pub(crate) fn widen(line: &str, a: usize, b: usize, path: &str) -> (usize, usize) {
     let Some(lang) = crate::langs::spec_for(path).map(|s| s.id) else { return (a, b) };
     let (word, rest) = (&line[a..b], &line[b..]);
     match lang {
@@ -583,12 +583,18 @@ impl Server {
             let Answer::Resolved { refs: r, .. } = refs(s, false)? else { unreachable!("resolved references") };
             let mut lines = self.lines();
             let mut out = Vec::new();
+            let mut decl = None;
             if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
                 let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
+                decl = Some((d.path.clone(), l, a));
                 out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
             }
             for o in r.of(def_id) {
-                if matches!(o.resolution, Ok((_, "definition"))) {
+                let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
+                // the declaration is listed once; a definition's other line (Haskell's signature) is its own
+                if decl.as_ref().is_some_and(|(p, dl, da)| *p == o.path && (*dl, *da) == (l, a))
+                    || !include_decl && matches!(o.resolution, Ok((_, "definition")))
+                {
                     continue;
                 }
                 // an alias (`h` for `helper`) spans what the line writes, not the name asked for
@@ -597,7 +603,6 @@ impl Server {
                 // the name as asked for, whole: `helper2` starts with `helper` but is another word
                 let whole = written.strip_prefix(ident.as_str()).is_some_and(|rest| !rest.chars().next().is_some_and(|c| word(&c)));
                 let width = if whole { ident.encode_utf16().count() } else { written.chars().take_while(word).map(char::len_utf16).sum() } as u64;
-                let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
                 out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
             }
             return Ok(Value::Array(out));

@@ -1199,7 +1199,13 @@ fn refs_brief(r: &References) -> Vec<Vec<Brief>> {
 
 /// The concise lines of `resolve::resolved_text`, one entry per line of it.
 fn resolved_brief(r: &Resolved, only: Option<i64>) -> Vec<Vec<Brief>> {
-    let occurrence = |o: &crate::resolve::Occurrence| vec![Brief::text("  ").then_line(&o.path, format!(":{}:{}", o.line, o.column))];
+    let occurrence = |o: &crate::resolve::Occurrence| {
+        let mark = match o.resolution {
+            Ok((_, how)) if how.starts_with("by name") => format!(" ({how})"),
+            _ => String::new(),
+        };
+        vec![Brief::text("  ").then_line(&o.path, format!(":{}:{}{mark}", o.line, o.column))]
+    };
     let mut out = Vec::new();
     for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
         let occ: Vec<_> = r.of(d.id).collect();

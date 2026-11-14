@@ -2441,6 +2441,18 @@ pub struct Occurrence {
 }
 
 impl Occurrence {
+    /// The same use, tied to `id` as an instantiation of its class.
+    pub(crate) fn retied(&self, id: i64) -> Occurrence {
+        Occurrence {
+            path: self.path.clone(),
+            line: self.line,
+            column: self.column,
+            text: std::sync::Arc::clone(&self.text),
+            at: self.at,
+            resolution: Ok((id, "class")),
+        }
+    }
+
     /// The line as an answer shows it, and whether it was cut: whole when short, else the part
     /// around the use. A minified line holds thousands of uses, and each would print all of it.
     pub fn shown_line(&self) -> (std::borrow::Cow<'_, str>, bool) {
@@ -2508,7 +2520,11 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
         let occ: Vec<&Occurrence> = r.of(d.id).collect();
         out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references)\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname), occ.len()));
         for o in occ {
-            out.push_str(&format!("    {}:{}:{}: {}\n", shown(&o.path), o.line, o.column, o.shown_line().0));
+            let mark = match o.resolution {
+                Ok((_, how)) if how.starts_with("by name") => format!("  ({how})"),
+                _ => String::new(),
+            };
+            out.push_str(&format!("    {}:{}:{}: {}{mark}\n", shown(&o.path), o.line, o.column, o.shown_line().0));
         }
     }
     let unresolved: Vec<&Occurrence> = r.unresolved().collect();

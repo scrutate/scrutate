@@ -188,6 +188,24 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs`, `callers` and `callees` take one decision per call site, so they agree: `refs` of a
+  constructor lists its class's instantiations (`new Box(1)`, `Point(1)`, Ruby `Invoice.new`,
+  JavaScript `super(..)`), which `callers` already listed; in a language the resolver does not
+  read, and in a file nested too deeply, `refs` ties a use to the one definition of its name it
+  can reach, marked `(by name)`, where `callers` kept the call and `refs` left it unresolved;
+  `callers` keeps a caller decided when one of its calls ties to the definition through an
+  alias (PHP `geoArea()` beside an undecided `area()`) ([CLI](docs/CLI.md#engine-b)).
+- `callees` of Ruby's `Invoice.new` lists the class `Invoice`, where it listed `new` as external
+  ([CLI](docs/CLI.md#engine-b)).
+- `callers` of a PHP class lists `new self()` and `new static()` in its methods, and of the base
+  class `new parent()`, in any case, which `callees` already listed; `refs` lists them too
+  ([CLI](docs/CLI.md#engine-b)).
+- `refs` of a PHP use alias finds it in any case: `refs pf` lists `PF()` after `use function
+  Lib\phpfn as pf`, and `refs T` lists `t::make()` ([CLI](docs/CLI.md#engine-b)).
+- A JavaScript or TypeScript quoted key holding a function (`"get": function () {}`,
+  `"q": () => 5`) is a method of what holds the object, as `get: function () {}` is; a call in it
+  had only the module chunk as caller. The content revision is 9 so an older index reads its
+  files again ([CLI](docs/CLI.md#engine-b)).
 - `callers` and `refs` follow an element and a returned value to its declared type: Go
   `xs[0].Save()`, `m["a"].Save()` and `f().Save()` for `xs []Store`, `m map[string]Store`,
   `f func() Store`, and Python `xs[0].save()` and `d['a'].save()` for `list[Store]` and
@@ -349,7 +367,7 @@ incompatible index by itself, and that is never breaking.
   function named `mutable`, and keeps a function named after a modifier word (`let data x`,
   `proc inner()`), and takes only OCaml's and F#'s own words after `let` for modifiers
   (`let data x y` binds `data`, `let inline (+.)` gives no definition named `inline`); the
-  content revision is 8 so an older index reads its files again
+  content revision goes up so an older index reads its files again
   ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - `grep -z` on a compressed file named on the command line whose text has a NUL reports a
   binary match, as ripgrep does, where it reported nothing and exit 1

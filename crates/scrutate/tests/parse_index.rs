@@ -1457,6 +1457,7 @@ fn methods_of_an_object_literal_are_owned_by_what_holds_the_literal() {
                 ("post", "api.post"),
                 ("put", "api.put"),
                 ("gen", "api.gen"),
+                ("q", "api.q"),
                 ("increment", "store.increment"),
                 ("total", "store.total"),
                 ("m", "store.sub.m"),

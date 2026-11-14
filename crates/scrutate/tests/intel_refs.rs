@@ -470,7 +470,8 @@ fn refs_names_a_language_the_resolver_does_not_read_apart_from_one_without_a_gra
     );
     let (_, out) = r.run(&["refs", "helper"]);
     let reason_of = |file: &str| out.lines().filter(|l| l.contains(file)).map(|l| l.rsplit('(').next().unwrap_or("").to_string()).collect::<Vec<_>>();
-    assert!(reason_of("m.kt").iter().any(|w| w.starts_with("not resolved in this language")), "{out}");
+    // the one definition of the name a call in a language the resolver does not read can reach
+    assert!(out.contains("m.kt:6:12: return helper()  (by name)"), "{out}");
     assert!(reason_of("m.kt").iter().all(|w| !w.starts_with("no grammar")), "{out}");
     assert!(reason_of("m.pl").iter().any(|w| w.starts_with("no grammar")), "{out}");
 }
@@ -877,7 +878,7 @@ fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves(
         let r = Repo::new("too_deep", &[class, ("a.py", &deep(head, 200_000))]);
         let (code, out) = r.run(&["refs", name, "--max-results", "50"]);
         assert_eq!(code, 0, "{}", &out[..out.len().min(2000)]);
-        let line = out.lines().find(|l| l.contains("a.py:") && l.contains("nested too deeply to read")).map(str::to_string);
+        let line = out.lines().find(|l| l.contains("a.py:") && l.contains("(by name: nested too deeply to read)")).map(str::to_string);
         assert!(line.is_some(), "{}", &out[out.len().saturating_sub(2000)..]);
     }
     let r = Repo::new("deep_500", &[class, ("a.py", &deep("x: A = ", 500))]);
@@ -1759,8 +1760,10 @@ fn refs_callers_and_callees_take_the_names_symbol_takes() {
         let v = r.json(&["refs", name, "--json"]);
         let defs: Vec<&str> = v["definitions"].as_array().unwrap().iter().map(|d| d["path"].as_str().unwrap()).collect();
         assert_eq!(defs, [def], "{name}: {v}");
-        let at: Vec<u64> = v["unresolved"].as_array().unwrap().iter().map(|u| u["column"].as_u64().unwrap()).collect();
-        assert_eq!(at, cols, "{name}: {v}");
+        assert_eq!(v["unresolved"].as_array().unwrap().len(), 0, "{name}: {v}");
+        let at: Vec<(u64, &str)> =
+            v["definitions"][0]["references"].as_array().unwrap().iter().map(|u| (u["column"].as_u64().unwrap(), u["via"].as_str().unwrap())).collect();
+        assert_eq!(at, [(cols[0], "definition"), (cols[1], "by name")], "{name}: {v}");
         let t = r.json(&["refs", name, "--textual", "--json"]);
         assert_eq!(t["definitions"].as_array().unwrap().len(), 1, "{name}: {t}");
     }

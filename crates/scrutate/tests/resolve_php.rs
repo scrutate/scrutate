@@ -248,3 +248,26 @@ fn refs_find_a_use_alias_written_in_another_case() {
     assert_eq!(r.resolved("phpfn"), expect(&[("app.php", 3, "lib.php"), ("app.php", 5, "lib.php"), ("lib.php", 3, "lib.php")]));
     assert_eq!(r.resolved("Tool"), expect(&[("app.php", 4, "lib.php"), ("app.php", 6, "lib.php"), ("app.php", 7, "lib.php"), ("lib.php", 4, "lib.php")]));
 }
+
+#[test]
+fn refs_of_a_use_alias_find_it_written_in_another_case() {
+    let app = "<?php\nnamespace App;\nuse function Lib\\phpfn as pf;\nuse Lib\\Tool as T;\nfunction upper() { return PF(); }\nfunction cls() { return t::make(); }\nfunction cls2() { return T::make(); }\n";
+    let lib = "<?php\nnamespace Lib;\nfunction phpfn() { return 1; }\nclass Tool\n{\n    public static function make() { return 1; }\n}\n";
+    let r = Repo::new("alias_case_by_alias", &[("app.php", app), ("lib.php", lib)]);
+    assert_eq!(r.resolved("pf"), expect(&[("app.php", 3, "lib.php"), ("app.php", 5, "lib.php")]));
+    assert_eq!(r.resolved("T"), expect(&[("app.php", 4, "lib.php"), ("app.php", 6, "lib.php"), ("app.php", 7, "lib.php")]));
+}
+
+#[test]
+fn new_self_static_and_parent_are_calls_of_their_class() {
+    for (tag, words) in [("new_self_lower", ["self", "static", "parent"]), ("new_self_upper", ["SELF", "Static", "PARENT"])] {
+        let a = format!(
+            "<?php\nclass Base\n{{\n    public function make() {{ return 1; }}\n}}\nclass Kid extends Base\n{{\n    public static function run()\n    {{\n        $a = new {}();\n        $b = new {}();\n        $c = new {}();\n        return $a;\n    }}\n}}\n",
+            words[0], words[1], words[2]
+        );
+        let r = Repo::new(tag, &[("a.php", &a)]);
+        assert_eq!(r.run(&["callers", "Kid"]).1, "a.php:8-14  [method] Kid.run\n", "{tag}");
+        assert_eq!(r.run(&["callers", "Base"]).1, "a.php:8-14  [method] Kid.run\n", "{tag}");
+        assert_eq!(r.resolved("Kid"), expect(&[("a.php", 6, "a.php"), ("a.php", 10, "a.php"), ("a.php", 11, "a.php")]), "{tag}");
+    }
+}

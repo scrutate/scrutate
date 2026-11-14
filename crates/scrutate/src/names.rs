@@ -62,7 +62,7 @@ impl<'a> Names<'a> {
     /// The definition the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`
     /// refers to and how that was found, or why none was.
     pub fn at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
-        self.rv.resolve_at(path, line, col, name)
+        self.tie(path, line, col, name).resolution()
     }
 
     /// Whether the text of `path` the resolver reads starts with a byte order mark, which its
@@ -78,38 +78,46 @@ impl<'a> Names<'a> {
         let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
         // a name defined in a language that ignores case is looked for in any case, and kept in
         // another case only in a file of such a language
-        let any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
-        if any_case {
-            q.pattern.case = crate::instant::Case::Insensitive;
-        }
+        let mut any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
         let walk = crate::files::repository_files(&s.ix.root);
-        // the text index, when it holds the files as the last look found them, says which can match
-        let files = crate::stores::grep_files(&s.ix, &q, &walk);
-        let (found, mut truncated) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
-        let mut notes = Vec::new();
-        let mut hits = Vec::new();
-        for r in found {
-            match r {
-                crate::instant::Record::Match(l) => hits.push(l),
-                crate::instant::Record::Note { path, text, .. } => notes.push((path.to_string(), text)),
-                _ => {}
+        // an alias in such a language (`use function Lib\phpfn as pf`) is used in any case too
+        let (mut occurrences, notes, mut truncated) = loop {
+            if any_case {
+                q.pattern.case = crate::instant::Case::Insensitive;
             }
-        }
-        let mut occurrences = Vec::new();
-        // Engine A stops at `max_results` lines; one long line can hold more uses than that
-        let total: usize = hits.iter().map(|h| h.spans.len()).sum();
-        truncated |= total as u64 > max_results;
-        for h in hits {
-            let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
-            let folds = !any_case || self.langs.folds(&h.path, "function");
-            let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
-            for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
-                let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
-                // the occurrence as this file spells it
-                let resolution = self.rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
-                occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
+            // the text index, when it holds the files as the last look found them, says which can match
+            let files = crate::stores::grep_files(&s.ix, &q, &walk);
+            let (found, mut truncated) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
+            let mut notes = Vec::new();
+            let mut hits = Vec::new();
+            for r in found {
+                match r {
+                    crate::instant::Record::Match(l) => hits.push(l),
+                    crate::instant::Record::Note { path, text, .. } => notes.push((path.to_string(), text)),
+                    _ => {}
+                }
             }
-        }
+            let mut occurrences = Vec::new();
+            // Engine A stops at `max_results` lines; one long line can hold more uses than that
+            let total: usize = hits.iter().map(|h| h.spans.len()).sum();
+            truncated |= total as u64 > max_results;
+            for h in hits {
+                let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
+                let folds = !any_case || self.langs.folds(&h.path, "function");
+                let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
+                for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
+                    let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
+                    // the occurrence as this file spells it
+                    let resolution = self.tie(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare)).resolution();
+                    occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
+                }
+            }
+            let alias = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if s.ix.chunk(id).ok().flatten().is_some_and(|d| d.name != *bare));
+            if any_case || !bare.is_ascii() || !occurrences.iter().any(|o| self.langs.folds(&o.path, "function") && alias(o)) {
+                break (occurrences, notes, truncated);
+            }
+            any_case = true;
+        };
         // a file that imports the name under an alias uses it under the alias too; the import
         // statement's own alias is listed already, through the name it imports. A file whose
         // import never spells the name (`const h = require("./m")`) is found as callers finds it.
@@ -121,12 +129,17 @@ impl<'a> Names<'a> {
         // `super()` in a JavaScript or TypeScript subclass constructor calls the class it extends
         let def_ids: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         let classes = definitions.iter().any(|d| d.kind == "class" && matches!(langs.id(&d.path), Some("javascript" | "typescript" | "tsx")));
+        // PHP `new self()`, `new static()` and `new parent()` make the class they stand for
+        let php_classes = definitions.iter().any(|d| d.kind == "class" && langs.id(&d.path) == Some("php"));
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         for path in importing {
             let mut aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
             let sites: HashSet<usize> = aliases.iter().flat_map(|(_, _, s)| s.iter().copied()).collect();
             if classes {
                 aliases.push(("super".into(), bare.to_string(), Vec::new()));
+            }
+            if php_classes && langs.id(&path) == Some("php") {
+                aliases.extend(["self", "static", "parent"].map(|w| (w.to_string(), bare.to_string(), Vec::new())));
             }
             let fi = self.rv.file(&path);
             // where names ignore case (PHP), `PF()` is a use of the alias `pf`; ASCII lower case
@@ -146,9 +159,11 @@ impl<'a> Names<'a> {
                         }
                         // the alias spelled in a string or bound again locally (`const g = ..`) is no
                         // use of these definitions; only a `super(..)` call names the class
-                        let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, &line[col..col + local.len()]);
+                        let resolution = self.tie(&path, i as u64 + 1, col, &line[col..col + local.len()]).resolution();
                         let called = line[col + local.len()..].trim_start().starts_with('(');
-                        if !matches!(resolution, Ok((id, _)) if def_ids.contains(&id)) || local == "super" && !called {
+                        let made = line[..col].trim_end().to_ascii_lowercase().ends_with("new") && called;
+                        let class_word = matches!(local.as_str(), "self" | "static" | "parent");
+                        if !matches!(resolution, Ok((id, _)) if def_ids.contains(&id)) || local == "super" && !called || class_word && !made {
                             continue;
                         }
                         let text = line.trim_end_matches('\r').into();
@@ -156,6 +171,29 @@ impl<'a> Names<'a> {
                         truncated |= occurrences.len() as u64 > max_results;
                     }
                 }
+            }
+        }
+        // a constructor's uses are its class's instantiations, as callers reads them
+        for d in &defs {
+            let ctor = d.id;
+            let Some(class) = constructed(s, &langs, std::slice::from_ref(d))?.0.pop() else { continue };
+            // `super(..)` in a JavaScript or TypeScript constructor runs the base class's
+            let mut spelled = vec![class.name.clone()];
+            if matches!(langs.id(&class.path), Some("javascript" | "typescript" | "tsx")) {
+                spelled.push("super".to_string());
+            }
+            for word in spelled {
+                let made = |o: &Occurrence| {
+                    let after = o.text.get(o.at + word.len()..).unwrap_or("").trim_start();
+                    let before = o.text.get(..o.at).unwrap_or("").trim_end();
+                    matches!(o.resolution, Ok((id, _)) if id == class.id) && (after.starts_with('(') || after.starts_with(".new") || before.ends_with("new"))
+                };
+                let of_class: Vec<Occurrence> = if word == bare.as_str() {
+                    occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
+                } else {
+                    self.references(&word, max_results)?.occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
+                };
+                occurrences.extend(of_class);
             }
         }
         occurrences.truncate(max_results as usize);
@@ -179,6 +217,68 @@ impl<'a> Names<'a> {
     }
 
     /// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.
+    /// The one decision about the site of `spelled` at 1-based `line`, 0-based byte `col` of
+    /// `path`: what the resolver ties it to; where the resolver does not read the language, the
+    /// one definition of the name the call can reach (in the site's own file when there are more).
+    pub(crate) fn tie(&mut self, path: &str, line: u64, col: usize, spelled: &str) -> Tie {
+        let r = self.rv.resolve_at(path, line, col, spelled);
+        let word = match r {
+            Ok((_, w)) | Err(w) => w,
+        };
+        debug_assert!(Reason::of(word).is_some(), "the resolver's word {word:?} is not a Reason");
+        let why = match r {
+            Ok((id, how)) => {
+                let ids = if how == "overload" { self.rv.overloads(id) } else { vec![id] };
+                return Tie::Resolved(ids, Reason::of(how).unwrap_or(Reason::Qualified));
+            }
+            Err(why) => match Reason::of(why) {
+                Some(why) => why,
+                None => return Tie::Elsewhere(Reason::External),
+            },
+        };
+        match why {
+            // a file with no grammar has no call sites in the index, so `callers` could not list it
+            Reason::Unread | Reason::TooDeep if self.whole_name(path, line, col, spelled) => {
+                let how = if why == Reason::TooDeep { Reason::ByNameTooDeep } else { Reason::ByName };
+                self.by_name(path, line, spelled, how).unwrap_or(Tie::Undecided(why))
+            }
+            Reason::Unread | Reason::TooDeep => Tie::Undecided(why),
+            Reason::NoGrammar => Tie::Undecided(why),
+            Reason::Receiver | Reason::NotFound | Reason::MacroArgument => Tie::Undecided(why),
+            _ => Tie::Elsewhere(why),
+        }
+    }
+
+    /// Whether `spelled` at `col` of `line` is the whole name the language writes there: `valid`
+    /// in Ruby's `valid?` is not.
+    fn whole_name(&mut self, path: &str, line: u64, col: usize, spelled: &str) -> bool {
+        let src = &self.rv.file(path).src;
+        let Some(text) = src.lines().nth((line.max(1) - 1) as usize) else { return false };
+        let end = col + spelled.len();
+        end <= text.len() && crate::lsp::widen(text, col, end, path) == (col, end)
+    }
+
+    /// The by-name tie of a use of `spelled` on `line` of `path`, a file the resolver does not
+    /// read: the name of a definition starting there is that definition.
+    fn by_name(&mut self, path: &str, line: u64, spelled: &str, deep: Reason) -> Option<Tie> {
+        let kinds: Vec<&str> = crate::search::CODE_KINDS.to_vec();
+        let mut rows: Vec<ChunkRow> = self.s.ix.named_of_kinds(spelled, &kinds).ok()?.into_iter().filter(|r| self.langs.same_family(path, &r.path)).collect();
+        if self.langs.folds(path, "function") {
+            let more = self.s.ix.named_of_kinds_any_case(spelled, &kinds).ok()?;
+            rows.extend(more.into_iter().filter(|r| r.name != spelled && self.langs.folds(&r.path, &r.kind) && self.langs.same_family(path, &r.path)));
+        }
+        if let Some(d) = rows.iter().find(|r| r.path == path && r.start == line as i64) {
+            return Some(Tie::Resolved(vec![d.id], Reason::Definition));
+        }
+        let own: Vec<i64> = rows.iter().filter(|r| r.path == path).map(|r| r.id).collect();
+        match (&rows[..], &own[..]) {
+            ([], _) => None,
+            ([one], _) => Some(Tie::ByName(vec![one.id], deep)),
+            (_, [mine]) => Some(Tie::ByName(vec![*mine], deep)),
+            _ => Some(Tie::Undecided(Reason::Rivals)),
+        }
+    }
+
     fn uses(&mut self, path: &str, lines: (i64, i64), name: &str) -> Uses {
         let site = (path.to_string(), lines.0, lines.1, name.to_string());
         if let Some(u) = self.stored.as_mut().and_then(|st| st.get(&site)) {
@@ -214,29 +314,31 @@ impl<'a> Names<'a> {
                 if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
                     continue;
                 }
-                match self.rv.resolve_at(path, i as u64 + 1, col, &line[col..col + name.len()]) {
+                match self.tie(path, i as u64 + 1, col, &line[col..col + name.len()]) {
                     // the name of a definition is not a call of it
-                    Ok((_, "definition")) => {}
-                    Ok((id, why)) => {
+                    Tie::Resolved(_, Reason::Definition) => {}
+                    // a use the arguments do not tie to one overload stands for all of them
+                    Tie::Resolved(ids, how) => {
                         seen = true;
-                        let all = if why == "overload" { self.rv.overloads(id) } else { vec![id] };
-                        if why != "super" {
-                            uses.dispatched.extend(&all);
+                        if how != Reason::Super {
+                            uses.dispatched.extend(&ids);
                         }
-                        // a use the arguments do not tie to one overload stands for all of them
-                        uses.got.extend(all);
+                        uses.got.extend(ids);
+                    }
+                    Tie::ByName(ids, _) => {
+                        seen = true;
+                        uses.dispatched.extend(&ids);
+                        uses.got.extend(ids);
+                    }
+                    Tie::Undecided(why) => {
+                        seen = true;
+                        unsure = true;
+                        unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
+                        let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));
+                        elsewhere |= receiver || !matches!(why, Reason::Rivals | Reason::NoGrammar | Reason::Unread | Reason::TooDeep);
                     }
                     // an import from outside, a local, a field or a string is decided: not this definition
-                    Err(why) => {
-                        seen = true;
-                        let unread = matches!(why, "no grammar" | crate::resolve::UNREAD | crate::resolve::TOO_DEEP);
-                        if unread || matches!(why, "receiver" | "not found" | "macro argument") {
-                            unsure = true;
-                            unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
-                            let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));
-                            elsewhere |= receiver || !unread;
-                        }
-                    }
+                    Tie::Elsewhere(_) => seen = true,
                 }
             }
         }
@@ -276,6 +378,11 @@ impl<'a> Names<'a> {
         if targets.iter().any(|t| t.kind == "class" && matches!(langs.id(&t.path), Some("javascript" | "typescript" | "tsx"))) {
             names.insert("super");
         }
+        // PHP `new self()`, `new static()`, `new parent()` make the class the resolver ties them to
+        let php_class = targets.iter().any(|t| t.kind == "class" && langs.id(&t.path) == Some("php"));
+        if php_class {
+            names.extend(["self", "static", "parent"]);
+        }
         let owners: HashSet<&str> =
             targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
         let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
@@ -293,12 +400,14 @@ impl<'a> Names<'a> {
             self.rivals |= rivals;
             let mut sites = s.ix.callers_of(n)?;
             // a call in a language that ignores case may spell the name in another case
-            if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind)) {
+            if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind)) || php_class && matches!(n, "self" | "static" | "parent") {
                 for other in self.other_cases(n)? {
                     sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| langs.folds(&r.path, "function")));
                 }
             }
-            sites.retain(|r| fits(&r.path) && seen.insert(r.id));
+            // a row is settled once kept; one no call of this name ties may hold another name's call
+            let mut once = HashSet::new();
+            sites.retain(|r| fits(&r.path) && !seen.contains(&r.id) && once.insert(r.id));
             if n == "new" && !targets.iter().any(|t| t.name == "new") {
                 sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));
             }
@@ -306,34 +415,27 @@ impl<'a> Names<'a> {
                 sites.sort_by_cached_key(&likely);
             }
             for row in sites {
-                let uses = self.uses(&row.path, (row.start, row.end), n);
+                // Ruby's `Invoice.new` is a call of the class `Invoice` ties to
+                let by_new = if n == "new" { made_by_new.iter().find(|c| has_word(&row.text, &format!("{c}.new"))) } else { None };
+                let uses = match by_new {
+                    Some(class) => self.uses(&row.path, (row.start, row.end), class),
+                    None => self.uses(&row.path, (row.start, row.end), n),
+                };
                 let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.dispatched.is_disjoint(&overridden);
                 // a `super` the resolver does not tie to a target is some other class's
-                if n == "super" && uses.got.is_disjoint(&ids) {
+                if (n == "super" || php_class && matches!(n, "self" | "static" | "parent")) && uses.got.is_disjoint(&ids) {
                     continue;
                 }
+                // a call `tie` holds is this definition's; one with only undecided sites of the name
+                // may be, or may run it through a method it overrides
                 if uses.got.is_disjoint(&ids) {
-                    // with no other definition of the name, a call in a language the resolver does not
-                    // read is this one's
-                    if unsure && rivals {
-                        let mine = |r: &&Symbol| own((&row.path, &row.qualname), &r.path, &r.kind, &r.qualname);
-                        let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.id).collect();
-                        if mine.is_empty() {
-                            unsure_rows.push(row);
-                            continue;
-                        }
-                        if mine.iter().all(|id| !ids.contains(id)) {
-                            continue;
-                        }
-                    } else if !unsure {
-                        continue;
-                    } else if crate::resolve::reads(&s.ix.root, &row.path) {
-                        // the resolver read the call and could not place it (`tx.foo.update()`, an
-                        // untyped parameter): only its name ties it, so it is undecided
+                    if unsure {
+                        seen.insert(row.id);
                         unsure_rows.push(row);
-                        continue;
                     }
+                    continue;
                 }
+                seen.insert(row.id);
                 out.push(Hit::from_row(&row, true));
                 if out.len() >= limit {
                     return Ok((out, 0, false));
@@ -348,9 +450,12 @@ impl<'a> Names<'a> {
                     sites.extend(s.ix.callers_of(&other)?);
                 }
             }
-            sites.retain(|r| r.path == file && seen.insert(r.id));
+            // a caller kept undecided for another call of the name is decided by this one's tie
+            let undecided: HashSet<i64> = unsure_rows.iter().map(|r| r.id).collect();
+            sites.retain(|r| r.path == file && (seen.insert(r.id) || undecided.contains(&r.id)));
             for row in sites {
                 if !self.uses(&row.path, (row.start, row.end), &local).got.is_disjoint(&ids) {
+                    unsure_rows.retain(|r| r.id != row.id);
                     out.push(Hit::from_row(&row, true));
                     if out.len() >= limit {
                         return Ok((out, 0, false));
@@ -489,6 +594,14 @@ impl<'a> Names<'a> {
                     rows.extend(s.ix.chunk(id)?);
                 }
             }
+            // Ruby's `Invoice.new` runs the class `Invoice` ties to
+            if n == "new" && rows.is_empty() && langs.id(&d.path) == Some("ruby") {
+                let made = self.made_by_new(d)?;
+                if !made.is_empty() {
+                    out.push((n, made, true));
+                    continue;
+                }
+            }
             if rows.is_empty() {
                 out.push((n, Vec::new(), false));
                 continue;
@@ -514,6 +627,31 @@ impl<'a> Names<'a> {
             };
             let picked = picked.into_iter().cloned().collect();
             out.push((n, picked, is_tied));
+        }
+        Ok(out)
+    }
+
+    /// The classes of the repository the `X.new` calls in the lines of `d` make.
+    fn made_by_new(&mut self, d: &Hit) -> Result<Vec<ChunkRow>> {
+        let src = self.rv.file(&d.path).src.clone();
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let mut classes = BTreeSet::new();
+        for line in src.lines().skip((d.start.max(1) - 1) as usize).take((d.end - d.start + 1).max(0) as usize) {
+            for (at, _) in line.match_indices(".new") {
+                if line[at + 4..].chars().next().is_some_and(word) {
+                    continue;
+                }
+                let class = &line[line[..at].rfind(|c: char| !word(c)).map_or(0, |i| i + 1)..at];
+                if class.starts_with(char::is_uppercase) {
+                    classes.insert(class.to_string());
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for class in classes {
+            for id in self.uses(&d.path, (d.start, d.end), &class).got {
+                out.extend(self.s.ix.chunk(id)?.filter(|r| r.kind == "class"));
+            }
         }
         Ok(out)
     }
@@ -929,6 +1067,157 @@ impl Langs<'_> {
         match (self.id(a), self.id(b)) {
             (Some(x), Some(y)) => family(x) == family(y),
             _ => true,
+        }
+    }
+}
+
+/// How a site is tied to a definition, or why it is not: the resolver's words, as one closed set
+/// every answer shows through `as_str`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Reason {
+    Definition,
+    Import,
+    Member,
+    Qualified,
+    Super,
+    Overload,
+    Variable,
+    Module,
+    Local,
+    Package,
+    Namespace,
+    Type,
+    Field,
+    Constant,
+    Declaration,
+    Default,
+    /// the resolver does not read the language; the name has one definition the call can reach
+    ByName,
+    /// by name, in a file nested too deeply for the resolver to read
+    ByNameTooDeep,
+    /// an instantiation of the class, a use of its constructor
+    Class,
+    External,
+    NotFound,
+    Receiver,
+    FieldOrKey,
+    LocalVariable,
+    Keyword,
+    KeywordArgument,
+    MacroArgument,
+    TypeParameter,
+    CommentOrString,
+    NotAnIdentifier,
+    NoGrammar,
+    Unread,
+    TooDeep,
+    /// by name only, and the name has more than one definition the call can reach
+    Rivals,
+}
+
+impl Reason {
+    const ALL: [Reason; 34] = [
+        Reason::Definition,
+        Reason::Import,
+        Reason::Member,
+        Reason::Qualified,
+        Reason::Super,
+        Reason::Overload,
+        Reason::Variable,
+        Reason::Module,
+        Reason::Local,
+        Reason::Package,
+        Reason::Namespace,
+        Reason::Type,
+        Reason::Field,
+        Reason::Constant,
+        Reason::Declaration,
+        Reason::Default,
+        Reason::ByName,
+        Reason::ByNameTooDeep,
+        Reason::Class,
+        Reason::External,
+        Reason::NotFound,
+        Reason::Receiver,
+        Reason::FieldOrKey,
+        Reason::LocalVariable,
+        Reason::Keyword,
+        Reason::KeywordArgument,
+        Reason::MacroArgument,
+        Reason::TypeParameter,
+        Reason::CommentOrString,
+        Reason::NotAnIdentifier,
+        Reason::NoGrammar,
+        Reason::Unread,
+        Reason::TooDeep,
+        Reason::Rivals,
+    ];
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Reason::Definition => "definition",
+            Reason::Import => "import",
+            Reason::Member => "member",
+            Reason::Qualified => "qualified",
+            Reason::Super => "super",
+            Reason::Overload => "overload",
+            Reason::Variable => "variable",
+            Reason::Module => "module",
+            Reason::Local => "local",
+            Reason::Package => "package",
+            Reason::Namespace => "namespace",
+            Reason::Type => "type",
+            Reason::Field => "field",
+            Reason::Constant => "constant",
+            Reason::Declaration => "declaration",
+            Reason::Default => "default",
+            Reason::ByName => "by name",
+            Reason::ByNameTooDeep => "by name: nested too deeply to read",
+            Reason::Class => "class",
+            Reason::External => "external",
+            Reason::NotFound => "not found",
+            Reason::Receiver => "receiver",
+            Reason::FieldOrKey => "field or key",
+            Reason::LocalVariable => "local variable",
+            Reason::Keyword => "keyword",
+            Reason::KeywordArgument => "keyword argument",
+            Reason::MacroArgument => "macro argument",
+            Reason::TypeParameter => "type parameter",
+            Reason::CommentOrString => "comment or string",
+            Reason::NotAnIdentifier => "not an identifier",
+            Reason::NoGrammar => "no grammar",
+            Reason::Unread => crate::resolve::UNREAD,
+            Reason::TooDeep => crate::resolve::TOO_DEEP,
+            Reason::Rivals => "by name, with other definitions of the name",
+        }
+    }
+
+    /// The reason the resolver's word `s` is.
+    pub(crate) fn of(s: &str) -> Option<Reason> {
+        Reason::ALL.into_iter().find(|r| r.as_str() == s)
+    }
+}
+
+/// What one site of a name is tied to: the one decision `refs`, `callers` and `callees` all read.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Tie {
+    /// the resolver placed it: on these definitions (the overloads a call does not pick between)
+    Resolved(Vec<i64>, Reason),
+    /// the resolver does not read the language, and the name has one definition the call reaches
+    ByName(Vec<i64>, Reason),
+    /// read but not placed, or by name with rivals: it may be any definition of the name
+    Undecided(Reason),
+    /// decided: no definition of the repository (a local, an import from outside, a keyword)
+    Elsewhere(Reason),
+}
+
+impl Tie {
+    /// The site as `refs` lists it: a definition and how, or why it stayed unresolved.
+    pub(crate) fn resolution(&self) -> Resolution {
+        match self {
+            Tie::Resolved(ids, how) => Ok((ids[0], how.as_str())),
+            Tie::ByName(ids, how) => Ok((ids[0], how.as_str())),
+            Tie::Undecided(why) | Tie::Elsewhere(why) => Err(why.as_str()),
         }
     }
 }

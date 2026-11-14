@@ -48,13 +48,14 @@ that raises it fails there. README.md and docs/INSTALL.md name it too.
 | `MODEL_REVISION` | the embedded semantic model changes |
 | the text index `FORMAT` | its files change |
 
-0.1.0 ships with content revision 8: builds with earlier rules were in use before the release,
+0.1.0 ships with content revision 9: builds with earlier rules were in use before the release,
 and their indexes must not keep the chunks, symbols and tokens those rules made (revision 3 joins
 Japanese shinjitai to the Han fold, and adds Java fields as symbols; revision 4 makes a Pascal
 statement that is a name alone a call; revision 5 reads a Free Pascal `.pp` unit as Pascal;
 revision 6 reads a C++ header with a Doxygen `@class` as C++; revision 7 names the definition
 after `let rec`, `let inline` and the like in the keyword tier; revision 8 takes only OCaml's and
-F#'s own words after `let` for modifiers, so `let data x y` binds `data`). `tools/gen_doc_assets.py --check` fails when this number
+F#'s own words after `let` for modifiers, so `let data x y` binds `data`; revision 9 makes a
+JavaScript or TypeScript quoted key that holds a function, `"get": function () {}`, a method). `tools/gen_doc_assets.py --check` fails when this number
 differs from `CONTENT_REVISION`. The four only go up: a binary leaves an index of a higher number
 alone, so two versions on one checkout never rebuild it in turn
 ([Architecture](ARCHITECTURE.md#storage-indexrs-lexrs)).

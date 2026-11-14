@@ -2,7 +2,7 @@
 //!
 //! The resolver test files run it on every tree they build, so each fixture is covered without
 //! a list. With `SCRUTATE_AGREEMENT_LOG` naming a file, each disagreement is appended to it as one
-//! line; with `SCRUTATE_AGREEMENT=assert`, the first tree with one fails its test.
+//! line. A tree with one fails its test, unless `SCRUTATE_AGREEMENT=off`.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -13,7 +13,7 @@ use serde_json::Value;
 /// Check the indexed tree `root` (built for `fixture`) as the environment asks.
 pub fn check(bin: &str, root: &Path, fixture: &str) {
     let log = std::env::var_os("SCRUTATE_AGREEMENT_LOG");
-    let assert = std::env::var("SCRUTATE_AGREEMENT").is_ok_and(|v| v == "assert");
+    let assert = std::env::var("SCRUTATE_AGREEMENT").map_or(true, |v| v != "off");
     if log.is_none() && !assert {
         return;
     }
@@ -149,7 +149,10 @@ pub fn disagreements(bin: &str, root: &Path) -> Vec<String> {
                 });
                 // a constructor's call is a call of its class, which callees names instead
                 let owner = x.qualname.rsplit_once('.').map(|(o, _)| o);
-                let class = defs.iter().find(|d| Some(d.qualname.as_str()) == owner && d.path == x.path).map(|d| format!("{}:{}-{}", d.path, d.start, d.end));
+                let class = defs
+                    .iter()
+                    .find(|d| Some(d.qualname.as_str()) == owner && d.path == x.path && d.kind != "module")
+                    .map(|d| format!("{}:{}-{}", d.path, d.start, d.end));
                 if !resolved.contains(&format!("{}:{}-{}", x.path, x.start, x.end)) && !class.is_some_and(|c| resolved.contains(&c)) {
                     out.push(format!("callee-missing\t{} ({spec})\tcallers lists {key} decided; callees {key} does not list {spec}", x.qualname));
                 }
@@ -158,7 +161,9 @@ pub fn disagreements(bin: &str, root: &Path) -> Vec<String> {
         // a call refs ties to X sits in code callers should list
         for (p, l, text, col) in &tied {
             let rest = text.get((*col as usize).saturating_sub(1)..).unwrap_or("");
-            let call = rest.strip_prefix(bare.as_str()).is_some_and(|r| r.trim_start().starts_with('('));
+            // `~Shape()` is a destructor's name, not a call
+            let after_tilde = text.get(..(*col as usize).saturating_sub(1)).is_some_and(|b| b.ends_with('~'));
+            let call = !after_tilde && rest.strip_prefix(bare.as_str()).is_some_and(|r| r.trim_start().starts_with('('));
             let Some(f) = around(p, *l).filter(|_| call) else { continue };
             if !listed.iter().any(|(cp, a, b, _)| cp == &f.path && *a == f.start && *b == f.end) {
                 out.push(format!(
