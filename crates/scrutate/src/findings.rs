@@ -208,8 +208,8 @@ fn bodies_of(path: &str, src: &[u8], min_tokens: usize) -> Vec<Body> {
         .collect()
 }
 
-/// The changed definitions (added or edited, outside test files) from which no test file is
-/// reached through the calls the walk found.
+/// The changed code definitions (`CODE_KINDS`, added or edited, outside test files) from which no
+/// test file is reached through the calls the walk found.
 fn untested(i: &Impact) -> Vec<usize> {
     let mut up: HashMap<&str, Vec<&Hit>> = HashMap::new();
     let by_id: HashMap<i64, &Hit> = i.changed.iter().map(|c| &c.hit).chain(i.callers.iter().map(|c| &c.hit)).map(|h| (h.id, h)).collect();
@@ -236,7 +236,7 @@ fn untested(i: &Impact) -> Vec<usize> {
     (0..i.changed.len())
         .filter(|&k| {
             let c = &i.changed[k];
-            c.status != "deleted" && c.hit.id != 0 && !matches!(c.hit.kind.as_str(), "window" | "module" | "file") && !reaches_test(&c.hit)
+            c.status != "deleted" && c.hit.id != 0 && CODE_KINDS.contains(&c.hit.kind.as_str()) && !reaches_test(&c.hit)
         })
         .collect()
 }

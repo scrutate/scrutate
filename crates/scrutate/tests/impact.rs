@@ -474,3 +474,15 @@ fn the_impact_tool_lists_the_findings_in_both_forms_and_says_it_does() {
     let impact = tools.as_array().unwrap().iter().find(|t| t["name"] == "impact").unwrap();
     assert!(impact["description"].as_str().unwrap().contains("findings"), "{impact}");
 }
+
+#[test]
+fn an_edited_readme_section_is_a_changed_definition_and_no_untested_finding() {
+    let t = chain("readme");
+    t.write("README.md", "# Tool\n\n## Usage\n\nRun it.\n");
+    t.commit("readme");
+    t.write("README.md", "# Tool\n\n## Usage\n\nRun it twice.\n");
+    let v = t.json(&[]);
+    let kinds: Vec<&str> = v["changed"].as_array().unwrap().iter().map(|c| c["kind"].as_str().unwrap()).collect();
+    assert!(kinds.contains(&"section"), "{v}");
+    assert_eq!(v["findings"], serde_json::json!([]), "{v}");
+}
