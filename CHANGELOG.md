@@ -231,7 +231,7 @@ incompatible index by itself, and that is never breaking.
 - The clauses of a Haskell function (`double 0 = 0` then `double x = x * 2`) are one definition
   with its signature, and each clause head is that definition in `refs` and the LSP, where the
   second clause was a definition of its own and a clause head a by-name use; the LSP's
-  references without the declaration leave out every line of it. The content revision is 10 so
+  references without the declaration leave out every line of it. The content revision goes up so
   an older index reads its files again ([CLI](docs/CLI.md#engine-b)).
 - `callers` and `refs` follow an element and a returned value to its declared type: Go
   `xs[0].Save()`, `m["a"].Save()` and `f().Save()` for `xs []Store`, `m map[string]Store`,
@@ -574,9 +574,16 @@ incompatible index by itself, and that is never breaking.
 - VS Code's symbol, callers and references commands ask for the word under the cursor without
   what comes before a dot when the name with its dots finds nothing, as the language server
   does: on `norm` in `p.norm()` they asked only for `p.norm` and found nothing. R's `is.ready` is
-  still asked whole, and a word is alphabetic characters and digits of any script, as the server
-  reads one: on `ß` in `größe(2)` they found no word, and on `हिंदी` they asked only for `ह`, as a
-  vowel sign is alphabetic but not a letter.
+  still asked whole, and a word is a name as Unicode's identifier rule reads one, as the server
+  does: on `ß` in `größe(2)` they found no word, and on `हिंदी` they asked only for `ह`, as a
+  vowel sign is not a letter.
+- Every reader of names (the call graph, `callers`, `refs`, `dead`, the language server) takes a
+  name's characters by one rule, Unicode's identifier rule (UAX #31), with the extra characters
+  a language allows (`$` in JavaScript, Java and PHP, `'` in OCaml, F# and Haskell, `\` in a PHP
+  qualified name). A call of a name that starts outside ASCII, such as `हिन्दी()`, was not
+  recorded, so `callers` and `callees` missed it, and the language server cut `हिन्दी` at its
+  virama. The content revision goes up so an older index reads its files again
+  ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - The GitHub Action keeps a backslash in `args` as written: `grep -c \bTODO\b .` searched for
   `bTODOb` and `--root C:\repo` named `C:repo`, so a gate could pass on the wrong search.
 - Python `grep(sort=True)` gives the CLI's `--sort` order (`a/b` before `a-b`), and with

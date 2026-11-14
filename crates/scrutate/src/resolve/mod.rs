@@ -493,8 +493,14 @@ fn strip_generics(s: &str) -> String {
     out.replace(' ', "")
 }
 
-fn is_ident(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+fn is_ident(lang: Lang, s: &str) -> bool {
+    let id = match lang {
+        Lang::Js => "javascript",
+        Lang::Java => "java",
+        Lang::Php => "php",
+        _ => "",
+    };
+    !s.is_empty() && s.chars().all(|c| crate::ident::is_continue_in(id, c))
 }
 
 const CONTAINER_KINDS: &[&str] = &["class", "impl", "trait", "struct", "interface", "enum"];
@@ -887,7 +893,7 @@ impl<'a> Resolver<'a> {
                     .map(|c| (c.start_byte(), c.end_byte()))
                     .collect()
             });
-            if lists.iter().any(|&(s, e)| src.get(s..e).unwrap_or("").split(|ch: char| !(ch.is_alphanumeric() || ch == '_')).any(|w| w == name)) {
+            if lists.iter().any(|&(s, e)| src.get(s..e).unwrap_or("").split(|ch: char| !crate::ident::is_continue(ch)).any(|w| w == name)) {
                 return true;
             }
             a = x.parent();
@@ -1149,7 +1155,7 @@ impl<'a> Resolver<'a> {
         let sep = rules!(lang, R => R::PATH_SEP);
         let stripped = strip_generics(qt);
         let segs: Vec<&str> = stripped.split(sep).collect();
-        if segs.iter().any(|s| !is_ident(s)) {
+        if segs.iter().any(|s| !is_ident(lang, s)) {
             return self.through_type(path, fi, lang, q, name);
         }
         for k in (1..=segs.len()).rev() {
@@ -1212,9 +1218,9 @@ impl<'a> Resolver<'a> {
         }
         // asked for each call of a common method on a type from outside
         let e = match self.ix.named(name) {
-            Ok(rows) => rows
-                .iter()
-                .any(|r| r.qualname.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == ty))),
+            Ok(rows) => {
+                rows.iter().any(|r| r.qualname.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !crate::ident::is_continue(c)).any(|w| w == ty)))
+            }
             Err(_) => true,
         };
         self.extended.insert(key, e);
@@ -1228,8 +1234,8 @@ impl<'a> Resolver<'a> {
             let mut words = HashSet::new();
             for t in self.ix.texts_of_kinds(&["trait", "interface"]).unwrap_or_default() {
                 let mut rest = t.as_str();
-                while let Some(i) = rest.find(|c: char| c.is_alphanumeric() || c == '_') {
-                    let word_len = rest[i..].find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len() - i);
+                while let Some(i) = rest.find(crate::ident::is_continue) {
+                    let word_len = rest[i..].find(|c: char| !crate::ident::is_continue(c)).unwrap_or(rest.len() - i);
                     let (word, after) = (&rest[i..i + word_len], rest[i + word_len..].trim_start_matches(['?', ' ']));
                     if after.starts_with(['(', '<']) {
                         words.insert(word.to_string());
@@ -1948,7 +1954,7 @@ impl<'a> Resolver<'a> {
         let head: String = self.ix.texts(&[defs[owner].id]).ok().and_then(|mut t| t.remove(&defs[owner].id)).unwrap_or_default();
         let head = &head[..head.find('{').into_iter().chain(head.find(":\n")).min().unwrap_or(head.len())];
         // a C++ or C# base list follows a `:`
-        if !head.contains(['(', ':']) && !head.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "for" | "extends" | "implements")) {
+        if !head.contains(['(', ':']) && !head.split(|c: char| !crate::ident::is_continue(c)).any(|w| matches!(w, "for" | "extends" | "implements")) {
             return Vec::new();
         }
         let fi = self.file(&path);

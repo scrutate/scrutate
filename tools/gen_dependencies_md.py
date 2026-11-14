@@ -51,6 +51,7 @@ PURPOSE = {
     "regex": "identifier/heuristic patterns",
     "regex-syntax": "pattern syntax trees: the text index's trigram conditions and the suffix literals of a regex",
     "rusqlite": "SQLite (bundled)",
+    "unicode-ident": "Unicode's identifier rule (XID_Start, XID_Continue): one answer to what a name's characters are",
     "unicode-normalization": "NFC form of names and non-ASCII words, so two spellings of one name match",
     "rust-stemmers": "Snowball English stemmer",
     "windows-sys": "opens and a rename relative to a directory handle (NtCreateFile, NtSetInformationFile) for `tsquery --rewrite --write`, refusing junctions (Windows; already in the tree through other crates)",

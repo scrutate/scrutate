@@ -221,7 +221,8 @@ pub fn spec_for(path: &str, source: &str) -> Option<&'static LangSpec> {
 // ------------------------------------------------------------------------- helpers
 static PYSTR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^[rRuUbBfF]{0,2}("""|'''|"|')"#).unwrap());
 static COMMENT_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*(/\*+|\*+/|\*|//+!?|<#|#>|#+|--\s?[|^]|--+|;+|%+|'|!|"|\{-\|?|-\})\s?"#).unwrap());
-static IDENT_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_$][\w$]*(?:-[A-Za-z_]\w*)*").unwrap());
+// crate::ident's rule in regex form (XID_Start or `_`, then XID_Continue), plus `$`
+static IDENT_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_$][\p{XID_Continue}$]*(?:-[\p{XID_Start}_]\p{XID_Continue}*)*").unwrap());
 
 fn expandtabs(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -578,7 +579,7 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
     if lang == "julia" {
         // `Base.show` is `show` owned by `Base`, `Base.:+` is `+`
         return match name.rsplit_once('.') {
-            Some((owner, last)) if !owner.is_empty() && owner.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '!')) => {
+            Some((owner, last)) if !owner.is_empty() && owner.chars().all(|c| crate::ident::is_continue(c) || matches!(c, '.' | '!')) => {
                 (Some(owner.to_string()), last.trim_start_matches(':').to_string())
             }
             Some((_, last)) => (None, last.to_string()),
@@ -823,7 +824,7 @@ fn callee_name(lang: &str, node: Node, field: &str, seps: &mut Seps) -> Option<S
 /// `operator==` or `~Shape` at the end of the C++ call target `s..e`, as their definitions are named.
 fn cpp_operator_or_destructor(seps: &mut Seps, s: usize, e: usize) -> Option<String> {
     let src = seps.src;
-    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let word = crate::ident::is_continue;
     if let Some(i) = seps.last_in("operator", s, e).filter(|&i| !src[s..i].ends_with(word)) {
         // the longest operators (`->*`, `<=>`) have three marks: in `a.operator()()()` only the first call is one
         let rest = &src[i + "operator".len()..e];
@@ -850,11 +851,12 @@ pub(crate) fn name_rule(lang: &str) -> &'static Regex {
 }
 
 // the name characters some languages allow past a plain identifier, as their definitions keep them
-static PREDICATE_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_]\w*[?!]?").unwrap());
-static BANG_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_]\w*!?").unwrap());
+static PREDICATE_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_]\p{XID_Continue}*[?!]?").unwrap());
+static BANG_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_]\p{XID_Continue}*!?").unwrap());
 static R_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z.][\w.]*").unwrap());
+// a POSIX shell name is ASCII
 static BASH_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][\w$]*(?:(?:-|::|\.)[A-Za-z_]\w*)*").unwrap());
-static PRIMED_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][\w']*(?:-[A-Za-z_][\w']*)*").unwrap());
+static PRIMED_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_][\p{XID_Continue}']*(?:-[\p{XID_Start}_][\p{XID_Continue}']*)*").unwrap());
 
 const ASM_CALLS: &[&str] = &["call", "callq", "calll", "bl", "jal"];
 const ASM_SECTIONS: &[&str] = &[".text", ".data", ".bss", ".rodata", ".section"];
@@ -2221,10 +2223,10 @@ fn modified<'a>(word: &str, modifier: &str, rest: &'a str) -> Option<(&'a str, u
         return None;
     }
     let body = rest.trim_start();
-    if !body.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+    if !body.starts_with(crate::ident::is_start) {
         return None;
     }
-    let len = body.find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '\'')).unwrap_or(body.len());
+    let len = body.find(|c: char| !crate::ident::is_continue_in("ocaml", c)).unwrap_or(body.len());
     let after = body[len..].trim_start();
     if !ml && (after.is_empty() || after.starts_with(['=', '(', ':'])) {
         return None;
@@ -2276,8 +2278,7 @@ fn heuristic_def(line: &str) -> Option<(&'static str, String)> {
                 let r = rest.trim_start();
                 // OCaml and F#: `let add x y =` takes parameters, `let limit = 5` does not
                 let ml_params = word == "let"
-                    && r.split_once('=')
-                        .is_some_and(|(p, _)| !p.trim().is_empty() && p.split_whitespace().all(|w| w.starts_with(|c: char| c.is_alphabetic() || c == '_')));
+                    && r.split_once('=').is_some_and(|(p, _)| !p.trim().is_empty() && p.split_whitespace().all(|w| w.starts_with(crate::ident::is_start)));
                 let is_fn = r.starts_with('(') || r.contains("=>") || r.contains("fun ") || r.contains("function") || r.contains("\\") || ml_params;
                 if !is_fn {
                     return None;
@@ -2626,7 +2627,7 @@ mod tests {
     }
 
     fn cpp_operator_or_destructor_by_whole_text(t: &str) -> Option<String> {
-        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let word = crate::ident::is_continue;
         if let Some(i) = t.rfind("operator").filter(|&i| !t[..i].ends_with(word)) {
             let op: String = t[i + "operator".len()..].split_whitespace().collect();
             if !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {

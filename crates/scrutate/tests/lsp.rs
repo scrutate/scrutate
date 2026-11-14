@@ -753,3 +753,37 @@ fn a_haskell_signature_and_its_clauses_are_one_declaration() {
     drop(c);
     child.wait().unwrap();
 }
+
+#[test]
+fn every_reader_of_names_takes_a_name_with_a_virama_whole() {
+    // हिन्दी holds a virama (U+094D): a mark, not a letter, but part of the name (UAX #31)
+    let r = Repo::new("virama");
+    r.write("app.py", "def हिन्दी():\n    return 1\n\n\ndef use():\n    return हिन्दी()\n");
+    let run = |args: &[&str]| -> Value {
+        let out = Command::new(BIN).args(args).current_dir(&r.root).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    assert!(Command::new(BIN).arg("index").current_dir(&r.root).output().unwrap().status.success());
+    let callers: Vec<Value> = run(&["callers", "--json", "--", "हिन्दी"])["result"].as_array().unwrap().iter().map(|h| h["name"].clone()).collect();
+    assert_eq!(callers, [json!("use")], "callers");
+    let refs = run(&["refs", "--json", "--", "हिन्दी"]);
+    let lines: Vec<&Value> = refs["result"]["definitions"][0]["references"].as_array().unwrap().iter().map(|x| &x["line"]).collect();
+    assert_eq!(lines, [&json!(1), &json!(6)], "refs");
+    let dead = run(&["dead", "--json"]);
+    assert!(dead["result"]["dead"].as_array().unwrap().iter().all(|d| d["name"] != "हिन्दी"), "dead: {dead}");
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    // the cursor on द, after the virama, in `return हिन्दी()`
+    let at = json!({"textDocument": {"uri": uri(&r.root.join("app.py"))}, "position": {"line": 5, "character": utf16("    return हिन्") + 1}});
+    let def = c.request("textDocument/definition", at.clone());
+    let got: Vec<(String, u64)> = places(&def["result"]).into_iter().map(|(f, l, _)| (f, l)).collect();
+    assert_eq!(got, [("app.py".to_string(), 0)], "definition: {def}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}

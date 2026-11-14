@@ -206,7 +206,7 @@ pub(super) fn java_package(src: &str) -> String {
             rest = r.split_once("*/").map_or("", |(_, r)| r);
         } else if let Some(r) = rest.strip_prefix('@') {
             // an annotation of the package (package-info.java), with its arguments
-            rest = r.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.' || c == '$').trim_start();
+            rest = r.trim_start_matches(|c: char| crate::ident::is_continue_in("java", c) || c == '.').trim_start();
             if rest.starts_with('(') {
                 let mut depth = 0;
                 let end = rest.char_indices().find(|&(_, c)| {

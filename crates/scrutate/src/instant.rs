@@ -1028,7 +1028,7 @@ pub fn ident_parts(ident: &str) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut cur = String::new();
     for (i, &c) in chars.iter().enumerate() {
-        if !c.is_alphanumeric() {
+        if !crate::ident::is_continue(c) || c == '_' {
             if !cur.is_empty() {
                 parts.push(std::mem::take(&mut cur));
             }

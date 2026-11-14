@@ -281,7 +281,7 @@ pub(crate) fn dotted(name: &str) -> String {
     let mut rest = name;
     while let Some(c) = rest.chars().next() {
         let sep = ["::", "->", "#"].into_iter().find(|s| rest.starts_with(s));
-        let follows = |s: &str| rest[s.len()..].chars().next().is_some_and(|n| n.is_alphanumeric() || n == '_' || n == '~');
+        let follows = |s: &str| rest[s.len()..].chars().next().is_some_and(|n| crate::ident::is_continue(n) || n == '~');
         match sep {
             Some(s) if !out.ends_with("operator") && follows(s) => {
                 // a leading separator (`::make`) names the top level: nothing before the name
@@ -306,9 +306,7 @@ fn plain(name: &str) -> String {
     let mut depth = 0usize;
     for (i, c) in name.char_indices() {
         match c {
-            '<' if depth > 0 || (!out.ends_with("operator") && out.ends_with(|p: char| p.is_alphanumeric() || p == '_') && name[i..].contains('>')) => {
-                depth += 1
-            }
+            '<' if depth > 0 || (!out.ends_with("operator") && out.ends_with(crate::ident::is_continue) && name[i..].contains('>')) => depth += 1,
             '>' if depth > 0 => depth -= 1,
             _ if depth > 0 => {}
             '\\' => out.push('.'),

@@ -162,9 +162,9 @@ fn looked_for(name: &str) -> (&str, bool) {
     }
 }
 
-/// A character of a word as a whole-word search reads it: a combining mark included.
+/// A character of a name.
 fn word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || unicode_normalization::char::is_combining_mark(c)
+    crate::ident::is_continue(c)
 }
 
 /// Every regular file of the repository the code index's walk reaches, binary or too large ones

@@ -496,6 +496,7 @@ fn hook_command(bin: &str, windows: bool, sub: &str) -> Vec<(&'static str, J)> {
     if !windows {
         return vec![("command", J::S(format!("{} hook {sub}", shell_word(bin))))];
     }
+    // a path, not a name: any letter or digit of a file name is safe unquoted
     if bin.chars().all(|c| c.is_alphanumeric() || r"\/._-:".contains(c)) {
         vec![("command", J::S(format!("{} hook {sub}", bin.replace('\\', "/"))))]
     } else {

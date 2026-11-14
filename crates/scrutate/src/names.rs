@@ -131,7 +131,7 @@ impl<'a> Names<'a> {
         let classes = definitions.iter().any(|d| d.kind == "class" && matches!(langs.id(&d.path), Some("javascript" | "typescript" | "tsx")));
         // PHP `new self()`, `new static()` and `new parent()` make the class they stand for
         let php_classes = definitions.iter().any(|d| d.kind == "class" && langs.id(&d.path) == Some("php"));
-        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let ident = |c: Option<char>| c.is_some_and(crate::ident::is_continue);
         for path in importing {
             let mut aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
             let sites: HashSet<usize> = aliases.iter().flat_map(|(_, _, s)| s.iter().copied()).collect();
@@ -308,7 +308,7 @@ impl<'a> Names<'a> {
             .or_insert_with(|| std::iter::once(0).chain(src.bytes().enumerate().filter(|&(_, c)| c == b'\n').map(|(i, _)| i + 1)).collect());
         let first = (start.max(1) - 1) as usize;
         let from = starts.get(first).copied().unwrap_or(src.len());
-        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let ident = |c: Option<char>| c.is_some_and(crate::ident::is_continue);
         let methods = crate::resolve::methods_only(self.langs.id(path));
         // ASCII lowercase keeps every byte where it is, so the columns hold
         let any_case = self.langs.folds(path, "function") && name.is_ascii();
@@ -502,7 +502,7 @@ impl<'a> Names<'a> {
                 self.s.ix.imports()?.into_iter().map(|(path, _, module)| (path, module)).collect()
             };
             for (path, module) in rows {
-                let names_it = module.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|seg| fresh.contains(&seg.to_string()));
+                let names_it = module.split(|c: char| !crate::ident::is_continue(c)).any(|seg| fresh.contains(&seg.to_string()));
                 let kept = names_it && targets.iter().any(|t| langs.same_family(&t.path, &path)) && files.insert(path.clone());
                 if kept && names.iter().any(|n| self.rv.imports_as(&path, n)) {
                     needles.insert(module_name(&stem(&path)).to_string());
@@ -641,7 +641,7 @@ impl<'a> Names<'a> {
     /// The classes of the repository the `X.new` calls in the lines of `d` make.
     fn made_by_new(&mut self, d: &Hit) -> Result<Vec<ChunkRow>> {
         let src = self.rv.file(&d.path).src.clone();
-        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let word = crate::ident::is_continue;
         let mut classes = BTreeSet::new();
         for line in src.lines().skip((d.start.max(1) - 1) as usize).take((d.end - d.start + 1).max(0) as usize) {
             for (at, _) in line.match_indices(".new") {
@@ -812,7 +812,7 @@ impl<'a> Names<'a> {
     /// definition `id`, else the first where `name` is called (a pick the resolver could not tie).
     fn call_line(&mut self, path: &str, (start, end): (i64, i64), name: &str, id: i64) -> i64 {
         let fi = self.rv.file(path);
-        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let ident = |c: Option<char>| c.is_some_and(crate::ident::is_continue);
         let mut first = None;
         let first_line = start.max(1);
         for (i, line) in fi.src.lines().enumerate().skip(first_line as usize - 1).take((end - first_line + 1).max(0) as usize) {
@@ -958,6 +958,7 @@ impl<'a> Names<'a> {
                     // a bare name in JavaScript or TypeScript that the resolver did not map is a package
                     None => {
                         !JS_EXTS.iter().any(|e| path.ends_with(e))
+                            // a package name with `-` is one segment here, unlike a name
                             && module.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-')).any(|seg| seg == own)
                     }
                 };
@@ -1282,7 +1283,7 @@ fn module_name(stem: &str) -> &str {
 
 /// Whether `word` is in `text` where it is not part of a longer identifier.
 fn has_word(text: &str, word: &str) -> bool {
-    let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let ident = |c: Option<char>| c.is_some_and(crate::ident::is_continue);
     text.match_indices(word).any(|(i, _)| !ident(text[..i].chars().next_back()) && !ident(text[i + word.len()..].chars().next()))
 }
 

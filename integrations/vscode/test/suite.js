@@ -115,14 +115,18 @@ exports.run = async function () {
     await vscode.commands.executeCommand("scrutate.symbol");
     assert.strictEqual(at(), "src/umlaut.py:1", "a word with letters outside ASCII");
 
-    // vowel signs are Alphabetic but not letters (\p{L}); the server keeps them in the word
+    // vowel signs and the virama are marks, not letters (\p{L}); a name keeps them (UAX #31), as the server does
     const hFile = vscode.Uri.joinPath(root, "src/hindi.py");
-    fs.writeFileSync(hFile.fsPath, "def हिंदी(x):\n    return x\n\n\ndef नया():\n    return हिंदी(2)\n");
+    fs.writeFileSync(hFile.fsPath, "def हिंदी(x):\n    return x\n\n\ndef नया():\n    return हिंदी(2)\n\n\ndef हिन्दी():\n    return हिन्दी()\n");
     await vscode.commands.executeCommand("scrutate.index");
     const onHa = new vscode.Position(5, 11); // `ह` in `return हिंदी(2)`
     (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(hFile))).selection = new vscode.Selection(onHa, onHa);
     await vscode.commands.executeCommand("scrutate.symbol");
     assert.strictEqual(at(), "src/hindi.py:1", "a word with vowel signs");
+    const onDa = new vscode.Position(9, 15); // `द`, after the virama, in `return हिन्दी()`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(hFile))).selection = new vscode.Selection(onDa, onDa);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/hindi.py:9", "a word with a virama");
 
     await onTheCall();
     want = (item) => item.description.startsWith("src/geo.py:");

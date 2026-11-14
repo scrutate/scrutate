@@ -19,6 +19,7 @@ pub mod fmt;
 pub mod fuzzyre;
 pub mod git;
 pub mod hook;
+pub mod ident;
 pub mod impact;
 pub mod index;
 pub mod instant;

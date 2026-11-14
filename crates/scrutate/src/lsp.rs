@@ -82,7 +82,7 @@ pub fn byte_to_utf16(line: &str, byte: usize) -> u64 {
 }
 
 fn is_ident(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+    crate::ident::is_continue(c)
 }
 
 /// Byte range of the identifier at (or just before) `at`.

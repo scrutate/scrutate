@@ -55,7 +55,7 @@ impl Rules for Php {
     // a `require` of a path is left to the mapping of paths onto files
     fn reads_import(module: &str) -> bool {
         let name = module.trim_start_matches('\\');
-        !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\\')
+        !name.is_empty() && name.chars().all(|c| crate::ident::is_continue_in("php", c))
     }
 
     fn import_files(r: &mut Resolver, from: &str, _fi: &FileInfo, _line: i64, module: &str) -> Option<Vec<String>> {
