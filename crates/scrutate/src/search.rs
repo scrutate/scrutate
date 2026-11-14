@@ -19,6 +19,9 @@ use crate::text::{literal_candidates, name_key, query_terms, query_wholes, Words
 pub const PRUNE: usize = 200; // the learned ranker sees (at most) this many candidates
 pub const LEX_LIMIT: usize = 100;
 pub const SEM_LIMIT: usize = 100;
+/// What a vendored hit loses from its ranker score: the bench/quality sweep put 0.5 and 1 at the
+/// unpenalized MRR@10 and 4 well below, while a strict tier lost a fifth of the queries.
+const VENDORED_MARGIN: f64 = 1.0;
 pub const CODE_KINDS: &[&str] = &["function", "method", "class", "struct", "trait", "interface", "type", "enum", "impl"];
 
 pub use crate::models::FEATURES;
@@ -317,6 +320,7 @@ fn plain(name: &str) -> String {
 
 impl Searcher {
     pub fn new(ix: Index) -> Searcher {
+        crate::text::learn_own_packages(&ix.root);
         Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default() }
     }
 
@@ -539,20 +543,17 @@ impl Searcher {
         // part of `Rec.valid?`) comes first: no name the ranker was fitted on is written so
         let typed: HashSet<String> = typed_tokens(&c.q.text).flat_map(|t| [t, typed_tail(t)]).filter(|t| punctuated(t)).map(|t| t.nfc().collect()).collect();
         let first: Vec<bool> = c.rows.iter().map(|r| !typed.is_empty() && r.kind != "window" && typed.contains(&r.name.nfc().collect::<String>())).collect();
-        // vendored code ranks below the project's own, but a name only it defines, searched for
-        // as itself, keeps its place
+        // vendored code ranks lower by a fixed margin, so a clearly better vendored match still
+        // comes first; a name only it defines, searched for as itself, keeps its place
         let whole = crate::text::name_key(c.q.text.trim());
-        let vendored: Vec<bool> = c.rows.iter().map(|r| crate::text::is_vendored_path(&r.path)).collect();
+        let vendored: Vec<bool> = c.rows.iter().map(|r| crate::text::is_vendored(&r.path)).collect();
         let named = |r: usize| c.rows[r].kind != "window" && c.rows[r].name_key == whole;
         let project_named = (0..c.rows.len()).any(|r| !vendored[r] && named(r));
         let demoted: Vec<bool> = (0..c.rows.len()).map(|r| vendored[r] && (project_named || !named(r))).collect();
+        let ranked: Vec<f64> = (0..c.rows.len()).map(|r| scores[r] - if demoted[r] { VENDORED_MARGIN } else { 0.0 }).collect();
         let mut order: Vec<usize> = (0..c.rows.len()).collect();
         order.sort_by(|&a, &b| {
-            first[b]
-                .cmp(&first[a])
-                .then(demoted[a].cmp(&demoted[b]))
-                .then(scores[b].partial_cmp(&scores[a]).unwrap_or(std::cmp::Ordering::Equal))
-                .then(c.rows[a].id.cmp(&c.rows[b].id))
+            first[b].cmp(&first[a]).then(ranked[b].partial_cmp(&ranked[a]).unwrap_or(std::cmp::Ordering::Equal)).then(c.rows[a].id.cmp(&c.rows[b].id))
         });
         let mut picked: Vec<Hit> = Vec::new();
         let mut best_by_key: HashMap<(String, String, bool), usize> = HashMap::new();

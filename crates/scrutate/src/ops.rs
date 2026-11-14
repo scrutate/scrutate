@@ -471,12 +471,12 @@ pub fn envelope(mut result: Value, stopped: Option<Stop>) -> Value {
     v
 }
 
-/// Every item of an answer with a `path` of vendored code (`text::is_vendored_path`) gains
+/// Every item of an answer with a `path` of vendored code (`text::is_vendored`) gains
 /// `"vendored": true`: the one place, so no answer can leave it out.
 fn mark_vendored(v: &mut Value) {
     match v {
         Value::Object(m) => {
-            if m.get("path").and_then(Value::as_str).is_some_and(crate::text::is_vendored_path) {
+            if m.get("path").and_then(Value::as_str).is_some_and(crate::text::is_vendored) {
                 m.insert("vendored".into(), Value::Bool(true));
             }
             m.values_mut().for_each(mark_vendored);

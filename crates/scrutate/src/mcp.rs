@@ -113,7 +113,7 @@ fn drop_descriptions(schema: &mut Value) {
 fn tool_table() -> Value {
     json!([
         {"name": "search_code", "short": "Search code by meaning or name.",
-         "description": "Search the codebase by meaning or by name. Returns the best matching functions/classes with file:line and a snippet. `query` may be natural language (\"where do we refresh expired tokens\") or identifiers (`ClientSession.call_tool`). To improve recall put synonyms and likely identifier names in `alt_queries` (e.g. [\"renew credentials\", \"refresh_token\"], at most 10); results of all phrasings are fused. Vendored code (vendor/, third_party/, node_modules/, Pods/, minified files) ranks below the project's own and is marked \"vendored\": true.",
+         "description": "Search the codebase by meaning or by name. Returns the best matching functions/classes with file:line and a snippet. `query` may be natural language (\"where do we refresh expired tokens\") or identifiers (`ClientSession.call_tool`). To improve recall put synonyms and likely identifier names in `alt_queries` (e.g. [\"renew credentials\", \"refresh_token\"], at most 10); results of all phrasings are fused. Vendored code (vendor/, third_party/, node_modules/, Pods/, minified files) ranks lower than the project's own by a fixed margin and is marked \"vendored\": true.",
          "inputSchema": {"type": "object", "properties": {
              "query": {"type": "string"},
              "alt_queries": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},

@@ -6,7 +6,9 @@ usage: quality.py BINARY            measure; exit 1 when a measure is below its 
        quality.py --make            derive the query set from the corpus again
 
 The corpus is a frozen copy of the code under CORPUS with every doc comment and docstring removed
-(variant A of bench/make_bench.py and bench/make_bench_code.py), kept in quality/corpus.tar.gz.
+(variant A of bench/make_bench.py and bench/make_bench_code.py), kept in quality/corpus.tar.gz
+with the root manifests as they are (search reads them to tell the project's own packages under
+vendor/ from vendored code).
 The queries are the benchmark's five types made from those doc comments (the first sentence is
 the query, the definition it documents is the answer), kept in quality/queries.json. Both are
 written by --make and committed, so the measure moves only when the engine does: an edit to the
@@ -35,6 +37,7 @@ from evalcore import first_relevant_rank, summarize  # noqa: E402
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 CORPUS = {"crates/scrutate/src": ".rs", "vendor/ignore/src": ".rs", "bench": ".py", "tools": ".py"}
+MANIFESTS = ("Cargo.toml", "go.mod", "package.json", "pnpm-workspace.yaml")
 QUERIES = os.path.join(REPO, "bench", "quality", "queries.json")
 FLOOR = os.path.join(REPO, "bench", "quality", "floor.json")
 FROZEN = os.path.join(REPO, "bench", "quality", "corpus.tar.gz")
@@ -85,6 +88,14 @@ def make() -> None:
             targets += found
             data = text.encode("utf8")
             info = tarfile.TarInfo(rel)
+            info.size, info.mode = len(data), 0o644
+            tar.addfile(info, io.BytesIO(data))
+        for manifest in MANIFESTS:
+            if not os.path.isfile(os.path.join(REPO, manifest)):
+                continue
+            with open(os.path.join(REPO, manifest), "rb") as f:
+                data = f.read()
+            info = tarfile.TarInfo(manifest)
             info.size, info.mode = len(data), 0o644
             tar.addfile(info, io.BytesIO(data))
     qs = make_bench.make_queries(targets, random.Random(1234), random.Random("types quality"))

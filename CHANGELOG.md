@@ -9,6 +9,9 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a
+  fixed margin, so a clearly better vendored match (`WalkBuilder.build_matchers` defined only
+  under `vendor/`) still comes first, and it is never left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
 - Secret-safe answers: the MCP tools, the Grep hook and `lsp` replace a secret in what they
   return with `[redacted:KIND]`, its name or armour kept, and say how many they redacted. The
   detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,
@@ -18,8 +21,10 @@ incompatible index by itself, and that is never breaking.
 - Vendored code ranks below the project's own in `search` and the MCP `search_code`, and is never
   left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
   their kin, a subset of GitHub linguist's `vendor.yml`. A name only vendored code defines,
-  searched for as itself, keeps its place. Every JSON item whose `path` is vendored code, in
-  any answer, has `"vendored": true`
+  searched for as itself, keeps its place. A directory the root manifest builds as the
+  project's own package (Cargo workspace members and path dependencies, a `go.mod` replace
+  into the repository, npm, Yarn and pnpm workspaces) is not vendored. Every JSON item whose
+  `path` is vendored code, in any answer, has `"vendored": true`
   ([CLI](docs/CLI.md#engine-b)).
 - `SCRUTATE_COUNT_KEY=N` keeps a count of big searches apart from the one the user's other
   searches join; the tests of that count use it, so another suite's searches cannot change what

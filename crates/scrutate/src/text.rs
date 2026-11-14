@@ -310,10 +310,97 @@ const VENDORED: &[&str] = &[
     r"(^|/)jspm_packages/",
 ];
 
-/// Whether `path` is vendored code (`VENDORED`): search ranks it below the project's own.
+/// Whether `path` matches a vendored pattern (`VENDORED`), whoever builds it.
 pub fn is_vendored_path(path: &str) -> bool {
     static SET: LazyLock<regex::RegexSet> = LazyLock::new(|| regex::RegexSet::new(VENDORED).expect("vendored patterns"));
     SET.is_match(&path.replace('\\', "/"))
+}
+
+/// Whether `path` is vendored code: search ranks it below the project's own. A path under a
+/// directory a repository opened in this process builds as its own package is not.
+pub fn is_vendored(path: &str) -> bool {
+    is_vendored_path(path) && !OWN.read().unwrap_or_else(|e| e.into_inner()).values().any(|dirs| owns(dirs, path))
+}
+
+/// By repository root: the directories its root manifests declare as its own packages.
+static OWN: LazyLock<std::sync::RwLock<HashMap<std::path::PathBuf, Vec<String>>>> = LazyLock::new(Default::default);
+
+/// Reads the root manifests of `root` once for this process, for `is_vendored`.
+pub fn learn_own_packages(root: &std::path::Path) {
+    if OWN.read().unwrap_or_else(|e| e.into_inner()).contains_key(root) {
+        return;
+    }
+    let dirs: Vec<String> = ["Cargo.toml", "go.mod", "package.json", "pnpm-workspace.yaml"]
+        .iter()
+        .flat_map(|m| crate::resolve::repo_text(root, m).map(|t| own_package_dirs(m, &t)).unwrap_or_default())
+        .collect();
+    OWN.write().unwrap_or_else(|e| e.into_inner()).insert(root.to_path_buf(), dirs);
+}
+
+/// The directories (globs allowed) a root manifest declares as the repository's own packages:
+/// Cargo workspace members and path dependencies, Go `replace` targets in the repository, npm,
+/// Yarn and pnpm workspaces.
+pub fn own_package_dirs(manifest: &str, text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    match manifest {
+        "Cargo.toml" => {
+            let Ok(t) = text.parse::<toml::Table>() else { return out };
+            let ws = t.get("workspace").and_then(|w| w.as_table());
+            out.extend(ws.and_then(|w| w.get("members")).and_then(|m| m.as_array()).into_iter().flatten().filter_map(|m| m.as_str()).map(str::to_string));
+            let tables = ["dependencies", "dev-dependencies", "build-dependencies"].map(|k| t.get(k));
+            for deps in tables.into_iter().chain([ws.and_then(|w| w.get("dependencies"))]).flatten().filter_map(|d| d.as_table()) {
+                out.extend(deps.values().filter_map(|d| d.get("path")?.as_str()).map(str::to_string));
+            }
+        }
+        "go.mod" => out.extend(
+            text.lines()
+                .filter_map(|l| l.split_once("=>"))
+                .map(|(_, to)| to.split_whitespace().next().unwrap_or(""))
+                .filter(|to| to.starts_with("./"))
+                .map(str::to_string),
+        ),
+        "package.json" => {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return out };
+            let ws = &v["workspaces"];
+            let list = ws.as_array().or_else(|| ws["packages"].as_array());
+            out.extend(list.into_iter().flatten().filter_map(|w| w.as_str()).map(str::to_string));
+        }
+        "pnpm-workspace.yaml" => {
+            // the `packages:` list, one quoted or bare glob per `- ` line
+            let mut inside = false;
+            for line in text.lines() {
+                if !line.starts_with([' ', '\t', '-']) {
+                    inside = line.trim_end() == "packages:";
+                } else if let Some(item) = line.trim().strip_prefix("- ").filter(|_| inside) {
+                    out.push(item.trim().trim_matches(['\'', '"']).to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+    out.iter()
+        .filter(|d| !d.starts_with('!'))
+        .map(|d| d.trim_start_matches("./").trim_end_matches('/').to_string())
+        .filter(|d| !d.is_empty() && !d.starts_with(".."))
+        .collect()
+}
+
+/// Whether `path` lies in one of `dirs`, whose parts may hold `*` (within a part) or be `**`.
+fn owns(dirs: &[String], path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    let parts: Vec<&str> = path.split('/').collect();
+    let glob = |pat: &str, part: &str| match pat.split_once('*') {
+        None => pat == part,
+        Some((a, b)) => part.len() >= a.len() + b.len() && part.starts_with(a) && part.ends_with(b),
+    };
+    fn under(pat: &[&str], parts: &[&str], glob: &dyn Fn(&str, &str) -> bool) -> bool {
+        match pat.split_first() {
+            None => !parts.is_empty(),
+            Some((&"**", rest)) => (0..parts.len()).any(|i| under(rest, &parts[i..], glob)),
+            Some((p, rest)) => parts.split_first().is_some_and(|(first, more)| glob(p, first) && under(rest, more, glob)),
+        }
+    }
+    dirs.iter().any(|d| under(&d.split('/').collect::<Vec<_>>(), &parts, &glob))
 }
 
 const TEST_PARTS: &[&str] = &["test", "tests", "testing", "__tests__", "spec", "specs", "e2e", "fixtures", "mocks"];
@@ -457,6 +544,30 @@ pub fn query_words(q: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_root_manifest_names_the_directories_the_repository_builds_as_its_own() {
+        let cargo = "[workspace]\nmembers = [\"crates/*\", \"./vendor/own/\"]\n\n[dependencies]\nshim = { path = \"third_party/shim\" }\nfar = { path = \"../far\" }\nreg = \"1\"\n";
+        assert_eq!(own_package_dirs("Cargo.toml", cargo), ["crates/*", "vendor/own", "third_party/shim"]);
+        let go = "module m\nreplace a => ./vendor/a\nreplace (\n\tb v1 => ./third_party/b/\n\tc => example.com/c v2\n)\n";
+        assert_eq!(own_package_dirs("go.mod", go), ["vendor/a", "third_party/b"]);
+        assert_eq!(own_package_dirs("package.json", r#"{"workspaces": {"packages": ["vendor/*"]}}"#), ["vendor/*"]);
+        assert_eq!(own_package_dirs("pnpm-workspace.yaml", "packages:\n  - 'vendor/**'\n  - \"!vendor/x\"\nother:\n  - no\n"), ["vendor/**"]);
+        assert!(own_package_dirs("Cargo.toml", "not toml [").is_empty());
+        let dirs = ["vendor/own".to_string(), "third_party/*".to_string(), "pods/**".to_string()];
+        for (path, yes) in [
+            ("vendor/own/a.rs", true),
+            ("vendor/own/src/deep/a.rs", true),
+            ("vendor/owner/a.rs", false),
+            ("vendor/own", false),
+            ("third_party/x/a.c", true),
+            ("third_party/a.c", false),
+            ("pods/a/b/c.m", true),
+            ("vendor\\own\\a.rs", true),
+        ] {
+            assert_eq!(owns(&dirs, path), yes, "{path}");
+        }
+    }
 
     #[test]
     fn a_vendored_path_is_a_dependency_directory_or_a_minified_file() {

@@ -298,17 +298,66 @@ fn search_ranks_vendored_code_below_project_code_and_marks_it() {
         hits
     };
     let hits = search("zqvortex lease");
-    // every project hit first, though the vendored zqvortex_lease matches the query better
-    let paths: Vec<&str> = hits.iter().map(|h| h["path"].as_str().unwrap()).collect();
-    let first_vendored = paths.iter().position(|p| p.starts_with("vendor/")).unwrap_or_else(|| panic!("vendored hits kept: {paths:?}"));
-    assert!(first_vendored > 0 && paths[first_vendored..].iter().all(|p| p.starts_with("vendor/")), "{paths:?}");
+    // a vendored hit ranks as its score less a fixed margin of 1: one only slightly better than a
+    // project hit stays below it, a clearly better one (zqvortex_lease) can come first
+    let vendored = |h: &serde_json::Value| h["path"].as_str().unwrap().starts_with("vendor/");
+    let ranked = |h: &serde_json::Value| h["score"].as_f64().unwrap() - if vendored(h) { 1.0 } else { 0.0 };
+    assert!(hits.windows(2).all(|w| ranked(&w[0]) >= ranked(&w[1])), "{hits:?}");
+    let slightly = hits
+        .iter()
+        .enumerate()
+        .any(|(i, v)| vendored(v) && hits[..i].iter().any(|p| !vendored(p) && p["score"].as_f64().unwrap() < v["score"].as_f64().unwrap()));
+    assert!(slightly, "no vendored hit kept below a weaker project hit: {hits:?}");
     let v = hits.iter().find(|h| h["name"] == "zqvortex_lease").unwrap_or_else(|| panic!("vendored hit kept: {hits:?}"));
     assert_eq!(v["vendored"], true, "{v}");
-    assert!(hits[0].get("vendored").is_none(), "{}", hits[0]);
+    assert!(hits.iter().filter(|h| !vendored(h)).all(|h| h.get("vendored").is_none()), "{hits:?}");
     // a name both define: the project's first; a name only vendored code defines: still first
     assert_eq!(search("parse_lease").first().map(|h| h["path"].clone()), Some("lib/tokens.py".into()));
     let burst = search("burst_frames");
     assert!(burst.first().is_some_and(|h| h["name"] == "burst_frames" && h["vendored"] == true), "{burst:?}");
+}
+
+#[test]
+fn a_qualified_name_only_vendored_code_defines_finds_it_first() {
+    let r = Repo::new("vendored_qid");
+    r.write(
+        "lib/app.py",
+        b"def build(x):\n    return x\n\n\ndef matchers(walk):\n    return walk.build_matchers()\n\n\ndef build_walk():\n    return build(1)\n",
+    );
+    r.write("vendor/walk/walk.py", b"class WalkBuilder:\n    def build_matchers(self):\n        return []\n\n    def threads(self, n):\n        return n\n");
+    let (code, out, err) = r.run(&["search", "WalkBuilder.build_matchers", "-k", "5", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
+    assert!(hits.first().is_some_and(|h| h["name"] == "WalkBuilder.build_matchers" && h["vendored"] == true), "{hits:?}");
+}
+
+#[test]
+fn a_vendored_directory_the_repository_builds_as_its_own_package_is_project_code() {
+    let manifests: [(&str, &str); 4] = [
+        ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\", \"vendor/own\"]\n\n[workspace.dependencies]\nshim = { path = \"third_party/shim\" }\n"),
+        ("go.mod", "module example.com/app\n\nreplace example.com/own => ./vendor/own\nreplace (\n\texample.com/shim v1.0.0 => ./third_party/shim/\n)\n"),
+        ("package.json", "{\"name\": \"app\", \"workspaces\": [\"vendor/own\", \"third_party/*\"]}\n"),
+        ("pnpm-workspace.yaml", "packages:\n  - 'vendor/own'\n  - \"third_party/**\"\n  - '!third_party/skip'\n"),
+    ];
+    for (i, (manifest, text)) in manifests.iter().enumerate() {
+        let r = Repo::new(&format!("vendored_own_{i}"));
+        r.write(manifest, text.as_bytes());
+        r.write("lib/app.py", b"def helper():\n    return 1\n");
+        r.write("vendor/own/zqmarlin.py", b"# Folds the zqmarlin ledger.\ndef fold_zqmarlin_ledger(rows):\n    return rows\n");
+        r.write("third_party/shim/zqmarlin_shim.py", b"# Folds the zqmarlin ledger.\ndef shim_zqmarlin_ledger(rows):\n    return rows\n");
+        r.write("vendor/other/zqmarlin_other.py", b"# Folds the zqmarlin ledger.\ndef other_zqmarlin_ledger(rows):\n    return rows\n");
+        let (code, out, err) = r.run(&["search", "fold zqmarlin ledger", "-k", "10", "--json"]);
+        assert_eq!(code, 0, "{err}");
+        let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
+        let of = |name: &str| hits.iter().find(|h| h["name"] == name).unwrap_or_else(|| panic!("{manifest}: {name} missing: {hits:?}"));
+        // the package the manifest declares is the project's: unmarked, and above the vendored hit
+        assert!(of("fold_zqmarlin_ledger").get("vendored").is_none(), "{manifest}: {hits:?}");
+        assert_eq!(of("other_zqmarlin_ledger")["vendored"], true, "{manifest}: {hits:?}");
+        let pos = |name: &str| hits.iter().position(|h| h["name"] == name).unwrap();
+        assert!(pos("fold_zqmarlin_ledger") < pos("other_zqmarlin_ledger"), "{manifest}: {hits:?}");
+        // a path dependency, a replace target and a glob declare it too
+        assert!(of("shim_zqmarlin_ledger").get("vendored").is_none(), "{manifest}: {hits:?}");
+    }
 }
 
 #[test]
