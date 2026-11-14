@@ -1512,17 +1512,17 @@ impl Index {
         Ok(db)
     }
 
-    /// Forget every indexed file and segment (inside one write transaction); with `stamp_for` (a
-    /// model signature), of an index triage found to need a rebuild, stamped with this version in
-    /// the same transaction. Another process that found the same
-    /// index may have done that first and be building it: then nothing is cleared, and its write
-    /// lock is not waited for.
     /// Every file's rows and every segment gone, in the database as it is: what a rebuild does when
     /// the files cannot be deleted. Segment names go on from the last one, never reused.
     pub fn clear_in_place(&mut self) -> Result<()> {
         self.clear_with(None)
     }
 
+    /// Forget every indexed file and segment (inside one write transaction); with `stamp_for` (a
+    /// model signature), of an index triage found to need a rebuild, stamped with this version in
+    /// the same transaction. Another process that found the same
+    /// index may have done that first and be building it: then nothing is cleared, and its write
+    /// lock is not waited for.
     fn clear_with(&mut self, stamp_for: Option<&str>) -> Result<()> {
         let done = |db: &Connection| stamp_for.is_some() && Self::rebuild_reason(db).is_none();
         self.lex = None;

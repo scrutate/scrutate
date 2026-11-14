@@ -490,14 +490,6 @@ pub struct Capture {
     pub text: String,
 }
 
-/// Run a tree-sitter query (S-expression pattern language) over the files of one language under
-/// `roots`, delivering every capture to `on_capture` in path order. No index is needed; files are
-/// parsed in parallel in bounded chunks, so memory stays flat however many matches there are.
-/// With `cache_root`, each file's captures are kept under `cache_root/.scrutate/tsquery/` by
-/// content hash and files seen before are not parsed again (see `tscache`); the output is the same.
-/// With `as_given`, paths are printed as `grep PATH...` prints them (the root as given, then the
-/// path below it), except under `.`; without, from the root that holds them.
-/// Returns the number of captures delivered (stops at `limit`).
 /// Each searched path from `top` ("" for `top` itself), or as given when it lies outside.
 fn scopes(top: &Path, roots: &[PathBuf]) -> Vec<String> {
     let top = std::fs::canonicalize(top).ok();
@@ -850,6 +842,14 @@ pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_g
     files
 }
 
+/// Run a tree-sitter query (S-expression pattern language) over the files of one language under
+/// `roots`, delivering every capture to `on_capture` in path order. No index is needed; files are
+/// parsed in parallel in bounded chunks, so memory stays flat however many matches there are.
+/// With `cache_root`, each file's captures are kept under `cache_root/.scrutate/tsquery/` by
+/// content hash and files seen before are not parsed again (see `tscache`); the output is the same.
+/// With `as_given`, paths are printed as `grep PATH...` prints them (the root as given, then the
+/// path below it), except under `.`; without, from the root that holds them.
+/// Returns the number of captures delivered (stops at `limit`).
 #[allow(clippy::too_many_arguments)]
 pub fn tsquery_each(
     lang: &str,

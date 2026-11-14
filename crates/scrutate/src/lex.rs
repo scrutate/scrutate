@@ -1393,8 +1393,6 @@ mod tests {
 
     const DOT_DIGEST: u64 = 438482546770;
 
-    /// A stop asked for while a segment's vectors are clustered ends the clustering at the next
-    /// block of rows, with no file written, and the clustering asked once more finishes.
     #[test]
     fn a_stopped_segment_write_leaves_no_directory_behind() {
         let (n, k) = (IVF_MIN_ROWS, 4);
@@ -1410,6 +1408,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A stop asked for while a segment's vectors are clustered ends the clustering at the next
+    /// block of rows, with no file written, and the clustering asked once more finishes.
     #[test]
     fn a_stop_ends_the_clustering_of_a_segment_s_vectors() {
         let (n, k) = (3000, 16);
