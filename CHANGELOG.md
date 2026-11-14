@@ -122,6 +122,11 @@ incompatible index by itself, and that is never breaking.
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- `dupes` and `review` read the duplicate keys the index keeps for each definition, made once per
+  text when it is parsed, and read a definition's text only when it is in a group or shares a
+  bucket: on the Linux tree `dupes` takes 15.6 s where it took 38.2 s, with the same 51,542 groups.
+  The index's schema is 15, so an older index is built again once; the keys add 6.8% to the Linux
+  tree's `.scrutate/`, and a full index of it took 0 to 32% longer in runs on a shared machine.
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
   (7.5 MiB compressed), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
   crates; publishing waits for the release ([INSTALL](docs/INSTALL.md)).

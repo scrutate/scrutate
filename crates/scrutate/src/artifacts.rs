@@ -19,13 +19,14 @@ use std::io::{Read, Write};
 use anyhow::{bail, Result};
 
 use crate::index::{ChunkRow, NewRow, TF_CAP};
+use crate::intel::DupKeys;
 use crate::lex::{tok_key, FileLex, QVecs, NF};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2};
 
 /// The layout of an encoded artifact; part of every key, so another layout is never read.
-const FORMAT: u32 = 1;
-const MAGIC: &[u8] = b"scrutate-artifact 1\n";
+const FORMAT: u32 = 2;
+const MAGIC: &[u8] = b"scrutate-artifact 2\n";
 const TEXTS_MAGIC: &[u8] = b"scrutate-texts 1\n";
 /// No artifact holds more chunks, words or bytes than this; a larger count is damage.
 const MAX_ITEMS: usize = 1 << 24;
@@ -91,6 +92,8 @@ pub struct Chunk {
     pub calls: Vec<String>,
     /// name, qualifier, signature, doc, body
     pub fields: [Field; 5],
+    /// what `dupes` compares, for a definition of `CODE_KINDS`
+    pub dup: Option<DupKeys>,
 }
 
 impl Chunk {
@@ -116,21 +119,24 @@ pub struct Found {
 }
 
 impl Artifact {
-    /// The words of a parsed chunk's fields, and its name's subwords each once in order.
-    pub fn tokenize(c: &crate::parse::Chunk) -> ([Field; 5], String) {
+    /// The words of a parsed chunk's fields, its name's subwords each once in order, and its body's
+    /// subwords in order.
+    pub fn tokenize(c: &crate::parse::Chunk) -> ([Field; 5], String, Vec<String>) {
         let qual = c.qualname.rfind('.').map_or("", |i| &c.qualname[..i]);
         let name = tokenize2(&c.name, None);
         let mut seen = std::collections::HashSet::new();
         let name_tok: Vec<&str> = name.0.iter().map(String::as_str).filter(|s| seen.insert(*s)).collect();
         let name_tok = name_tok.join(" ");
+        let body = tokenize2(&c.body, Some(crate::text::BODY_CAP));
+        let body_subs = body.0.clone();
         let fields = [
             Field::of(name),
             Field::of(tokenize2(qual, None)),
             Field::of(tokenize2(&c.sig, Some(80))),
             Field::of(tokenize2(&c.doc, Some(200))),
-            Field::of(tokenize2(&c.body, Some(crate::text::BODY_CAP))),
+            Field::of(body),
         ];
-        (fields, name_tok)
+        (fields, name_tok, body_subs)
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -153,6 +159,19 @@ impl Artifact {
                     for (s, n) in list {
                         put_str(&mut w, s);
                         w.extend(n.to_le_bytes());
+                    }
+                }
+            }
+            // 0: no keys, 1: keys, 2: keys and bands
+            match &c.dup {
+                None => w.push(0),
+                Some(d) => {
+                    w.push(if d.bands.is_some() { 2 } else { 1 });
+                    w.extend(d.body.to_le_bytes());
+                    w.extend(d.words.to_le_bytes());
+                    w.extend(d.ntok.to_le_bytes());
+                    for b in d.bands.iter().flatten() {
+                        w.extend(b.to_le_bytes());
                     }
                 }
             }
@@ -185,7 +204,24 @@ impl Artifact {
                     }
                 }
             }
-            chunks.push(Chunk { kind, name, qualname, start, end, name_tok, calls, fields });
+            let dup = match r.take(1)?[0] {
+                0 => None,
+                with @ (1 | 2) => {
+                    let (body, words, ntok) = (r.u64()?, r.u64()?, r.u32()?);
+                    let bands = if with == 2 {
+                        let mut b = [0u64; crate::intel::BANDS];
+                        for v in &mut b {
+                            *v = r.u64()?;
+                        }
+                        Some(b)
+                    } else {
+                        None
+                    };
+                    Some(DupKeys { body, words, ntok, bands })
+                }
+                other => bail!("unknown duplicate keys mark {other}"),
+            };
+            chunks.push(Chunk { kind, name, qualname, start, end, name_tok, calls, fields, dup });
         }
         let imports = (0..r.n()?).map(|_| Ok((r.i64()?, r.string()?))).collect::<Result<_>>()?;
         if r.pos != raw.len() {
@@ -297,6 +333,7 @@ pub fn derive(rel: &str, found: Found, model: Option<&SemanticModel>) -> (Vec<Ne
             },
             c.calls,
             text,
+            c.dup,
         ));
     }
     if model.is_some() && !rows.is_empty() {
@@ -410,6 +447,10 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into()?))
     }
+    fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into()?))
+    }
+
     fn i64(&mut self) -> Result<i64> {
         Ok(i64::from_le_bytes(self.take(8)?.try_into()?))
     }

@@ -340,7 +340,8 @@ NFC with final sigma folded.
 ### Storage (`index.rs`, `lex.rs`)
 - **SQLite** (bundled, WAL, `synchronous=NORMAL`): `files` (size, mtime, status-change time
   `ctime_ns`, SHA-1 content hash, and `art`, the key of the file's artifact: the path map), `chunks`
-  (metadata + zlib-compressed text), `refs` (call edges), `imports`, `artifacts` (the artifact
+  (metadata + zlib-compressed text), `refs` (call edges), `imports`, `dupkeys` (each code
+  definition's duplicate keys, written with its chunk row: below), `artifacts` (the artifact
   store, below), `meta` (schema version, model signature, segment manifest, data version, and
   `chunks_at`, the chunk count of the commit that wrote that data version). The tables are private
   to `index.rs` (the database handle is not public): other modules ask `Index` a question (whether a
@@ -376,8 +377,12 @@ NFC with final sigma folded.
   | | the vectors, when they are made: per model, from the stored word counts |
   | | name resolution, which reads other files (asked at query time; `callers` and `callees` keep their answers by request, below) |
 
-  An artifact holds the chunks (kind, names, lines, the name's subwords, calls), the imports, and
-  per chunk and field the subwords and whole identifiers with their counts. The postings come from
+  An artifact holds the chunks (kind, names, lines, the name's subwords, calls), the imports,
+  per chunk and field the subwords and whole identifiers with their counts, and for a definition
+  of `search::CODE_KINDS` its duplicate keys (`intel::DupKeys`: the hash of its body with
+  whitespace squeezed, the hash of its body's words in order, its word count and, from 8
+  three-word shingles up, 16 MinHash band keys), made at parse time from the chunk text as it is
+  stored, since the counts lose the word order the shingles need. The postings come from
   those, and so do any model's vectors (`Artifact::vectors`, through
   `SemanticModel::encode_counts`), at a change of model too. Chunk texts and vectors are not stored
   twice: while a path names an artifact they are its rows and segment rows, and an artifact
@@ -659,7 +664,10 @@ language server offers no socket, so `serve` is the one meeting point per root.
 Definitions and references, callers/callees, outline, imports mapped to files by the resolver
 `refs` uses, reverse dependencies, **similar code** (implementation-view vectors + token Jaccard),
 **duplicates** (exact: the same body text once whitespace runs are squeezed; near: MinHash/LSH
-over token 3-grams, nested chunks excluded), and **structural search** (`tsquery`: tree-sitter
+over token 3-grams, nested chunks excluded; `intel::duplicates` reads the keys the index keeps in
+`dupkeys` in one pass and the text only of a definition in a group or in a bucket of 2 to 64, so
+it finds what reading every text would, `intel::dupes_in`, which the tests keep as its oracle),
+and **structural search** (`tsquery`: tree-sitter
 query language over all files of a language, parallel, no index needed).
 
 `refs` resolves names (`resolve/`). Engine A finds the whole-word occurrences; each file holding
@@ -782,9 +790,11 @@ resolver ties to no existing definition. The test files are those with the index
 session runs it. It asks `impact::between` for the diff of two commits (`git diff BASE HEAD`, each
 side parsed from git's copies, as `--staged` reads the staged side) and keeps what that answer
 read: each changed file's base copy and every call the walk met. The new duplicates take two runs
-of `dupes`' search (`intel::dupes_in`) over the index's bodies: one as they are, one with the
-changed files replaced by the definitions a parse of their base copies gives; a head group with no
-member in a changed file is dropped before the second run, since the base had it unchanged. The
+of `dupes`' search (`intel::duplicates`) around the changed files: the head's groups that share a
+key with a definition of a changed file, a group with no member in one dropped, then the base's
+groups with the changed files' definitions left out and the definitions a parse of their base
+copies gives put in, around the head groups' members (a base group that holds a match for each
+member shares a key with one). The
 untested mark and the three renderings (Markdown, JSON, GitLab, methods of `Review`) are in
 [CLI](CLI.md#review).
 

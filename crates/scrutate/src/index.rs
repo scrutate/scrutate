@@ -18,7 +18,7 @@ use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::name_key;
 
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS refs(chunk_id INTEGER NOT NULL, callee TEXT NOT NULL)
 CREATE INDEX IF NOT EXISTS refs_callee ON refs(callee);
 CREATE INDEX IF NOT EXISTS refs_chunk ON refs(chunk_id);
 CREATE TABLE IF NOT EXISTS imports(path TEXT NOT NULL, module TEXT NOT NULL, line INTEGER);
+CREATE TABLE IF NOT EXISTS dupkeys(id INTEGER PRIMARY KEY, nbody INTEGER NOT NULL, body INTEGER NOT NULL, words INTEGER NOT NULL, ntok INTEGER NOT NULL, bands BLOB);
 CREATE INDEX IF NOT EXISTS imports_path ON imports(path);
 CREATE INDEX IF NOT EXISTS imports_module ON imports(module);
 CREATE TABLE IF NOT EXISTS artifacts(key BLOB PRIMARY KEY, body BLOB NOT NULL, kept BLOB, bytes INTEGER NOT NULL, used INTEGER NOT NULL);
@@ -140,6 +141,17 @@ fn pack_text(text: &str) -> Vec<u8> {
 }
 
 /// Inverse of `pack_text`; accepts legacy plain text and NULL.
+/// A row of `dupkeys` as (id, keys).
+fn dup_row(r: &rusqlite::Row) -> Result<(i64, crate::intel::DupKeys)> {
+    let id: i64 = r.get(0)?;
+    let bands = match r.get_ref(4)?.as_blob_or_null()? {
+        Some(b) if b.len() == 8 * crate::intel::BANDS => Some(std::array::from_fn(|i| u64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap_or_default()))),
+        Some(_) => bail!("duplicate keys of chunk {id} do not decode"),
+        None => None,
+    };
+    Ok((id, crate::intel::DupKeys { body: r.get::<_, i64>(1)? as u64, words: r.get::<_, i64>(2)? as u64, ntok: r.get(3)?, bands }))
+}
+
 fn unpack_text(v: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<String> {
     use std::io::Read;
     match v {
@@ -245,7 +257,7 @@ fn symbol_order(typed: &str) -> String {
 /// Parse + tokenize one file -> (rows with their callee names, FileLex, imports). Pure function.
 /// A chunk ready for insertion: the row, its callees, and the compressed text (packed here, in
 /// the parallel stage, so the single-writer insert loop only copies bytes).
-pub type NewRow = (ChunkRow, Vec<String>, Vec<u8>);
+pub type NewRow = (ChunkRow, Vec<String>, Vec<u8>, Option<crate::intel::DupKeys>);
 
 /// Cumulative nanoseconds per indexing phase, printed by `update()` when SCRUTATE_PROFILE is set.
 pub mod prof {
@@ -293,14 +305,24 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
     for mut c in parsed.chunks {
         let t = Instant::now();
         c.fill(source.as_bytes(), &mut budget);
-        let (fields, name_tok) = Artifact::tokenize(&c);
+        let (fields, name_tok, body_toks) = Artifact::tokenize(&c);
         if prof {
             prof::add(&prof::TOKENIZE, t);
         }
         let t = Instant::now();
         texts.push(pack_text(&c.text));
         let calls = c.calls.into_iter().collect();
+        let dup = crate::search::CODE_KINDS.contains(&c.kind).then(|| {
+            // the body's words are already made when the body is the text below the signature line
+            let below = c.text.split_once('\n').map_or("", |(_, b)| b);
+            if below.trim_start() == c.body {
+                crate::intel::DupKeys::of_tokens(&c.text, &body_toks)
+            } else {
+                crate::intel::DupKeys::of(&c.text)
+            }
+        });
         chunks.push(crate::artifacts::Chunk {
+            dup,
             kind: c.kind.to_string(),
             name: c.name,
             qualname: c.qualname,
@@ -1393,7 +1415,7 @@ impl Index {
             return Ok(());
         }
         let old = self.segments();
-        self.db.execute_batch("DELETE FROM refs; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts;")?;
+        self.db.execute_batch("DELETE FROM refs; DELETE FROM dupkeys; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts;")?;
         self.set_meta("segments", "[]")?;
         let ver = self.bump_version()?;
         self.set_meta("chunks_at", &format!("{ver} 0"))?;
@@ -2431,12 +2453,17 @@ impl Index {
              VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         )?;
         let mut refs = self.db.prepare_cached("INSERT INTO refs(chunk_id,callee) VALUES(?1,?2)")?;
-        for (c, calls, blob) in rows {
+        let mut dups = self.db.prepare_cached("INSERT INTO dupkeys(id,nbody,body,words,ntok,bands) VALUES(?1,?2,?3,?4,?5,?6)")?;
+        for (c, calls, blob, dup) in rows {
             let cid = next_id;
             next_id += 1;
             ins.execute(params![cid, rel, c.kind, c.name, c.qualname, c.name_key, c.qual_key, c.start, c.end, c.is_test, c.ndoc, c.nbody, blob, c.name_tok])?;
             for callee in calls {
                 refs.execute(params![cid, callee])?;
+            }
+            if let Some(d) = dup {
+                let bands: Option<Vec<u8>> = d.bands.map(|b| b.iter().flat_map(|v| v.to_le_bytes()).collect());
+                dups.execute(params![cid, c.nbody, d.body as i64, d.words as i64, d.ntok, bands])?;
             }
         }
         Ok(next_id)
@@ -2537,6 +2564,7 @@ impl Index {
         let ids: Vec<i64> = q.query_map([rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         if !ids.is_empty() {
             self.db.execute("DELETE FROM refs WHERE chunk_id IN (SELECT id FROM chunks WHERE path=?1)", [rel])?;
+            self.db.execute("DELETE FROM dupkeys WHERE id IN (SELECT id FROM chunks WHERE path=?1)", [rel])?;
             self.db.execute("DELETE FROM chunks WHERE path=?1", [rel])?;
         }
         self.db.execute("DELETE FROM imports WHERE path=?1", [rel])?;
@@ -2742,6 +2770,61 @@ impl Index {
         ))?;
         let rows = st.query_map([key], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
+    }
+
+    /// The duplicate keys of every definition of `CODE_KINDS` with at least `min_tokens` body
+    /// tokens, by id, as `bodies` would give their texts; one pass, nothing held.
+    pub fn dup_keys(&self, min_tokens: usize, mut each: impl FnMut(i64, crate::intel::DupKeys)) -> Result<()> {
+        let mut st = self.db.prepare_cached("SELECT id, body, words, ntok, bands FROM dupkeys WHERE nbody >= ?1 ORDER BY id")?;
+        let mut rows = st.query([i64::try_from(min_tokens).unwrap_or(i64::MAX)])?;
+        while let Some(r) = rows.next()? {
+            let (id, k) = dup_row(r)?;
+            each(id, k);
+        }
+        Ok(())
+    }
+
+    /// The duplicate keys of these chunks, those that have them, by id.
+    pub fn dup_keys_of(&self, ids: &[i64]) -> Result<Vec<(i64, crate::intel::DupKeys)>> {
+        let mut st = self.db.prepare_cached("SELECT id, body, words, ntok, bands FROM dupkeys WHERE id=?1")?;
+        let mut out = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let mut rows = st.query([id])?;
+            if let Some(r) = rows.next()? {
+                out.push(dup_row(r)?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The id of the definition of `CODE_KINDS` at this place.
+    pub fn code_chunk_at(&self, rel: &str, qualname: &str, start: i64, end: i64) -> Result<Option<i64>> {
+        let mut q = self.db.prepare_cached(
+            "SELECT c.id FROM chunks c JOIN dupkeys d ON d.id = c.id WHERE c.path=?1 AND c.start=?2 AND c.end=?3 AND COALESCE(c.qualname, '')=?4 ORDER BY c.id LIMIT 1",
+        )?;
+        Ok(q.query_row(params![rel, start, end, qualname], |r| r.get(0)).optional()?)
+    }
+
+    /// The ids of a file's chunks.
+    pub fn chunk_ids(&self, rel: &str) -> Result<Vec<i64>> {
+        let mut q = self.db.prepare_cached("SELECT id FROM chunks WHERE path=?1 ORDER BY id")?;
+        let ids = q.query_map([rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
+    /// Id, path, qualified name, lines and text of these chunks, by id.
+    pub fn bodies_by_id(&self, ids: &[i64]) -> Result<Vec<Body>> {
+        let mut out = Vec::with_capacity(ids.len());
+        let mut st = self.db.prepare_cached("SELECT id, path, qualname, start, end, text FROM chunks WHERE id=?1")?;
+        for &id in ids {
+            let row = st
+                .query_row([id], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?, r.get(4)?, unpack_text(r.get_ref(5)?)?))
+                })
+                .optional()?;
+            out.extend(row);
+        }
+        Ok(out)
     }
 
     /// Id, path, qualified name, lines and text of the chunks of these kinds with at least
@@ -3072,6 +3155,35 @@ mod tests {
             let md = e.metadata().unwrap();
             assert_eq!(listed.stat(&e.path(), &md), super::Stat::of(&e.path(), &std::fs::symlink_metadata(e.path()).unwrap()), "{}", e.path().display());
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_definition_keeps_its_duplicate_keys_through_an_update() {
+        use crate::intel::DupKeys;
+        use std::collections::BTreeMap;
+        let root = std::env::temp_dir().join(format!("scrutate_ix_dupkeys_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "LIMIT = 3\n\n\ndef alpha(x):\n    return x + 1\n\n\nclass Beta:\n    def gamma(self):\n        return 2\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        // every code definition has the keys of its text as stored, and nothing else has any
+        let check = |ix: &super::Index| {
+            let mut got: BTreeMap<i64, DupKeys> = BTreeMap::new();
+            ix.dup_keys(0, |id, keys| {
+                got.insert(id, keys);
+            })
+            .unwrap();
+            let want: BTreeMap<i64, DupKeys> = ix.bodies(crate::search::CODE_KINDS, 0).unwrap().into_iter().map(|b| (b.0, DupKeys::of(&b.5))).collect();
+            assert_eq!(got, want);
+            got.len()
+        };
+        assert_eq!(check(&ix), 3);
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 2\n").unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(check(&ix), 1);
+        drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }
 

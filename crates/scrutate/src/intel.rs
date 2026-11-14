@@ -67,7 +67,47 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
 
 // ------------------------------------------------------------------------- duplicates (MinHash LSH)
 const HASHES: usize = 64;
-const BANDS: usize = 16; // 16 bands x 4 rows: pairs with Jaccard >= 0.7 collide with probability ~0.98
+pub(crate) const BANDS: usize = 16; // 16 bands x 4 rows: pairs with Jaccard >= 0.7 collide with probability ~0.98
+
+/// What `dupes` compares of one definition, made once from its text as the index stores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DupKeys {
+    /// the body below the signature line, runs of whitespace squeezed (`body_key`)
+    pub body: u64,
+    /// the body's word tokens in order: bodies that differ in operators, numbers or spacing
+    pub words: u64,
+    /// how many word tokens the body has, at most `BODY_CAP`
+    pub ntok: u32,
+    /// the MinHash band keys of the body's three-word shingles, when it has 8 or more
+    pub bands: Option<[u64; BANDS]>,
+}
+
+impl DupKeys {
+    pub fn of(text: &str) -> DupKeys {
+        // the signature line differs between copies of one body
+        let body = text.split_once('\n').map(|(_, b)| b).unwrap_or("");
+        DupKeys::of_tokens(text, &tokenize2(body, Some(BODY_CAP)).0)
+    }
+
+    /// `of(text)`, given the words of the text below its signature line as `tokenize2` makes them.
+    pub fn of_tokens(text: &str, toks: &[String]) -> DupKeys {
+        let mut words = 1469598103934665603u64;
+        for t in toks {
+            for b in t.as_bytes() {
+                words = (words ^ *b as u64).wrapping_mul(1099511628211);
+            }
+            words = (words ^ 0x2e).wrapping_mul(1099511628211);
+        }
+        let sh = shingles(toks);
+        let bands = (sh.len() >= 8).then(|| band_keys(&minhash(&sh)));
+        DupKeys { body: body_key(text), words, ntok: toks.len() as u32, bands }
+    }
+}
+
+fn band_keys(mh: &[u64; HASHES]) -> [u64; BANDS] {
+    let rows_per_band = HASHES / BANDS;
+    std::array::from_fn(|b| mh[b * rows_per_band..(b + 1) * rows_per_band].iter().fold(0xcbf29ce484222325u64, |key, v| mix64(key ^ *v)))
+}
 
 fn mix64(mut x: u64) -> u64 {
     x ^= x >> 33;
@@ -109,7 +149,7 @@ fn minhash(sh: &HashSet<u64>) -> [u64; HASHES] {
     mh
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DupGroup {
     pub kind: &'static str, // "exact" (same body text up to whitespace) or "near"
     pub similarity: f32,
@@ -120,8 +160,7 @@ pub struct DupGroup {
 /// Duplicate and near-duplicate functions: the same body text up to whitespace, then MinHash/LSH
 /// candidates verified by Jaccard similarity of word 3-gram sets (>= `threshold`; 1 = exact only).
 pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
-    let rows = ix.bodies(CODE_KINDS, min_tokens)?;
-    Ok(dupes_in(&rows.iter().collect::<Vec<_>>(), min_tokens, threshold, limit))
+    duplicates(ix, &KeyRows::load(ix, min_tokens)?, None, threshold, limit)
 }
 
 /// What `exact` duplicates share: the body below the signature line, runs of whitespace squeezed.
@@ -137,7 +176,191 @@ pub(crate) fn body_key(text: &str) -> u64 {
     seq
 }
 
-/// `dupes` over these definitions.
+/// The keys of the index's definitions of `CODE_KINDS` with at least `min_tokens` body tokens, by
+/// id: read once, for every search over them.
+pub(crate) struct KeyRows {
+    rows: Vec<(i64, DupKeys)>,
+    min_tokens: usize,
+}
+
+impl KeyRows {
+    pub(crate) fn load(ix: &Index, min_tokens: usize) -> Result<KeyRows> {
+        let mut rows = Vec::new();
+        ix.dup_keys(min_tokens, |id, k| rows.push((id, k)))?;
+        Ok(KeyRows { rows, min_tokens })
+    }
+}
+
+/// Where `duplicates` looks when it is not after every group.
+pub(crate) struct Focus<'a> {
+    /// the definitions of these paths are left out of the index's ...
+    pub left_out: &'a HashSet<&'a str>,
+    /// ... and these bodies put in after them, as `Index::bodies` gives them
+    pub put_in: &'a [&'a crate::index::Body],
+    /// the groups wanted share a key with a put-in body, with a definition of one of these paths,
+    /// or with one of these keys
+    pub paths: &'a HashSet<&'a str>,
+    pub keys: &'a [DupKeys],
+}
+
+/// The keys a focus wants, each kind apart.
+#[derive(Default)]
+struct Wanted {
+    bodies: HashSet<u64>,
+    words: HashSet<u64>,
+    bands: HashSet<(usize, u64)>,
+}
+
+impl Wanted {
+    fn add(&mut self, k: &DupKeys) {
+        self.bodies.insert(k.body);
+        self.words.insert(k.words);
+        self.bands.extend(k.bands.iter().flatten().copied().enumerate());
+    }
+
+    fn shares(&self, k: &DupKeys) -> bool {
+        self.bodies.contains(&k.body) || self.words.contains(&k.words) || k.bands.iter().flatten().enumerate().any(|(b, key)| self.bands.contains(&(b, *key)))
+    }
+}
+
+/// The groups `dupes_in` finds over the index's definitions of `CODE_KINDS` with at least
+/// `min_tokens` body tokens, read from the keys the index keeps: a text is read only for a
+/// definition in a group or in a bucket of 2 to 64. With `focus`, only the groups that share a key
+/// with it, each whole: every definition with a wanted key is read, so no group is cut short.
+pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
+    let min_tokens = keys.min_tokens;
+    let all = focus.is_none();
+    let put: Vec<DupKeys> = focus.map(|f| f.put_in.iter().map(|b| DupKeys::of(&b.5)).collect()).unwrap_or_default();
+    let (mut left, mut want) = (HashSet::new(), Wanted::default());
+    if let Some(f) = focus {
+        for p in f.left_out {
+            left.extend(ix.chunk_ids(p)?);
+        }
+        let mut ids = Vec::new();
+        for p in f.paths {
+            ids.extend(ix.chunk_ids(p)?);
+        }
+        for k in f.keys.iter().chain(&put).chain(ix.dup_keys_of(&ids)?.iter().map(|(_, k)| k)) {
+            want.add(k);
+        }
+    }
+    // one pass over the keys: every definition that shares a wanted key, in id order, then the
+    // put-in bodies, in the order `dupes_in` reads them (id 0 marks them)
+    let mut rows: Vec<(i64, DupKeys)> = keys.rows.iter().filter(|(id, k)| !left.contains(id) && (all || want.shares(k))).copied().collect();
+    let first_put = rows.len();
+    rows.extend(put.iter().map(|k| (0, *k)));
+
+    // a group is formed only from a key all of whose definitions were read: a wanted one, or the
+    // body of a definition read for its wanted words (the same body has the same words)
+    let mut exact: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut same_words: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut buckets: HashMap<(usize, u64), Vec<usize>> = HashMap::new();
+    for (i, (_, k)) in rows.iter().enumerate() {
+        let words_wanted = all || want.words.contains(&k.words);
+        if k.ntok as usize >= min_tokens {
+            if words_wanted || want.bodies.contains(&k.body) {
+                exact.entry(k.body).or_default().push(i);
+            }
+            if words_wanted {
+                same_words.entry(k.words).or_default().push(i);
+            }
+        }
+        for (b, key) in k.bands.iter().flatten().enumerate() {
+            if all || want.bands.contains(&(b, *key)) {
+                buckets.entry((b, *key)).or_default().push(i);
+            }
+        }
+    }
+    let near_on = threshold < 1.0;
+    // the place of each definition a group or a pair may hold, and the text of each a pair may hold
+    let mut needed: HashSet<usize> = exact.values().chain(same_words.values()).filter(|m| m.len() > 1).flatten().copied().collect();
+    let texts_needed: HashSet<usize> = buckets.values().filter(|m| near_on && m.len() > 1 && m.len() <= 64).flatten().copied().collect();
+    needed.extend(&texts_needed);
+    let ids: Vec<i64> = needed.iter().filter(|&&i| i < first_put).map(|&i| rows[i].0).collect();
+    let mut place: HashMap<usize, (String, String, i64, i64, String)> = HashMap::new();
+    let at: HashMap<i64, usize> = needed.iter().filter(|&&i| i < first_put).map(|&i| (rows[i].0, i)).collect();
+    for (id, path, qual, start, end, text) in ix.bodies_by_id(&ids)? {
+        if let Some(&i) = at.get(&id) {
+            place.insert(i, (path, qual, start, end, text));
+        }
+    }
+    for (k, b) in focus.map(|f| f.put_in).unwrap_or_default().iter().enumerate() {
+        place.insert(first_put + k, (b.1.clone(), b.2.clone(), b.3, b.4, b.5.clone()));
+    }
+    let member = |i: usize| {
+        let p = &place[&i];
+        (p.0.clone(), p.1.clone(), p.2, p.3)
+    };
+    let overlap = |a: usize, b: usize| {
+        let (x, y) = (&place[&a], &place[&b]);
+        x.0 == y.0 && x.2 <= y.3 && y.2 <= x.3
+    };
+
+    let mut out: Vec<DupGroup> = Vec::new();
+    let mut in_exact: HashMap<usize, u64> = HashMap::new();
+    for (&key, members) in exact.iter().filter(|(_, m)| m.len() > 1) {
+        let mut ms: Vec<usize> = members.clone();
+        ms.sort();
+        ms.dedup_by(|b, a| overlap(*a, *b));
+        if ms.len() < 2 {
+            continue;
+        }
+        in_exact.extend(ms.iter().map(|&i| (i, key)));
+        out.push(DupGroup { kind: "exact", similarity: 1.0, tokens: rows[ms[0]].1.ntok as usize, members: ms.iter().map(|&i| member(i)).collect() });
+    }
+    for members in same_words.values().filter(|m| near_on && m.len() > 1) {
+        let mut ms: Vec<usize> = members.clone();
+        ms.sort();
+        ms.dedup_by(|b, a| overlap(*a, *b));
+        if ms.len() < 2 || ms.iter().all(|i| in_exact.contains_key(i) && in_exact.get(i) == in_exact.get(&ms[0])) {
+            continue;
+        }
+        out.push(DupGroup { kind: "near", similarity: 1.0, tokens: rows[ms[0]].1.ntok as usize, members: ms.iter().map(|&i| member(i)).collect() });
+    }
+    let sets: HashMap<usize, HashSet<u64>> = texts_needed
+        .iter()
+        .map(|&i| {
+            let text = &place[&i].4;
+            let body = text.split_once('\n').map(|(_, b)| b).unwrap_or("");
+            (i, shingles(&tokenize2(body, Some(BODY_CAP)).0))
+        })
+        .collect();
+    let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
+    let mut near: Vec<(f32, usize, usize)> = Vec::new();
+    for members in buckets.values().filter(|m| near_on && m.len() > 1 && m.len() <= 64) {
+        for a in 0..members.len() {
+            for b in a + 1..members.len() {
+                let (i, j) = (members[a].min(members[b]), members[a].max(members[b]));
+                if i == j || rows[i].1.words == rows[j].1.words || !seen_pairs.insert((i, j)) {
+                    continue;
+                }
+                // a container and the symbol nested inside it share text: not a duplicate
+                if overlap(i, j) {
+                    continue;
+                }
+                let inter = sets[&i].intersection(&sets[&j]).count() as f32;
+                let union = sets[&i].union(&sets[&j]).count().max(1) as f32;
+                let jac = inter / union;
+                if jac >= threshold {
+                    near.push((jac, i, j));
+                }
+            }
+        }
+    }
+    near.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    for (jac, i, j) in near.into_iter().take(limit) {
+        let tokens = (rows[i].1.ntok as usize).min(rows[j].1.ntok as usize);
+        out.push(DupGroup { kind: "near", similarity: jac, tokens, members: vec![member(i), member(j)] });
+    }
+    // members last: the exact groups come from a hash map, and a cut must not depend on its order
+    out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(b.similarity.partial_cmp(&a.similarity).unwrap()).then_with(|| a.members.cmp(&b.members)));
+    out.truncate(limit);
+    Ok(out)
+}
+
+/// `dupes` over these definitions, each text read whole: the search `duplicates` replaced, kept
+/// as the oracle its tests compare with.
+#[cfg(test)]
 pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshold: f32, limit: usize) -> Vec<DupGroup> {
     let mut exact: HashMap<u64, Vec<usize>> = HashMap::new();
     // the same words in the same order: bodies that differ in operators, numbers or spacing
@@ -344,6 +567,177 @@ fn loose_predicate(query: &str) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+pub(crate) mod duplicates_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+
+    const SEEDS: [&str; 4] = ["alpha", "beta", "gamma", "delta"];
+
+    /// A function body long enough for `dupes`, its words from `seed`, changed as `how` says.
+    fn function(name: &str, seed: &str, how: u8, indent: &str) -> String {
+        let lines = [
+            "total = 0".to_string(),
+            "for row in rows:".to_string(),
+            format!("    if row.amount > {seed}_limit and row.status == \"open\":"),
+            format!("        total += compute_{seed}_weight(row.amount, row.discount, row.region)"),
+            "    elif row.status == \"closed\":".to_string(),
+            format!("        total -= penalty_for_{seed}(row.region, row.amount, row.owner)"),
+            "    else:".to_string(),
+            format!("        total = adjust_{seed}(total, row.created, row.updated)"),
+            format!("return normalize_{seed}_total(total, rows, scale_factor, offset_value, rounding_mode)"),
+        ];
+        let body: Vec<String> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| match how {
+                // spacing only: the same text up to whitespace
+                1 => l.replace(" = ", "  =  "),
+                // other operators: the same words
+                2 if i == 3 => l.replace("+=", "*="),
+                // one line of other words: near
+                3 if i == 5 => l.replace("row.owner", "row.manager_of_the_region"),
+                // half the lines of other words
+                4 if i >= 4 => format!("{l}  # unrelated_{i}_{seed}_words here"),
+                _ => l.clone(),
+            })
+            .collect();
+        let short = if how == 5 { "    return rows\n".to_string() } else { body.iter().map(|l| format!("{indent}    {l}\n")).collect() };
+        format!("{indent}def {name}(rows):\n{short}\n")
+    }
+
+    pub(crate) type Spec = Vec<Vec<(usize, u8, bool)>>;
+
+    /// Files of functions, some wrapped in a class (a container whose text holds its method's).
+    pub(crate) fn files() -> impl Strategy<Value = Vec<Vec<(usize, u8, bool)>>> {
+        prop::collection::vec(prop::collection::vec((0..SEEDS.len(), 0u8..6, any::<bool>()), 1..6), 1..5)
+    }
+
+    /// The files of a tree: their names and texts.
+    pub(crate) fn tree(spec: &[Vec<(usize, u8, bool)>]) -> Vec<(String, String)> {
+        let mut n = 0;
+        let mut out = Vec::new();
+        for (f, defs) in spec.iter().enumerate() {
+            let mut text = String::new();
+            for &(seed, how, wrap) in defs {
+                n += 1;
+                if wrap {
+                    text.push_str(&format!("class Holder{n}:\n{}", function(&format!("method_{n}"), SEEDS[seed], how, "    ")));
+                } else {
+                    text.push_str(&function(&format!("fn_{n}"), SEEDS[seed], how, ""));
+                }
+            }
+            out.push((format!("m{f}.py"), text));
+        }
+        out
+    }
+
+    fn write(root: &Path, spec: &[Vec<(usize, u8, bool)>]) {
+        let _ = std::fs::remove_dir_all(root);
+        std::fs::create_dir_all(root).unwrap();
+        for (name, text) in tree(spec) {
+            std::fs::write(root.join(name), text).unwrap();
+        }
+    }
+
+    fn agree(root: &Path) -> std::result::Result<(), TestCaseError> {
+        let mut ix = Index::open(root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        for (min, threshold, limit) in [(30, 0.75, 50), (8, 0.5, 3), (5, 1.0, 1000), (30, 0.75, usize::MAX)] {
+            let rows = ix.bodies(CODE_KINDS, min).unwrap();
+            let want = dupes_in(&rows.iter().collect::<Vec<_>>(), min, threshold, limit);
+            prop_assert_eq!(
+                duplicates(&ix, &KeyRows::load(&ix, min).unwrap(), None, threshold, limit).unwrap(),
+                want,
+                "min {} threshold {} limit {}",
+                min,
+                threshold,
+                limit
+            );
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 48, failure_persistence: None, ..ProptestConfig::default() })]
+        #[test]
+        fn every_group_duplicates_finds_is_the_one_dupes_in_finds(spec in files()) {
+            let root = std::env::temp_dir().join(format!("scrutate_duplicates_{}", std::process::id()));
+            write(&root, &spec);
+            agree(&root)?;
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn a_tree_with_every_kind_of_group_agrees() {
+        let root = std::env::temp_dir().join(format!("scrutate_duplicates_kinds_{}", std::process::id()));
+        let spec = vec![
+            vec![(0, 0, false), (0, 0, false), (0, 1, false), (0, 2, false), (0, 3, false)],
+            vec![(1, 0, true), (1, 0, false), (2, 4, false), (2, 0, false), (3, 5, false)],
+        ];
+        write(&root, &spec);
+        let mut ix = Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let rows = ix.bodies(CODE_KINDS, 30).unwrap();
+        let groups = dupes_in(&rows.iter().collect::<Vec<_>>(), 30, 0.5, usize::MAX);
+        // the tree holds an exact group, a group of the same words and a near pair
+        assert!(groups.iter().any(|g| g.kind == "exact"), "{groups:?}");
+        assert!(groups.iter().any(|g| g.kind == "near" && g.similarity == 1.0), "{groups:?}");
+        assert!(groups.iter().any(|g| g.kind == "near" && g.similarity < 1.0), "{groups:?}");
+        drop(ix);
+        agree(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn on_this_crate_s_own_source_duplicates_finds_what_dupes_in_finds() {
+        let root = std::env::temp_dir().join(format!("scrutate_duplicates_self_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        for entry in std::fs::read_dir(&src).unwrap().flatten() {
+            if entry.path().extension().is_some_and(|e| e == "rs") {
+                std::fs::create_dir_all(&root).unwrap();
+                std::fs::copy(entry.path(), root.join(entry.file_name())).unwrap();
+            }
+        }
+        agree(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod dup_keys_tests {
+    use super::*;
+
+    fn body(seed: &str, op: &str) -> String {
+        let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "theta", "kappa", "lambda", "sigma", "omega", "rho"];
+        words.iter().map(|w| format!("    total_{seed} = total_{seed} {op} weight_{seed}_{w}(row.amount, row.region)\n")).collect()
+    }
+
+    #[test]
+    fn the_keys_of_a_body_ignore_its_name_and_spacing_and_tell_its_words_from_its_text() {
+        let f = |sig: &str, b: &str| DupKeys::of(&format!("{sig}\n{b}"));
+        let a = f("def first(rows):", &body("x", "+"));
+        // another name and other spacing: the same body
+        let renamed = f("def second(items, more):", &body("x", "+").replace("    ", "\t  "));
+        assert_eq!(a, renamed);
+        // other operators, the same words in the same order
+        let other_op = f("def first(rows):", &body("x", "-"));
+        assert_ne!(a.body, other_op.body);
+        assert_eq!((a.words, a.ntok, a.bands), (other_op.words, other_op.ntok, other_op.bands));
+        // other words
+        let other = f("def first(rows):", &body("y", "+"));
+        assert_ne!((a.body, a.words), (other.body, other.words));
+        assert!(a.ntok >= 30 && a.bands.is_some());
+        // under 8 three-word shingles there are no bands
+        let short = f("def tiny():", "    return a + b + c\n");
+        assert_eq!(short.bands, None);
+        assert_eq!(f("def nothing():", ""), DupKeys::of("def nothing():"));
+    }
 }
 
 #[cfg(test)]

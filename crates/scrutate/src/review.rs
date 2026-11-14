@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::fmt::shown;
 use crate::impact::Impact;
 use crate::index::Body;
-use crate::intel::DupGroup;
+use crate::intel::{DupGroup, DupKeys, Focus, KeyRows};
 use crate::search::{Hit, Searcher, CODE_KINDS};
 
 /// The first line of the comment: the GitHub Action finds its earlier comment by it.
@@ -44,18 +44,21 @@ pub fn review(s: &Searcher, base: &str, head: Option<&str>, depth: usize) -> Res
 }
 
 /// The duplicate groups of the head that the base did not have. Only a group with a member in a
-/// file the diff changed can be new; the base's groups come from the same search over the head's
-/// definitions with the changed files replaced by a parse of their base copies. A head group is
-/// old when one base group holds a match for each of its members, each base member used once:
-/// the same definition (path and qualified name), or the same body text up to whitespace.
+/// file the diff changed can be new; the base's groups come from the same search with the changed
+/// files replaced by a parse of their base copies, around the head groups' members, since a base
+/// group that holds a match for each member shares a key with one. A head group is old when one
+/// base group holds a match for each of its members, each base member used once: the same
+/// definition (path and qualified name), or the same body text up to whitespace.
 fn new_duplicates(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
     let (min, threshold) = (crate::ops::DUPES_MIN_TOKENS, crate::ops::DUPES_THRESHOLD);
     let changed: HashSet<&str> = i.head_paths.iter().chain(i.base_copies.iter().map(|c| &c.0)).map(String::as_str).collect();
     if changed.is_empty() {
         return Ok(Vec::new());
     }
-    let rows = s.ix.bodies(CODE_KINDS, min)?;
-    let head: Vec<DupGroup> = crate::intel::dupes_in(&rows.iter().collect::<Vec<_>>(), min, threshold, usize::MAX)
+    let none = HashSet::new();
+    let keys = KeyRows::load(&s.ix, min)?;
+    let around_head = Focus { left_out: &none, put_in: &[], paths: &changed, keys: &[] };
+    let head: Vec<DupGroup> = crate::intel::duplicates(&s.ix, &keys, Some(&around_head), threshold, usize::MAX)?
         .into_iter()
         .filter(|g| g.members.iter().any(|m| changed.contains(m.0.as_str())))
         .collect();
@@ -63,13 +66,12 @@ fn new_duplicates(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
         return Ok(head);
     }
     let parsed: Vec<Body> = i.base_copies.iter().flat_map(|(path, src)| bodies_of(path, src, min)).collect();
-    let base_rows: Vec<&Body> = rows.iter().filter(|r| !changed.contains(r.1.as_str())).chain(&parsed).collect();
-    let base = crate::intel::dupes_in(&base_rows, min, threshold, usize::MAX);
-    // a changed file has a definition at the same place on both sides: one map per side
-    let keys = |rs: &[&Body]| -> HashMap<(String, String, i64, i64), u64> {
-        rs.iter().map(|r| ((r.1.clone(), r.2.clone(), r.3, r.4), crate::intel::body_key(&r.5))).collect()
-    };
-    let (head_keys, base_keys) = (keys(&rows.iter().collect::<Vec<_>>()), keys(&base_rows));
+    let head_keys = member_keys(s, head.iter().flat_map(|g| &g.members), &[])?;
+    let member: Vec<DupKeys> = head_keys.values().copied().collect();
+    let put_in: Vec<&Body> = parsed.iter().collect();
+    let around_base = Focus { left_out: &changed, put_in: &put_in, paths: &none, keys: &member };
+    let base = crate::intel::duplicates(&s.ix, &keys, Some(&around_base), threshold, usize::MAX)?;
+    let base_keys = member_keys(s, base.iter().flat_map(|g| &g.members), &parsed)?;
     let old = |g: &DupGroup| {
         base.iter().filter(|b| b.members.len() >= g.members.len()).any(|b| {
             let mut used = vec![false; b.members.len()];
@@ -81,12 +83,45 @@ fn new_duplicates(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
                 }
             }
             left.into_iter().all(|m| {
-                let found = head_keys.get(m).and_then(|k| (0..b.members.len()).find(|&j| !used[j] && base_keys.get(&b.members[j]) == Some(k)));
+                let found =
+                    head_keys.get(m).and_then(|k| (0..b.members.len()).find(|&j| !used[j] && base_keys.get(&b.members[j]).map(|x| x.body) == Some(k.body)));
                 found.map(|j| used[j] = true).is_some()
             })
         })
     };
     Ok(head.into_iter().filter(|g| !old(g)).collect())
+}
+
+/// The keys of these group members: one of `parsed` from its text, any other from the index.
+fn member_keys<'a>(
+    s: &Searcher,
+    members: impl Iterator<Item = &'a (String, String, i64, i64)>,
+    parsed: &[Body],
+) -> Result<HashMap<(String, String, i64, i64), DupKeys>> {
+    let (mut out, mut seen, mut ids) = (HashMap::new(), HashSet::new(), Vec::new());
+    let mut at: HashMap<i64, (String, String, i64, i64)> = HashMap::new();
+    for m in members {
+        if !seen.insert(m) {
+            continue;
+        }
+        match parsed.iter().find(|b| (&b.1, &b.2, b.3, b.4) == (&m.0, &m.1, m.2, m.3)) {
+            Some(b) => {
+                out.insert(m.clone(), DupKeys::of(&b.5));
+            }
+            None => {
+                if let Some(id) = s.ix.code_chunk_at(&m.0, &m.1, m.2, m.3)? {
+                    ids.push(id);
+                    at.insert(id, m.clone());
+                }
+            }
+        }
+    }
+    for (id, k) in s.ix.dup_keys_of(&ids)? {
+        if let Some(m) = at.remove(&id) {
+            out.insert(m, k);
+        }
+    }
+    Ok(out)
 }
 
 /// The definitions of a base copy as the index would hold them for `dupes`.
@@ -339,6 +374,139 @@ fn cap(lines: Vec<String>, base: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The search `new_duplicates` replaced, over every definition's text: the oracle it must agree with.
+    /// The duplicate groups of the head that the base did not have. Only a group with a member in a
+    /// file the diff changed can be new; the base's groups come from the same search over the head's
+    /// definitions with the changed files replaced by a parse of their base copies. A head group is
+    /// old when one base group holds a match for each of its members, each base member used once:
+    /// the same definition (path and qualified name), or the same body text up to whitespace.
+    fn new_duplicates_oracle(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
+        let (min, threshold) = (crate::ops::DUPES_MIN_TOKENS, crate::ops::DUPES_THRESHOLD);
+        let changed: HashSet<&str> = i.head_paths.iter().chain(i.base_copies.iter().map(|c| &c.0)).map(String::as_str).collect();
+        if changed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = s.ix.bodies(CODE_KINDS, min)?;
+        let head: Vec<DupGroup> = crate::intel::dupes_in(&rows.iter().collect::<Vec<_>>(), min, threshold, usize::MAX)
+            .into_iter()
+            .filter(|g| g.members.iter().any(|m| changed.contains(m.0.as_str())))
+            .collect();
+        if head.is_empty() {
+            return Ok(head);
+        }
+        let parsed: Vec<Body> = i.base_copies.iter().flat_map(|(path, src)| bodies_of(path, src, min)).collect();
+        let base_rows: Vec<&Body> = rows.iter().filter(|r| !changed.contains(r.1.as_str())).chain(&parsed).collect();
+        let base = crate::intel::dupes_in(&base_rows, min, threshold, usize::MAX);
+        // a changed file has a definition at the same place on both sides: one map per side
+        let keys = |rs: &[&Body]| -> HashMap<(String, String, i64, i64), u64> {
+            rs.iter().map(|r| ((r.1.clone(), r.2.clone(), r.3, r.4), crate::intel::body_key(&r.5))).collect()
+        };
+        let (head_keys, base_keys) = (keys(&rows.iter().collect::<Vec<_>>()), keys(&base_rows));
+        let old = |g: &DupGroup| {
+            base.iter().filter(|b| b.members.len() >= g.members.len()).any(|b| {
+                let mut used = vec![false; b.members.len()];
+                let mut left: Vec<&(String, String, i64, i64)> = Vec::new();
+                for m in &g.members {
+                    match (0..b.members.len()).find(|&j| !used[j] && b.members[j].0 == m.0 && b.members[j].1 == m.1) {
+                        Some(j) => used[j] = true,
+                        None => left.push(m),
+                    }
+                }
+                left.into_iter().all(|m| {
+                    let found = head_keys.get(m).and_then(|k| (0..b.members.len()).find(|&j| !used[j] && base_keys.get(&b.members[j]) == Some(k)));
+                    found.map(|j| used[j] = true).is_some()
+                })
+            })
+        };
+        Ok(head.into_iter().filter(|g| !old(g)).collect())
+    }
+
+    use crate::intel::duplicates_tests::{files, tree, Spec};
+    use proptest::prelude::*;
+
+    /// A base tree and a head made from it: some definitions changed, maybe a new file.
+    fn histories() -> impl Strategy<Value = (Spec, Spec)> {
+        (files(), prop::collection::vec((any::<prop::sample::Index>(), 0..4usize, 0u8..6), 0..4), files()).prop_map(|(base, edits, extra)| {
+            let mut head = base.clone();
+            for (at, seed, how) in edits {
+                let places: Vec<(usize, usize)> = head.iter().enumerate().flat_map(|(f, d)| (0..d.len()).map(move |k| (f, k))).collect();
+                let (f, k) = places[at.index(places.len())];
+                head[f][k] = (seed, how, head[f][k].2);
+            }
+            head.push(extra[0].clone());
+            (base, head)
+        })
+    }
+
+    fn git(root: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
+            .args(args)
+            .current_dir(root)
+            .envs([("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_NOSYSTEM", "1")])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn commit(root: &std::path::Path, spec: &Spec) -> String {
+        for e in std::fs::read_dir(root).unwrap().flatten() {
+            if e.path().extension().is_some_and(|x| x == "py") {
+                std::fs::remove_file(e.path()).unwrap();
+            }
+        }
+        for (name, text) in tree(spec) {
+            std::fs::write(root.join(name), text).unwrap();
+        }
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(root, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn a_third_copy_is_new_and_the_pair_the_base_had_is_not() {
+        let root = std::env::temp_dir().join(format!("scrutate_review_third_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        let base: Spec = vec![vec![(0, 0, false), (0, 0, false), (1, 0, false), (1, 0, false)]];
+        let base_sha = commit(&root, &base);
+        // seed 1's pair is left as it was; seed 0 gets a third copy in a new file
+        let mut head = base.clone();
+        head.push(vec![(0, 0, false)]);
+        let head_sha = commit(&root, &head);
+        let mut ix = crate::index::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let s = Searcher::new(ix);
+        let i = crate::impact::between(&s, &base_sha, &head_sha, 1).unwrap();
+        let found = new_duplicates(&s, &i).unwrap();
+        assert_eq!(found.iter().map(|g| g.members.len()).collect::<Vec<_>>(), [3], "{found:?}");
+        assert_eq!(found, new_duplicates_oracle(&s, &i).unwrap());
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 32, failure_persistence: None, ..ProptestConfig::default() })]
+        #[test]
+        fn the_new_duplicates_are_those_the_old_search_found((base, head) in histories()) {
+            let root = std::env::temp_dir().join(format!("scrutate_review_dups_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            git(&root, &["init", "-q"]);
+            let base_sha = commit(&root, &base);
+            let head_sha = commit(&root, &head);
+            let mut ix = crate::index::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            ix.update(false).unwrap();
+            let s = Searcher::new(ix);
+            let i = crate::impact::between(&s, &base_sha, &head_sha, 1).unwrap();
+            prop_assert_eq!(new_duplicates(&s, &i).unwrap(), new_duplicates_oracle(&s, &i).unwrap());
+            drop(s);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 
     #[test]
     fn a_code_span_outfences_the_backticks_inside() {

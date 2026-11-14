@@ -70,6 +70,10 @@ parsed once. Its rules live in `resolve/`.
 Dead: no line outside its own names it. Undecided: some line names it but the resolver ties none
 to it, or its type extends another whose code may call it. An undecidable use never makes one dead.
 
+**[Duplicate keys](docs/ARCHITECTURE.md#storage-indexrs-lexrs)**: what `dupes` compares of one
+definition (`intel::DupKeys`): hashes of its body and of its words, its word count and its
+MinHash band keys, made once per text at parse time and kept in the index (`dupkeys`).
+
 **[Kept answers](docs/ARCHITECTURE.md#intelligence-intelrs)**: what `callers`, `callees` and
 `dead` learned of each call site, stored per request (`answers.rs`, `.scrutate/answers/`) with
 what the run read. A later run uses them only while all of that is unchanged.
