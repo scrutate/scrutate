@@ -467,6 +467,58 @@ pub fn envelope(root: &std::path::Path, mut result: Value, stopped: Option<Stop>
     wrapped(result, stopped)
 }
 
+/// Each line of `text` that names a path `vendored` holds (`path`, `path:start-end`,
+/// `path:line:column`, before any code the line quotes) is marked as the JSON item is:
+/// `[kind, vendored]` when the location is followed by a kind, else `(vendored)` at its end.
+pub fn mark_vendored_text(text: &str, vendored: &dyn Fn(&str) -> bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let Some(end) = vendored_location(line, vendored) else {
+            out.push_str(line);
+            continue;
+        };
+        match line[end..].strip_prefix("  [").and_then(|r| r.find(']').map(|k| end + 3 + k)) {
+            Some(close) => {
+                out.push_str(&line[..close]);
+                out.push_str(", vendored");
+                out.push_str(&line[close..]);
+            }
+            None => {
+                out.push_str(line);
+                out.push_str("  (vendored)");
+            }
+        }
+    }
+    out
+}
+
+/// Where the first location of a vendored path in `line` ends. Only the words before a
+/// location's closing `:` count: what follows it is the code of that line.
+fn vendored_location(line: &str, vendored: &dyn Fn(&str) -> bool) -> Option<usize> {
+    let mut at = 0;
+    for word in line.split(' ') {
+        let start = at;
+        at += word.len() + 1;
+        if word.is_empty() {
+            continue;
+        }
+        // `path:12-14`, `path:12:5:`, `path`
+        let quoted_code = word.ends_with(':') && word[..word.len() - 1].rsplit(':').next().is_some_and(|n| n.parse::<u64>().is_ok());
+        let bare = word.trim_end_matches(':');
+        let path = bare.split_once(':').filter(|(_, loc)| loc.starts_with(|c: char| c.is_ascii_digit())).map_or(bare, |(p, _)| p);
+        if vendored(path) {
+            return Some(start + bare.len());
+        }
+        if quoted_code {
+            return None;
+        }
+    }
+    None
+}
+
 /// `envelope` for a result whose items are marked already (each by its own repository).
 pub fn wrapped(result: Value, stopped: Option<Stop>) -> Value {
     let mut v = json!({"schema": ANSWER_SCHEMA, "result": result});
@@ -1547,14 +1599,32 @@ impl Answer {
 
     /// `text_within` in either form.
     pub fn text_as(&self, max_bytes: usize, offset: usize, form: Form) -> String {
-        self.text_page(max_bytes, offset, form, None).0
+        self.text_page(None, max_bytes, offset, form, None).0
     }
 
-    /// `text_as`, with how many items the page shows and how many the answer has. With a
+    /// `text_as`, with how many items the page shows and how many the answer has. With the
+    /// repository's `root`, a location of vendored code is marked as in the JSON form. With a
     /// `redactor` every item is redacted before the budget pages them, so no secret is cut in two
     /// at a page's edge.
-    pub fn text_page(&self, max_bytes: usize, offset: usize, form: Form, redactor: Option<&mut crate::secrets::Redactor>) -> (String, usize, usize) {
+    pub fn text_page(
+        &self,
+        root: Option<&std::path::Path>,
+        max_bytes: usize,
+        offset: usize,
+        form: Form,
+        redactor: Option<&mut crate::secrets::Redactor>,
+    ) -> (String, usize, usize) {
         let mut parts = self.parts();
+        if let Some(root) = root {
+            let v = crate::text::Vendored::of(root);
+            let is = |p: &str| v.is(p);
+            parts.items = parts.items.iter().map(|item| mark_vendored_text(item, &is)).collect();
+            for line in parts.brief.iter_mut().flatten().flatten() {
+                if line.0.iter().any(|p| matches!(p, Piece::At(path, _) if v.is(path))) {
+                    line.0.push(Piece::Text(" (vendored)".into()));
+                }
+            }
+        }
         if let Some(r) = redactor {
             // the head, the items a page of max_bytes can show, and the tail
             let mut ends = [std::mem::take(&mut parts.head), std::mem::take(&mut parts.tail)];

@@ -24,7 +24,9 @@ incompatible index by itself, and that is never breaking.
   searched for as itself, keeps its place. A directory the root manifest builds as the
   project's own package (Cargo workspace members and path dependencies, a `go.mod` replace
   into the repository, npm, Yarn and pnpm workspaces) is not vendored. Every JSON item whose
-  `path` is vendored code, in any answer, has `"vendored": true`
+  `path` is vendored code, in any answer, has `"vendored": true`, and so does every text line
+  that names such a path: `[function, vendored]` after a location with its kind, `(vendored)`
+  at the end of any other line
   ([CLI](docs/CLI.md#engine-b)).
 - `SCRUTATE_COUNT_KEY=N` keeps a count of big searches apart from the one the user's other
   searches join; the tests of that count use it, so another suite's searches cannot change what

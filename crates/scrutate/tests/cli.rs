@@ -342,6 +342,68 @@ fn another_repositorys_manifest_does_not_decide_what_is_vendored_here() {
 }
 
 #[test]
+fn a_vendored_hit_is_marked_in_text_output_too() {
+    let r = Repo::new("vendored_text");
+    r.write("lib/app.py", b"def main():\n    return 1\n");
+    r.write("vendor/frames/frames.py", b"def burst_frames(n):\n    return n\n");
+    let (code, out, err) = r.run(&["search", "burst_frames", "-k", "3"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.lines().next().is_some_and(|l| l.contains("[function, vendored] burst_frames")), "{out}");
+    assert!(out.lines().filter(|l| l.contains("lib/app.py")).all(|l| !l.contains("vendored")), "{out}");
+}
+
+#[test]
+fn every_text_answer_marks_the_vendored_paths_its_json_marks() {
+    let r = Repo::new("vendored_every_text");
+    r.write("vendor/leases/lease.py", b"def helper(x): return x\n\n\ndef lease(): return helper(1)\n");
+    r.write("app.py", b"from vendor.leases.lease import helper\n\n\ndef run(): return helper(2)\n");
+    assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+    fn marked(v: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                if m.get("vendored") == Some(&serde_json::Value::Bool(true)) {
+                    out.insert(m["path"].as_str().unwrap().to_string());
+                }
+                m.values().for_each(|x| marked(x, out));
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| marked(x, out)),
+            _ => {}
+        }
+    }
+    let commands: [&[&str]; 13] = [
+        &["search", "helper"],
+        &["symbol", "helper"],
+        &["refs", "helper"],
+        &["callers", "helper"],
+        &["callees", "lease"],
+        &["dead"],
+        &["files", "lease"],
+        &["path", "run", "helper"],
+        &["map"],
+        &["find", "helper"],
+        &["outline", "vendor/leases/lease.py"],
+        &["rdeps", "vendor/leases/lease.py"],
+        &["similar", "vendor/leases/lease.py:4"],
+    ];
+    let mut any = 0;
+    for args in commands {
+        let (_, text, _) = r.run(args);
+        let (_, json, _) = r.run(&[args, &["--json"]].concat());
+        let mut want = std::collections::BTreeSet::new();
+        marked(&serde_json::from_str(&json).unwrap(), &mut want);
+        // the paths the text marks are the paths the JSON marks, and no line naming one is unmarked
+        let lines: Vec<&str> = text.lines().collect();
+        let got: std::collections::BTreeSet<String> =
+            want.iter().filter(|p| lines.iter().any(|l| l.contains(p.as_str()) && l.contains("vendored"))).cloned().collect();
+        assert_eq!(got, want, "{args:?}:\n{text}");
+        let unmarked: Vec<&&str> = lines.iter().filter(|l| l.split(": ").next().unwrap_or("").contains("vendor/leases") && !l.contains("vendored")).collect();
+        assert!(unmarked.is_empty(), "{args:?}: {unmarked:?}\n{text}");
+        any += want.len();
+    }
+    assert!(any >= 10, "the tree no longer exercises the marks: {any}");
+}
+
+#[test]
 fn a_qualified_name_only_vendored_code_defines_finds_it_first() {
     let r = Repo::new("vendored_qid");
     r.write(

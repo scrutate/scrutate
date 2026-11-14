@@ -717,7 +717,14 @@ impl Repo {
         let answer = self.run(py, op)?;
         let mut v = answer.envelope(&self.root);
         v["text"] = answer
-            .text_as(max_bytes.unwrap_or(usize::MAX), offset, form)
+            .text_page(
+                Some(&self.root),
+                max_bytes.unwrap_or(usize::MAX),
+                offset,
+                form,
+                None,
+            )
+            .0
             .into();
         to_py(py, &v)
     }

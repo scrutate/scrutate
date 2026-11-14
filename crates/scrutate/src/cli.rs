@@ -1414,23 +1414,26 @@ pub fn run() -> Result<i32> {
                 hits.truncate(k);
             }
             let other = hits.iter().find(|(_, i)| *i > 0).map(|x| format!("{}:{}-{}", shown(x), x.0.start, x.0.end));
+            // each item is vendored or not by its own repository's manifests
+            let vendored: Vec<crate::text::Vendored> = roots.iter().map(|(r, _)| crate::text::Vendored::of(r)).collect();
             if json && roots.len() > 1 {
                 let plain: Vec<crate::search::Hit> = hits.iter().map(|(h, _)| h.clone()).collect();
                 let mut v = hits_json(&plain);
-                // each item is vendored or not by its own repository's manifests
-                let vendored: Vec<crate::text::Vendored> = roots.iter().map(|(r, _)| crate::text::Vendored::of(r)).collect();
                 for (rec, (_, i)) in v.as_array_mut().into_iter().flatten().zip(&hits) {
                     crate::ops::mark_vendored(rec, &vendored[*i]);
                     rec["root"] = serde_json::json!(roots[*i].1.to_string_lossy());
                 }
                 println!("{}", serde_json::to_string_pretty(&crate::ops::wrapped(v, None))?);
             } else {
+                let marked: Vec<bool> = hits.iter().map(|(h, i)| vendored[*i].is(&h.path)).collect();
                 let hits: Vec<crate::search::Hit> = hits.iter().map(|x| crate::search::Hit { path: shown(x), ..x.0.clone() }).collect();
                 if json || hits.is_empty() {
                     print_hits(&cli.root, &hits, &qs, why, json)?;
                 } else {
                     let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
-                    println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", text_room(page.0), page.1));
+                    let blocks = crate::fmt::hit_blocks(&hits, &words, true, why);
+                    let blocks = blocks.iter().zip(&marked).map(|(b, &m)| if m { crate::ops::mark_vendored_text(b, &|_| true) } else { b.clone() }).collect();
+                    println!("{}", crate::ops::paged(blocks, "results", text_room(page.0), page.1));
                 }
             }
             if let (Some(other), false) = (other, json) {
@@ -1887,9 +1890,11 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
     } else if let (false, Op::Search { query, alt, .. }, Answer::Hits { hits, .. }) = (answer.is_empty(), &r.op, &answer) {
         // a ranked search shows `--why` and lights up the words of every phrasing as given
         let words: Vec<String> = std::iter::once(query).chain(alt).flat_map(|q| query_words(q)).collect();
-        writeln!(p.out, "{}", crate::ops::paged(crate::fmt::hit_blocks(hits, &words, true, r.why), "results", text_room(r.max_bytes), r.offset))?;
+        let v = crate::text::Vendored::of(root);
+        let blocks = crate::fmt::hit_blocks(hits, &words, true, r.why).iter().map(|b| crate::ops::mark_vendored_text(b, &|p| v.is(p))).collect();
+        writeln!(p.out, "{}", crate::ops::paged(blocks, "results", text_room(r.max_bytes), r.offset))?;
     } else {
-        let text = answer.text_within(text_room(r.max_bytes), r.offset);
+        let text = answer.text_page(Some(root), text_room(r.max_bytes), r.offset, crate::ops::Form::Detailed, None).0;
         write!(p.out, "{text}{}", if text.ends_with('\n') { "" } else { "\n" })?;
     }
     if let Some(w) = why {
