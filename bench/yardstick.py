@@ -136,6 +136,8 @@ def summary(rows: list[dict]) -> dict:
             forms = {r["form"] for r in mine if r["status"] == "ok" and "ratio" not in r}
             ours = sorted({f"{r['tool']} {r['status']}" for r in rows if r["workload"] == w and r["tool"].startswith("scrutate")
                            and r["form"] in forms and r["status"] != "ok"})
+            ours += [f"no scrutate row of form {f}" for f in sorted(forms)
+                     if not any(r["workload"] == w and r["tool"].startswith("scrutate") and r["form"] == f for r in rows)]
             seen = sorted({f"{r['tool']} {r['status']}" for r in mine})
             out[w] = {"reason": "; ".join(ours) + ", so no rival has a time to compare" if ours
                       else "no rival answered right: " + ("; ".join(seen) if seen else "none adapted")}

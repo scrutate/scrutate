@@ -130,7 +130,8 @@ incompatible index by itself, and that is never breaking.
   universal-ctags, ast-grep, rust-analyzer, pyright, clangd and gopls, and on the QUALITY queries
   (`--quality N`) ck, grepai and claude-context with local embeddings, with each tool's MRR@10
   and hit@5. It checks every answer before it times one, reports a wrong answer instead of a
-  time, and records each rival's version. `bench/competitors/install_rivals.sh` installs every
+  time, and records each rival's version. A rival is timed against scrutate in the same form:
+  the zoekt and livegrep servers against scrutate's MCP server, which answers indexed grep too. `bench/competitors/install_rivals.sh` installs every
   rival pinned by version and checksum; `yardstick.Dockerfile` and `claude-context.compose.yml`
   run them in containers. CI runs `--smoke` on a small tree in Python, Rust, C and Go
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).

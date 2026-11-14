@@ -13,7 +13,27 @@ import time
 
 import leaderboard as lb
 
-from . import Adapter, Setup
+from . import Adapter, Setup, Unsupported
+
+GREP_MAX = 5000  # grep_code's ceiling on max_results; it has no paging
+
+
+def grep_args(g: dict, mode: str) -> dict:
+    """grep_code's arguments for a leaderboard grep query (`pats`, `fixed`, `icase`, `word`,
+    `multiline`, `ident`), or Unsupported for what grep_code cannot say."""
+    if mode != "ignore":
+        raise Unsupported(f"grep_code searches the index's files only, not mode {mode}")
+    if g.get("multiline"):
+        raise Unsupported("grep_code has no multiline mode")
+    if g.get("ident"):
+        pattern, how = g["ident"], "identifier"
+    elif len(g["pats"]) == 1:
+        pattern, how = g["pats"][0], "literal" if g["fixed"] else "regex"
+    else:
+        # several patterns are one alternation; a fixed one escaped as the regex crate reads it
+        esc = (lambda p: "".join("\\" + c if c in "\\.+*?()|[]{}^$#&-~" else c for c in p)) if g["fixed"] else (lambda p: f"(?:{p})")
+        pattern, how = "|".join(map(esc, g["pats"])), "regex"
+    return {"pattern": pattern, "mode": how, "case": "insensitive" if g["icase"] else "sensitive", "word": bool(g["word"]), "max_results": GREP_MAX}
 
 
 def bare(name: str) -> str:
@@ -77,7 +97,7 @@ class Mcp(Adapter):
 
     name = "scrutate-mcp"
     form = "resident"
-    workloads = frozenset({"W4", "W5", "W8", "W10"})
+    workloads = frozenset({"W3", "W4", "W5", "W8", "W10"})
     TOOL = {"symbol": "find_symbol", "refs": "references", "callers": "callers"}
 
     def __init__(self, binary: str | None = None):
@@ -126,6 +146,13 @@ class Mcp(Adapter):
         return r
 
     def ask(self, workload, query):
+        if workload == "W3":
+            # the resident indexed grep is MCP's grep_code, the only resident grep scrutate has; a
+            # Session grep in the library, once it exists, is the closer match to zoekt and livegrep
+            r = self.call("grep_code", grep_args(query["grep"], query.get("mode", "ignore")))["structuredContent"]
+            if not r.get("complete", True) or r["result"].get("stopped_at"):
+                raise Unsupported(f"grep_code returns at most {GREP_MAX} lines; this query has more")
+            return {(g["path"], ln["line"]) for g in r["result"]["groups"] for ln in g["lines"]}
         if workload == "W8":
             res = self.call("search_code", {"query": query["query"], "k": 10})["structuredContent"]["result"]
             return [(h["path"], h["start"], h["end"]) for h in res]

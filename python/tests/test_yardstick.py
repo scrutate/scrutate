@@ -112,3 +112,25 @@ def test_a_query_scrutate_cannot_express_still_passes():
 def test_when_scrutate_fails_the_summary_says_so_and_does_not_blame_the_rivals():
     reason = Y.summary(run(Fake("scrutate-mcp", RIGHT, fails=True), Fake("rival", RIGHT))["rows"])["W4"]["reason"]
     assert reason == "scrutate-mcp error: crashed, so no rival has a time to compare"
+
+
+def test_a_grep_query_becomes_grep_code_arguments_or_is_unsupported():
+    from rivals import scrutate
+    g = {"pats": ["a.b"], "fixed": True, "icase": False, "word": False, "multiline": False, "ident": None}
+    assert scrutate.grep_args(g, "ignore") == {"pattern": "a.b", "mode": "literal", "case": "sensitive", "word": False, "max_results": 5000}
+    two = scrutate.grep_args({**g, "pats": ["a.b", "c|d"], "icase": True}, "ignore")
+    assert (two["pattern"], two["mode"], two["case"]) == (r"a\.b|c\|d", "regex", "insensitive")
+    assert scrutate.grep_args({**g, "ident": "make_point"}, "ignore")["mode"] == "identifier"
+    for bad, mode in [({**g, "multiline": True}, "ignore"), (g, "unrestricted")]:
+        try:
+            scrutate.grep_args(bad, mode)
+            raise AssertionError(f"{bad} {mode} was accepted")
+        except Y.Unsupported:
+            pass
+
+
+def test_a_right_rival_without_a_scrutate_row_of_its_form_says_so():
+    class Process(Fake):
+        workloads = frozenset({"W4"})
+    reason = Y.summary(run(Process("scrutate", RIGHT, form="process"), Fake("resident rival", RIGHT))["rows"])["W4"]["reason"]
+    assert reason == "no scrutate row of form resident, so no rival has a time to compare"
