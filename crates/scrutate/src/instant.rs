@@ -2017,6 +2017,11 @@ pub fn build_walker(roots: &[PathBuf], f: &Files) -> Result<ignore::WalkParallel
     Ok(walk_builder(roots, f, Policy::read(&System::default(), f.threads).threads())?.build_parallel())
 }
 
+/// The default walk of `root` on one thread, in path order.
+pub fn sorted_walk(root: &Path) -> Result<ignore::Walk> {
+    Ok(walk_builder(&[root.to_path_buf()], &Files::default(), 1)?.sort_by_file_path(|a, b| a.cmp(b)).build())
+}
+
 /// The rules of the default walk of `root`, asked about one path from it at a time.
 pub fn default_rules(root: &Path) -> Result<ignore::IncrementalIgnore> {
     walk_builder(&[root.to_path_buf()], &Files::default(), 1)?.build_matchers().pop().ok_or_else(|| anyhow!("no walk root"))

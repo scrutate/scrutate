@@ -90,7 +90,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
     }
     let odd: Vec<&str> = name_ids.keys().copied().filter(|n| !n.chars().all(word_char)).collect();
     let odd_finder = aho_corasick::AhoCorasick::new(&odd)?;
-    let files = every_file(root);
+    let files = crate::files::every_file(root);
     let scanned: Vec<Scanned> = files
         .par_iter()
         .map(|rel| {
@@ -165,21 +165,6 @@ fn looked_for(name: &str) -> (&str, bool) {
 /// A character of a name.
 fn word_char(c: char) -> bool {
     crate::ident::is_continue(c)
-}
-
-/// Every regular file of the repository the code index's walk reaches, binary or too large ones
-/// included (their reading decides), from the root, sorted.
-fn every_file(root: &Path) -> Vec<String> {
-    let walk = crate::files::CodeWalk::new(root);
-    let mut out: Vec<String> = walk
-        .builder(root)
-        .build()
-        .flatten()
-        .filter(|e| e.file_type().is_some_and(|t| t.is_file()) && e.file_name() != ".git")
-        .filter_map(|e| Some(e.path().strip_prefix(root).ok()?.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")))
-        .collect();
-    out.sort();
-    out
 }
 
 /// Ruby methods the interpreter or the core library calls without the code naming them.

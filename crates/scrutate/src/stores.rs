@@ -20,7 +20,7 @@
 //! | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); never waits (else the command does the work itself) | code index |
 //! | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 //! | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
-//! | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
+//! | `tsquery` | Engine A's default walk, one `stat` per file against the code index's record | `tsquery` cache |
 //! | `callers`, `callees` | as any index command, then one `stat` per file the kept run read | its answers |
 //!
 //! Recovery: a store found damaged is built again from the sources, once, by the process that

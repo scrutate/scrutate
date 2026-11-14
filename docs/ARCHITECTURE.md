@@ -565,6 +565,17 @@ changed (`stores::Changes`: every file, or the files a watch burst names), never
 module decides which stores that touches, when it looks, and what happens on damage. A new store
 is added there alone.
 
+Two walks decide which files belong, and nothing else builds one (the test
+`files::tests::only_files_rs_and_instant_rs_build_a_walker` fails on a third). The code index's
+walk (`files::CodeWalk`, `files::list_files`) enters hidden directories and skips the build and
+vendor directories (`files::skipped_dirs`), since config files and dotfiles hold code people look
+up. Engine A's walk (`instant::walk_builder`) is ripgrep's: hidden files are left out unless asked
+for, and every grep flag shapes it; the text index takes its default (`Files::default()`), so an
+indexed grep answers what an unindexed one would, and `tsquery` walks it too
+(`instant::sorted_walk`). `files::look` walks once for both sets. `fresh.rs` answers the change
+set for both: a watch's events name files of either set, read by the same two walks
+(`watch::Listing`).
+
 | Operation | Looks for changes | Keeps current |
 |---|---|---|
 | `index` | every file; waits for another writer, up to 10 minutes or a cancel | code index, text index (built when missing) |
@@ -579,7 +590,7 @@ is added there alone.
 | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); never waits (else the command does the work itself) | code index |
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
-| `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
+| `tsquery` | Engine A's default walk, one `stat` per file against the code index's record | `tsquery` cache |
 | `callers`, `callees` | as any index command, then one `stat` per file the kept run read | its answers |
 
 A look at every file is one walk and one `stat` per file (`files::look`), whatever stores it

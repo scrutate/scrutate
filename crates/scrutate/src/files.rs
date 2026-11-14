@@ -277,6 +277,21 @@ pub fn list_files(root: &Path) -> Vec<String> {
     out
 }
 
+/// Every regular file the code index's walk reaches, binary or too large ones included, from the
+/// root, sorted.
+pub fn every_file(root: &Path) -> Vec<String> {
+    let walk = CodeWalk::new(root);
+    let mut out: Vec<String> = walk
+        .builder(root)
+        .build()
+        .flatten()
+        .filter(|e| e.file_type().is_some_and(|t| t.is_file()) && e.file_name() != ".git")
+        .filter_map(|e| Some(slashed(e.path().strip_prefix(root).ok()?)))
+        .collect();
+    out.sort();
+    out
+}
+
 /// A file one look at the tree found.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Found {
@@ -428,6 +443,30 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn only_files_rs_and_instant_rs_build_a_walker() {
+        fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    sources(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut all = Vec::new();
+        sources(&src, &mut all);
+        let homes = [src.join("files.rs"), src.join("instant.rs")];
+        let builder = ["WalkBuilder", "::new"].concat();
+        let strays: Vec<_> = all.iter().filter(|p| !homes.contains(p) && std::fs::read_to_string(p).unwrap().contains(&builder)).collect();
+        assert!(
+            strays.is_empty(),
+            "{strays:?} build a walker: add a function to files.rs (the code index's walk) or instant.rs (Engine A's, which the text index reuses) and call it; a third walker means a third set of membership rules"
+        );
+    }
 
     #[test]
     fn a_cache_file_is_read_only_as_a_regular_file_within_its_limit() {

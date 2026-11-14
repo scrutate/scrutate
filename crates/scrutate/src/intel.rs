@@ -766,14 +766,13 @@ pub(crate) struct QueryFile {
     pub root: usize,
 }
 
-/// The files of up to 1 MB under `roots` that `spec` may hold by name, in path order, as the
-/// walker gives them (ignore files read, hidden files and links left out).
+/// The files of up to 1 MB under `roots` that `spec` may hold by name, in path order, as Engine
+/// A's default walk gives them (ignore files read, hidden files and links left out).
 pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_given: bool) -> Vec<QueryFile> {
     let mut files = Vec::new();
     for (i, root) in roots.iter().enumerate() {
-        let mut wb = ignore::WalkBuilder::new(root);
-        wb.hidden(true).git_ignore(true).add_custom_ignore_filename(crate::instant::RGIGNORE).sort_by_file_path(|a, b| a.cmp(b));
-        for entry in wb.build().flatten() {
+        let Ok(walk) = crate::instant::sorted_walk(root) else { continue };
+        for entry in walk.flatten() {
             if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
             }
