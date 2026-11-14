@@ -647,7 +647,8 @@ does not scan again.
 
 What a scan looks at is the **change set** since the token of the last one applied
 (`fresh::Freshness::changes_since`, [ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)).
-The walk adapter (`fresh::Walk`, a session with no watch) always answers every file. The watch's
+`fresh::for_session` is the one place that picks the adapter. The walk adapter (`fresh::Walk`, a
+session with no watch, every session of the wasi build) always answers every file. The watch's
 adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own that neither the
 burst's debounce nor a running update holds up. A read first writes a cookie file under
 `.scrutate/cookies/` and waits for its event (on macOS after `FSEventStreamFlushSync`): events

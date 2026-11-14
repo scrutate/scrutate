@@ -105,7 +105,7 @@ pub struct Session {
     /// the token of the newest change set applied
     applied: Mutex<Token>,
     /// what `watch` keeps for the reads, from `open_watched`
-    notes: Option<crate::watch::Notes>,
+    notes: Option<crate::fresh::Watching>,
     /// ends that watch when the session is dropped
     unwatch: Arc<AtomicBool>,
 }
@@ -158,9 +158,9 @@ impl Session {
     /// tree as without one.
     pub fn open_watched(root: &Path, every: Every) -> Result<Arc<Session>> {
         let s = Session::open(root, every)?;
-        let notes = crate::watch::Notes::new(s.root());
-        let mut s = s.with_freshness(Box::new(notes.clone()));
-        s.notes = Some(notes);
+        let (fresh, notes) = crate::fresh::for_session(s.root());
+        let mut s = s.with_freshness(fresh);
+        s.notes = notes;
         Ok(Arc::new(s))
     }
 
@@ -181,7 +181,7 @@ impl Session {
             };
             // the session's writer lock orders a burst's update with its other writes; the index's
             // own locks order it with other processes
-            match crate::watch::run_noting(&root, &stop, Some(&notes), ready, update) {
+            match notes.run(&root, &stop, ready, update) {
                 Err(e) if apply => eprintln!("[scrutate] watching stopped: {e:#}"),
                 Err(e) => debug(&format!("the watch stopped ({e:#}); reads walk the tree")),
                 Ok(()) => {}

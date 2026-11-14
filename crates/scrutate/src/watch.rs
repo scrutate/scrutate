@@ -427,6 +427,11 @@ impl Notes {
         n.walked = Some(Arc::clone(walked));
     }
 
+    /// `run_noting` with these notes.
+    pub fn run(&self, root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
+        run_noting(root, stop, Some(self), on_ready, on_change)
+    }
+
     fn stopped(&self) {
         lock(&self.0.noted).walked = None;
         #[cfg(target_os = "macos")]

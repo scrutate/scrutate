@@ -44,6 +44,34 @@ pub trait Freshness: Send + Sync {
     }
 }
 
+/// What feeds a session's freshness from a watch: the watch's notes, on targets with a file watcher.
+#[cfg(not(target_os = "wasi"))]
+pub type Watching = crate::watch::Notes;
+
+/// No file watcher on this target: never made.
+#[cfg(target_os = "wasi")]
+#[derive(Clone)]
+pub enum Watching {}
+
+#[cfg(target_os = "wasi")]
+impl Watching {
+    pub fn run(&self, _: &Path, _: &std::sync::atomic::AtomicBool, _: impl FnOnce(), _: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
+        match *self {}
+    }
+}
+
+/// The freshness a session of `root` (canonical) reads with, and the watch that feeds it: a
+/// watch's notes where this target has a watcher, the walk elsewhere. The one place that chooses.
+pub fn for_session(root: &Path) -> (Box<dyn Freshness>, Option<Watching>) {
+    #[cfg(not(target_os = "wasi"))]
+    {
+        let notes = crate::watch::Notes::new(root);
+        (Box::new(notes.clone()), Some(notes))
+    }
+    #[cfg(target_os = "wasi")]
+    (Box::new(Walk::new(root)), None)
+}
+
 /// No watcher: any file may have changed, so every call walks the tree.
 pub struct Walk {
     root: PathBuf,
