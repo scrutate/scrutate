@@ -42,7 +42,9 @@ for the LLVM tree (4.9 GB in 16 KB pages), every tool read part of it from disk,
 In a 5-CPU Linux VM on the same Mac (one virtual CPU per performance core), Engine A is
 significantly fastest on all 14 Linux-tree benchmarks: 7 to 16% ahead of ripgrep on 11, 40% ahead
 with 1.3 million matching lines (its output leaves in 64 KB writes, ripgrep's in one write per
-file) and 59% on the complex regex; ast-grep takes 24 times as long on the structural query. With
+file) and 59% on the complex regex. On the structural query ast-grep takes 24 times as long when
+scrutate reads its capture cache (a cache hit), but on a first run scrutate is the slower one (1.41
+times ast-grep's time on a 4-vCPU Linux x86_64 server, section 2). With
 the page cache dropped before every run it takes 0.28 to 0.30 of the next tool's time on all four
 rows (git grep or ugrep, 1.2 to 1.4 s each), because it reads a cold tree on up to 64 threads
 where the others use one per core: 18 to 24% above the time to merely read the files.
@@ -84,12 +86,15 @@ in the Linux tree).
 ## 2. Against ast-grep (structural search)
 
 Against ast-grep 0.51.1 on the same question (every call to `kmalloc` in the Linux tree, every
-`format!` in ripgrep), both answers checked against a tree-sitter reference: 943 ms against 13.4 s
-on the Linux tree (0.070x), 6.4 ms against 39.0 ms on ripgrep (0.163x); in the Linux VM, 662 ms
+`format!` in ripgrep), both answers checked against a tree-sitter reference. A cache hit, on the
+Apple M3 Pro: 943 ms against 13.4 s on the Linux tree (0.070x), 6.4 ms against 39.0 ms on ripgrep (0.163x); in the Linux VM, 662 ms
 against 16.3 s on the Linux tree. These runs read scrutate's capture cache (`.scrutate/tsquery/`),
 filled by earlier runs, so scrutate parsed no file while ast-grep parsed every file: they compare
-the cached tool with the uncached one, with no parse-for-parse run (`tsquery --no-cache`, which
-the harness now uses). For C, ast-grep needs
+the cached tool with the uncached one. A first run, parse for parse (`tsquery --no-cache`), is the
+other way round: on a
+4-vCPU Linux x86_64 server (`bench/competitors/linux_bench.sh` at 3ff4eb5), scrutate took 56.9 s
+against ast-grep's 40.4 s on the Linux tree, 1.41 times as long (95% interval 1.405 to 1.447).
+For C, ast-grep needs
 `--selector call_expression` and a statement as the pattern: alone, `kmalloc($$$A)` parses as a
 type macro and matches nothing, which the first comparison mistook for ast-grep being wrong.
 
@@ -151,7 +156,7 @@ No measured tool has a code-intelligence index, so this part has no competitor:
 
 Scrutate replaces a grep-class tool: it was the fastest measured on every benchmark of the suite
 on both platforms (section 1), most where its own design sets the time (one large file, heavy
-output, a cold disk, a structural query). It adds identifier and fuzzy search, results grouped by
+output, a cold disk). It adds identifier and fuzzy search, results grouped by
 function, and an index that answers the same greps in a fraction of the time and stays current as
 files change. Its ranking quality is measured on held-out code, with a quality floor in CI and
 features and scores pinned bit for bit by a test. Its outputs are machine-readable and versioned; hostile inputs, corrupted indexes and

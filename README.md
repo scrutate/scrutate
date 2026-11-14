@@ -150,8 +150,10 @@ benchmarks and all 5 cold-cache ones. Its lead over the next tool:
 - LLVM: 15 to 30% on five of six rows. 200,000 small files: 24 to 26%. A 211-file repository: 17
   to 24%. A 740 MB file: 43 to 58%. Cold cache: 23 to 28%.
 
-Structural search is 6 and 14 times faster than ast-grep with scrutate's capture cache filled, so
-it parsed no file while ast-grep parsed every file.
+Structural search is 6 and 14 times faster than ast-grep with scrutate's capture cache filled (a
+cache hit: it parses no file while ast-grep parses every one). On a first run ast-grep is faster:
+scrutate took 1.41 times its time on the Linux tree on a 4-vCPU Linux x86_64 server
+([Competitive](docs/COMPETITIVE.md#2-against-ast-grep-structural-search)).
 
 <p align="center">
   <picture>
