@@ -2103,6 +2103,32 @@ fn a_call_on_an_element_or_a_returned_value_follows_the_declared_type() {
 }
 
 #[test]
+fn an_element_of_a_rust_typescript_or_python_container_has_its_declared_type() {
+    let rs_store = "pub struct Store;\nimpl Store {\n    pub fn save(&self) -> u8 {\n        1\n    }\n}\n";
+    let rs_other = "pub struct Other;\nimpl Other {\n    pub fn save(&self) -> u8 {\n        2\n    }\n}\n";
+    let rs_use = "mod store;\nmod other;\nuse store::Store;\nuse other::Other;\nuse std::collections::HashMap;\n\npub fn p(xs: &[Store], a: [Other; 2], v: Vec<Store>, m: HashMap<u8, Other>) -> u8 {\n    xs[0].save()\n        + a[1].save()\n        + v[0].save()\n        + m[&1].save()\n}\n";
+    let r =
+        Repo::new("elem_rs", &[("Cargo.toml", "[package]\nname = \"demo\"\n"), ("src/store.rs", rs_store), ("src/other.rs", rs_other), ("src/lib.rs", rs_use)]);
+    let want = [("src/lib.rs:8", "src/store.rs"), ("src/lib.rs:9", "src/other.rs"), ("src/lib.rs:10", "src/store.rs"), ("src/lib.rs:11", "src/other.rs")];
+    let calls: Vec<(String, String)> = r.resolved("save").into_iter().filter(|(at, _)| at.starts_with("src/lib.rs")).collect();
+    assert_eq!(calls, pairs(&want));
+    let ts_store = "export class Store {\n  save(): number {\n    return 1;\n  }\n}\n";
+    let ts_other = "export class Other {\n  save(): number {\n    return 2;\n  }\n}\n";
+    let ts_use = "import { Store } from './store';\nimport { Other } from './other';\nexport function p(xs: Store[], m: Record<string, Other>, t: [Other, Store], ys: Array<Store>) {\n  return xs[0].save() +\n    m['k'].save() +\n    t[1].save() +\n    t[0].save() +\n    ys[2].save();\n}\n";
+    let r = Repo::new("elem_ts", &[("store.ts", ts_store), ("other.ts", ts_other), ("svc.ts", ts_use)]);
+    let want = [("svc.ts:4", "store.ts"), ("svc.ts:5", "other.ts"), ("svc.ts:6", "store.ts"), ("svc.ts:7", "other.ts"), ("svc.ts:8", "store.ts")];
+    let calls: Vec<(String, String)> = r.resolved("save").into_iter().filter(|(at, _)| at.starts_with("svc.ts")).collect();
+    assert_eq!(calls, pairs(&want));
+    let py_store = "class Store:\n    def save(self):\n        return 1\n";
+    let py_other = "class Other:\n    def save(self):\n        return 2\n";
+    let py_use = "from store import Store\nfrom other import Other\n\ndef a(t: tuple[Store, Other], u: tuple[Other, ...]):\n    return (t[1].save() +\n        t[0].save() +\n        u[3].save())\n";
+    let r = Repo::new("elem_py_tuple", &[("store.py", py_store), ("other.py", py_other), ("svc.py", py_use)]);
+    let want = [("svc.py:5", "other.py"), ("svc.py:6", "store.py"), ("svc.py:7", "other.py")];
+    let calls: Vec<(String, String)> = r.resolved("save").into_iter().filter(|(at, _)| at.starts_with("svc.py")).collect();
+    assert_eq!(calls, pairs(&want));
+}
+
+#[test]
 fn the_undecided_note_names_no_other_definition_when_there_is_none() {
     let store = "class Store:\n    def save(self):\n        return 1\n";
     let svc = "def run(x):\n    return x.save()\n";

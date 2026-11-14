@@ -209,7 +209,10 @@ incompatible index by itself, and that is never breaking.
 - `callers` and `refs` follow an element and a returned value to its declared type: Go
   `xs[0].Save()`, `m["a"].Save()` and `f().Save()` for `xs []Store`, `m map[string]Store`,
   `f func() Store`, and Python `xs[0].save()` and `d['a'].save()` for `list[Store]` and
-  `dict[str, Store]` are calls of `Store.save`, where they were undecided; the undecided note no
+  `dict[str, Store]` are calls of `Store.save`, where they were undecided, and so are an
+  element of Rust `&[Store]`, `[Store; 2]`, `Vec<Store>` and `HashMap<K, Store>`, of TypeScript
+  `Store[]`, `Array<Store>` and `Record<string, Store>`, and a place of a tuple by its number
+  (Python `tuple[Other, Store]` and `tuple[Store, ...]`, TypeScript `[Other, Store]`); the undecided note no
   longer speaks of another definition of the name when there is none ([CLI](docs/CLI.md#engine-b)).
 - `impact` and `review` run from a subdirectory read a relative `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` from that directory, as git does: they started git at

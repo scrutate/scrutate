@@ -1335,13 +1335,25 @@ impl<'a> Resolver<'a> {
             }
             // an element of a container whose element type is written (`xs []Store`, `list[Store]`,
             // `map[string]Store`, `dict[str, Store]`)
-            "index_expression" | "subscript" => {
-                let base = e.child_by_field_name("operand").or_else(|| e.child_by_field_name("value"))?;
+            "index_expression" | "subscript" | "subscript_expression" => {
+                let base = e
+                    .child_by_field_name("operand")
+                    .or_else(|| e.child_by_field_name("value"))
+                    .or_else(|| e.child_by_field_name("object"))
+                    .or_else(|| e.named_child(0))?;
+                let index = e.child_by_field_name("index").or_else(|| e.child_by_field_name("subscript")).or_else(|| e.named_child(1));
                 let Ty::Foreign(n, args) = self.type_of(path, fi, lang, base)? else { return None };
                 let at = if CONTAINER_MAPS.contains(&n.as_str()) {
                     1
                 } else if CONTAINER_SEQUENCES.contains(&n.as_str()) {
                     0
+                } else if CONTAINER_TUPLES.contains(&n.as_str()) {
+                    // `tuple[Other, ...]` holds one type throughout; `t[1]` of a fixed tuple, its second
+                    if matches!(args.get(1), Some(Some(Ty::Foreign(rest, _))) if rest == "...") {
+                        0
+                    } else {
+                        text(index?, src).trim().parse().ok()?
+                    }
                 } else {
                     return None;
                 };
@@ -1604,7 +1616,20 @@ impl<'a> Resolver<'a> {
                 let result = t.child_by_field_name("result").and_then(|r| self.ty_of_type(path, fi, lang, r));
                 Some(Ty::Foreign(t.kind().to_string(), vec![result]))
             }
+            // a Rust `[T]` or `[T; N]`, a TypeScript `T[]`: what it holds
+            "array_type" if matches!(lang, Lang::Rust | Lang::Js) => {
+                let element = t.child_by_field_name("element").or_else(|| t.named_child(0)).and_then(|e| self.ty_of_type(path, fi, lang, e));
+                Some(Ty::Foreign(t.kind().to_string(), vec![element]))
+            }
+            "tuple_type" if lang == Lang::Js => {
+                let mut cur = t.walk();
+                let parts: Vec<Node> = t.named_children(&mut cur).collect();
+                let elements = parts.into_iter().map(|p| self.ty_of_type(path, fi, lang, p)).collect();
+                Some(Ty::Foreign(t.kind().to_string(), elements))
+            }
             "array_type" | "slice_type" | "map_type" | "string_type" => Some(Ty::Foreign(t.kind().to_string(), Vec::new())),
+            // `...` in Python's `tuple[Other, ...]`: every further place holds the first's type
+            "ellipsis" if lang == Lang::Python => Some(Ty::Foreign("...".to_string(), Vec::new())),
             "generic_type" | "subscript" => {
                 let base = t
                     .child_by_field_name("type")
@@ -2334,8 +2359,12 @@ fn python_class_binds(body: Node, name: &str, src: &str, use_: Node) -> bool {
 
 /// Types whose element is their first type argument (`[]T`, `list[T]`), and those whose element
 /// is their second, a map's value (`map[K]V`, `dict[K, V]`).
-const CONTAINER_SEQUENCES: &[&str] = &["slice_type", "array_type", "list", "List", "Sequence", "MutableSequence"];
-const CONTAINER_MAPS: &[&str] = &["map_type", "dict", "Dict", "Mapping", "MutableMapping", "OrderedDict", "defaultdict"];
+const CONTAINER_SEQUENCES: &[&str] = &["slice_type", "array_type", "list", "List", "Sequence", "MutableSequence", "Vec", "VecDeque", "Array", "ReadonlyArray"];
+const CONTAINER_MAPS: &[&str] =
+    &["map_type", "dict", "Dict", "Mapping", "MutableMapping", "OrderedDict", "defaultdict", "HashMap", "BTreeMap", "IndexMap", "Record"];
+/// Containers indexed by position, each place its own type: Python `tuple[Store, Other]`, a
+/// TypeScript `[Other, Store]`.
+const CONTAINER_TUPLES: &[&str] = &["tuple", "Tuple", "tuple_type"];
 
 /// The innermost function around `node`.
 fn enclosing_function(node: Node) -> Option<Node> {
@@ -3410,7 +3439,7 @@ mod tests {
                 ("user.rs", "m.remove(&k).unwrap().ok()", "ok", "receiver"),
                 ("user.rs", "pick(Report).ok()", "ok", "receiver"),
                 // a slice's elements are not known
-                ("user.rs", "&& v.first().unwrap().ok() && s", "ok", "receiver"),
+                ("user.rs", "&& v.first().unwrap().ok() && s", "ok", ok),
             ],
         );
         // a trait of the repository may give an outside type the method

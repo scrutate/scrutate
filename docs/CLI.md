@@ -363,7 +363,9 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
      Python function is one scope; a JavaScript `var` belongs to its whole function.
 
    An element of a container whose element type is written (Go `xs []T` and `m map[K]T`, Python
-   `list[T]` and `dict[K, T]`) has that type, and a Go call of a variable of a function type
+   `list[T]` and `dict[K, T]`, Rust `[T]`, `[T; N]`, `Vec<T>` and `HashMap<K, T>`, TypeScript
+   `T[]`, `Array<T>` and `Record<K, T>`) has that type, and so has a place of a tuple by its
+   number (Python `tuple[A, B]`, where `tuple[A, ...]` is all `A`; TypeScript `[A, B]`), and a Go call of a variable of a function type
    (`f func() T`) has its result type. A variable set from a call takes the function's declared return type (through `?` and holders
    such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes field `x`'s
    declared type, and a module-level or static variable its declared or built type. A Go method
