@@ -246,11 +246,6 @@ mod tests {
     use super::*;
 
     /// The search `new_duplicates` replaced, over every definition's text: the oracle it must agree with.
-    /// The duplicate groups of the head that the base did not have. Only a group with a member in a
-    /// file the diff changed can be new; the base's groups come from the same search over the head's
-    /// definitions with the changed files replaced by a parse of their base copies. A head group is
-    /// old when one base group holds a match for each of its members, each base member used once:
-    /// the same definition (path and qualified name), or the same body text up to whitespace.
     fn new_duplicates_oracle(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
         let (min, threshold) = (crate::ops::DUPES_MIN_TOKENS, crate::ops::DUPES_THRESHOLD);
         let changed: HashSet<&str> = i.head_paths.iter().chain(i.base_copies.iter().map(|c| &c.0)).map(String::as_str).collect();

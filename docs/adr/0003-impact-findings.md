@@ -45,9 +45,8 @@ The rules a renderer and a later kind keep:
 - An agent gets the findings from the MCP `impact` tool, with no tool added.
 - Every `impact` call now pays for the duplicate search, which only `review` paid before. It
   reads every definition's duplicate keys once per call and a text only for a definition in a
-  group or a shared bucket ([Architecture](../ARCHITECTURE.md#intelligence-intelrs)). On the Linux
-  tree, with a copy of one function and an edit of another, `impact --json` took 3.60 s with the
-  findings and 3.00 s without them (warm, best of 5, in turn), within the 1.2 times this was held
-  to.
+  group or a shared bucket ([Architecture](../ARCHITECTURE.md#intelligence-intelrs)). It was held to
+  at most 1.2 times the time of `impact --json` without the findings on the Linux tree, measured
+  by hand for the change (its commit message has the run; no script in `bench/` reruns it).
 - `review` keeps its Markdown and GitLab output byte for byte; its JSON gains the `findings` key
   and keeps `new_duplicates` and `untested`, read from the list.

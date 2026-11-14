@@ -140,7 +140,6 @@ fn pack_text(text: &str) -> Vec<u8> {
     })
 }
 
-/// Inverse of `pack_text`; accepts legacy plain text and NULL.
 /// A row of `dupkeys` as (id, keys).
 fn dup_row(r: &rusqlite::Row) -> Result<(i64, crate::intel::DupKeys)> {
     let id: i64 = r.get(0)?;
@@ -152,6 +151,7 @@ fn dup_row(r: &rusqlite::Row) -> Result<(i64, crate::intel::DupKeys)> {
     Ok((id, crate::intel::DupKeys { body: r.get::<_, i64>(1)? as u64, words: r.get::<_, i64>(2)? as u64, ntok: r.get(3)?, bands }))
 }
 
+/// Inverse of `pack_text`; accepts legacy plain text and NULL.
 fn unpack_text(v: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<String> {
     use std::io::Read;
     match v {
@@ -2828,7 +2828,8 @@ impl Index {
     }
 
     /// Id, path, qualified name, lines and text of the chunks of these kinds with at least
-    /// `min_tokens` body tokens, by id.
+    /// `min_tokens` body tokens, by id: what the tests' oracles of the duplicate search read.
+    #[cfg(test)]
     pub fn bodies(&self, kinds: &[&str], min_tokens: usize) -> Result<Vec<Body>> {
         let mut st = self
             .db
