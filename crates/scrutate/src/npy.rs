@@ -21,6 +21,10 @@ compile_error!("the on-disk format is little-endian; big-endian targets are not 
 pub(crate) enum Backing {
     Mmap(Mmap),
     Owned(Vec<u8>),
+    /// bytes built into the binary
+    Static(&'static [u8]),
+    /// bytes `start..end` of another backing: a stored member of an `.npz` archive, read in place
+    Part(std::sync::Arc<Backing>, usize, usize),
 }
 
 impl std::ops::Deref for Backing {
@@ -29,6 +33,8 @@ impl std::ops::Deref for Backing {
         match self {
             Backing::Mmap(m) => m,
             Backing::Owned(v) => v,
+            Backing::Static(s) => s,
+            Backing::Part(b, start, end) => &b[*start..*end],
         }
     }
 }
@@ -178,11 +184,7 @@ impl Npy {
     }
 
     fn bytes(&self) -> &[u8] {
-        let all = match &self.backing {
-            Backing::Mmap(m) => &m[..],
-            Backing::Owned(v) => &v[..],
-        };
-        &all[self.offset..]
+        &self.backing[self.offset..]
     }
 
     /// Zero-copy typed view (file data is 64-byte aligned, so this is always sound for mmaps).
@@ -303,15 +305,43 @@ pub fn load_npz(path: &Path) -> Result<Vec<(String, Npy)>> {
 pub fn load_npz_bytes(bytes: &[u8]) -> Result<Vec<(String, Npy)>> {
     let mut out = Vec::new();
     for (name, data) in zip_entries(bytes)? {
+        let data = match data {
+            Entry::Stored(start, end) => bytes[start..end].to_vec(),
+            Entry::Inflated(d) => d,
+        };
         out.push((name.trim_end_matches(".npy").to_string(), Npy::from_bytes(data)?));
     }
     Ok(out)
 }
 
+/// `load_npz_bytes` of an archive that stays in memory (built in, or mapped): a stored member is
+/// read where it lies, not copied; a deflated one is inflated.
+pub(crate) fn load_npz_shared(src: std::sync::Arc<Backing>) -> Result<Vec<(String, Npy)>> {
+    let mut out = Vec::new();
+    for (name, data) in zip_entries(&src)? {
+        let npy = match data {
+            Entry::Stored(start, end) => {
+                let backing = Backing::Part(std::sync::Arc::clone(&src), start, end);
+                let (descr, shape, fortran, offset) = parse_header(&backing)?;
+                Npy { descr, shape, fortran, offset, backing }
+            }
+            Entry::Inflated(d) => Npy::from_bytes(d)?,
+        };
+        out.push((name.trim_end_matches(".npy").to_string(), npy));
+    }
+    Ok(out)
+}
+
+/// The data of a zip entry: where a stored one lies in the archive, or an inflated one.
+enum Entry {
+    Stored(usize, usize),
+    Inflated(Vec<u8>),
+}
+
 /// Minimal ZIP reader for `.npz` archives (what `numpy.savez` / `savez_compressed` write): entries
 /// are read from the central directory and are either stored or deflated. Nothing is ever written
 /// to disk, no file names are interpreted as paths, and ZIP64 or encrypted archives are rejected.
-fn zip_entries(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+fn zip_entries(bytes: &[u8]) -> Result<Vec<(String, Entry)>> {
     let u16_at = |i: usize| -> Result<usize> { bytes.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).ok_or_else(|| anyhow!("truncated zip")) };
     let u32_at = |i: usize| -> Result<usize> {
         bytes.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).ok_or_else(|| anyhow!("truncated zip"))
@@ -368,15 +398,19 @@ fn zip_entries(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
         let start = local + 30 + lname + lextra;
         let comp = bytes.get(start..start + csize).ok_or_else(|| anyhow!("zip: truncated data for {name}"))?;
         let data = match method {
-            0 => comp.to_vec(),
+            0 => Entry::Stored(start, start + csize),
             8 => {
                 let mut d = Vec::with_capacity(usize_);
                 flate2::read::DeflateDecoder::new(comp).read_to_end(&mut d).with_context(|| format!("zip: inflate {name}"))?;
-                d
+                Entry::Inflated(d)
             }
             m => bail!("zip: unsupported compression method {m} for {name}"),
         };
-        if data.len() != usize_ {
+        let len = match &data {
+            Entry::Stored(a, b) => b - a,
+            Entry::Inflated(d) => d.len(),
+        };
+        if len != usize_ {
             bail!("zip: size mismatch for {name}");
         }
         out.push((name, data));

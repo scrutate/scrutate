@@ -831,6 +831,36 @@ pub fn decode_source(raw: &[u8]) -> Option<std::borrow::Cow<'_, str>> {
     Some(String::from_utf8_lossy(raw))
 }
 
+/// The file of the index directory that records the last passing `quick_check`: what
+/// `check_mark` gave then. An open that finds the same mark trusts that check.
+const CHECKED: &str = "checked";
+
+/// The identity of the database at `db_path` whose data version is `ver`: its file (device and
+/// inode, size, mtime, change time) and its log while the log holds anything. Any write to
+/// either file, ours or another's, changes it.
+fn check_mark(db_path: &Path, ver: &str) -> String {
+    let wal = db_path.with_extension("db-wal");
+    let stat = |p: &Path| match std::fs::symlink_metadata(p) {
+        Ok(md) if p == wal && md.len() == 0 => "empty".to_string(),
+        Ok(md) => {
+            let s = Stat::of(p, &md);
+            format!("{:?} {} {} {}", file_id(p), s.size, s.mtime, s.ctime)
+        }
+        Err(_) => "empty".to_string(),
+    };
+    format!("{} | {} | {ver}\n", stat(db_path), stat(&wal))
+}
+
+/// Record `mark` as the state of a passing check (a new file, renamed into place) -> whether it is.
+fn write_record(record: &Path, mark: &str) -> bool {
+    let tmp = record.with_file_name(format!("{CHECKED}.{}.tmp", std::process::id()));
+    let done = write_new(&tmp, mark.as_bytes()).and_then(|()| rename_settled(&tmp, record));
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done.is_ok()
+}
+
 /// The chunk count `chunks_at` ("<data version> <count>") records, when it was written for `ver`.
 fn counted(at: Option<&str>, ver: Option<&str>) -> Option<i64> {
     let (v, n) = at?.split_once(' ')?;
@@ -1022,6 +1052,8 @@ pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
 
 #[cfg(test)]
 thread_local! {
+    /// How many `PRAGMA quick_check` walks this thread's opens ran.
+    pub static QUICK_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Run once at the next `Index::chunks`: a test's writer commits between a query's reads.
     pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
     /// Run once right after an update loads its root's custom languages.
@@ -1120,6 +1152,11 @@ fn add_art(db: &Connection) -> rusqlite::Result<()> {
 enum Triage {
     /// use the files as they are
     Reuse,
+    /// use them, unchanged since an open whose `quick_check` passed recorded them (`CHECKED`): no
+    /// setup kept in the file (WAL) and no schema work either
+    Trusted,
+    /// use them: the `quick_check` passed, so the open records them once its schema work is done
+    Checked,
     /// a readable index of another schema or model: empty it inside the database and re-index
     Rebuild(&'static str),
     /// not a usable database: delete the files
@@ -1236,8 +1273,12 @@ impl Index {
         std::fs::create_dir_all(&seg_dir)?;
         // a lock another process took first (even before the database had its WAL) is waited for
         let never = std::sync::atomic::AtomicBool::new(false);
+        let trusted = matches!(triage, Triage::Trusted);
         let setup = |db: &Connection| -> Result<()> {
-            wait_busy(db, &never, |db| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
+            // WAL is kept in the file: a trusted one has it
+            if !trusted {
+                wait_busy(db, &never, |db| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
+            }
             // WAL + NORMAL: durable against process crashes, consistent after power loss (at worst the
             // last transaction rolls back); one fsync per checkpoint instead of per transaction; a
             // log cut back at a checkpoint keeps at most 4 MB of its file
@@ -1245,7 +1286,7 @@ impl Index {
                 db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000; PRAGMA journal_size_limit=4194304;")
             })
         };
-        let schema = |db: &Connection| wait_busy(db, &never, |db| db.execute_batch(SCHEMA).and_then(|()| add_art(db)));
+        let schema = |db: &Connection| if trusted { Ok(()) } else { wait_busy(db, &never, |db| db.execute_batch(SCHEMA).and_then(|()| add_art(db))) };
         let read_only = |e: &anyhow::Error| matches!(e.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly);
         let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
         let db = match setup(&db) {
@@ -1255,7 +1296,7 @@ impl Index {
                 Err(e) if e.downcast_ref::<rusqlite::Error>().is_some() => Err(e),
                 Err(e) => return Err(e),
             },
-            Err(e) if read_only(&e) && matches!(triage, Triage::Reuse) => {
+            Err(e) if read_only(&e) && matches!(triage, Triage::Reuse | Triage::Trusted | Triage::Checked) => {
                 drop(db);
                 Ok(Self::open_immutable(&db_path, &sem_sig)?)
             }
@@ -1323,6 +1364,10 @@ impl Index {
                     ix.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
                 }
             }
+        }
+        // what a passing check saw, with this open's own schema work and stamps on it
+        if matches!(triage, Triage::Checked) {
+            write_record(&ix.dir.join(CHECKED), &check_mark(&ix.dir.join("index.db"), &ix.meta("data_version").unwrap_or_default()));
         }
         Ok(ix)
     }
@@ -1428,6 +1473,7 @@ impl Index {
             self.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
         }
         retry_busy(|| self.db.execute_batch("COMMIT"))?;
+        let _ = std::fs::remove_file(self.dir.join(CHECKED));
         for n in old {
             let _ = std::fs::remove_dir_all(self.seg_dir.join(n));
         }
@@ -1450,23 +1496,35 @@ impl Index {
         if let Err(e) = con.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
             return if is_corruption(&e) { Triage::Garbage("not a database") } else { Triage::Reuse };
         }
+        let get =
+            |k: &str| -> Option<String> { con.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional().ok().flatten() };
+        // a database unchanged since a passing check is not walked again
+        let record = db_path.with_file_name(CHECKED);
+        let mark = check_mark(db_path, &get("data_version").unwrap_or_default());
+        let trusted = std::fs::read_to_string(&record).is_ok_and(|r| r == mark);
         // the full page walk is affordable for small databases; large ones rely on the error-driven
         // recovery in `recover_if_corrupt` (and on `scrutate check` for an explicit audit)
         let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
         let limit = std::env::var("SCRUTATE_QUICK_CHECK_MAX_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(QUICK_CHECK_MAX_BYTES);
-        if size <= limit {
+        let mut passed = false;
+        if size <= limit && !trusted {
+            #[cfg(test)]
+            QUICK_CHECKS.with(|c| c.set(c.get() + 1));
             match con.query_row("PRAGMA quick_check(1)", [], |r| r.get::<_, String>(0)) {
-                Ok(s) if s == "ok" => {}
+                Ok(s) if s == "ok" => passed = true,
                 Ok(_) => return Triage::Garbage("integrity check failed"),
                 Err(e) => return if is_corruption(&e) { Triage::Garbage("integrity check failed") } else { Triage::Reuse },
             }
         }
-        let get =
-            |k: &str| -> Option<String> { con.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional().ok().flatten() };
         if let Some(n) = Newer::of(get).filter(|n| !n.readable) {
             return Triage::Newer(n);
         }
-        Self::rebuild_reason(&con).map_or(Triage::Reuse, Triage::Rebuild)
+        match Self::rebuild_reason(&con) {
+            Some(why) => Triage::Rebuild(why),
+            None if trusted => Triage::Trusted,
+            None if passed => Triage::Checked,
+            None => Triage::Reuse,
+        }
     }
 
     /// Why a readable index of this or an older version must be emptied and built again. Another
@@ -1494,7 +1552,7 @@ impl Index {
     }
 
     pub(crate) fn wipe(dir: &Path, seg_dir: &Path) {
-        for name in ["index.db", "index.db-wal", "index.db-shm", "vectors.npz"] {
+        for name in ["index.db", "index.db-wal", "index.db-shm", "vectors.npz", CHECKED] {
             let p = dir.join(name);
             let _ = std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir_all(&p));
         }
@@ -1821,6 +1879,14 @@ impl Index {
                 r => r?,
             }
         }
+        // a forced update is asked for when the index is in doubt: the next open checks it again;
+        // otherwise our commit keeps a passing check true when nothing changed the database since
+        let record = self.dir.join(CHECKED);
+        let db_path = self.dir.join("index.db");
+        if force {
+            let _ = std::fs::remove_file(&record);
+        }
+        let held = !force && std::fs::read_to_string(&record).is_ok_and(|r| r == check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
         self.gc_segments();
         let cur_ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         // vectors made anew replace every segment: what is held in memory is read again
@@ -1882,6 +1948,9 @@ impl Index {
                 Ok(()) => {}
             }
             self.log_left = !self.truncate_log();
+            if held && !self.log_left {
+                write_record(&record, &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
+            }
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
@@ -2165,7 +2234,10 @@ impl Index {
         if kept > 0 {
             self.collect_kept()?;
         }
-        self.set_meta("next_id", &next_id.to_string())?;
+        // an update that changes nothing writes nothing: the database file stays as it was
+        if self.meta("next_id").as_deref() != Some(next_id.to_string().as_str()) {
+            self.set_meta("next_id", &next_id.to_string())?;
+        }
         if reparse {
             self.set_meta("content_rev", &rev)?;
         }
@@ -3010,6 +3082,10 @@ impl Index {
         let integrity: String = self.db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap_or_else(|e| format!("error: {e}"));
         r.database_ok = integrity == "ok";
         if !r.database_ok {
+            // the next open walks it again
+            let _ = std::fs::remove_file(self.dir.join(CHECKED));
+        }
+        if !r.database_ok {
             r.problems.push(format!("database integrity: {integrity}"));
         }
         r.chunks_db = self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |row| row.get(0))?;
@@ -3141,6 +3217,87 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
+    fn checked_repo(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..12 {
+            std::fs::write(root.join(format!("m{i}.py")), format!("def alpha_{i}(x):\n    return x + {i}\n")).unwrap();
+        }
+        root
+    }
+
+    /// Garbage over every page but the first, keeping the file's length and mtime.
+    fn damage_keeping_length_and_mtime(db: &std::path::Path) {
+        let mtime = std::fs::metadata(db).unwrap().modified().unwrap();
+        let mut bytes = std::fs::read(db).unwrap();
+        assert!(bytes.len() > 4096 * 4, "{}", bytes.len());
+        for b in bytes[4096..].iter_mut() {
+            *b = 0xA5;
+        }
+        std::fs::write(db, &bytes).unwrap();
+        std::fs::File::options().write(true).open(db).unwrap().set_modified(mtime).unwrap();
+        let _ = std::fs::remove_file(db.with_extension("db-wal"));
+        let _ = std::fs::remove_file(db.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn an_open_trusts_the_check_it_recorded_until_the_database_changes() {
+        let root = checked_repo("trusted");
+        let checks = || super::QUICK_CHECKS.with(|c| c.get());
+        let open = || super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        let mut ix = open();
+        ix.update(false).unwrap();
+        drop(ix);
+        let c0 = checks();
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "the first open of a built index checks it");
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "the next one trusts that check");
+        // what every command does first: an update that finds nothing changed writes nothing
+        open().update(false).unwrap();
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "an update that changes nothing keeps the check true");
+        std::fs::write(root.join("b.py"), "def beta():\n    return 2\n").unwrap();
+        let mut ix = open();
+        ix.update(false).unwrap();
+        drop(ix);
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "an update of this process keeps the check true");
+        // bytes changed behind the index's back: the change time gives it away
+        damage_keeping_length_and_mtime(&root.join(".scrutate/index.db"));
+        let mut ix = open();
+        assert_eq!(checks(), c0 + 2, "a changed database is checked again");
+        ix.update(false).unwrap();
+        assert_eq!(ix.named("beta").unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn damage_a_trusted_record_hides_is_reported_by_the_first_read() {
+        let root = checked_repo("forged");
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        drop(ix);
+        let db = root.join(".scrutate/index.db");
+        damage_keeping_length_and_mtime(&db);
+        // the record says this very file passed a check: the open trusts it
+        let ver = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .ok()
+            .and_then(|c| c.query_row("SELECT value FROM meta WHERE key='data_version'", [], |r| r.get::<_, String>(0)).ok())
+            .unwrap_or_default();
+        std::fs::write(root.join(".scrutate").join(super::CHECKED), super::check_mark(&db, &ver)).unwrap();
+        let before = super::QUICK_CHECKS.with(|c| c.get());
+        match super::Index::open(&root, crate::models::ModelSet::none()) {
+            Ok(ix) => {
+                assert_eq!(super::QUICK_CHECKS.with(|c| c.get()), before, "the record was trusted");
+                let e = ix.named("alpha_1").expect_err("a read of the damaged pages fails");
+                assert!(super::error_is_corruption(&e), "{e:#}");
+            }
+            Err(e) => assert!(super::error_is_corruption(&e), "{e:#}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
     /// A write that keeps size and mtime moves the change time, and the walk's listing of a
     /// directory gives each file the change time its own stat gives.
     #[test]

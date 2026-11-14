@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::npy::load_npz_bytes;
+use crate::npy::load_npz_shared;
 
 pub struct SemanticModel {
     pub va: HashMap<String, usize>,
@@ -28,10 +28,18 @@ pub struct SemanticModel {
     v32: OnceLock<Vec<f32>>,
 }
 
-/// An int8 table with one float32 scale per row: value = code * scale.
+/// An int8 table with one float32 scale per row: value = code * scale. The codes are read where
+/// the model lies (built in, or mapped), not copied into each process.
 struct Table {
-    q: Vec<i8>,
+    q: crate::npy::Npy,
     scale: Vec<f32>,
+}
+
+impl Table {
+    fn q(&self) -> &[i8] {
+        // checked when the model loaded
+        self.q.view::<i8>().unwrap_or(&[])
+    }
 }
 
 fn sublog(c: u32) -> f64 {
@@ -40,12 +48,13 @@ fn sublog(c: u32) -> f64 {
 
 impl SemanticModel {
     pub fn load(path: &Path) -> Result<SemanticModel> {
-        let bytes = std::fs::read(path).with_context(|| format!("load semantic model {}", path.display()))?;
-        load_npz_bytes(&bytes).and_then(Self::from_arrays).with_context(|| format!("load semantic model {}", path.display()))
+        let file = std::fs::File::open(path).with_context(|| format!("load semantic model {}", path.display()))?;
+        let mapped = crate::npy::map(&file, path).with_context(|| format!("load semantic model {}", path.display()))?;
+        load_npz_shared(std::sync::Arc::new(mapped)).and_then(Self::from_arrays).with_context(|| format!("load semantic model {}", path.display()))
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<SemanticModel> {
-        Self::from_arrays(load_npz_bytes(bytes).context("load embedded semantic model")?)
+    pub fn from_bytes(bytes: &'static [u8]) -> Result<SemanticModel> {
+        Self::from_arrays(load_npz_shared(std::sync::Arc::new(crate::npy::Backing::Static(bytes))).context("load embedded semantic model")?)
     }
 
     fn from_arrays(arrays: Vec<(String, crate::npy::Npy)>) -> Result<SemanticModel> {
@@ -61,9 +70,13 @@ impl SemanticModel {
         }
         let k = u.shape[1];
         let int8 = "its word tables must be int8 with a scale per row (bench/train_semantic.py writes them)";
-        let uq = Table { q: u.to_vec::<i8>().context(int8)?, scale: take("U_scale")?.to_vec::<f32>()? };
-        let vq = Table { q: take("V")?.to_vec::<i8>().context(int8)?, scale: take("V_scale")?.to_vec::<f32>()? };
-        if uq.q.len() != uq.scale.len() * k || vq.q.len() != vq.scale.len() * k {
+        let v = take("V")?;
+        for t in [&u, &v] {
+            t.view::<i8>().context(int8)?;
+        }
+        let uq = Table { q: u, scale: take("U_scale")?.to_vec::<f32>()? };
+        let vq = Table { q: v, scale: take("V_scale")?.to_vec::<f32>()? };
+        if uq.q().len() != uq.scale.len() * k || vq.q().len() != vq.scale.len() * k {
             return Err(anyhow!("model scales do not match its tables"));
         }
         let s = take("s")?.to_vec::<f32>()?;
@@ -103,7 +116,7 @@ impl SemanticModel {
 
     fn expand(&self, t: &Table) -> Vec<f32> {
         let k = self.k;
-        t.q.iter().enumerate().map(|(i, &v)| v as f32 * t.scale[i / k] * self.w[i % k]).collect()
+        t.q().iter().enumerate().map(|(i, &v)| v as f32 * t.scale[i / k] * self.w[i % k]).collect()
     }
 
     fn row_into(&self, table: &Table, warmed: &OnceLock<Vec<f32>>, i: usize, out: &mut [f32]) {
@@ -112,8 +125,9 @@ impl SemanticModel {
             out.copy_from_slice(&full[i * k..(i + 1) * k]);
         } else {
             let s = table.scale[i];
+            let q = &table.q()[i * k..(i + 1) * k];
             for j in 0..k {
-                out[j] = table.q[i * k + j] as f32 * s * self.w[j];
+                out[j] = q[j] as f32 * s * self.w[j];
             }
         }
     }

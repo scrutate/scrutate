@@ -426,7 +426,12 @@ NFC with final sigma folded.
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a
-    database up to 64 MB (`QUICK_CHECK_MAX_BYTES` or `SCRUTATE_QUICK_CHECK_MAX_BYTES`), a larger
+    database up to 64 MB (`QUICK_CHECK_MAX_BYTES` or `SCRUTATE_QUICK_CHECK_MAX_BYTES`), once per
+    state of the file: a passing check is recorded in `.scrutate/checked` with the database's file
+    identity (device, inode, size, mtime, change time, and its log's while it holds anything) and
+    data version, an open that finds both unchanged skips the walk and the schema work, an update
+    of this process that started from that state records the state it leaves, and a failing
+    `check`, a forced update, a rebuild or any recovery deletes the record; a larger
     one when an error shows damage and in `scrutate check`; structural validation of every array
     on segment open, deep validation in `scrutate check`; also a chunk text that does not inflate,
     a segment list that is not JSON, a segment without vectors under a model, an `index.db`
@@ -1006,7 +1011,9 @@ and runs clippy on the native build without `pcre2`, on every push.
 ## Models (`crates/scrutate/models/`, `models.rs`)
 `semantic.npz` (7.6 MB: code-word vocabulary tables and projections, the two word tables as int8
 codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (87 KB)
-are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
+are embedded in the binary with `include_bytes!`; the semantic model's stored int8 tables are read
+where they lie (in the binary, or in the mapped `SCRUTATE_SEMANTIC` file), not copied into each
+process; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
 point at other files or `none` (a vector model file with the float16 tables of revision 1 is an
 error that names the file). `models.rs` holds them as one model set, with the feature list the
 ranker reads (`FEATURES`) and the model revision. Each part loads on first use, once per process,

@@ -153,6 +153,12 @@ incompatible index by itself, and that is never breaking.
   before the call in its answer; when the watch cannot vouch for fewer files, or cannot start, the
   call looks at every file as before. `SCRUTATE_SESSION_DEBUG=1` says why
   ([ADR 0001](docs/adr/0001-change-sets-and-the-cookie-barrier.md), [CLI](docs/CLI.md)).
+- A fresh process opens an index whose database it saw pass a check as fast as a running one:
+  the `quick_check` walk and the schema work run once per state of the file, recorded in
+  `.scrutate/checked`, and an update that finds nothing changed no longer rewrites the database.
+  The semantic model's tables are read where they lie in the binary instead of being copied.
+  On a 61 MB index, `symbol` takes 16.5 ms where it took 86.7 ms, and `search` 68.8 ms where it
+  took 174.6 ms ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
   (7.5 MiB compressed), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
   crates; publishing waits for the release ([INSTALL](docs/INSTALL.md)).

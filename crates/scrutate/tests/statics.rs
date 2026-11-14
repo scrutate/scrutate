@@ -27,6 +27,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("index.rs", "FOUND", "Windows' GetFileInformationByName, looked up once per process"),
     ("index.rs", "BEFORE_CHUNKS", "per thread, a test hook"),
     ("index.rs", "AFTER_LANGUAGES", "per thread, a test hook"),
+    ("index.rs", "QUICK_CHECKS", "per thread, a test's count of quick_check walks"),
     ("index.rs", "OPENED", "whether the process opened any index, for the panic message"),
     ("index.rs", "STOP", "the process's stop flag, which ends every wait for a lock of any root"),
     ("instant.rs", "JOINED", "per thread, a reused path buffer"),
