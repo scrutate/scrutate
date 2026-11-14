@@ -21,10 +21,13 @@ impl Token {
         Token(self.0 + 1)
     }
 
+    /// The watcher's own numbering, which no other adapter has.
+    #[cfg(not(target_os = "wasi"))]
     pub(crate) fn at(n: u64) -> Token {
         Token(n)
     }
 
+    #[cfg(not(target_os = "wasi"))]
     pub(crate) fn get(self) -> u64 {
         self.0
     }
