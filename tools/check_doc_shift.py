@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Fail when a change puts a new Rust item between an unchanged `///` block and the item it
+documented, so the doc comment silently moves onto the new item.
+
+usage: check_doc_shift.py [REV | A..B | --diff FILE]   (default HEAD: the diff of REV^..REV)
+
+A change block (added and removed lines between context lines) that follows unchanged `///`
+lines (attribute and blank lines between them aside) and adds an item (fn, struct, enum, type,
+const, static, impl, mod, trait, union, macro_rules!) is reported, unless it also removes the
+documented item and does not add it back below another (an edit, a rename or a replacement in
+place). The fix is to insert the new item above the doc block.
+"""
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+ITEM = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe|default|extern(?:\s+\"[^\"]*\")?)\s+)*"
+    r"(fn|struct|enum|type|const|static|impl|mod|trait|union|macro_rules!)(?:\s*<[^>]*>)?\s+([\w]+)"
+)
+
+
+def item(line: str) -> tuple[str, str] | None:
+    """(kind, name) when `line` opens a Rust item."""
+    if line.lstrip().startswith("//"):
+        return None
+    m = ITEM.match(line)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def shifted(diff: str) -> list[str]:
+    """`path:line: text` of each added item that takes over the doc block above it."""
+    found, path, new_line, ctx, block = [], None, 0, [], []
+
+    def close():
+        if not block or not path or not path.endswith(".rs"):
+            return
+        above = [c for c in ctx if c.strip() and not c.strip().startswith("#[")]
+        if not above or not above[-1].lstrip().startswith("///"):
+            return
+        added = [(n, t, item(t)) for kind, n, t in block if kind == "+" and item(t)]
+        removed = [item(t) for kind, _, t in block if kind == "-" and item(t)]
+        # the documented item gone for good is a replacement; back below a new item, it lost its doc
+        if added and (not removed or (added[0][2] != removed[0] and removed[0] in [a[2] for a in added])):
+            n, t, _ = added[0]
+            found.append(f"{path}:{n}: {t.strip()}")
+
+    for raw in diff.splitlines():
+        if raw.startswith("diff --git"):
+            close()
+            block, ctx, path = [], [], None
+        elif raw.startswith("+++ "):
+            path = raw[4:].removeprefix("b/") if raw[4:] != "/dev/null" else None
+        elif raw.startswith("--- "):
+            continue
+        elif raw.startswith("@@"):
+            close()
+            block, ctx = [], []
+            new_line = int(re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", raw).group(1))
+        elif raw.startswith("+"):
+            block.append(("+", new_line, raw[1:]))
+            new_line += 1
+        elif raw.startswith("-"):
+            block.append(("-", new_line, raw[1:]))
+        elif raw.startswith(" ") or raw == "":
+            close()
+            block = []
+            ctx = (ctx + [raw[1:]])[-20:]
+            new_line += 1
+    close()
+    return found
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--diff"]:
+        diff = sys.stdin.read() if argv[1:2] in ([], ["-"]) else open(argv[1], encoding="utf-8").read()
+    else:
+        rev = argv[0] if argv else "HEAD"
+        a, b = rev.split("..", 1) if ".." in rev else (f"{rev}^", rev)
+        diff = subprocess.run(["git", "diff", "-U5", a, b, "--", "*.rs"], capture_output=True, text=True, check=True).stdout
+    bad = shifted(diff)
+    for b in bad:
+        print(f"{b}\n    goes between a doc comment and the item it documented: insert it above the doc block")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
