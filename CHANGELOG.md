@@ -9,6 +9,10 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `impact`, its `--json` and the MCP `impact` tool list the change's findings: the duplicates it
+  adds of code the repository has and the changed definitions no test reaches, which only
+  `review` named before. `review` renders the same list, and its Markdown and GitLab reports are
+  unchanged.
 - Secret-safe answers: the MCP tools, the Grep hook and `lsp` replace a secret in what they
   return with `[redacted:KIND]`, its name or armour kept, and say how many they redacted. The
   detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,

@@ -570,7 +570,8 @@ files staged or not, plus every untracked file that is not ignored, as a new fil
 compares the working tree with another commit; `--base main...` (three dots) with the merge base
 of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`). `--staged`
 takes the staged changes alone, against `HEAD` or `--base`, and no untracked file. The answer has
-three sections, each a line with its count and then one line per item:
+three sections, and a fourth when the change has findings, each a line with its count and then one
+line per item:
 
 - `changed`: the innermost definition around each changed line, as
   `path:start-end  [kind] name  (status)`. `added`: the base lacks it (by kind and qualified name
@@ -594,13 +595,27 @@ three sections, each a line with its count and then one line per item:
 - `tests`: each test file (the index's test flag: a `test` or `tests` directory, `test_*.py`,
   `*_test.go` and the like) that defines a changed symbol or holds a caller, with its distance
   and the symbol reached, and each test file the diff changed, once, at its smallest distance.
+- `findings`: what a reviewer would want named, as `path:start-end  [kind, severity] sentence`.
+  First each new duplicate group (kind `duplicate`, severity `minor`), at its member the change
+  touched: the groups `dupes` finds with its defaults (`--min-tokens 30`, `--threshold 0.75`)
+  that the base lacked, largest first, at most 50, with a last line when more were new. Only a
+  group with a member in a changed file can be new. The base's groups come from the same search
+  over the index's definitions, each changed file replaced by a parse of its base copy. A group is
+  old when one base group matches each of its members, each base member used once: the same
+  definition (path and qualified name), or the same body text up to whitespace. So a pair the base
+  had stays out when one of them is edited or moved, and a third copy is listed. Then each changed
+  definition (added or edited, outside a test file) that no test file reaches through the calls
+  the walk found (kind `untested-change`, severity `info`). Severities are GitLab's Code Quality
+  levels.
 
 Items sort by distance, path and line, the same every run. A file with no definitions to name
 gets a line under `notes`: a binary file, a submodule (its commits are not read), a file the
 index leaves out. `--json` gives the envelope, its `result` with `against`, `base` (the commit
 compared with), `staged`, `depth`, `changed` (each with `status`), `callers` (each with
 `distance`, `via`, the location of what it calls, `undecided` and `calls_deleted`), `tests`
-(`path`, `distance`, `via`), `notes` and `stopped`. `--max-bytes` pages the text by whole lines,
+(`path`, `distance`, `via`), `notes`, `findings` (each with `kind`, `severity`, `path`, `start`,
+`end`, `qualname`, `text`, the sentence, and `related`, the other definitions it names, each with
+`path`, `qualname`, `start` and `end`), `more_findings` and `stopped`. `--max-bytes` pages the text by whole lines,
 as the other answers. No change is exit code 1. Errors (exit 2): a directory outside a git
 repository, git missing, a revision git does not know, two revisions with no merge base, a file
 with unmerged changes. A revision that starts with `-` is refused before git runs, so it can
@@ -610,7 +625,7 @@ runs in the command's own environment. Git runs at the root, and a relative `GIT
 runs in, as git reads it; `GIT_INDEX_FILE` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are read at the
 work tree's top, as git reads them. With `GIT_DIR` and no `GIT_WORK_TREE`, git takes the directory
 it starts in, the root, as the work tree's top. The MCP tool `impact` takes `base`, `staged` and `depth`
-and gives the same answer.
+and gives the same answer, findings included.
 
 ### `review`
 ```
@@ -619,17 +634,9 @@ scrutate review --base REV [--head REV] [--format markdown|json|gitlab] [--depth
 A pull request report for CI: `impact` between `--base` (a revision, or `main...` for the merge
 base) and `--head` (`HEAD` by default), from git's diff of the two, with no untracked file. Each
 side is read from git's copies, and a definition is named where the index (the working tree's)
-holds it, so check the head out first. Callers, tests and `--depth` work as in `impact`.
-
-It adds the duplicates the head adds: the groups `dupes` finds with its defaults
-(`--min-tokens 30`, `--threshold 0.75`) that the base lacked, at most 50. Only a group with a
-member in a changed file can be new. The base's groups come from the same search over the
-index's definitions, each changed file replaced by a parse of its base copy. A head group is old
-when one base group matches each of its members, each base member used once: the same
-definition (path and qualified name), or the same body text up to whitespace. So a pair the base
-had stays out when one of them is edited or moved, and a third copy is listed. A changed
-definition (added or edited, outside a test file) that no test file reaches through the calls
-the walk found is marked: no test reaches it.
+holds it, so check the head out first. Callers, tests, findings and `--depth` work as in
+`impact`: `review` renders that answer and looks for nothing of its own. A changed definition
+with an `untested-change` finding is marked: no test reaches it.
 
 `--format markdown` (the default) is a PR comment body: first the marker `<!-- scrutate-review -->`
 (by which the GitHub Action finds its comment again), then a line naming the two commits, a line of
@@ -638,21 +645,22 @@ counts, and a section for each part with items: `Changed definitions`,
 `Notes`. Locations are paths from the repository root; with `--link URL` each links to
 `URL/PATH#Lstart-Lend` (the Action passes `https://github.com/OWNER/REPO/blob/COMMIT`). The body
 is cut at whole lines before 65,536 characters, GitHub's comment limit, with a last line that
-says so. `--format json` is the envelope: `impact`'s `result` with `head`, `head_commit`,
-`new_duplicates` (each group as `dupes --json` gives it) and `untested` (the marked
-definitions' locations). `--format gitlab` is a GitLab Code Quality report: a JSON list of issues
-with `description`, `check_name`, `fingerprint`, `severity` and
-`location.path`/`location.lines.begin`. Each new duplicate group is one `scrutate-duplicate`
-issue of severity `minor` at the member the diff changed; each marked definition one
-`scrutate-untested-change` issue of severity `info`. A fingerprint is the SHA-1 of the check and
-the paths and qualified names involved, not the lines, so GitLab matches an issue across pushes.
+says so. `--format json` is the envelope: `impact`'s `result`, `findings` included, with `head`,
+`head_commit`, `new_duplicates` (each duplicate finding's group as `dupes --json` gives it) and
+`untested` (the marked definitions' locations). `--format gitlab` is a GitLab Code Quality
+report: a JSON list of issues with `description`, `check_name`, `fingerprint`, `severity` and
+`location.path`/`location.lines.begin`, one per finding: `check_name` is `scrutate-` and its kind
+(`scrutate-duplicate`, `scrutate-untested-change`), `description` its sentence, at its place. A
+fingerprint is the SHA-1 of the check and the paths and qualified names involved, not the lines,
+so GitLab matches an issue across pushes.
 
 Nothing to report (no changed definition, note or test, no new duplicate) is exit code 1, with
 the report still printed (in Markdown a line that says so, in GitLab an empty list). The errors
 are `impact`'s (exit 2), and `--head` is checked as `--base` is: a revision that starts with `-`
 is refused before git runs. `review` runs `git` as `impact` does and nothing else, writes only
 the index, as every index command does, and posts nothing; the GitHub Action posts its output
-([GitHub Actions](../integrations/github/README.md)). There is no MCP tool.
+([GitHub Actions](../integrations/github/README.md)). There is no MCP tool; the MCP `impact` tool
+gives the same findings.
 
 ### `files`
 ```

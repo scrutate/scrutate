@@ -14,6 +14,7 @@ pub mod custom;
 pub mod dead;
 pub mod files;
 pub mod finder;
+pub mod findings;
 pub mod fmt;
 pub mod fuzzyre;
 pub mod git;

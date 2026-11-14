@@ -95,17 +95,21 @@ in name resolution, one file each under `resolve/` behind the `Rules` trait. The
 rule set of a file's language wherever languages differ.
 
 **[Impact](docs/CLI.md#impact)**: what a change touches (`impact.rs`, `scrutate impact`): the
-definitions a git diff changes, their callers through `Names` with the distance of each, and the
-test files to run.
+definitions a git diff changes, their callers through `Names` with the distance of each, the
+test files to run, and its findings.
 
 **[Git](docs/ARCHITECTURE.md#intelligence-intelrs)**: the one module that runs the `git` program
 (`git.rs`, `git::Git`): the base commit, the diff with the changed lines of each side, the
 untracked files and the blobs of base copies. Impact reads a change through it.
 
+**[Finding](docs/adr/0003-impact-findings.md)**: something a change does that a reviewer would want
+named (`findings::Finding`): a **new duplicate** (a head `dupes` group no base group matches) or a
+changed definition no test reaches. Impact makes the list; every front end and review render it.
+
 **[Review](docs/CLI.md#review)**: the report of a pull request (`review.rs`, `scrutate review`):
-the impact between a base and a head commit, and the **new duplicates** (head `dupes` groups no
-base group matches). It prints as the PR comment the GitHub Action posts and edits in place
-(marker `<!-- scrutate-review -->`), as JSON, or as a GitLab Code Quality report.
+the impact between a base and a head commit, findings included, rendered as the PR comment the
+GitHub Action posts and edits in place (marker `<!-- scrutate-review -->`), as JSON, or as a
+GitLab Code Quality report.
 
 **[Rewrite](docs/CLI.md#tsquery---rewrite)**: a structural search that replaces what it finds
 (`rewrite.rs`, `scrutate tsquery --rewrite`). A **plan** (`rewrite::Plan`) holds each file's bytes

@@ -9,6 +9,7 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
+use crate::findings::Finding;
 use crate::fmt::{echo, shown};
 use crate::git::{Entry, Git, New};
 use crate::names::Names;
@@ -62,6 +63,10 @@ pub struct Impact {
     pub stopped: bool,
     /// the head commit, when the change is between two commits
     pub head: Option<String>,
+    /// what a reviewer would want named: new duplicates, then changes no test reaches
+    pub findings: Vec<Finding>,
+    /// more duplicate groups were new than `findings::MAX_DUPLICATES`
+    pub more_findings: bool,
     /// (path, bytes) of the base copy of each changed file the index would hold
     pub(crate) base_copies: Vec<(String, Vec<u8>)>,
     /// the path each changed file has after the change
@@ -121,7 +126,25 @@ fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact
     notes.sort();
     let (callers, edges, stopped) = walk(s, &changed, depth)?;
     let tests = test_files(&changed, &callers, &files);
-    Ok(Impact { against, base, staged, depth, changed, callers, tests, notes, stopped, head, base_copies, head_paths, edges })
+    let mut i = Impact {
+        against,
+        base,
+        staged,
+        depth,
+        changed,
+        callers,
+        tests,
+        notes,
+        stopped,
+        head,
+        findings: Vec::new(),
+        more_findings: false,
+        base_copies,
+        head_paths,
+        edges,
+    };
+    (i.findings, i.more_findings) = crate::findings::find(s, &i)?;
+    Ok(i)
 }
 
 /// Kinds whose callers are not asked for: lines outside every definition, and a module.
@@ -451,7 +474,11 @@ impl Impact {
     /// The repository files whose indexed definitions this answer shows.
     pub fn cited(&self) -> Vec<&str> {
         let changed = self.changed.iter().filter(|c| c.status != "deleted").map(|c| c.hit.path.as_str());
-        changed.chain(self.callers.iter().map(|c| c.hit.path.as_str())).collect()
+        let related = self.findings.iter().flat_map(|f| match &f.what {
+            crate::findings::What::Duplicate(g) => g.members.iter().map(|m| m.0.as_str()).collect(),
+            crate::findings::What::Untested { .. } => Vec::new(),
+        });
+        changed.chain(self.callers.iter().map(|c| c.hit.path.as_str())).chain(related).collect()
     }
 
     /// One line per section head and per item, as the text pages them.
@@ -484,11 +511,25 @@ impl Impact {
             Some(h) => format!("{}  (distance {}: {})", shown(&t.path), t.distance, symbol(h)),
             None => format!("{}  (changed)", shown(&t.path)),
         }));
+        if !self.findings.is_empty() {
+            out.push(format!("findings: {}", self.findings.len()));
+            out.extend(
+                self.findings.iter().map(|f| format!("{}:{}-{}  [{}, {}] {}", shown(&f.path), f.start, f.end, f.kind(), f.severity(), shown(&f.text()))),
+            );
+            if self.more_findings {
+                out.push(self.more_line());
+            }
+        }
         if !self.notes.is_empty() {
             out.push(format!("notes: {}", self.notes.len()));
             out.extend(self.notes.iter().map(|(p, n)| format!("{}  {n}", shown(p))));
         }
         out
+    }
+
+    /// The line under a list of findings that more duplicate groups were new than it holds.
+    pub fn more_line(&self) -> String {
+        format!("(more than {} duplicate groups were new: these are the largest)", crate::findings::MAX_DUPLICATES)
     }
 
     pub fn stop_line(&self) -> String {
@@ -523,6 +564,11 @@ impl Impact {
             }).collect::<Vec<_>>(),
             "tests": self.tests.iter().map(|t| json!({"path": t.path, "distance": t.distance, "via": t.via.as_ref().map(symbol)})).collect::<Vec<_>>(),
             "notes": self.notes.iter().map(|(p, n)| json!({"path": p, "note": n})).collect::<Vec<_>>(),
+            "findings": self.findings.iter().map(|f| json!({
+                "kind": f.kind(), "severity": f.severity(), "path": f.path, "start": f.start, "end": f.end, "qualname": f.name, "text": f.text(),
+                "related": f.related().iter().map(|(path, name, start, end)| json!({"path": path, "qualname": name, "start": start, "end": end})).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "more_findings": self.more_findings,
             "stopped": self.stopped,
         })
     }

@@ -1258,6 +1258,19 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
             None => Brief::path(&t.path).then(" (changed)"),
         }]
     }));
+    if !i.findings.is_empty() {
+        out.push(vec![Brief::text(format!("findings: {}", i.findings.len()))]);
+        out.extend(i.findings.iter().map(|f| {
+            let mut b = Brief::at(&f.path, f.start, f.end, &format!("{} ({})", named(&f.name), f.kind()));
+            for (k, (path, _, start, end)) in f.related().iter().enumerate() {
+                b = b.then(if k == 0 { " of " } else { ", " }).then_at(path, *start, *end);
+            }
+            vec![b]
+        }));
+        if i.more_findings {
+            out.push(vec![Brief::text(i.more_line())]);
+        }
+    }
     if !i.notes.is_empty() {
         out.push(vec![Brief::text(format!("notes: {}", i.notes.len()))]);
         out.extend(i.notes.iter().map(|(p, n)| vec![Brief::path(p).then(format!(" {n}"))]));
@@ -2053,12 +2066,16 @@ impl Answer {
                 let r = w.take(lines.len());
                 v = json!({"text": lines[r.clone()].join("\n"), "start": start + r.start as i64, "end": start + r.end as i64 - 1, "file_lines": file_lines});
             }
-            Answer::Impact(_) => {
-                for key in ["changed", "callers", "tests", "notes"] {
-                    if key != "notes" || len(&v[key]) > 0 {
+            Answer::Impact(i) => {
+                for key in ["changed", "callers", "tests", "findings", "notes"] {
+                    // findings and notes have a head line only when they have items
+                    if !matches!(key, "findings" | "notes") || len(&v[key]) > 0 {
                         w.take(1);
                     }
                     list(&mut w, &mut v[key]);
+                    if key == "findings" && i.more_findings {
+                        w.take(1);
+                    }
                 }
             }
             Answer::Resolved { only, .. } => {

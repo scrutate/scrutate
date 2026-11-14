@@ -90,6 +90,11 @@ pub fn echo(s: &str) -> String {
     format!("{}... (cut: {n} characters in all)", escaped(&head, false))
 }
 
+/// A count with its noun: `1 step`, `3 steps`.
+pub fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// `path:start-end` of a hit, as text.
 pub fn loc(h: &Hit) -> String {
     format!("{}:{}-{}", shown(&h.path), h.start, h.end)

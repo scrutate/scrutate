@@ -786,17 +786,22 @@ and each file is parsed once. A deleted definition is not in the index, so its f
 resolver ties to no existing definition. The test files are those with the index's test flag
 (`text::is_test_path`) among the changed definitions, the callers and the changed files.
 
+Last, `findings::find` makes the answer's findings from what the walk kept: each changed file's
+base copy and every call it met. Every front end and `review` render this one list, and none
+looks for findings of its own ([ADR 0003](adr/0003-impact-findings.md) holds the contract). The
+new duplicates take two runs of `dupes`' search (`intel::duplicates`) around the changed files:
+the head's groups that share a key with a definition of a changed file, a group with no member in
+one dropped, then the base's groups with the changed files' definitions left out and the
+definitions a parse of their base copies gives put in, around the head groups' members (a base
+group that holds a match for each member shares a key with one). A changed definition no test
+reaches is one from which no test file is
+found going up the calls the walk met.
+
 `review` (`review.rs`) is a command line answer, not an operation: it serves CI, so no MCP tool or
 session runs it. It asks `impact::between` for the diff of two commits (`git diff BASE HEAD`, each
-side parsed from git's copies, as `--staged` reads the staged side) and keeps what that answer
-read: each changed file's base copy and every call the walk met. The new duplicates take two runs
-of `dupes`' search (`intel::duplicates`) around the changed files: the head's groups that share a
-key with a definition of a changed file, a group with no member in one dropped, then the base's
-groups with the changed files' definitions left out and the definitions a parse of their base
-copies gives put in, around the head groups' members (a base group that holds a match for each
-member shares a key with one). The
-untested mark and the three renderings (Markdown, JSON, GitLab, methods of `Review`) are in
-[CLI](CLI.md#review).
+side parsed from git's copies, as `--staged` reads the staged side) and renders that answer,
+findings included, three ways (Markdown, JSON, GitLab, methods of `Review`;
+[CLI](CLI.md#review)).
 
 `files` (`finder.rs`, the MCP `find_files`) is an operation that reads no index: the command line
 runs it without opening one, and the MCP server through `Repo` like any other. It walks the files

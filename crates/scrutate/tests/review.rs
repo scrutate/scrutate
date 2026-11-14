@@ -152,6 +152,26 @@ fn the_comment_names_the_changed_symbols_their_callers_the_tests_and_only_the_ne
     assert_eq!(r["tests"][0]["path"], "tests/test_top.py");
 }
 
+#[test]
+fn review_and_impact_report_one_list_of_findings() {
+    let (t, base_sha) = base("one_list");
+    head(&t);
+    let review: Value = serde_json::from_str(&t.review(&["--base", &base_sha, "--format", "json"])).unwrap();
+    let (code, out, err) = t.run(&["impact", "--base", &base_sha, "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let impact: Value = serde_json::from_str(&out).unwrap();
+    let findings = &review["result"]["findings"];
+    assert_eq!(findings.as_array().map(Vec::len), Some(3), "{review}");
+    assert_eq!(findings, &impact["result"]["findings"]);
+    // the older keys are the same list read two ways
+    let kinds: Vec<&str> = findings.as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["duplicate", "untested-change", "untested-change"]);
+    assert_eq!(review["result"]["new_duplicates"].as_array().unwrap().len(), 1);
+    let untested: Vec<String> =
+        findings.as_array().unwrap()[1..].iter().map(|f| format!("{}:{}-{}", f["path"].as_str().unwrap(), f["start"], f["end"])).collect();
+    assert_eq!(review["result"]["untested"], serde_json::json!(untested));
+}
+
 /// Checks a value against GitLab's Code Quality format: a list of issues, each with a
 /// `description`, `check_name`, `fingerprint`, `severity` of the five GitLab knows, and a
 /// `location` with a relative `path` and `lines.begin`, a line number from 1.

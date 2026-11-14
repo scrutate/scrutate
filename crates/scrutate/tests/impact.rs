@@ -94,6 +94,16 @@ fn chain(name: &str) -> Tree {
     t
 }
 
+/// A function body long enough for `dupes` (30 body tokens), its words from `seed`.
+fn long_fn(name: &str, seed: &str) -> String {
+    format!(
+        "def {name}(rows):\n    total = 0\n    for row in rows:\n        if row.amount > {seed}_limit and row.status == \"open\":\n            \
+         total += compute_{seed}_weight(row.amount, row.discount, row.region)\n        elif row.status == \"closed\":\n            \
+         total -= penalty_for_{seed}(row.region, row.amount, row.owner)\n        else:\n            total = adjust_{seed}(total, row.created, row.updated)\n    \
+         return normalize_{seed}_total(total, rows, scale_factor, offset_value, rounding_mode)\n"
+    )
+}
+
 fn ids(v: &Value, key: &str) -> Vec<String> {
     v[key].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap_or_else(|| x["path"].as_str().unwrap()).to_string()).collect()
 }
@@ -406,4 +416,61 @@ fn a_relative_git_dir_set_in_a_subdirectory_is_read_from_there() {
     let (text, err) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert_eq!(out.status.code(), Some(0), "{text}{err}");
     assert!(text.contains("lib/core.py:1-2  [function] deepest  (edited)"), "{text}");
+}
+
+#[test]
+fn a_new_copy_of_a_function_and_a_change_no_test_reaches_are_its_findings() {
+    let t = chain("findings");
+    t.write("lib/text.py", &long_fn("unique", "beta"));
+    t.commit("unique");
+    t.write("lib/fresh.py", &long_fn("copy_of_unique", "beta"));
+    let v = t.json(&[]);
+    let found: Vec<(&str, &str, &str, i64, i64, &str)> = v["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{v}"))
+        .iter()
+        .map(|f| {
+            let s = |k: &str| f[k].as_str().unwrap_or_else(|| panic!("{f}"));
+            (s("kind"), s("severity"), s("path"), f["start"].as_i64().unwrap(), f["end"].as_i64().unwrap(), s("qualname"))
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [("duplicate", "minor", "lib/fresh.py", 1, 10, "copy_of_unique"), ("untested-change", "info", "lib/fresh.py", 1, 10, "copy_of_unique")],
+        "{v}"
+    );
+    assert_eq!(v["findings"][0]["text"], "copy_of_unique is an exact duplicate of unique at lib/text.py:1-10");
+    assert_eq!(v["findings"][0]["related"], serde_json::json!([{"path": "lib/text.py", "qualname": "unique", "start": 1, "end": 10}]));
+    assert_eq!(v["findings"][1]["text"], "copy_of_unique changed (added) and no test file reaches it within 3 steps of callers");
+    assert_eq!(v["findings"][1]["related"], serde_json::json!([]));
+}
+
+#[test]
+fn the_impact_tool_lists_the_findings_in_both_forms_and_says_it_does() {
+    let t = chain("findings_tool");
+    t.write("lib/text.py", &long_fn("unique", "beta"));
+    t.commit("unique");
+    t.write("lib/fresh.py", &long_fn("copy_of_unique", "beta"));
+    let session = scrutate::session::Session::open(&t.root, scrutate::session::Every::given(Some(3600.0))).unwrap();
+    let call = |form: &str| {
+        let args = serde_json::json!({"response_format": form});
+        let c = scrutate::mcp::call_tool(&session, "impact", &args, &scrutate::mcp::Settings::new(None), &Default::default());
+        assert!(!c.is_error, "{}", c.text);
+        c.text
+    };
+    let detailed = call("detailed");
+    assert!(
+        detailed.contains(
+            "\nfindings: 2\nlib/fresh.py:1-10  [duplicate, minor] copy_of_unique is an exact duplicate of unique at lib/text.py:1-10\n\
+             lib/fresh.py:1-10  [untested-change, info] copy_of_unique changed (added) and no test file reaches it within 3 steps of callers"
+        ),
+        "{detailed}"
+    );
+    let concise = call("concise");
+    // a line in the file of the line before it starts at its lines
+    assert!(concise.contains(":1-10 copy_of_unique (duplicate) of text.py:1-10\n"), "{concise}");
+    assert!(concise.ends_with("\nfresh.py:1-10 copy_of_unique (untested-change)"), "{concise}");
+    let tools = scrutate::mcp::tools(false, 24_000, false);
+    let impact = tools.as_array().unwrap().iter().find(|t| t["name"] == "impact").unwrap();
+    assert!(impact["description"].as_str().unwrap().contains("findings"), "{impact}");
 }
