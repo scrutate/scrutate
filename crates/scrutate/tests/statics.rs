@@ -9,7 +9,6 @@ use std::path::Path;
 const ALLOWED: &[(&str, &str, &str)] = &[
     ("answers.rs", "READS", "per thread, the files a resolver read while one Names is open"),
     ("cli.rs", "FLAG", "the process's Ctrl-C flag"),
-    ("cli.rs", "NEVER", "a stop flag that is never set, for the watch thread of serve"),
     ("custom.rs", "CURRENT", "the last loaded root's custom languages; an update runs under custom::with for its own root"),
     ("custom.rs", "SCOPED", "per thread, the custom languages of the root custom::with runs for"),
     ("finder.rs", "ONE", "serializes this process's writes of the shared recent-files list"),
@@ -52,6 +51,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("text.rs", "IDENT_CACHE", "per thread, splits of identifiers, the same for every root"),
     ("text.rs", "OWN", "keyed by canonical root"),
     ("textindex.rs", "TABLE", "per thread, a reused trigram mask table"),
+    ("watch.rs", "NOTES", "numbers the watch notes of the process, so two sessions of one root name their cookies apart"),
 ];
 
 const MUTABLE: &[&str] = &["Mutex", "RwLock", "Cell<", "Cell::", "RefCell", "Atomic", "OnceCell", "OnceLock", "UnsafeCell"];
