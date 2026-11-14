@@ -312,6 +312,8 @@ struct Shared {
     /// this notes' own cookie names start with it: another session's cookies make events too
     prefix: String,
     next_cookie: AtomicU64,
+    /// the least time between two safety walks, in milliseconds
+    safety_every: AtomicU64,
     noted: Mutex<Noted>,
     arrived: Condvar,
     #[cfg(target_os = "macos")]
@@ -372,6 +374,7 @@ impl Notes {
             code: CodeWalk::new(root),
             prefix: format!("cookie-{}-{}-", std::process::id(), NOTES.fetch_add(1, Ordering::Relaxed)),
             next_cookie: AtomicU64::new(0),
+            safety_every: AtomicU64::new(SAFETY_EVERY.as_millis() as u64),
             noted: Mutex::default(),
             arrived: Condvar::new(),
             #[cfg(target_os = "macos")]
@@ -455,6 +458,12 @@ impl Notes {
     /// `run_noting` with these notes.
     pub fn run(&self, root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
         run_noting(root, stop, Some(self), on_ready, on_change)
+    }
+
+    /// Safety walks at most once per `every`, for a watch started after this.
+    #[cfg(test)]
+    pub(crate) fn set_safety_every(&self, every: Duration) {
+        self.0.safety_every.store(every.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// The cookies this keeps a name of.
@@ -759,11 +768,12 @@ struct Safety {
     seen: HashMap<String, Option<crate::index::Stat>>,
     at: Instant,
     pause: Duration,
+    every: Duration,
 }
 
 impl Safety {
-    fn new(root: &Path) -> Safety {
-        let mut s = Safety { root: root.to_path_buf(), seen: HashMap::new(), at: Instant::now(), pause: SAFETY_EVERY };
+    fn new(root: &Path, every: Duration) -> Safety {
+        let mut s = Safety { root: root.to_path_buf(), seen: HashMap::new(), at: Instant::now(), pause: every, every };
         s.seen = s.look();
         s
     }
@@ -789,7 +799,7 @@ impl Safety {
             now.iter().filter(|(p, s)| self.seen.get(*p) != Some(s)).map(|(p, _)| event(EventKind::Modify(ModifyKind::Data(DataChange::Any)), p)).collect();
         out.extend(self.seen.keys().filter(|p| !now.contains_key(*p)).map(|p| event(EventKind::Remove(RemoveKind::Any), p)));
         self.seen = now;
-        self.pause = (t0.elapsed() * SAFETY_SHARE).max(SAFETY_EVERY);
+        self.pause = (t0.elapsed() * SAFETY_SHARE).max(self.every);
         self.at = Instant::now();
         out
     }
@@ -963,7 +973,7 @@ pub fn run_noting(
         n.watching(&walked, dirs);
     }
     let mut poll = Poll::new(&walked);
-    let mut safety = notes.map(|_| Safety::new(&root));
+    let mut safety = notes.map(|n| Safety::new(&root, Duration::from_millis(n.0.safety_every.load(Ordering::Relaxed))));
     on_change(&Changes::All)?;
     on_ready();
     let debug = debug();
@@ -1293,7 +1303,7 @@ mod tests {
     fn a_safety_walk_finds_the_changes_since_the_last_one() {
         let root = tree("safety");
         std::fs::write(root.join("src/gone.py"), "x\n").unwrap();
-        let mut safety = Safety::new(&root);
+        let mut safety = Safety::new(&root, SAFETY_EVERY);
         assert!(safety.check().is_empty(), "nothing before the pause is over");
         std::fs::write(root.join("src/a.py"), "a longer body\n").unwrap();
         std::fs::write(root.join("src/deep/new.py"), "y\n").unwrap();

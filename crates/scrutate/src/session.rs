@@ -1256,6 +1256,11 @@ mod tests {
 
     /// A built session of `files` files under `name` whose reads the watch already tells.
     fn watched(name: &str, files: usize, every: Every) -> (PathBuf, Arc<Session>) {
+        watched_with(name, files, every, None)
+    }
+
+    /// `watched`, with safety walks at most once per `safety`.
+    fn watched_with(name: &str, files: usize, every: Every, safety: Option<Duration>) -> (PathBuf, Arc<Session>) {
         let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for i in 0..files {
@@ -1265,6 +1270,9 @@ mod tests {
         }
         std::fs::create_dir_all(root.join("src/d0")).unwrap();
         let s = Session::open_watched(&root, every).unwrap();
+        if let (Some(every), Some(notes)) = (safety, &s.notes) {
+            notes.set_safety_every(every);
+        }
         s.build().unwrap();
         s.watch(false).unwrap();
         let t0 = Instant::now();
@@ -1282,13 +1290,13 @@ mod tests {
 
     #[test]
     fn a_file_written_just_before_a_call_is_in_its_answer_every_time() {
-        let (root, s) = watched("barrier", 1, Every::given(Some(3600.0)));
+        // no safety walk lands in the run: a second file looked at is a second look
+        let (root, s) = watched_with("barrier", 1, Every::given(Some(3600.0)), Some(Duration::from_secs(3600)));
         for i in 0..1000 {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1 }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
-            // a safety walk that lands in the run also names the probe `watched` wrote
-            assert!(st.files_looked == 1 || st.files_looked == 2, "write {i}: {st:?}");
+            assert_eq!(st.files_looked, 1, "write {i}: {st:?}");
         }
         let _ = std::fs::remove_dir_all(root);
     }
