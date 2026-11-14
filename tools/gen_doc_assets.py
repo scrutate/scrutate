@@ -1163,6 +1163,42 @@ def check_content_revision(problems):
                                 f"crates/scrutate/src/index.rs declares CONTENT_REVISION = {code}")
 
 
+def changelog_bullets(text):
+    """(line, heading, bullet text) of each CHANGELOG bullet, its wrapped lines joined."""
+    out, heading, cur = [], "", None
+    for n, line in enumerate(text.split("\n"), 1):
+        if line.startswith("- "):
+            if cur:
+                out.append(cur)
+            cur = [n, heading, line[2:]]
+        elif cur and line.startswith("  ") and line.strip():
+            cur[2] += " " + line.strip()
+        else:
+            if cur:
+                out.append(cur)
+            cur = None
+            if line.startswith("#"):
+                heading = line
+    if cur:
+        out.append(cur)
+    return out
+
+
+def check_changelog(problems):
+    """Every CHANGELOG bullet ends its sentence, and no two under one heading open with the same
+    five words: a rebase that merged an entry badly leaves one cut off and two of it."""
+    with open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8") as f:
+        bullets = changelog_bullets(f.read())
+    opened = {}
+    for n, heading, text in bullets:
+        if not text.rstrip().endswith("."):
+            problems.append(f"CHANGELOG.md:{n}: the entry ends mid-sentence: ...{text.rstrip()[-60:]}")
+        key = (heading, " ".join(text.split()[:5]))
+        if key in opened:
+            problems.append(f"CHANGELOG.md:{n}: opens as the entry at line {opened[key]} does, under {heading}: {key[1]}")
+        opened.setdefault(key, n)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true", help="change nothing; fail when a file differs or a link is broken")
@@ -1212,6 +1248,7 @@ def main():
                 text = f.read()
         check_links(path, text, problems)
     check_content_revision(problems)
+    check_changelog(problems)
     for p in problems:
         print(p, file=sys.stderr)
     if problems:

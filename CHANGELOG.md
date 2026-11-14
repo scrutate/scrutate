@@ -9,19 +9,18 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
-- Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a
-  fixed margin, so a clearly better vendored match (`WalkBuilder.build_matchers` defined only
-  under `vendor/`) still comes first, and it is never left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
 - Secret-safe answers: the MCP tools, the Grep hook and `lsp` replace a secret in what they
   return with `[redacted:KIND]`, its name or armour kept, and say how many they redacted. The
   detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,
   Google, OpenAI, Anthropic, npm, PyPI, JWT, Twilio, SendGrid, Mailgun, database URLs, private
   keys, `.env` lines and a generic assignment rule). `SCRUTATE_REDACT=off` turns it off and `on`
   turns it on for the CLI's index answers ([Security](docs/SECURITY.md#secrets-in-answers)).
-- Vendored code ranks below the project's own in `search` and the MCP `search_code`, and is never
-  left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
-  their kin, a subset of GitHub linguist's `vendor.yml`. A name only vendored code defines,
-  searched for as itself, keeps its place. A directory the root manifest builds as the
+- Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a
+  fixed margin, so a clearly better vendored match (`WalkBuilder.build_matchers` defined only
+  under `vendor/`) still comes first, and it is never left out: `vendor/`, `third_party/`,
+  `node_modules/`, `Pods/`, `Carthage/`, minified files and their kin, a subset of GitHub
+  linguist's `vendor.yml`. A name only vendored code defines, searched for as itself, keeps its
+  place. A directory the root manifest builds as the
   project's own package (Cargo workspace members and path dependencies, a `go.mod` replace
   into the repository, npm, Yarn and pnpm workspaces) is not vendored. Every JSON item whose
   `path` is vendored code, in any answer, has `"vendored": true`, and so does every text line
@@ -260,10 +259,6 @@ incompatible index by itself, and that is never breaking.
 - `this` in a JavaScript method under a quoted key (`"get": function () {}`, `"del"() {}`) is
   the object literal, so `this.put()` there is `api.put`, where it was `receiver`
   ([CLI](docs/CLI.md#engine-b)).
-- `callers`, `callees`, `impact` and `refs` follow an import alias through a package that
-  re-exports the name: `from pkg import helper as h` with `pkg/__init__.py` importing `helper`
-  from `.util`, where the alias was looked for only in imports naming `helper` or `util`
-  ([CLI](docs/CLI.md#engine-b)).
 - A PHP variable a closure takes with `function () use ($u)`, or `use (&$u)`, has the type it
   has around the closure, so `$u->save()` inside is `User::save`, where it was `receiver`
   ([CLI](docs/CLI.md#engine-b)).
@@ -299,13 +294,11 @@ incompatible index by itself, and that is never breaking.
 - `refs` lists a use under an import alias also in a file whose import never spells the
   definition's name: `h()` after `const h = require("./m")` or `import h from "./m"`, which
   `callers` already found ([CLI](docs/CLI.md#engine-b)).
-- The name of a JavaScript generator expression (`function* load() {}`) or class expression
-  (`class Box {}` as a value) is its own inside it, where uses there went to an outer `load` or
-  `Box`; a generator expression is also a scope for its parameters and locals
-  ([CLI](docs/CLI.md#engine-b)).
-- The name of a JavaScript named function expression is its own inside it: in `var h = function
-  load() { return load(); }` the inner call no longer goes to an outer `function load`, which
-  `callers load` listed `h` for ([CLI](docs/CLI.md#engine-b)).
+- The name of a JavaScript generator expression (`function* load() {}`), class expression
+  (`class Box {}` as a value) or named function expression is its own inside it, where uses there
+  went to an outer `load` or `Box`, and in `var h = function load() { return load(); }` the inner
+  call went to an outer `function load`, which `callers load` listed `h` for; a generator
+  expression is also a scope for its parameters and locals ([CLI](docs/CLI.md#engine-b)).
 - `refs` ties a JavaScript or TypeScript shorthand property, the `helper` in `{ helper }` or
   `module.exports = { helper }`, to the `helper` it reads, where it listed it as `field or key`.
 - A Rust path inside a macro's arguments resolves as the same path outside a macro: with `use
@@ -504,7 +497,9 @@ incompatible index by itself, and that is never breaking.
   (`<=>`) ([CLI](docs/CLI.md#engine-b)).
 - `callers`, `callees`, `impact` and `refs` follow an import alias: with `from util import helper
   as h` or `const { lone: l } = require("./u")`, a call `h()` was no caller of `helper`, so
-  `impact` found no callers and no tests ([CLI](docs/CLI.md#engine-b)).
+  `impact` found no callers and no tests; and through a package that re-exports the name
+  (`from pkg import helper as h` with `pkg/__init__.py` importing `helper` from `.util`), where
+  the alias was looked for only in imports naming `helper` or `util` ([CLI](docs/CLI.md#engine-b)).
 - Several first opens of a new linked work tree at once (an editor starting its language server
   and MCP server) no longer delete each other's copied segments: the losing open removed the
   segments the winner's database listed, and `check` found the new index damaged.
