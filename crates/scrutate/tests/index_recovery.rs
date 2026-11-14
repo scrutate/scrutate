@@ -1,6 +1,9 @@
 //! The index survives what a stopped writer leaves behind, and refuses roots and index
 //! directories it must not write into.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -16,7 +19,7 @@ impl Tmp {
         let p = std::env::temp_dir().join(format!("scrutate_recovery_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
-        Tmp(fs::canonicalize(&p).unwrap())
+        Tmp(canon(&p))
     }
 }
 

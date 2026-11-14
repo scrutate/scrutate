@@ -6,6 +6,10 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 const GIT_ENV: [(&str, &str); 2] = [("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_NOSYSTEM", "1")];
 
@@ -20,7 +24,7 @@ impl Tree {
         let root = std::env::temp_dir().join(format!("scrutate_history_{name}_{}_{n}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        Tree { root: fs::canonicalize(root).unwrap() }
+        Tree { root: canon(root) }
     }
 
     fn git(&self, args: &[&str]) {

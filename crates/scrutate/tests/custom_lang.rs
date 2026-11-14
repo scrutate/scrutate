@@ -2,6 +2,9 @@
 //! adds a language: its files get symbols, outlines, ranked hits and a `--type`, `languages`
 //! lists it, a change of the table reparses its files, and a bad table is one error with its line.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -34,7 +37,7 @@ impl Tree {
         let root = base.join("repo");
         fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(base.join("home/.config")).unwrap();
-        let t = Tree { root: fs::canonicalize(&root).unwrap(), base: fs::canonicalize(&base).unwrap() };
+        let t = Tree { root: canon(&root), base: canon(&base) };
         t.write("shapes.myl", SOURCE);
         t.write("other.py", "def circle_area_py(r):\n    return 3 * r * r\n");
         t

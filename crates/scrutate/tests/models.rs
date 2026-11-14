@@ -2,6 +2,9 @@
 //! rows again, and leaves the index a fresh build with that model writes; a ranker is read only
 //! by what ranks, and one that does not fit is an error.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,7 +18,7 @@ impl Tmp {
         let p = std::env::temp_dir().join(format!("scrutate_models_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
-        Tmp(fs::canonicalize(&p).unwrap())
+        Tmp(canon(&p))
     }
 }
 

@@ -5,6 +5,9 @@
 //! Every program runs with HOME, CODEX_HOME and the XDG directories in the build's temporary
 //! directory, so no real configuration is read or written.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,7 +32,7 @@ impl Scratch {
         for d in ["home", "codex", "config", "state", "data", "repo/.git", "repo/sub"] {
             fs::create_dir_all(base.join(d)).unwrap();
         }
-        let base = fs::canonicalize(base).unwrap();
+        let base = canon(base);
         fs::write(base.join("repo/m.py"), "def needle():\n    return 1\n").unwrap();
         Scratch { home: base.join("home"), repo: base.join("repo"), base }
     }
@@ -49,7 +52,7 @@ impl Scratch {
             ("XDG_DATA_HOME", self.base.join("data")),
         ];
         // both sides canonical: on Windows that adds the verbatim prefix to one of them only
-        let tmp = fs::canonicalize(env!("CARGO_TARGET_TMPDIR")).unwrap();
+        let tmp = canon(env!("CARGO_TARGET_TMPDIR"));
         for (_, v) in &vars {
             assert!(v.starts_with(&tmp), "{} is not a scratch directory", v.display());
         }
@@ -103,7 +106,7 @@ impl Drop for Scratch {
 
 /// The binary's path as setup writes it: canonical, without Windows' verbatim prefix.
 fn bin() -> String {
-    fs::canonicalize(BIN).unwrap().to_str().unwrap().trim_start_matches(r"\\?\").to_string()
+    canon(BIN).to_str().unwrap().to_string()
 }
 
 /// The command line a file of `agent` holds for the scrutate server.

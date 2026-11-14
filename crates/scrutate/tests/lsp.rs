@@ -1,6 +1,9 @@
 //! `scrutate lsp` end to end: the real binary over stdio with Content-Length framing, one request of
 //! each kind, UTF-16 columns on a non-ASCII line, and a save picked up by the background update.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -234,7 +237,7 @@ fn workspace_symbols_rank_the_name_then_prefixes_then_camel_case_humps_then_the_
 fn real_file(top: &Path, loc: &Value) -> String {
     let p = scrutate::lsp::uri_to_path(loc["uri"].as_str().unwrap()).unwrap();
     assert!(p.is_file(), "{p:?} does not exist: {loc}");
-    let (p, top) = (fs::canonicalize(&p).unwrap(), fs::canonicalize(top).unwrap());
+    let (p, top) = (canon(&p), canon(top));
     p.strip_prefix(&top).unwrap().to_string_lossy().replace('\\', "/")
 }
 

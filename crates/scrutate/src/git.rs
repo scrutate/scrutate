@@ -304,7 +304,7 @@ impl Git {
     /// printed, the newest, and `true`.
     pub(crate) fn line_log(&self, path: &str, start: i64, end: i64, n: usize, limit: std::time::Duration) -> Result<(Vec<Commit>, bool)> {
         // the path is all that follows the range's colon, so a colon or a dash in it reads as itself
-        let range = format!("{start},{end}:{}", plain(path));
+        let range = format!("{start},{end}:{}", crate::paths::plain(path));
         let n = n.to_string();
         let args = [
             "--literal-pathspecs",
@@ -396,7 +396,7 @@ impl Git {
 
     /// Where lines `start` to `end` of the working tree's `path` are in HEAD's copy of the file.
     pub(crate) fn at_head(&self, path: &str, start: i64, end: i64) -> Result<AtHead> {
-        let path = plain(path);
+        let path = crate::paths::plain(path);
         if !self.output(&["cat-file", "-e", &format!("HEAD:./{path}")])?.0 {
             return Ok(AtHead::Absent);
         }
@@ -695,35 +695,19 @@ fn first_line(b: &[u8]) -> String {
     line.strip_prefix("fatal: ").or_else(|| line.strip_prefix("error: ")).unwrap_or(line).to_string()
 }
 
-/// A path as git reads it: on Windows a verbatim path (`\\?\C:\x`, `\\?\UNC\host\share\x`, what
-/// `canonicalize` gives) in its plain form, since git does not read the verbatim one.
-fn plain(path: &str) -> std::borrow::Cow<'_, str> {
-    if cfg!(windows) {
-        if let Some(rest) = path.strip_prefix(r"\\?\") {
-            if rest.as_bytes().get(1) == Some(&b':') {
-                return rest.into();
-            }
-            if let Some(share) = rest.strip_prefix(r"UNC\") {
-                return format!(r"\\{share}").into();
-            }
-        }
-    }
-    path.into()
-}
-
 /// A value handed to git with each path in it plain; `GIT_ALTERNATE_OBJECT_DIRECTORIES` is a list.
 fn plain_value(name: &str, value: &str) -> String {
     if cfg!(windows) && name == "GIT_ALTERNATE_OBJECT_DIRECTORIES" {
-        value.split(';').map(plain).collect::<Vec<_>>().join(";")
+        value.split(';').map(crate::paths::plain).collect::<Vec<_>>().join(";")
     } else {
-        plain(value).into_owned()
+        crate::paths::plain(value).into_owned()
     }
 }
 
 /// The root as a directory to start git in, plain.
 fn plain_dir(root: &Path) -> PathBuf {
     let s = root.to_string_lossy();
-    let p = plain(&s);
+    let p = crate::paths::plain(&s);
     if p != s {
         PathBuf::from(p.as_ref())
     } else {
@@ -1018,7 +1002,7 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
     #[test]
     fn a_verbatim_windows_path_reaches_git_in_its_plain_form() {
         for (given, on_windows) in [(r"\\?\C:\x\y", r"C:\x\y"), (r"\\?\UNC\host\share\x", r"\\host\share\x"), (r"C:\x", r"C:\x"), ("/a/b", "/a/b")] {
-            assert_eq!(plain(given), if cfg!(windows) { on_windows } else { given });
+            assert_eq!(crate::paths::plain(given), if cfg!(windows) { on_windows } else { given });
         }
         let list = r"\\?\C:\a;\\?\UNC\h\s\b;c";
         assert_eq!(plain_value("GIT_ALTERNATE_OBJECT_DIRECTORIES", list), if cfg!(windows) { r"C:\a;\\h\s\b;c" } else { list });

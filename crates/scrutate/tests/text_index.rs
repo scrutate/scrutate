@@ -1,6 +1,9 @@
 //! The text index across updates that go wrong or come often: a manifest cut short, a liveness
 //! file left by a failed update, and many small updates beside one large segment.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -14,7 +17,7 @@ impl Tmp {
         let p = std::env::temp_dir().join(format!("scrutate_text_index_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
-        Tmp(fs::canonicalize(&p).unwrap())
+        Tmp(canon(&p))
     }
 }
 

@@ -2,6 +2,9 @@
 //! checkout of a linked git work tree, is not parsed again, and the index made from it equals a
 //! fresh build of the same tree, row for row.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,7 +20,7 @@ impl Tmp {
         let p = std::env::temp_dir().join(format!("scrutate_artifacts_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
-        Tmp(fs::canonicalize(&p).unwrap())
+        Tmp(canon(&p))
     }
 }
 

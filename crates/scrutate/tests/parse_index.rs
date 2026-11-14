@@ -1,5 +1,8 @@
 use std::time::{Duration, Instant};
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use scrutate::parse::parse_source;
 use scrutate::search::prune_indices;
 
@@ -432,7 +435,7 @@ fn tree(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, body).unwrap();
     }
-    std::fs::canonicalize(root).unwrap()
+    canon(root)
 }
 
 #[test]

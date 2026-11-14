@@ -6,6 +6,10 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 struct Repo {
@@ -30,7 +34,7 @@ impl Repo {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, text).unwrap();
         }
-        Repo { root: fs::canonicalize(&root).unwrap() }
+        Repo { root: canon(&root) }
     }
 
     fn run(&self, args: &[&str]) -> (i32, String, String) {

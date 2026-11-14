@@ -35,6 +35,7 @@ pub mod names;
 pub mod npy;
 pub mod ops;
 pub mod parse;
+pub mod paths;
 pub mod rank;
 pub mod repomap;
 pub mod resolve;

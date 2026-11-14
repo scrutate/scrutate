@@ -2,6 +2,9 @@
 //! writes, a second run, overlapping matches, text that does not parse, a file edited between the
 //! read and the write, and what the index answers afterwards.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -20,7 +23,7 @@ impl Tree {
         let _ = fs::remove_dir_all(&root);
         // its own repository, so the work tree above lends it no ignore file
         fs::create_dir_all(root.join(".git")).unwrap();
-        Tree { root: fs::canonicalize(root).unwrap() }
+        Tree { root: canon(root) }
     }
 
     fn write(&self, rel: &str, text: &str) {

@@ -1,6 +1,9 @@
 //! `scrutate grep` and the command line as a user meets them: environment switches, odd
 //! arguments, per-file limits, context lines, globs over several roots and the paths printed.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -14,7 +17,7 @@ impl Dir {
         let root = std::env::temp_dir().join(format!("scrutate_grepcli_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        Dir(fs::canonicalize(&root).unwrap())
+        Dir(canon(&root))
     }
     fn write(&self, rel: &str, bytes: &[u8]) {
         let p = self.0.join(rel);
@@ -284,8 +287,8 @@ fn paths_are_printed_as_given() {
         assert_eq!(sorted(&d.run(&a).1), want, "{args:?}");
     }
     let (_, out, _) = d.run(&["grep", "-l", "needle", &abs]);
-    // Windows: `/` between the parts, and the plain form of the verbatim path `canonicalize` gave
-    let shown = if cfg!(windows) { abs.trim_start_matches(r"\\?\").replace('\\', "/") } else { abs.clone() };
+    // Windows: `/` between the parts
+    let shown = if cfg!(windows) { abs.replace('\\', "/") } else { abs.clone() };
     assert_eq!(out, format!("{shown}/a.txt\n"));
     let (_, out, _) = d.run(&["grep", "needle", "dir"]);
     assert_eq!(out, "dir/a.txt:1:needle\n");
@@ -1430,7 +1433,7 @@ fn a_type_matches_after_the_ignore_rules_as_ripgrep_does() {
     let _ = fs::remove_dir_all(&root);
     // a repository of its own, so its ignore file applies for ripgrep too
     fs::create_dir_all(root.join(".git")).unwrap();
-    let d = Dir(fs::canonicalize(&root).unwrap());
+    let d = Dir(canon(&root));
     d.write(".gitignore", b"gone.py\n");
     for f in ["gone.py", "kept.py", ".hidden.py", "notes.txt", "sub/also.py"] {
         d.write(f, b"needle\n");

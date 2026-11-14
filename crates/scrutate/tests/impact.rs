@@ -3,6 +3,9 @@
 //! change, a base revision, a merge base, an untracked file and a directory outside git, and the
 //! callers of a deleted definition.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -24,7 +27,7 @@ impl Tree {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("impact_{name}_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        Tree { root: fs::canonicalize(root).unwrap() }
+        Tree { root: canon(root) }
     }
 
     fn write(&self, rel: &str, text: &str) {

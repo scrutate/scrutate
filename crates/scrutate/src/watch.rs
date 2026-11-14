@@ -750,9 +750,9 @@ pub fn local(root: &Path) -> bool {
         }
         const DRIVE_REMOTE: u32 = 4;
         let s = root.as_os_str().to_string_lossy();
-        let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
-        // a share named \\server\share, or \\?\UNC\server\share
-        if s.starts_with(r"\\") || s.starts_with(r"UNC\") {
+        // a share: \\server\share, or \\?\UNC\server\share, which plain makes the first
+        let s = crate::paths::plain(&s);
+        if s.starts_with(r"\\") {
             return false;
         }
         let Some(drive) = s.get(..3).filter(|d| d.ends_with(":\\")) else { return false };

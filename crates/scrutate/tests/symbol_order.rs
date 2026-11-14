@@ -1,6 +1,9 @@
 //! The order of `find_symbol` answers: the name as typed before its case-folded namesakes, types
 //! before functions, test files last within each, a definition before its prototype.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::PathBuf;
 
@@ -18,7 +21,7 @@ impl Repo {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(&p, body).unwrap();
         }
-        let root = fs::canonicalize(&root).unwrap();
+        let root = canon(&root);
         let s = scrutate::open_updated(&root, true).unwrap().0.into_searcher();
         Repo { root, s }
     }

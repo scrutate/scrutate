@@ -2,6 +2,9 @@
 //! files and private keys among them, asked through every MCP tool that returns text and through
 //! the Grep hook. No secret's bytes may come back, and each redaction says its kind.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -148,8 +151,7 @@ fn tree(test: &str) -> (PathBuf, Vec<(&'static str, String)>) {
     // a file that holds a marker's text and no secret: no redaction is counted for it
     fs::write(root.join("notes.py"), "NOTE = \"[redacted:github-token] is how answers show a token\"\n").unwrap();
     // as Claude Code has it: on Windows without the `\\?\` of canonicalize, which the hook declines
-    let root = fs::canonicalize(&root).unwrap();
-    (PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\")), secrets)
+    (canon(&root), secrets)
 }
 
 /// Every string of an MCP answer: its text and its structured form.
@@ -469,8 +471,7 @@ fn a_key_over_a_megabyte_is_redacted_from_its_middle_and_by_its_last_line() {
     big.push_str(&format!("{last}\n{}\n", armour("END")));
     assert!(big.len() > 1_500_000);
     fs::write(root.join("big.pem"), big).unwrap();
-    let root = fs::canonicalize(&root).unwrap();
-    let root = PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\"));
+    let root = canon(&root);
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
     let settings = scrutate::mcp::Settings::new(None);
     for (tool, args) in [
@@ -519,7 +520,7 @@ fn an_indexed_key_s_lines_are_found_by_their_text_through_hook_run() {
         fs::write(root.join(name), format!("{}\n{}\n{}\n", armour("BEGIN"), body.join("\n"), armour("END"))).unwrap();
         lines.extend(body);
     }
-    let root = fs::canonicalize(&root).unwrap();
+    let root = canon(&root);
     let home = root.with_extension("home");
     let run = |args: &[&str]| {
         let out = Command::new(BIN)

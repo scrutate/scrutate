@@ -75,13 +75,13 @@ impl Env {
         let top = cwd.ancestors().find(|d| d.join(".git").exists()).unwrap_or(&cwd).to_path_buf();
         let exe = std::env::current_exe().context("cannot find this program's path")?;
         let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-        let bin = exe.to_str().context("this program's path is not UTF-8")?.trim_start_matches(r"\\?\").to_string();
+        let bin = crate::paths::plain(exe.to_str().context("this program's path is not UTF-8")?).into_owned();
         Ok(Env {
             claude_dir: claude_config.clone().unwrap_or_else(|| home.join(".claude")),
             claude_json: claude_config.map_or_else(|| home.join(".claude.json"), |d| d.join(".claude.json")),
             codex_home: var("CODEX_HOME").unwrap_or_else(|| home.join(".codex")),
             config_home: var("XDG_CONFIG_HOME").filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config")),
-            top: std::fs::canonicalize(&top).map(|p| PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\"))).unwrap_or(top),
+            top: std::fs::canonicalize(&top).map(|p| crate::paths::plain_path(&p).into_owned()).unwrap_or(top),
             claude: on_path("claude"),
             home,
             bin,

@@ -985,7 +985,7 @@ pub(crate) fn no_first_build(dir: &Path) -> Option<String> {
     (wide && !dir.join(crate::files::INDEX_DIR).is_dir()).then(|| {
         format!(
             "[scrutate] {} is the home directory or a filesystem root and has no index: pass --root DIR for a project, or run `scrutate index` here to index everything below it",
-            dir.display().to_string().trim_start_matches(r"\\?\")
+            crate::paths::plain_path(dir).display()
         )
     })
 }
@@ -1216,7 +1216,7 @@ pub fn run() -> Result<i32> {
         }
     }
     if let Some(top) = found_index {
-        eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+        eprintln!("[scrutate] using the index in {}", crate::paths::plain_path(&top).display());
     }
     // every process that updates an index must leave out the same directories, so only the root's own file counts
     if cfg_excludes && uses_index && std::env::var_os("SCRUTATE_INDEX_EXCLUDE_DIRS").is_none() {
@@ -1516,7 +1516,7 @@ pub fn run() -> Result<i32> {
                     println!("configuration file: {}", p.display());
                     println!("{}", std::fs::read_to_string(p)?.trim_end());
                     if !cfg_globs.is_empty() {
-                        println!("\ngrep globs, matched from {}: {}", cfg_root.display().to_string().trim_start_matches(r"\\?\"), cfg_globs.join(", "));
+                        println!("\ngrep globs, matched from {}: {}", crate::paths::plain_path(&cfg_root).display(), cfg_globs.join(", "));
                     }
                 }
                 None if root_given => println!(

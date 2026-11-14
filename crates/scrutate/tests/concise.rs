@@ -2,6 +2,9 @@
 //! concise answer lists the locations the detailed one lists, in at most half its bytes when the
 //! detailed one is over 1 KB.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,7 +51,7 @@ fn tree() -> PathBuf {
     let fmt = root.join("crates/scrutate/src/fmt.rs");
     let text = fs::read_to_string(&fmt).unwrap().replace("let mut out = Vec::with_capacity(hits.len());", "let mut out = Vec::with_capacity(hits.len() + 0);");
     fs::write(&fmt, text).unwrap();
-    fs::canonicalize(root).unwrap()
+    canon(root)
 }
 
 /// Every `path:start-end` of a text. In a concise answer a line that ends with `/` names the
@@ -156,7 +159,7 @@ fn concise_paths_name_their_directory_once_and_a_bad_form_is_refused() {
     fs::write(root.join("pkg/a.py"), "def make_point():\n    return 1\n\n\ndef make_line():\n    return make_point()\n").unwrap();
     fs::write(root.join("pkg/sub/b.py"), "from pkg.a import make_point\n\n\ndef make_box():\n    return make_point()\n").unwrap();
     fs::write(root.join("top.py"), "from pkg.a import make_point\n\n\ndef make_top():\n    return make_point()\n").unwrap();
-    let root = fs::canonicalize(&root).unwrap();
+    let root = canon(&root);
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
     session.build().unwrap();
     let settings = scrutate::mcp::Settings::new(None);

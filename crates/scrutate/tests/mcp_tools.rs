@@ -1,6 +1,9 @@
 //! What the `serve` tools answer, called the way the server calls them: arguments as JSON, the
 //! text an agent reads, and whether the call failed.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::PathBuf;
 
@@ -39,7 +42,7 @@ impl Repo {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(&p, body).unwrap();
         }
-        let root = fs::canonicalize(&root).unwrap();
+        let root = canon(&root);
         let repo = scrutate::Repo::open(&root).unwrap();
         Repo { session: session(&root, 0.0), root, repo }
     }

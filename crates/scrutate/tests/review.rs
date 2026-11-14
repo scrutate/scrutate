@@ -3,6 +3,9 @@
 //! another; then the GitLab Code Quality report and the GitHub Action's comment script against a
 //! stand-in `gh` that replays a recorded list of comments.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -23,7 +26,7 @@ impl Tree {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("review_{name}_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        Tree { root: fs::canonicalize(root).unwrap() }
+        Tree { root: canon(root) }
     }
 
     fn write(&self, rel: &str, text: &str) {

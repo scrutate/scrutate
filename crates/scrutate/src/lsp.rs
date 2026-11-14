@@ -648,7 +648,7 @@ impl Server {
         let folder = std::path::absolute(&folder).unwrap_or(folder);
         let top = ruled.then(|| crate::cli::index_above(&folder)).flatten();
         if let Some(top) = &top {
-            eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+            eprintln!("[scrutate] using the index in {}", crate::paths::plain_path(top).display());
         }
         // a folder from the editor is the user's choice; the server's own directory is not
         let refused = (may_refuse && top.is_none()).then(|| crate::cli::no_first_build(&folder)).flatten();

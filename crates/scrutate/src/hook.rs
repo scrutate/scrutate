@@ -263,7 +263,7 @@ fn real_path(real: &str, p: &str, windows: bool) -> Option<String> {
     if !windows {
         return (real == p).then(|| p.to_string());
     }
-    let real = real.strip_prefix(r"\\?\").unwrap_or(real);
+    let real = crate::paths::plain_on(real, windows);
     let b = real.as_bytes();
     let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && &b[1..3] == b":\\";
     (drive && real.to_lowercase() == p.to_lowercase()).then(|| real.to_string())

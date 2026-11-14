@@ -2,6 +2,9 @@
 //! unified `find`, cross-repository search, `check`, compaction, the MCP protocol, and the
 //! edge cases the traceability matrix promises (UTF-16 BOM, `.git` files, no Python at runtime).
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -662,7 +665,7 @@ fn search_also_merges_repositories() {
     let (code, out, _) = run_in(&a.root, &["search", "renew an expired access token", "-k", "3", "--also", b.root.to_str().unwrap(), "--json"], &[]);
     assert_eq!(code, 0, "{out}");
     let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
-    let canon = |p: &Path| fs::canonicalize(p).unwrap().to_string_lossy().into_owned();
+    let canon = |p: &Path| canon::canon(p).to_string_lossy().into_owned();
     assert!(hits.iter().any(|h| h["path"] == "lib/tokens.py" && h["root"] == canon(&b.root)), "the other repository's root in a field: {out}");
     assert!(hits.iter().any(|h| h["path"].as_str().unwrap().starts_with("pkg/") && h["root"] == canon(&a.root)), "{out}");
 }
@@ -1301,11 +1304,11 @@ fn config_json_names_the_root_an_index_command_uses() {
         assert_eq!(code, 0, "{args:?}: {err}");
         let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
         assert!(v["configuration_file"].is_null(), "{out}");
-        fs::canonicalize(v["root"].as_str().unwrap()).unwrap()
+        canon(v["root"].as_str().unwrap())
     };
-    assert_eq!(root_of(&["config", "--json"]), fs::canonicalize(&r.root).unwrap(), "the top, before any index");
+    assert_eq!(root_of(&["config", "--json"]), canon(&r.root), "the top, before any index");
     assert!(!r.root.join(".scrutate").exists(), "config builds no index");
-    assert_eq!(root_of(&["--root", ".", "config", "--json"]), fs::canonicalize(&deep).unwrap(), "--root as given");
+    assert_eq!(root_of(&["--root", ".", "config", "--json"]), canon(&deep), "--root as given");
 }
 
 #[test]
@@ -1676,7 +1679,7 @@ fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
     let mut child = Command::new(BIN).arg("watch").current_dir(&deep).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
     let stderr = child.stderr.take().unwrap();
     let _guard = KillOnDrop(child);
-    let top = fs::canonicalize(&r.root).unwrap();
+    let top = canon(&r.root);
     let line = std::io::BufReader::new(stderr).lines().map_while(Result::ok).find(|l| l.contains("watching")).unwrap();
     assert!(line.ends_with(&format!("watching {}", top.display())), "{line}");
     assert!(!deep.join(".scrutate").exists());
@@ -2672,7 +2675,7 @@ fn tsquery_takes_the_content_hash_the_code_index_records_for_a_current_file() {
     assert_eq!(r.run(&["tsquery", "python", q]).1, "a.py:1:5  @n (identifier)  one\n");
     r.write("a.py", b"def two():\n    return 2\n");
     let md = fs::metadata(r.root.join("a.py")).unwrap();
-    let ix = scrutate::index::Index::open(&fs::canonicalize(&r.root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
+    let ix = scrutate::index::Index::open(&canon(&r.root), scrutate::models::ModelSet::none()).unwrap();
     let s = scrutate::index::Stat::of(&r.root.join("a.py"), &md);
     ix.damage_for_tests(&format!("UPDATE files SET size={}, mtime_ns={}, ctime_ns={} WHERE path='a.py'", s.size, s.mtime, s.ctime)).unwrap();
     drop(ix);
@@ -2708,7 +2711,7 @@ fn a_tsquery_cache_made_in_one_tree_answers_in_a_copy_at_another_path() {
     // the copy's a.py holds other bytes under the stat its index records: only a cache hit answers `one`
     b.write("a.py", b"def won():\n    return 1\n");
     let md = fs::metadata(b.root.join("a.py")).unwrap();
-    let ix = scrutate::index::Index::open(&fs::canonicalize(&b.root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
+    let ix = scrutate::index::Index::open(&canon(&b.root), scrutate::models::ModelSet::none()).unwrap();
     let s = scrutate::index::Stat::of(&b.root.join("a.py"), &md);
     ix.damage_for_tests(&format!("UPDATE files SET size={}, mtime_ns={}, ctime_ns={} WHERE path='a.py'", s.size, s.mtime, s.ctime)).unwrap();
     drop(ix);

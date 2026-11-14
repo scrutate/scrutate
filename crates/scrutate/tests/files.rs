@@ -2,6 +2,9 @@
 //! fragment find the file, an exact basename ranks first, reads through `read` and `read_code`
 //! raise a file above its namesake, and the state file lives under `XDG_STATE_HOME`.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,7 +26,7 @@ impl Tree {
         let root = top.join("repo");
         fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(top.join("state")).unwrap();
-        let top = fs::canonicalize(top).unwrap();
+        let top = canon(top);
         let t = Tree { root: top.join("repo"), state: top.join("state") };
         for p in
             ["src/search.rs", "lib/search.rs", "src/source.rs", "src/session.rs", "src/searcher_tools.rs", "deep/a/b/ops.rs", "x/topsy.rs", "docs/notes.md"]

@@ -2,6 +2,9 @@
 //! with are ripgrep's for the same arguments (run here with the arguments Grep passes it), a call
 //! it cannot answer exactly gets no answer, and `hook stats` counts the bytes it measured.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -14,10 +17,9 @@ const HEADER: &str = "Grep result:";
 /// The separator Grep prints between the parts of a path.
 const SEP: &str = if cfg!(windows) { "\\" } else { "/" };
 
-/// `p` as Claude Code has it: on Windows without the `\\?\` that `canonicalize` puts in front.
+/// `p` as Claude Code has it: canonical, on Windows without the verbatim prefix.
 fn real(p: PathBuf) -> PathBuf {
-    let p = fs::canonicalize(p).unwrap();
-    PathBuf::from(p.to_str().unwrap().trim_start_matches(r"\\?\"))
+    canon(p)
 }
 
 /// A fixture tree and a scratch home under the build's own temporary directory.
@@ -64,8 +66,8 @@ impl Tree {
     /// The hook's stdout for `input`, and its exit code.
     fn hook(&self, input: &Value, env: &[(&str, &str)]) -> (i32, String) {
         let home = self.base.join("home");
-        let tmp = fs::canonicalize(env!("CARGO_TARGET_TMPDIR")).unwrap();
-        assert!(fs::canonicalize(&self.base).unwrap().starts_with(&tmp), "the hook runs only with a scratch home");
+        let tmp = canon(env!("CARGO_TARGET_TMPDIR"));
+        assert!(canon(&self.base).starts_with(&tmp), "the hook runs only with a scratch home");
         let mut c = Command::new(BIN);
         c.args(["hook", "grep"]).current_dir(&self.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         c.env("HOME", &home)

@@ -1,6 +1,9 @@
 //! `scrutate watch` against the real binary: what it sees while it starts, which directories it
 //! watches, and what happens when the tree under it moves or goes away.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -19,7 +22,7 @@ impl Repo {
         let root = std::env::temp_dir().join(format!("scrutate_watchfiles_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        Repo { root: fs::canonicalize(&root).unwrap() }
+        Repo { root: canon(&root) }
     }
     fn write(&self, rel: &str, bytes: &[u8]) {
         let p = self.root.join(rel);

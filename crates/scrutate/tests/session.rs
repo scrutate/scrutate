@@ -2,6 +2,9 @@
 //! process, the files as they are now, and every way the session can be passed over.
 #![cfg(unix)]
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -34,7 +37,7 @@ impl Repo {
             "from pkg.geo import Point, helper\n\n\ndef main():\n    return helper(Point())\n\n\ndef twin():\n    return helper(Point())\n",
         )
         .unwrap();
-        Repo { root: root.canonicalize().unwrap() }
+        Repo { root: canon(&root) }
     }
 
     fn socket(&self) -> PathBuf {
@@ -245,7 +248,7 @@ fn a_long_socket_path_leaves_relative_arguments_to_the_callers_directory() {
     let r = Repo::at(base.join(&rel));
     assert!(r.socket().as_os_str().len() > 110);
     let _server = Server::start(&r.root);
-    let base = base.canonicalize().unwrap();
+    let base = canon(&base);
     let file = format!("{rel}/pkg/use.py");
     let run = |args: &[&str], env: &[(&str, &str)]| {
         let mut c = Command::new(BIN);

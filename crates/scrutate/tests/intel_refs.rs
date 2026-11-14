@@ -2,6 +2,9 @@
 //! among many namesakes, special files where a config is expected, imports of outside packages,
 //! scopes, undecodable bytes, duplicates, and the `reindex` and `search_code` tools.
 
+#[path = "support/canon.rs"]
+mod canon;
+use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,7 +30,7 @@ impl Repo {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(&p, body).unwrap();
         }
-        Repo { root: fs::canonicalize(&root).unwrap() }
+        Repo { root: canon(&root) }
     }
 
     fn new(name: &str, files: &[(&str, &str)]) -> Repo {
@@ -1732,7 +1735,7 @@ fn every_outlined_sample_name_is_found_by_symbol() {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::copy(dir.join(&name), root.join(&name)).unwrap();
-        let ix = scrutate::index::Index::open(&fs::canonicalize(&root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
+        let ix = scrutate::index::Index::open(&canon(&root), scrutate::models::ModelSet::none()).unwrap();
         let mut s = scrutate::search::Searcher::new(ix);
         s.ix.update(false).unwrap();
         for row in s.ix.outline(&name).unwrap() {
