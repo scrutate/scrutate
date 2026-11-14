@@ -24,3 +24,11 @@ def test_an_older_ripgrep_is_refused_by_name(tmp_path):
         assert "15.1.0" in str(e) and "43e2f08ede" in str(e)
     fake.write_text("#!/bin/sh\necho 'ripgrep 15.2.0 (rev e89fff89ac)'\n")
     assert differential.require_rg(str(fake)) == str(fake)
+
+
+def test_a_missing_ripgrep_says_how_to_name_one(tmp_path):
+    try:
+        differential.require_rg(str(tmp_path / "no-such-rg"))
+        raise AssertionError("a missing ripgrep was accepted")
+    except SystemExit as e:
+        assert "no-such-rg" in str(e) and "SCRUTATE_RG" in str(e)

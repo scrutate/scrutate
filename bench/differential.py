@@ -51,7 +51,10 @@ def rg_version(text: str) -> tuple[int, ...]:
 
 def require_rg(rg: str = RG) -> str:
     """`rg` when it is ripgrep 15.2.0 or newer, else exit naming the fix the comparison needs."""
-    out = subprocess.run([rg, "--version"], capture_output=True, text=True).stdout
+    try:
+        out = subprocess.run([rg, "--version"], capture_output=True, text=True).stdout
+    except OSError as e:
+        sys.exit(f"{rg} does not run ({e.strerror}): the comparison needs ripgrep 15.2.0 or newer; set SCRUTATE_RG")
     if rg_version(out) < RG_MIN:
         sys.exit(f"{rg} is {out.splitlines()[0] if out else 'not ripgrep'}: the comparison needs ripgrep 15.2.0 or newer "
                  "(43e2f08ede fixed overlapping path arguments); set SCRUTATE_RG")
@@ -293,12 +296,12 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
 
 
 def main() -> int:
-    require_rg()
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", type=int, default=200)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--keep", action="store_true", help="keep the corpus of a failing case")
     a = ap.parse_args()
+    require_rg()
     if not os.path.exists(SCRUTATE) or not os.path.exists(RG):
         print(f"need {SCRUTATE} and ripgrep", file=sys.stderr)
         return 2
