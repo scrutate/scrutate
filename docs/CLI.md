@@ -605,9 +605,10 @@ line per item:
   definition (path and qualified name), or the same body text up to whitespace. So a pair the base
   had stays out when one of them is edited or moved, and a third copy is listed. Then each changed
   code definition (a function, method, class, struct, trait, interface, type, enum or impl, added
-  or edited, outside a test file; not a constant, a field or a Markdown section) that no test file
-  reaches through the calls the walk found (kind `untested-change`, severity `info`). Severities
-  are GitLab's Code Quality levels.
+  or edited, outside a test file) that no test file reaches through the calls the walk found
+  (kind `untested-change`, severity `info`). These are the kinds that have call edges; a
+  constant, macro, key, field, signal, block, module, window or Markdown section has none for the
+  walk to follow, so none of them is named. Severities are GitLab's Code Quality levels.
 
 Items sort by distance, path and line, the same every run. A file with no definitions to name
 gets a line under `notes`: a binary file, a submodule (its commits are not read), a file the

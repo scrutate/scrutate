@@ -126,6 +126,9 @@ incompatible index by itself, and that is never breaking.
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- `review` marks as no test reaching it only a changed function, method, class, struct, trait,
+  interface, type, enum or impl, the kinds with call edges: an edited constant, macro, key,
+  field or Markdown section is no longer counted under "no test reaches", and is no GitLab issue.
 - `dupes` and `review` read the duplicate keys the index keeps for each definition, made once per
   text when it is parsed, and read a definition's text only when it is in a group or shares a
   bucket, so they no longer read every definition's text, and find the same groups. The index's
