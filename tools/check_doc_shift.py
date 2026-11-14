@@ -94,8 +94,9 @@ def main(argv: list[str]) -> int:
         diff = sys.stdin.read() if argv[1:2] in ([], ["-"]) else open(argv[1], encoding="utf-8").read()
     else:
         rev = argv[0] if argv else "HEAD"
-        a, b = rev.split("..", 1) if ".." in rev else (f"{rev}^", rev)
-        diff = subprocess.run(["git", "diff", "-U5", a, b, "--", "*.rs"], capture_output=True, text=True, check=True).stdout
+        # `git show` reads a commit against its parent (a merge against the first), a root against nothing
+        cmd = ["git", "diff", "-U5", *rev.split("..", 1)] if ".." in rev else ["git", "show", "--format=", "-U5", "--diff-merges=first-parent", rev]
+        diff = subprocess.run([*cmd, "--", "*.rs"], capture_output=True, text=True, check=True).stdout
     bad = shifted(diff)
     for b in bad:
         print(f"{b}\n    goes between a doc comment and the item it documented: insert it above the doc block")

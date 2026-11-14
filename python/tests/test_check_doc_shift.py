@@ -54,3 +54,34 @@ def test_an_edited_documented_item_with_a_new_item_after_it_passes():
 def test_an_attribute_over_several_lines_does_not_hide_the_doc_above_it():
     d = doc_diff(" /// What `kept` does.", " #[cfg(any(", "     unix,", "     windows,", " ))]", "+fn added() {}", " fn kept() {}")
     assert C.shifted(d) == ["x.rs:6: fn added() {}"]
+
+
+def test_a_root_commit_is_read_without_a_parent(tmp_path, monkeypatch):
+    import subprocess
+    git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=tmp_path, check=True, capture_output=True)
+    git("init", "-q")
+    (tmp_path / "x.rs").write_text("/// The limit.\nconst A: u8 = 1;\n")
+    git("add", "x.rs")
+    git("commit", "-qm", "root")
+    monkeypatch.chdir(tmp_path)
+    assert C.main(["HEAD"]) == 0
+
+
+def test_a_merge_is_read_against_its_first_parent(tmp_path, monkeypatch):
+    # a pull request's merge ref: what the branch brings in is what is checked
+    import subprocess
+    git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=tmp_path, check=True, capture_output=True)
+    git("init", "-q", "-b", "main")
+    (tmp_path / "x.rs").write_text("/// The limit.\nconst A: u8 = 1;\n")
+    git("add", "x.rs")
+    git("commit", "-qm", "base")
+    git("checkout", "-qb", "topic")
+    (tmp_path / "x.rs").write_text("/// The limit.\nconst NEW: u8 = 9;\nconst A: u8 = 1;\n")
+    git("commit", "-qam", "shifted")
+    git("checkout", "-q", "main")
+    (tmp_path / "y.rs").write_text("fn other() {}\n")
+    git("add", "y.rs")
+    git("commit", "-qm", "main moves on")
+    git("merge", "-q", "--no-ff", "-m", "merge", "topic")
+    monkeypatch.chdir(tmp_path)
+    assert C.main(["HEAD"]) == 1
