@@ -1164,39 +1164,51 @@ def check_content_revision(problems):
 
 
 def changelog_bullets(text):
-    """(line, heading, bullet text) of each CHANGELOG bullet, its wrapped lines joined."""
-    out, heading, cur = [], "", None
+    """(line, release, heading, bullet text) of each CHANGELOG bullet, its wrapped lines joined:
+    the `## ` release and the `### ` heading it is under."""
+    out, release, heading, cur = [], "", "", None
     for n, line in enumerate(text.split("\n"), 1):
         if line.startswith("- "):
             if cur:
                 out.append(cur)
-            cur = [n, heading, line[2:]]
+            cur = [n, release, heading, line[2:]]
         elif cur and line.startswith("  ") and line.strip():
-            cur[2] += " " + line.strip()
+            cur[3] += " " + line.strip()
         else:
             if cur:
                 out.append(cur)
             cur = None
-            if line.startswith("#"):
+            if line.startswith("## "):
+                release, heading = line, ""
+            elif line.startswith("#"):
                 heading = line
     if cur:
         out.append(cur)
     return out
 
 
-def check_changelog(problems):
-    """Every CHANGELOG bullet ends its sentence, and no two under one heading open with the same
-    five words: a rebase that merged an entry badly leaves one cut off and two of it."""
-    with open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8") as f:
-        bullets = changelog_bullets(f.read())
-    opened = {}
-    for n, heading, text in bullets:
-        if not text.rstrip().endswith("."):
-            problems.append(f"CHANGELOG.md:{n}: the entry ends mid-sentence: ...{text.rstrip()[-60:]}")
-        key = (heading, " ".join(text.split()[:5]))
+def changelog_problems(text):
+    """Every CHANGELOG bullet ends its sentence, and no two under one heading of one release open
+    with the same five words: a rebase that merged an entry badly leaves one cut off and two of it."""
+    problems, opened = [], {}
+    for n, release, heading, body in changelog_bullets(text):
+        if not body.rstrip().endswith("."):
+            problems.append(f"CHANGELOG.md:{n}: the entry ends mid-sentence: ...{body.rstrip()[-60:]}")
+        key = (release, heading, " ".join(body.split()[:5]))
         if key in opened:
-            problems.append(f"CHANGELOG.md:{n}: opens as the entry at line {opened[key]} does, under {heading}: {key[1]}")
+            problems.append(f"CHANGELOG.md:{n}: opens as the entry at line {opened[key]} does, under {heading}: {key[2]}")
         opened.setdefault(key, n)
+    return problems
+
+
+def check_changelog(problems):
+    # the rule itself: two releases may each have an entry that opens alike, one release may not
+    two = "## [2]\n\n### Fixed\n- The name of a thing is kept.\n\n## [1]\n\n### Fixed\n- The name of a thing is right.\n"
+    assert changelog_problems(two) == [], changelog_problems(two)
+    one = "## [1]\n\n### Fixed\n- The name of a thing is kept.\n- The name of a thing is right.\n- Cut off and\n"
+    assert len(changelog_problems(one)) == 2, changelog_problems(one)
+    with open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8") as f:
+        problems.extend(changelog_problems(f.read()))
 
 
 def main():
