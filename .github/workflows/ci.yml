@@ -118,10 +118,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # HEAD^ for the doc-shift check: on a pull request the merge ref's first parent is the base
-          fetch-depth: 2
-      # no new Rust item between a doc comment and the item it documented, in HEAD^..HEAD
-      - run: python3 tools/check_doc_shift.py HEAD
+          # the doc-shift check reads HEAD^ (a pull request's merge ref: its first parent is the base),
+          # and on a push every commit since the one before it
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '2' }}
+      # no new Rust item between a doc comment and the item it documented, in each new commit
+      - name: doc comments stay on their items
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # a new branch has an all-zero `before`; a force push may name a commit this clone lacks
+          if [ "$EVENT" = push ] && [ "${BEFORE//0/}" != "" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            python3 tools/check_doc_shift.py --each "$BEFORE..HEAD"
+          else
+            python3 tools/check_doc_shift.py HEAD
+          fi
       - run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

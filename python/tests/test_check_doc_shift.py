@@ -85,3 +85,22 @@ def test_a_merge_is_read_against_its_first_parent(tmp_path, monkeypatch):
     git("merge", "-q", "--no-ff", "-m", "merge", "topic")
     monkeypatch.chdir(tmp_path)
     assert C.main(["HEAD"]) == 1
+
+
+def test_each_commit_of_a_push_is_checked_not_only_the_last(tmp_path, monkeypatch):
+    import subprocess
+    git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=tmp_path, check=True, capture_output=True, text=True)
+    git("init", "-q")
+    (tmp_path / "x.rs").write_text("/// The limit.\nconst A: u8 = 1;\n")
+    git("add", "x.rs")
+    git("commit", "-qm", "before the push")
+    before = git("rev-parse", "HEAD").stdout.strip()
+    (tmp_path / "x.rs").write_text("/// The limit.\nconst NEW: u8 = 9;\nconst A: u8 = 1;\n")
+    git("commit", "-qam", "first pushed commit: shifts the doc")
+    (tmp_path / "y.rs").write_text("fn other() {}\n")
+    git("add", "y.rs")
+    git("commit", "-qm", "second pushed commit: clean")
+    monkeypatch.chdir(tmp_path)
+    assert C.main(["HEAD"]) == 0, "the last commit alone is clean"
+    assert C.main(["--each", f"{before}..HEAD"]) == 1
+    assert C.main(["--each", "HEAD^..HEAD"]) == 0

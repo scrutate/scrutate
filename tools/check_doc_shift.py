@@ -2,7 +2,10 @@
 """Fail when a change puts a new Rust item between an unchanged `///` block and the item it
 documented, so the doc comment silently moves onto the new item.
 
-usage: check_doc_shift.py [REV | A..B | --diff FILE]   (default HEAD: the diff of REV^..REV)
+usage: check_doc_shift.py [REV | A..B | --each A..B | --diff FILE]   (default HEAD: the diff of REV^..REV)
+
+`--each A..B` checks every commit the range holds on its own, as a push of several commits needs:
+the diff of A..B alone can hide a commit whose shift a later one touched.
 
 A change block (added and removed lines between context lines) that follows unchanged `///`
 lines (attributes, over one line or several, and blank lines between them aside) and adds an item (fn, struct, enum, type,
@@ -90,6 +93,9 @@ def shifted(diff: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["--each"]:
+        revs = subprocess.run(["git", "rev-list", "--reverse", argv[1]], capture_output=True, text=True, check=True).stdout.split()
+        return max((main([r]) for r in revs), default=0)
     if argv[:1] == ["--diff"]:
         diff = sys.stdin.read() if argv[1:2] in ([], ["-"]) else open(argv[1], encoding="utf-8").read()
     else:
