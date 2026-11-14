@@ -420,14 +420,14 @@ fn read_line(r: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -> std::io::Re
 /// the short form of `tools`.
 pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structured: bool, short: bool) -> Result<()> {
     session.building();
-    {
+    let built = {
         let session = Arc::clone(&session);
         std::thread::Builder::new().name("scrutate-index".into()).spawn(move || match session.build() {
             Err(e) if e.is::<Panicked>() => eprintln!("[scrutate] indexing failed: internal failure (a bug: please report it); each tool call tries again"),
             Err(e) => eprintln!("[scrutate] indexing failed: {e:#}"),
             Ok(_) => {}
-        })?;
-    }
+        })?
+    };
     let calls = Calls::default();
     let server = Server { session: &session, calls: &calls, settings: &settings, version, structured, short };
     let (server, send) = (&server, &to_stdout as &Wire);
@@ -475,6 +475,8 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
         }
         Ok(())
     })?;
+    // the first build's outcome is said before the process exits
+    let _ = built.join();
     session.hold_writes();
     Ok(())
 }
