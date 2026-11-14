@@ -25,6 +25,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("index.rs", "READ", "SCRUTATE_PROFILE timing totals for the process"),
     ("index.rs", "LOOKUP", "SCRUTATE_PROFILE timing totals for the process"),
     ("index.rs", "SAID", "a warning said once per process"),
+    ("index.rs", "FOUND", "Windows' GetFileInformationByName, looked up once per process"),
     ("index.rs", "BEFORE_CHUNKS", "per thread, a test hook"),
     ("index.rs", "AFTER_LANGUAGES", "per thread, a test hook"),
     ("index.rs", "OPENED", "whether the process opened any index, for the panic message"),
@@ -35,6 +36,8 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("instant.rs", "NO_ONE_LINE", "per thread, search statistics for tests"),
     ("instant.rs", "MOST_QUEUED", "per thread, search statistics for tests"),
     ("lazy_bind.rs", "SYSTEM", "the handle of the system library, the same for the process"),
+    ("policy.rs", "DEBUG", "SCRUTATE_GREP_DEBUG, read once per process"),
+    ("policy.rs", "CORES", "the machine's cores, asked once per process"),
     ("parse.rs", "PARSERS", "per thread, a reused tree-sitter parser per language"),
     ("running.rs", "LOCK", "the process's signal state"),
     ("running.rs", "HELD", "the process's signal state"),
@@ -44,13 +47,14 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("running.rs", "SET", "the process's count of running searches"),
     ("running.rs", "WATCHING", "the process's signal state"),
     ("running.rs", "STOP_ASKED", "the process's signal state"),
+    ("running.rs", "MAY", "whether this process's stdout can block, asked once"),
     ("text.rs", "STEM_CACHE", "per thread, stems of words, the same for every root"),
     ("text.rs", "IDENT_CACHE", "per thread, splits of identifiers, the same for every root"),
     ("text.rs", "OWN", "keyed by canonical root"),
     ("textindex.rs", "TABLE", "per thread, a reused trigram mask table"),
 ];
 
-const MUTABLE: &[&str] = &["Mutex", "RwLock", "Cell<", "Cell::", "RefCell", "Atomic", "OnceCell", "UnsafeCell"];
+const MUTABLE: &[&str] = &["Mutex", "RwLock", "Cell<", "Cell::", "RefCell", "Atomic", "OnceCell", "OnceLock", "UnsafeCell"];
 
 /// (file, name) of each static whose type can change after it is first set.
 fn mutable_statics(src: &Path) -> BTreeSet<(String, String)> {
@@ -61,30 +65,50 @@ fn mutable_statics(src: &Path) -> BTreeSet<(String, String)> {
             let p = e.path();
             if p.is_dir() {
                 dirs.push(p);
-                continue;
-            }
-            if p.extension().is_none_or(|x| x != "rs") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&p).unwrap();
-            let file = p.strip_prefix(src).unwrap().to_string_lossy().replace('\\', "/");
-            let mut rest = text.as_str();
-            while let Some(at) = rest.find("static ") {
-                let before = rest[..at].chars().next_back();
-                rest = &rest[at + "static ".len()..];
-                if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '\'' || c == '&') {
-                    continue;
-                }
-                let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-                let Some(ty) = rest[name.len()..].trim_start().strip_prefix(':') else { continue };
-                let ty = &ty[..ty.find(['=', ';']).unwrap_or(ty.len())];
-                if MUTABLE.iter().any(|m| ty.contains(m)) {
-                    out.insert((file.clone(), name));
-                }
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let file = p.strip_prefix(src).unwrap().to_string_lossy().replace('\\', "/");
+                out.extend(in_source(&std::fs::read_to_string(&p).unwrap()).into_iter().map(|n| (file.clone(), n)));
             }
         }
     }
     out
+}
+
+/// The names of the mutable statics `text` declares: `static mut`, or a type in `MUTABLE`.
+fn in_source(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("static ") {
+        let before = rest[..at].chars().next_back();
+        rest = &rest[at + "static ".len()..];
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '\'' || c == '&') {
+            continue;
+        }
+        let (mutable, decl) = match rest.trim_start().strip_prefix("mut ") {
+            Some(d) => (true, d.trim_start()),
+            None => (false, rest),
+        };
+        let name: String = decl.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        let Some(ty) = decl[name.len()..].trim_start().strip_prefix(':') else { continue };
+        let ty = &ty[..ty.find(['=', ';']).unwrap_or(ty.len())];
+        if mutable || MUTABLE.iter().any(|m| ty.contains(m)) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+#[test]
+fn the_scan_finds_every_form_of_a_mutable_static() {
+    let src = "static RV2_A: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
+pub(crate) static RV2_D: std::sync::LazyLock<std::sync::Mutex<u8>> = std::sync::LazyLock::new(Default::default);
+static mut RV2_B: u8 = 0;
+static RV2_C: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+static PLAIN: &str = \"x\";
+static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| todo!());
+fn f(x: &'static str) {}
+";
+    assert_eq!(in_source(src), ["RV2_A", "RV2_D", "RV2_B", "RV2_C"]);
 }
 
 #[test]
