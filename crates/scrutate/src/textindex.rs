@@ -765,14 +765,14 @@ fn encode_postings(out: &mut Vec<u8>, list: &[(u32, u16)]) {
 /// The file at `path` flushed to disk, through a handle that may write: Windows flushes no other
 /// (FlushFileBuffers needs write access; Unix fsyncs a read-only one too).
 fn sync_file(path: &Path) -> std::io::Result<()> {
-    std::fs::OpenOptions::new().write(true).open(path)?.sync_all()
+    crate::index::sync_file(&std::fs::OpenOptions::new().write(true).open(path)?)
 }
 
 /// `bytes` as the file at `path`, on disk before this returns.
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut f = File::create(path)?;
     f.write_all(bytes)?;
-    f.sync_all()
+    crate::index::sync_file(&f)
 }
 
 /// Write one segment from documents in order (document `i` of the segment is `docs[i]`).
@@ -904,7 +904,7 @@ fn merge_segments(dir: &Path, segs: &[&Segment]) -> Result<()> {
         keys.push(k);
         ptr.push(written);
     }
-    w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+    crate::index::sync_file(&w.into_inner().map_err(|e| e.into_error())?)?;
     npy::save(&dir.join("keys.npy"), &keys, &[keys.len()])?;
     npy::save(&dir.join("ptr.npy"), &ptr, &[ptr.len()])?;
     let (hash, doc): (Vec<i64>, Vec<u32>) = segs

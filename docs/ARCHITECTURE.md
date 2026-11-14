@@ -416,7 +416,9 @@ NFC with final sigma folded.
     attributes only, as CPython's `os.stat` does (`index::Listed`, `index::change_time`);
     SHA-1 verification;
   - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory,
-    each file and the directory flushed to disk, and renamed before the database names them, so
+    each file and the directory flushed to disk (`index::sync_file`: on macOS a write barrier,
+    `F_BARRIERFSYNC`, which keeps that order without `sync_all`'s flush of the drive cache, about
+    3 ms a file; `sync_all` where the file system refuses it), and renamed before the database names them, so
     a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
     by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
   - one read snapshot per operation (`ops::run`, each language server request): its reads see

@@ -182,6 +182,9 @@ incompatible index by itself, and that is never breaking.
   schema is 15, so an older index is built again once; the keys make the index larger and a full
   index slower (measured by hand for the change, in its commit message: no script in `bench/`
   reruns it).
+- On macOS an index update flushes its files with a write barrier (`F_BARRIERFSYNC`) in place of
+  a flush of the drive cache: the update behind a read of one changed file takes about 30 ms in
+  place of about 150 ms, and the files still reach the disk before the database names them.
 - A read in the MCP server, the language server or the Python bindings waits up to 250 ms for
   the process's own index update, and past that answers from the last committed index and says
   which changed files the answer does not hold yet: a line in the tool's text and `pending` in

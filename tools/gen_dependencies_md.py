@@ -42,6 +42,7 @@ PURPOSE = {
     "half": "float16 arrays in the `.npy` reader",
     "scrutate-ignore": "parallel, ignore-aware directory walking, imported as `ignore` (a modified copy of `ignore` 0.4.34 in vendor/ignore; its changes are listed in its README)",
     "matrixmultiply": "sgemm for k-means (pure Rust)",
+    "libc": "`F_BARRIERFSYNC` for the index's files (macOS; already in the tree through other crates)",
     "memchr": "newline and NUL scans when one large file is searched in ranges",
     "memmap2": "memory-mapped segments",
     "notify": "filesystem events for `watch` and `serve --watch` (inotify, ReadDirectoryChangesW; only its event types on macOS, where `watch.rs` loads FSEvents; not built for wasi)",

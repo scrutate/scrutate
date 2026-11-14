@@ -511,7 +511,9 @@ on Unix).
     nul-terminated path, or `GetFileInformationByHandleEx` on a handle `std` opened for attributes
     only; and of a directory's entries, from `GetFileInformationByHandleEx` with
     `FileIdBothDirectoryInfo` into an 8-byte aligned buffer whose size it passes, each entry read
-    from a byte copy with bounds-checked slicing;
+    from a byte copy with bounds-checked slicing; and on macOS one `fcntl(F_BARRIERFSYNC)` per
+    file the index flushes (`sync_file`), on a descriptor the `File` it borrows keeps open, with
+    no third argument;
   - `policy.rs`: one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
     whose size it passes;
   - `instant.rs`: on Linux one `statfs` per search root, and per directory named `proc` or `sys`
@@ -570,7 +572,7 @@ on Unix).
   | `crates/scrutate/src/config.rs` | 1 |
   | `crates/scrutate/src/foldfind.rs` | 2 |
   | `crates/scrutate/src/hook.rs` | 2 |
-  | `crates/scrutate/src/index.rs` | 5 |
+  | `crates/scrutate/src/index.rs` | 6 |
   | `crates/scrutate/src/instant.rs` | 2 |
   | `crates/scrutate/src/lazy_bind.rs` | 7 |
   | `crates/scrutate/src/lex.rs` | 1 |

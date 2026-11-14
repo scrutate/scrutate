@@ -947,10 +947,40 @@ pub fn rename_settled(from: &Path, to: &Path) -> std::io::Result<()> {
 /// and NTFS journals its entries).
 pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
-    std::fs::File::open(dir)?.sync_all()?;
+    sync_file(&std::fs::File::open(dir)?)?;
     #[cfg(not(unix))]
     let _ = dir;
     Ok(())
+}
+
+/// `f` on disk before anything written after it, the order a commit naming it needs. On macOS
+/// that is a write barrier (`F_BARRIERFSYNC`), where `sync_all` flushes the drive's cache
+/// (`F_FULLFSYNC`, about 3 ms a file); a file system that refuses the barrier gets `sync_all`.
+pub fn sync_file(f: &std::fs::File) -> std::io::Result<()> {
+    sync_with(f, barrier, std::fs::File::sync_all)
+}
+
+fn sync_with(
+    f: &std::fs::File,
+    barrier: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+    full: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    barrier(f).or_else(|_| full(f))
+}
+
+#[cfg(target_os = "macos")]
+fn barrier(f: &std::fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: F_BARRIERFSYNC takes no third argument and only names the descriptor, which `f` keeps open.
+    match unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) } {
+        -1 => Err(std::io::Error::last_os_error()),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn barrier(_: &std::fs::File) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 /// `.gitignore` of the index directory, unless something is there already.
@@ -3551,6 +3581,50 @@ mod tests {
             assert_eq!(listed.stat(&e.path(), &md), super::Stat::of(&e.path(), &std::fs::symlink_metadata(e.path()).unwrap()), "{}", e.path().display());
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The index's files are flushed through `sync_file` alone: on macOS `sync_all` is
+    /// `F_FULLFSYNC`, a drive cache flush of about 3 ms that every one of an update's 50 or so
+    /// files paid. The user's own files (`rewrite`, `setup`) keep it.
+    #[test]
+    fn the_index_flushes_its_files_through_sync_file_alone() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let call = [".sync", "_all()"].concat();
+        let mut strays = Vec::new();
+        for e in std::fs::read_dir(&src).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if ["index.rs", "rewrite.rs", "setup.rs"].contains(&name.as_str()) || !name.ends_with(".rs") {
+                continue;
+            }
+            if std::fs::read_to_string(e.path()).unwrap().contains(&call) {
+                strays.push(name);
+            }
+        }
+        assert!(strays.is_empty(), "{strays:?} flush with sync_all: use index::sync_file");
+    }
+
+    /// A file system that refuses the barrier (an older or network one: ENOTSUP, EINVAL) gets a
+    /// full flush, and an error of that flush is the caller's.
+    #[test]
+    fn a_refused_barrier_falls_back_to_a_full_flush() {
+        let path = std::env::temp_dir().join(format!("scrutate_sync_file_{}", std::process::id()));
+        let f = std::fs::File::create(&path).unwrap();
+        let fulls = std::cell::Cell::new(0);
+        let full = |_: &std::fs::File| {
+            fulls.set(fulls.get() + 1);
+            Ok(())
+        };
+        assert!(super::sync_with(&f, |_| Ok(()), full).is_ok());
+        assert_eq!(fulls.get(), 0, "a barrier that holds is enough");
+        // ENOTSUP, and EINVAL (22 on every Unix)
+        for refused in [std::io::ErrorKind::Unsupported, std::io::Error::from_raw_os_error(22).kind()] {
+            assert!(super::sync_with(&f, |_| Err(refused.into()), full).is_ok());
+        }
+        assert_eq!(fulls.get(), 2);
+        let failed = super::sync_with(&f, |_| Err(std::io::ErrorKind::Unsupported.into()), |_| Err(std::io::Error::other("disk gone")));
+        assert!(failed.is_err_and(|e| e.to_string() == "disk gone"));
+        assert!(super::sync_file(&f).is_ok(), "this platform's own path");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

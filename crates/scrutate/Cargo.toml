@@ -155,6 +155,8 @@ notify = { version = "=9.0.0-rc.8", default-features = false }
 # event types, and watch.rs loads FSEvents itself while `watch` runs
 [target.'cfg(target_os = "macos")'.dependencies]
 notify = { version = "=9.0.0-rc.8", default-features = false, features = ["macos_kqueue"] }
+# F_BARRIERFSYNC for the index's files (index::sync_file); already in the tree through other crates
+libc = "0.2"
 
 # a write goes through directories opened one by one, never through a link (already in the
 # tree through tar)
