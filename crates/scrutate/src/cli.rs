@@ -1481,7 +1481,7 @@ pub fn run() -> Result<i32> {
                 let mut v = hits_json(&plain);
                 for (rec, (_, i)) in v.as_array_mut().into_iter().flatten().zip(&hits) {
                     crate::ops::mark_vendored(rec, &vendored[*i]);
-                    rec["root"] = serde_json::json!(roots[*i].1.to_string_lossy());
+                    rec["root"] = serde_json::json!(crate::paths::plain_path(&roots[*i].1).to_string_lossy());
                 }
                 println!("{}", serde_json::to_string_pretty(&crate::ops::wrapped(v, None))?);
             } else {
