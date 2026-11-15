@@ -1438,8 +1438,10 @@ after `--` too. Anything else exits 2 and runs nothing. A program is looked up
 in the directories of its `PATH` given as absolute paths and outside the current directory and its
 git work tree, never the current directory, a relative entry, a repository's own `bin` or
 scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
-`LD_AUDIT` and every `DYLD_*` variable removed. A line with `\r` or another control character
-but tab and line feed is left alone.
+`LD_AUDIT` and every `DYLD_*` variable removed. A `grep` gets `--exclude-dir=.scrutate` and an
+`rg` `--glob=!.scrutate` in front of its arguments: scrutate's own index directory, at any depth,
+is never searched (its caches hold the repository's text, see [Security](SECURITY.md)). A line
+with `\r` or another control character but tab and line feed is left alone.
 
 It answers the search as the program would. `rg` goes to `scrutate grep -N` with the same
 arguments (line numbers only when asked, as `rg` writing to a pipe), with no scrutate

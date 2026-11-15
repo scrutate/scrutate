@@ -565,6 +565,48 @@ fn an_indexed_key_s_lines_are_found_by_their_text_through_hook_run() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A recursive grep or rg through `hook run` leaves scrutate's own index directory out: its
+/// caches hold the repository's text in binary records, where a secret runs straight into the next
+/// field's bytes and no detector can tell where it ends.
+#[cfg(unix)]
+#[test]
+fn hook_run_searches_nothing_under_the_index_directory() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_index_dir_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("app.py"), "print('hello')\n").unwrap();
+    let secret = chars(&mut 62, &format!("{ALNUM}/+"), 40);
+    // a tsquery cache record: a capture's text, then the next capture's line as eight bytes, the
+    // first one a digit (line 52)
+    let mut record = b"\0\0\0assignment@\0\0\0aws_secret_access_key = ".to_vec();
+    record.extend_from_slice(secret.as_bytes());
+    record.extend_from_slice(b"4\0\0\0\0\0\0\0\x01\0\0\0a\n");
+    for dir in [".scrutate/tsquery", "sub/.scrutate/tsquery"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+        fs::write(root.join(dir).join("c.bin"), &record).unwrap();
+    }
+    let home = root.with_extension("home");
+    let mut asks = vec![vec!["grep", "-a", "-rHn", "-e", ".", "."], vec!["grep", "-a", "-R", "aws", "."], vec!["grep", "-a", "-r", "aws", "sub"]];
+    if rg::have_rg() {
+        asks.push(vec!["rg", "-a", "-uuu", "-n", "aws"]);
+        asks.push(vec!["rg", "-a", "--no-ignore", "--hidden", "aws", "sub"]);
+    }
+    for ask in asks {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(&ask)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(!text.contains(&secret), "hook run {ask:?}: the cache's secret came back:\n{text}");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// A line that is not UTF-8 (a stray byte, or a long line's piece cut inside a character) has its
 /// secrets redacted by `hook run` too.
 #[cfg(unix)]

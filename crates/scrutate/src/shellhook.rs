@@ -678,6 +678,17 @@ fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
         c
     } else {
         let mut c = Command::new(on_path(&argv[0])?);
+        // scrutate's own index holds the repository's text in binary records, where a secret runs
+        // into the next field's bytes and no detector sees where it ends: a search leaves it out
+        match argv[0].as_str() {
+            "grep" => {
+                c.arg(format!("--exclude-dir={}", crate::files::INDEX_DIR));
+            }
+            "rg" => {
+                c.arg(format!("--glob=!{}", crate::files::INDEX_DIR));
+            }
+            _ => {}
+        }
         c.args(&argv[1..]);
         c
     };
