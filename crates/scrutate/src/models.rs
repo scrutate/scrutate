@@ -176,11 +176,8 @@ fn fits(names: &[String]) -> std::result::Result<(), String> {
 
 /// The signature of a model file: a hash of its bytes.
 pub fn file_signature(bytes: &[u8]) -> String {
-    use blake2::digest::{Update, VariableOutput};
-    let mut h = blake2::Blake2bVar::new(16).expect("blake2b-128");
-    h.update(bytes);
-    let mut out = [0u8; 16];
-    h.finalize_variable(&mut out).expect("blake2b finalize");
+    use blake2::Digest;
+    let out = blake2::Blake2b::<blake2::digest::consts::U16>::digest(bytes);
     format!("blake2b:{}", out.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 

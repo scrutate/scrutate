@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use blake2::digest::{Update, VariableOutput};
-use blake2::Blake2bVar;
+use blake2::digest::consts::U8;
+use blake2::{Blake2b, Digest};
 use rayon::prelude::*;
 
 use crate::npy::{self, Npy};
@@ -33,10 +33,8 @@ pub const IVF_ITERS: usize = 10;
 
 /// Stable 63-bit key of a token (no vocabulary file: segments merge without remapping).
 pub fn tok_key(tok: &str) -> i64 {
-    let mut h = Blake2bVar::new(8).expect("blake2b-64");
-    h.update(tok.as_bytes());
     let mut out = [0u8; 8];
-    h.finalize_variable(&mut out).expect("blake2b finalize");
+    out.copy_from_slice(&Blake2b::<U8>::digest(tok.as_bytes()));
     (u64::from_le_bytes(out) >> 1) as i64
 }
 

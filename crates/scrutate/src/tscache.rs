@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{bail, Result};
-use blake2::digest::{Update, VariableOutput};
-use blake2::Blake2bVar;
+use blake2::digest::consts::U16;
+use blake2::{Blake2b, Digest};
 
 use crate::intel::Capture;
 
@@ -25,13 +25,13 @@ const MAGIC: &[u8] = b"scrutate-tsquery-cache 1\n";
 pub type Key = [u8; 16];
 
 pub fn hash(parts: &[&[u8]]) -> Key {
-    let mut h = Blake2bVar::new(16).expect("blake2b-128");
+    let mut h = Blake2b::<U16>::new();
     for p in parts {
-        h.update(&(p.len() as u64).to_le_bytes());
+        h.update((p.len() as u64).to_le_bytes());
         h.update(p);
     }
     let mut out = [0u8; 16];
-    h.finalize_variable(&mut out).expect("blake2b finalize");
+    out.copy_from_slice(&h.finalize());
     out
 }
 

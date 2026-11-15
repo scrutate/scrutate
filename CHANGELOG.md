@@ -190,6 +190,8 @@ incompatible index by itself, and that is never breaking.
   (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
   dropped the `\r`; `--json` and MCP text still carry no line end
   ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- blake2 0.11 and sha1 0.11 (digest 0.11): token keys, model signatures and file hashes are the
+  same bytes as before, so an existing index stays valid.
 - A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter
   grammars with `-fjump-tables`, which GCC 15 drops at the `-O0` their `parser.c` asks for:
   parsing was 1.8 times slower (Linux's C sources, 22 s against 12 s); a build outside the

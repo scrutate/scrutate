@@ -804,7 +804,12 @@ fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()
 
 /// The hash of a file's bytes the index records for it.
 pub fn content_hash(raw: &[u8]) -> String {
-    format!("{:x}", Sha1::digest(raw))
+    hex(&Sha1::digest(raw))
+}
+
+/// `bytes` as lowercase hex, two digits each.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Of the files the index of `root` holds, the stat and content hash it recorded, by path; empty
@@ -870,7 +875,7 @@ fn check_mark(db_path: &Path, ver: &str) -> String {
     };
     // the SQL a trusted open skips: an in-place layout change (as `add_art`'s) adds its SQL here
     let schema = Sha1::digest([SCHEMA, ART_INDEX, ART_COLUMN].concat());
-    format!("{} | {} | {ver} | schema {SCHEMA_VERSION} {:x}\n", stat(db_path), stat(&wal), schema)
+    format!("{} | {} | {ver} | schema {SCHEMA_VERSION} {}\n", stat(db_path), stat(&wal), hex(&schema))
 }
 
 /// Record `mark` as the state of a passing check (a new file, renamed into place) -> whether it is.
@@ -3449,7 +3454,7 @@ impl Index {
             for (rel, hash) in rows {
                 match std::fs::read(self.root.join(&rel)) {
                     Ok(raw) => {
-                        if format!("{:x}", Sha1::digest(&raw)) != hash {
+                        if content_hash(&raw) != hash {
                             r.files_changed += 1;
                         }
                     }
@@ -3537,6 +3542,12 @@ fn past(prefix: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// An index records each file's hash in this form: the same hex under every sha1 release.
+    #[test]
+    fn a_content_hash_is_the_sha1_of_the_bytes_in_lowercase_hex() {
+        assert_eq!(super::content_hash(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+    }
+
     fn checked_repo(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("scrutate_ix_{name}_{}", std::process::id()));
         crate::claim_test_tree(&root);
@@ -3660,7 +3671,7 @@ mod tests {
     fn the_schema_sql_and_its_version_change_together() {
         // an index of another shape under the same version is opened as current, and its writes
         // fail: a change of the SQL raises SCHEMA_VERSION and sets this hash
-        let hash = format!("{:x}", <sha1::Sha1 as sha1::Digest>::digest([super::SCHEMA, super::ART_INDEX, super::ART_COLUMN].concat()));
+        let hash = super::hex(&<sha1::Sha1 as sha1::Digest>::digest([super::SCHEMA, super::ART_INDEX, super::ART_COLUMN].concat()));
         assert_eq!(
             (super::SCHEMA_VERSION, hash.as_str()),
             (17, "709ebea109ea8f1c611ac2deded8c478cd57b6ff"),

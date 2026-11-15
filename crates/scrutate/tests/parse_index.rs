@@ -188,13 +188,10 @@ fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
 
 #[test]
 fn the_model_signature_is_a_hash_of_the_model_file() {
-    use blake2::digest::{Update, VariableOutput};
+    use blake2::Digest;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/semantic.npz");
     let bytes = std::fs::read(&path).unwrap();
-    let mut h = blake2::Blake2bVar::new(16).unwrap();
-    h.update(&bytes);
-    let mut out = [0u8; 16];
-    h.finalize_variable(&mut out).unwrap();
+    let out = blake2::Blake2b::<blake2::digest::consts::U16>::digest(&bytes);
     // the signature of a model file: "blake2b:" and the 16-byte BLAKE2b of its bytes in hex
     let want = format!("blake2b:{}", out.iter().map(|b| format!("{b:02x}")).collect::<String>());
     assert_eq!(scrutate::models::BUNDLED_SIGNATURE, want);
