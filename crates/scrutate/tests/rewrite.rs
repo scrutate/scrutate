@@ -234,6 +234,25 @@ fn a_link_out_of_the_root_is_never_written_and_permissions_are_kept() {
     assert_eq!(fs::metadata(t.root.join("a.py")).unwrap().permissions().mode() & 0o777, 0o640);
 }
 
+/// A link named on the command line is left alone, whether it points to a file of the root or out
+/// of it: `--write` changes only the files it names.
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_file_inside_the_root_is_not_a_regular_file_and_is_left_alone() {
+    let t = Tree::new("link_inside");
+    let outside = Tree::new("link_inside_outside");
+    t.write("a.py", "print(x)\n");
+    outside.write("o.py", "print(secret)\n");
+    std::os::unix::fs::symlink(t.root.join("a.py"), t.root.join("l.py")).unwrap();
+    std::os::unix::fs::symlink(outside.root.join("o.py"), t.root.join("o.py")).unwrap();
+    let (code, out, err) = t.run(&["tsquery", "python", PRINT, "l.py", "o.py", "--rewrite", "log$args", "--write"]);
+    assert_eq!((code, out.as_str()), (2, ""), "{err}");
+    assert!(err.contains("l.py: not a regular file, left alone"), "{err}");
+    assert!(err.contains("o.py: outside the root, left alone"), "{err}");
+    assert_eq!(t.read("a.py"), "print(x)\n");
+    assert_eq!(outside.read("o.py"), "print(secret)\n");
+}
+
 /// A directory swapped for a link to somewhere outside the root between the read and the write
 /// leaves the file alone: the write goes through the directories as they were opened, never
 /// through a link, and leaves nothing outside.

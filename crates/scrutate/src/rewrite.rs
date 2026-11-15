@@ -119,6 +119,10 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 let Some(inside) = std::fs::canonicalize(&f.path).ok().and_then(|p| p.strip_prefix(&top).ok().map(Path::to_path_buf)) else {
                     return alone("outside the root", skipped);
                 };
+                // the name itself, before canonicalize followed a link to the file it names
+                if !std::fs::symlink_metadata(&f.path).is_ok_and(|m| m.file_type().is_file()) {
+                    return alone("not a regular file", skipped);
+                }
                 let (parent, name) = split(&inside);
                 let Ok(at) = dir.below(parent) else { return alone("could not be read", skipped) };
                 if !at.regular(name).is_ok_and(|p| p.is_some()) {
