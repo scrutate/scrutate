@@ -2385,7 +2385,15 @@ fn comment_top(lines: &[&str], floor: usize, mut at: usize, m: &Marks) -> usize 
 
 /// Keyword-introduced definitions for languages without a grammar (or whose grammar found nothing).
 pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
-    line_chunks(source, &heuristic_marks(path), heuristic_def, clean_comment)
+    line_chunks(source, &heuristic_marks(path), heuristic_def, starts_item, clean_comment)
+}
+
+/// Whether `line` opens an item by its first word, named or not (`let () =`, `def _`): the keyword
+/// block above it ends there. `var`, `val`, `const` and `lambda` open locals inside a body too, as
+/// Pascal's `var` section at its procedure's own indent does.
+fn starts_item(line: &str) -> bool {
+    let word = line.trim_start().split(|c: char| !crate::ident::is_continue(c)).next().unwrap_or("");
+    (FUNC_WORDS.contains(&word) && !matches!(word, "var" | "val" | "const" | "lambda")) || TYPE_WORDS.iter().any(|(w, _)| *w == word)
 }
 
 /// The definitions of a custom language: lines its patterns match, outside its comments, with
@@ -2404,12 +2412,20 @@ pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
         };
         raw.split('\n').map(strip).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
     };
-    line_chunks(source, &marks, |l| if is_marked(l, &marks) { None } else { lang.definition(l) }, doc)
+    line_chunks(source, &marks, |l| if is_marked(l, &marks) { None } else { lang.definition(l) }, |_| false, doc)
 }
 
 /// Chunks of the lines `def_of` names a definition: each block ends before the next definition
-/// at the same or a shallower indentation, and `doc_of` cleans the comment lines above it.
-fn line_chunks(source: &str, marks: &Marks, def_of: impl Fn(&str) -> Option<(&'static str, String)>, doc_of: impl Fn(&str) -> String) -> Vec<Chunk> {
+/// at the same or a shallower indentation, before a code line shallower than it, and before a
+/// line at its indentation or shallower that `starts_item` (another item, named or not); `doc_of`
+/// cleans the comment lines above it.
+fn line_chunks(
+    source: &str,
+    marks: &Marks,
+    def_of: impl Fn(&str) -> Option<(&'static str, String)>,
+    starts_item: impl Fn(&str) -> bool,
+    doc_of: impl Fn(&str) -> String,
+) -> Vec<Chunk> {
     let lines = split_lines(source);
     let mut defs: Vec<(usize, &'static str, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
@@ -2423,8 +2439,15 @@ fn line_chunks(source: &str, marks: &Marks, def_of: impl Fn(&str) -> Option<(&'s
     let indents: Vec<usize> = defs.iter().map(|(i, ..)| indent_of(lines[*i])).collect();
     let mut out = Vec::new();
     for (di, (start, kind, name)) in defs.iter().enumerate() {
-        // the block ends before the next definition at the same or a shallower indentation
-        let end = (di + 1..defs.len()).find(|&j| indents[j] <= indents[di]).map_or(lines.len(), |j| defs[j].0);
+        // the block ends before the next definition at the same or a shallower indentation, or
+        // before the top-level code or item that comes first
+        let next = (di + 1..defs.len()).find(|&j| indents[j] <= indents[di]).map_or(lines.len(), |j| defs[j].0);
+        let end = (start + 1..next)
+            .find(|&i| {
+                let (l, d) = (lines[i], indent_of(lines[i]));
+                !l.trim().is_empty() && !is_marked(l, marks) && (d < indents[di] || d == indents[di] && starts_item(l))
+            })
+            .unwrap_or(next);
         let cap = if CONTAINERS.contains(kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
         // trailing blank/comment lines belong to the next definition
         let mut e = end;
@@ -2725,6 +2748,24 @@ mod tests {
         assert!(parse_source("notes.unknownext", plain).iter().all(|c| c.kind == "module"));
     }
 
+    /// A keyword block ends before a shallower line, and before a line at its own indent that opens
+    /// another item without naming one (OCaml's `let () =`): top-level code after the last
+    /// definition is not inside it, and a body at the definition's own indent still is.
+    #[test]
+    fn a_keyword_block_ends_where_the_top_level_code_after_it_starts() {
+        let span = |path: &str, src: &str, name: &str| {
+            let ch = heuristic_chunks(path, src);
+            let c = ch.iter().find(|c| c.name == name).unwrap_or_else(|| panic!("{name} in {path}"));
+            (c.start, c.end)
+        };
+        assert_eq!(span("a.ml", "let step' x = x + 1\nlet () = print_int (step' 1)\n", "step'"), (1, 1));
+        let f90 =
+            "module m\ncontains\n  subroutine lonely()\n    print *, 1\n  end subroutine\nend module\n\nprogram p\n  use m\n  call lonely()\nend program\n";
+        assert_eq!(span("m.f90", f90, "lonely"), (3, 5));
+        let pas = "procedure Foo;\nvar\n  x: integer;\nbegin\n  x := 1;\nend;\n";
+        assert_eq!(span("a.pas", pas, "Foo"), (1, 6));
+    }
+
     /// The keyword chunker (OCaml and F# have no grammar in the default build): `rec`, `mutable`,
     /// `inline` and `private` before a name modify it, and a function may be named after a
     /// modifier word when nothing follows that could be the name (`let data x`, `proc inner()`).
@@ -2732,7 +2773,9 @@ mod tests {
     fn heuristics_skip_modifiers_before_a_name_and_keep_a_name_that_is_a_modifier_word() {
         let src = "let rec fact n =\n  if n = 0 then 1 else n * fact (n - 1)\n\nlet inline square x = x * x\n\nlet private helper y =\n  y + 1\n\nlet mutable count = 0\n\nlet f x =\n  x\n\nlet data x = x\n\nproc inner() =\n  discard\n";
         let ch = parse_source("f.unknownext", src);
-        let names: Vec<(&str, &str, i64)> = ch.iter().filter(|c| c.kind != "module").map(|c| (c.kind, c.name.as_str(), c.start)).collect();
+        // `let mutable count = 0` binds a value: top-level code, a window of its own
+        let names: Vec<(&str, &str, i64)> =
+            ch.iter().filter(|c| c.kind != "module" && c.kind != "window").map(|c| (c.kind, c.name.as_str(), c.start)).collect();
         assert_eq!(
             names,
             vec![
@@ -2745,12 +2788,16 @@ mod tests {
             ]
         );
         assert_eq!(ch.iter().find(|c| c.name == "f").map(|c| c.end), Some(12));
+        let windows = |ch: &[Chunk]| ch.iter().filter(|c| c.kind == "window").map(|c| (c.start, c.end)).collect::<Vec<_>>();
+        assert_eq!(windows(&ch), vec![(9, 9)], "`let mutable count = 0` is a window of its own");
         // after `let` only OCaml's and F#'s own words modify: `data` with two parameters is a
         // name, and an operator after `inline` is no definition the tier can name
         let ml = "let data x y = x + y\n\nlet inline (+.) a b = a + b\n\nlet rec fact n = n\n\nlet private helper z = z\n";
         let ch = parse_source("g.unknownext", ml);
-        let names: Vec<(&str, i64)> = ch.iter().filter(|c| c.kind != "module").map(|c| (c.name.as_str(), c.start)).collect();
+        // `let inline (+.)` opens an item it cannot name: a window of its own, not `data`'s lines
+        let names: Vec<(&str, i64)> = ch.iter().filter(|c| c.kind != "module" && c.kind != "window").map(|c| (c.name.as_str(), c.start)).collect();
         assert_eq!(names, vec![("data", 1), ("fact", 5), ("helper", 7)]);
+        assert_eq!(windows(&ch), vec![(3, 3)], "`let inline (+.)` is a window of its own");
     }
 
     #[test]
