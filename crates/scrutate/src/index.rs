@@ -2062,7 +2062,9 @@ impl Index {
                 }
                 Ok(()) => {}
             }
-            self.log_left = !self.truncate_log(Duration::from_secs(1));
+            // as at the start: a read that must not wait tries once, and the next update cuts
+            // what a reader on an older snapshot kept
+            self.log_left = !self.truncate_log(if wait { Duration::from_secs(1) } else { Duration::ZERO });
             if held && !self.log_left {
                 record_pass(&self.dir, "quick_check", &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
             }
@@ -3678,6 +3680,32 @@ mod tests {
         assert!(t.elapsed() < std::time::Duration::from_millis(300), "waited {:?}", t.elapsed());
         assert!(ix.log_left, "the log is cut by a later update");
         other.execute_batch("ROLLBACK").unwrap();
+        drop((ix, other));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    /// A read that saves an edit while another process reads an older snapshot does not wait for
+    /// that snapshot to cut the log; a later update cuts it.
+    #[test]
+    fn a_read_that_saves_an_edit_does_not_wait_on_another_reader_to_cut_the_log() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_cut_reader_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let other = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+        other.execute_batch("BEGIN").unwrap();
+        let _: i64 = other.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        let t = std::time::Instant::now();
+        let st = ix.update_paths(&["a.py".into()], false).unwrap();
+        let took = t.elapsed();
+        assert_eq!(st.files_changed, 1, "the edit is saved");
+        assert!(took < std::time::Duration::from_millis(300), "waited {took:?}");
+        assert!(ix.log_left, "the reader kept the log from being cut");
+        other.execute_batch("COMMIT").unwrap();
+        ix.update(false).unwrap();
+        assert!(!ix.log_left, "a later update cuts the log");
         drop((ix, other));
         let _ = std::fs::remove_dir_all(&root);
     }
