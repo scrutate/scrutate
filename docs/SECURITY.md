@@ -513,12 +513,12 @@ lines too; no byte of any secret comes back, each kind is marked, and with `SCRU
 every one does. The CLI's `--json` stays one JSON document with it on.
 
 Marked although no secret: the body of a public key (an SSH `known_hosts` line, `PUBLIC KEY`
-armour), read as key material; a constructor's argument under a secret's name
-(`secret_file = PathBuf::from("config/...")`, `TOKEN_SCOPES = Set.of(...)`, `token_msg =
-Ok(...)`), which costs readability only. Not detected: token families outside the table (any
+armour), read as key material, which costs readability only. Not detected: token families outside the table (any
 vendor's format scrutate has no rule for).
 
-Not covered, in assignments: two on one line; `=` inside a type's generics; a type over 80
+Not covered, in assignments: a quoted value that reads as a name (a file path with an
+extension, or capitalized words run together with up to four digits after them, so a password
+such as `WinterIsComing2024` too); two on one line; `=` inside a type's generics; a type over 80
 characters; a value built in a closure (`Lazy::new(|| ...)`) or a Kotlin `by lazy`; an f-string;
 a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borrowed`). Not
 covered elsewhere: a private key's short last line in a `search_code` or definition answer that

@@ -307,7 +307,12 @@ fn generic(secret: &str, whole: &str, before: &str) -> bool {
         && real_value(secret, whole, before)
         && !NUMBER.is_match(secret)
         && !IDENTIFIER.is_match(secret)
+        && !NOT_A_PASSWORD.is_match(secret)
 }
+
+/// A quoted value that names a thing: a file path with an extension (`config/secret_settings.toml`)
+/// or words run together in camel case, a year or a count after them (`TokenRefreshed2024`).
+static NOT_A_PASSWORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:[\w.-]*[/\\][\w./\\-]*\.[A-Za-z0-9]{1,5}|(?:[A-Z][a-z]+){2,}[0-9]{0,4})$").unwrap());
 
 /// A name in one case joined by `_`, `-` or `.` (`NL80211_AUTHTYPE_SAE`, `keypad_row0`,
 /// `x2apic_state`): code and device trees name things so; a random secret mixes cases.
@@ -387,7 +392,12 @@ fn env_value(secret: &str, whole: &str, before: &str) -> bool {
 
 /// A quoted secret: no placeholder, URL, number or one-case name, and a digit or a symbol in it.
 fn quoted(secret: &str, whole: &str, before: &str) -> bool {
-    secret.len() <= 150 && env_value(secret, whole, before) && !secret.contains("://") && !NUMBER.is_match(secret) && !IDENTIFIER.is_match(secret)
+    secret.len() <= 150
+        && !NOT_A_PASSWORD.is_match(secret)
+        && env_value(secret, whole, before)
+        && !secret.contains("://")
+        && !NUMBER.is_match(secret)
+        && !IDENTIFIER.is_match(secret)
 }
 
 /// Base64 that is no checksum a lockfile writes (`h1:` in go.sum, `sha512-` in package-lock),
@@ -1059,6 +1069,11 @@ mod tests {
             "Authorization: Basic dXNlcm5hbWU6cGFzc3dvcmQ=",
             "Authorization: Basic dXNlcjpwYXNzd29yZA==",
             "Authorization: Basic <base64 of username:password>",
+            // quoted values that name a thing
+            "secret_file = PathBuf::from(\"config/secret_settings.toml\")",
+            "token_msg = Ok(\"TokenRefreshed2024\")",
+            "secret_manager_client_name = \"SecretsManagerClient2024\"",
+            "TOKEN_SCOPES = Set.of(\"repo:read\", \"repo:write\")",
             // a typed parameter list: the annotation stops at its parameter's comma
             "    def __init__(self, token: str, repo: Optional[str] = \"AdminUser2024\"):",
             "fun connect(token: String, user: String = \"AdminUser2024\") {",
@@ -1401,7 +1416,7 @@ mod tests {
         let t0 = std::time::Instant::now();
         LazyLock::force(&RULES);
         LazyLock::force(&PREFILTER);
-        for re in [&NOT_SECRET_NAMES, &IDENTIFIER, &UUID, &NUMBER, &HASH_PREFIX, &PEM_BEGIN, &PEM_END, &BASE64_RUN, &LINE_PREFIX] {
+        for re in [&NOT_SECRET_NAMES, &IDENTIFIER, &UUID, &NOT_A_PASSWORD, &NUMBER, &HASH_PREFIX, &PEM_BEGIN, &PEM_END, &BASE64_RUN, &LINE_PREFIX] {
             LazyLock::force(re);
         }
         println!("building the detectors, once a process: {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
