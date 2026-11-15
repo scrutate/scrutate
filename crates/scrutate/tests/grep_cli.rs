@@ -1022,11 +1022,28 @@ fn a_crlf_line_keeps_its_carriage_return_as_ripgrep_prints_it() {
 }
 
 #[test]
+fn a_nul_on_a_context_line_of_a_named_file_ends_the_output_as_ripgrep_does() {
+    // ripgrep 15.2.0 checks context lines for a NUL too: where it maps the file the output ends
+    // before the context line that holds it; on macOS at the read that meets it
+    let maps = cfg!(any(unix, windows)) && !cfg!(target_os = "macos");
+    let d = Dir::new("ctxnul");
+    d.write("c.txt", &[&b"y x\n".repeat(20000)[..], b"\0\n", &b"y x\n".repeat(20000)[..]].concat());
+    let shown = if maps { 20000 } else { 16384 };
+    let want: Vec<String> =
+        (1..=shown).map(|i| format!("{i}:y x")).chain(["binary file matches (found \"\\0\" byte around offset 80000)".to_string()]).collect();
+    for context in ["-C1", "-A1", "-B1"] {
+        let out = d.run(&["grep", "-n", context, "x", "c.txt"]).1;
+        assert_eq!(out.lines().collect::<Vec<_>>(), want.iter().map(String::as_str).collect::<Vec<_>>(), "{context}");
+    }
+}
+
+#[test]
 fn a_named_file_with_a_nul_byte_is_searched_as_ripgrep_searches_it() {
     // ripgrep searches a named file through a memory map where grep-searcher maps one (not on
     // macOS): one slice, whose first 64 KiB are checked for a NUL before any line prints, and past
-    // that the first matched line holding a NUL stops the output; a NUL ends no line. On macOS it
-    // reads the file, which turns a NUL into a line break and stops at the read that meets it
+    // that the first matched or context line holding a NUL stops the output; a NUL ends no line.
+    // On macOS it reads the file, which turns a NUL into a line break and stops at the read that
+    // meets it
     let maps = cfg!(any(unix, windows)) && !cfg!(target_os = "macos");
     let d = Dir::new("namednul");
     d.write("f1", b"x\r\nbar\r\nfoo x\r\nT\0bin x\n");

@@ -1725,6 +1725,10 @@ impl<'a> Sink for Collector<'a> {
     }
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
+        if self.convert && self.binary_at.is_some() {
+            // as ripgrep: a context line past a NUL byte ends the output, `finish` writes the note
+            return Ok(false);
+        }
         let bytes = ctx.bytes();
         let line = self.shown(bytes);
         if self.plain.is_some() {
