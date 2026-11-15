@@ -1072,8 +1072,8 @@ tree was walked). Each update that changed something prints one stderr line. A f
 update stops the watch; a later failure is reported and the watch goes on. Ctrl-C stops it (exit 130):
 a code index update in progress stops at its next batch of files, or block of rows while a large
 segment's vectors are clustered, and leaves the index as it was; a text index update in progress
-ends first. When `PATH` is removed or moved away, `watch` stops with an
-error (exit 2). When another directory takes its place (moved or copied there, as `mv repo.new repo`
+ends first. When `PATH` is removed or moved away and nothing takes its place within 2 s, `watch`
+stops with an error (exit 2). When another directory takes its place (moved or copied there, as `mv repo.new repo`
 does, or removed and made again), stderr says `root replaced; watching the new tree`, and `watch`
 opens that tree's index (building it when it has none) and watches it; `serve --watch` and the
 watch of the MCP server, the language server and the Python bindings do the same. Other processes can read and update the same index meanwhile; the indexes' own

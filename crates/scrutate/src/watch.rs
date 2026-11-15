@@ -834,9 +834,17 @@ fn root_id(root: &Path) -> RootId {
     Some((dev, ino, m.created().ok()))
 }
 
+/// How long the root's path may name nothing before the watch says it is gone: a swap by two
+/// renames (`mv repo repo.old; mv repo.new repo`) leaves it empty between them.
+const ROOT_GONE_AFTER: Duration = Duration::from_secs(2);
+
 fn root_present(root: &Path, id: &RootId) -> Result<()> {
-    if !root.is_dir() {
-        anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(root).display());
+    let t0 = Instant::now();
+    while !root.is_dir() {
+        if t0.elapsed() >= ROOT_GONE_AFTER {
+            anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(root).display());
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
     if id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id) {
         return Err(RootReplaced.into());
@@ -1572,6 +1580,31 @@ mod tests {
         std::fs::remove_file(root.join(".scrutate/text/manifest.json")).unwrap();
         assert!(w.due(&root), "the text index went away");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `mv repo repo.old; mv repo.new repo` leaves the path empty between the two renames: the
+    /// watch waits for what takes the path, and a root that stays gone is gone.
+    #[test]
+    fn a_root_swapped_by_two_renames_is_replaced_not_gone() {
+        let root = tree("swapgap");
+        let id = root_id(&root);
+        let (old, new) = (root.with_extension("old"), root.with_extension("new"));
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::rename(&root, &old).unwrap();
+        let swap = {
+            let (new, root) = (new.clone(), root.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::rename(new, root).unwrap();
+            })
+        };
+        let r = root_present(&root, &id);
+        swap.join().unwrap();
+        assert!(r.as_ref().is_err_and(|e| e.is::<RootReplaced>()), "{r:?}");
+        std::fs::remove_dir_all(&root).unwrap();
+        let r = root_present(&root, &id);
+        assert!(r.is_err_and(|e| e.to_string().contains("is gone")));
+        std::fs::remove_dir_all(&old).unwrap();
     }
 
     #[test]

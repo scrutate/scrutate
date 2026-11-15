@@ -185,7 +185,8 @@ fn watch_stops_with_an_error_when_its_root_is_removed() {
         assert!(t0.elapsed() < Duration::from_secs(20), "watch keeps running after its root was removed");
         std::thread::sleep(Duration::from_millis(100));
     };
-    let err: Vec<String> = rx.try_iter().collect();
+    // every line the process wrote: the reader thread ends at the end of its stderr
+    let err: Vec<String> = rx.iter().collect();
     assert_eq!(status.code(), Some(2), "{err:?}");
     assert!(err.iter().any(|l| l.contains("is gone")), "{err:?}");
 }
