@@ -1,7 +1,7 @@
 # Security checks for every push to main, every pull request and once a week, so a new advisory
-# or a new zizmor audit shows up without a code change: cargo deny against deny.toml, zizmor on
-# the workflows and the action, the count of `unsafe` against docs/SECURITY.md, and gitleaks over
-# the tree against .gitleaks.toml.
+# or a new zizmor audit shows up without a code change: cargo deny against deny.toml, zizmor and
+# actionlint on the workflows (zizmor on the action too), the count of `unsafe` against
+# docs/SECURITY.md, and gitleaks over the tree against .gitleaks.toml.
 name: security
 on:
   push:
@@ -54,6 +54,23 @@ jobs:
           persona: pedantic
           version: 1.32.0
           advanced-security: false
+  actionlint:
+    name: actionlint on the workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # the release archive, checked against the SHA-256 actionlint publishes for it; it runs the
+      # image's shellcheck on every run: script
+      - run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+      - run: '"$RUNNER_TEMP/actionlint"'
   unsafe:
     name: unsafe count against docs/SECURITY.md
     runs-on: ubuntu-latest

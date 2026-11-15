@@ -211,6 +211,14 @@
   "step": "\"$RUNNER_TEMP/gitleaks\" dir . --no-banner --redact --config .gitleaks.toml",
   "by": "gate: secret-scan"
  },
+ "security.yml:actionlint:c3e03217e0": {
+  "step": "curl -fsSL -o \"$RUNNER_TEMP/actionlint.tar.gz\" https://github.com/rhysd/actionli",
+  "by": "setup: the box's ci_setup.sh puts actionlint 1.7.12 and shellcheck in SCRUTATE_GATE_TOOLS"
+ },
+ "security.yml:actionlint:87cd63b287": {
+  "step": "\"$RUNNER_TEMP/actionlint\"",
+  "by": "gate: actionlint"
+ },
  "benchmarks.yml:scope:6dcdce5b13": {
   "step": "if [ \"$MODE\" != compare ]; then",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"

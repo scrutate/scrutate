@@ -10,7 +10,7 @@
 # One PASS/FAIL line per step; exit 0 only if every step run passed. The box is set up by its
 # ci_setup.sh: the toolchains, wasi-sdk in ~/wasi-sdk, and in SCRUTATE_GATE_TOOLS (default
 # /srv/tools) and SCRUTATE_GATE_VENV (default /srv/venv) the pinned rg, cargo-deny, gitleaks,
-# zizmor, ruff and numpy.
+# actionlint (shellcheck on PATH too, as on the runner), zizmor, ruff and numpy.
 set -u
 . "$HOME/.cargo/env"
 tools=${SCRUTATE_GATE_TOOLS:-/srv/tools} venv=${SCRUTATE_GATE_VENV:-/srv/venv} results=${SCRUTATE_GATE_RESULTS:-/srv/gate-results}
@@ -121,10 +121,11 @@ pre_commit() {
 if [ "$mode" != "--bench" ]; then
   # every run step of the three workflows is in tools/gate_map.json, covered here or CI-only
   step gate-parity parity
-  # security.yml's checks: the unsafe inventory in docs/SECURITY.md, cargo deny, zizmor
+  # security.yml's checks: the unsafe inventory in docs/SECURITY.md, cargo deny, zizmor, actionlint
   [ -f tools/unsafe_count.py ] && step unsafe-count python3 tools/unsafe_count.py
   [ -f deny.toml ] && step cargo-deny "$tools/cargo-deny" --locked check
   step zizmor "$venv/bin/zizmor" --persona pedantic --offline .github
+  step actionlint "$tools/actionlint"
   step doc-assets bash -c 'python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check'
   step licences licences
   step ruff "$venv/bin/ruff" check --select F .
