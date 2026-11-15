@@ -203,6 +203,10 @@
   "step": "curl -fsSL -o \"$RUNNER_TEMP/gitleaks.tar.gz\" https://github.com/gitleaks/gitleak",
   "by": "setup: the box's ci_setup.sh puts gitleaks 8.30.1 in SCRUTATE_GATE_TOOLS"
  },
+ "security.yml:gitleaks:3fc60456d2": {
+  "step": "python3 tools/gitleaks_config.py",
+  "by": "gate: secret-scan"
+ },
  "security.yml:gitleaks:89531704e7": {
   "step": "\"$RUNNER_TEMP/gitleaks\" dir . --no-banner --redact --config .gitleaks.toml",
   "by": "gate: secret-scan"

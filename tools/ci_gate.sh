@@ -76,9 +76,10 @@ bindings() {
   "$target/pyvenv/bin/python" -c "import scrutate; print(scrutate.__version__)" || return 1
   (cd python && SCRUTATE_BIN="$b" "$target/pyvenv/bin/python" -m pytest -q tests)
 }
-# gitleaks over the tree, then over a copy with a token planted in a file whose lines it once let
-# through, which it must find: no allow list can exempt a file again unseen
+# the config exempts no file (no allow list with paths, here or extended); gitleaks over the tree;
+# then over a copy with a token planted in a file whose lines it once let through, which it must find
 secret_scan() {
+  python3 tools/gitleaks_config.py || return 1
   "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml || return 1
   local copy; copy=$(mktemp -d)
   git archive HEAD | tar -x -C "$copy" || return 1
