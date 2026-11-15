@@ -209,7 +209,7 @@ impl Review {
 /// The lines joined, then `last`, which is always kept: cut before the line that would pass
 /// `MAX_COMMENT`, with the note that says so.
 fn cap(lines: Vec<String>, last: &[String], base: &str) -> String {
-    let note = format!("\n_Cut at {MAX_COMMENT} characters: `scrutate review --base {}` prints the whole report._\n", shown(base));
+    let note = format!("\n_Cut at {MAX_COMMENT} characters: {} prints the whole report._\n", code(&format!("scrutate review --base {base}")));
     let tail: String = last.iter().map(|l| format!("{l}\n")).collect();
     let mut out = String::new();
     for l in &lines {

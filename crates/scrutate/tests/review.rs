@@ -497,3 +497,12 @@ fn a_capped_comment_keeps_the_line_that_the_walk_stopped() {
     assert!(md.contains("_Cut at 65536 characters"), "not capped: {}", md.len());
     assert!(md.contains("_The walk stopped at 2000 callers._"), "{}", &md[md.len() - 300..]);
 }
+
+/// The base a pull request names goes into the cut note: in a code span, as every other name.
+#[test]
+fn the_cut_note_quotes_the_base_it_names() {
+    let odd = "b`<!--x";
+    let (t, _) = many_callers("capped_base", odd);
+    let md = t.review(&["--base", odd, "--depth", "1"]);
+    assert!(md.contains("`` scrutate review --base b`<!--x ``"), "{}", &md[md.len() - 300..]);
+}
