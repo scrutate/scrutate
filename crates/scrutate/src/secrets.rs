@@ -215,7 +215,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         // a token as a URL's user, alone or before a placeholder password, as a clone URL carries one
         rule("url-token", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://([A-Za-z0-9_-]{20,})(?::[^@/\s]*)?@[^/\s?#]", 1, 3.0, &["://"], opaque),
         // the password of any other URL that carries one (`https://user:pass@host`)
-        rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]+:([^@/\s]+)@[^/\s?#]", 1, 0.0, &["://"], env_value),
+        rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]*:([^@/\s]+)@[^/\s?#]", 1, 0.0, &["://"], url_password),
         // an opaque token after `Bearer` or an `Authorization: Token` scheme (a header, a curl
         // line); a JWT has its own rule
         rule(
@@ -341,6 +341,12 @@ fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
     let Some(i) = out.iter().position(|&b| b == b':').filter(|&i| i > 0 && i + 1 < out.len()) else { return false };
     let password = String::from_utf8_lossy(&out[i + 1..]).to_ascii_lowercase();
     out.iter().all(|b| (0x20..0x7f).contains(b)) && !matches!(password.as_str(), "password" | "passwd" | "pass" | "pwd" | "secret" | "changeme")
+}
+
+/// A URL's password: no variable or placeholder word, and a digit or a symbol in it unless it is
+/// eight letters or more (`admin:admin@localhost` is a doc's example, a generated one is long).
+fn url_password(secret: &str, whole: &str, before: &str) -> bool {
+    real_value(secret, whole, before) && !NOT_SECRET_NAMES.is_match(whole) && (secret.len() >= 8 || secret.chars().any(|c| !c.is_ascii_alphabetic()))
 }
 
 /// A `.env` value that is no placeholder and is not a name or a word alone.
@@ -1163,6 +1169,34 @@ mod tests {
             "git clone https://build_user_2024_ci_robot@github.com/org/app.git",
         ] {
             assert!(redact(line).1.is_empty(), "{line}");
+        }
+    }
+
+    /// A URL's password is redacted when it is letters alone or the URL names no user; a variable,
+    /// a placeholder word and a short word are not.
+    #[test]
+    fn a_url_password_of_letters_or_without_a_user_is_redacted() {
+        let letters = fake(87, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 20);
+        let mixed = fake(88, ALNUM, 14);
+        for (line, secret) in [
+            (format!("git remote add origin https://deploy:{letters}@git.example.com/app.git"), &letters),
+            (format!("EMAIL_URL=smtp://mailer:{letters}@smtp.example.com:587"), &letters),
+            (format!("URL=https://:{mixed}@api.example.com/"), &mixed),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && marks.iter().any(|m| m.kind == "url-password"), "{line} -> {out}");
+        }
+        for line in [
+            "url = \"https://${USER}:${PASS}@example.com\"",
+            "https://user:password@example.com/",
+            "https://admin:admin@localhost:8080/",
+            "https://user:$PASSWORD@example.com/",
+            "proxy = http://proxy.internal:3128",
+        ] {
+            assert!(redact(line).1.iter().all(|m| m.kind != "url-password"), "{line}");
+            // the line ends at the `@`: a password needs a host after it
+            let at_end = format!("{line}@");
+            assert!(redact(&at_end).1.iter().all(|m| m.kind != "url-password"), "{at_end}");
         }
     }
 
