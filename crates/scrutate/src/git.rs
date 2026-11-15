@@ -238,8 +238,20 @@ impl Git {
         // the path is all that follows the range's colon, so a colon or a dash in it reads as itself
         let range = format!("{start},{end}:{}", plain(path));
         let n = n.to_string();
-        let out =
-            self.run(&["log", "--no-color", "--no-ext-diff", "--no-textconv", "-L", &range, "-s", "-n", &n, "--date=short", "--format=%x01%H%x00%ad%x00%s"])?;
+        let out = self.run(&[
+            "--literal-pathspecs",
+            "log",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-L",
+            &range,
+            "-s",
+            "-n",
+            &n,
+            "--date=short",
+            "--format=%x01%H%x00%ad%x00%s",
+        ])?;
         Ok(out
             .split(|&b| b == b'\n')
             .filter_map(|line| line.strip_prefix(b"\x01"))
@@ -594,8 +606,9 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let c = &git.line_log("new.py", 1, 2, 1).unwrap()[0];
         assert!(c.id.len() == 40 && c.id.bytes().all(|b| b.is_ascii_hexdigit()), "{}", c.id);
         assert!(c.date.len() == 10 && c.date.as_bytes()[4] == b'-', "{}", c.date);
-        // a path git could read as a range or an option
-        for odd in ["a:b.py", "-x.py"] {
+        // a path git could read as a range, an option or pathspec magic; Windows names hold no colon
+        let odd: &[&str] = if cfg!(windows) { &["-x.py"] } else { &["a:b.py", "-x.py", ":(top)m.py"] };
+        for &odd in odd {
             commit_file(&root, odd, "def h():\n    return 1\n", &format!("add {odd}"));
             assert_eq!(git.line_log(odd, 1, 2, 10).unwrap().into_iter().map(|c| c.subject).collect::<Vec<_>>(), [format!("add {odd}")]);
         }
