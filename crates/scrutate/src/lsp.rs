@@ -456,7 +456,24 @@ impl Folder {
     }
 
     fn lines(&self) -> Lines<'_> {
-        Lines { root: &self.root, given: &self.given, docs: &self.docs, cache: HashMap::new() }
+        self.lines_at(&self.given)
+    }
+
+    fn lines_at<'a>(&'a self, given: &'a Path) -> Lines<'a> {
+        Lines { root: &self.root, given, docs: &self.docs, cache: HashMap::new() }
+    }
+
+    /// The folder as the editor spells it in the request's document: one repository opened under
+    /// two spellings (a folder through a link, a file named another way) is answered in the
+    /// document's. The first folder's spelling when the document's path does not end in its
+    /// path in the repository.
+    fn given_for(&self, p: &Value) -> PathBuf {
+        let spelled = p["textDocument"]["uri"].as_str().and_then(|u| {
+            let (path, rel) = (uri_to_path(u)?, self.rel(u)?);
+            let top = path.ancestors().nth(Path::new(&rel).components().count())?;
+            (top.join(&rel) == path).then(|| top.to_path_buf())
+        });
+        spelled.unwrap_or_else(|| self.given.clone())
     }
 
     /// The line under the cursor and the byte range of the name there: the identifier, widened
@@ -490,9 +507,10 @@ impl Folder {
 
     fn definition(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
         let Some((text, a, b)) = self.word_in_line(s, p)? else { return Ok(Value::Null) };
+        let given = self.given_for(p);
         let (ident, before) = (&text[a..b], &text[..a]);
         if let Some(d) = self.resolved_at(&mut Names::new(s)?, p, ident, before).map(|id| s.ix.chunk(id)).transpose()?.flatten() {
-            return Ok(json!([self.lines().location(&d.path, d.start, d.end, &d.name)]));
+            return Ok(json!([self.lines_at(&given).location(&d.path, d.start, d.end, &d.name)]));
         }
         let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
         // the run up to the word (`my-trim`, `Foo::Bar` in `Foo::Bar.new`), then the whole run as
@@ -511,25 +529,26 @@ impl Folder {
             hits = if qualified.is_empty() { definitions(s, ident)? } else { qualified };
         }
         hits.sort_by_key(|h| Some(&h.path) != here.as_ref()); // stable: index order within each group
-        let mut lines = self.lines();
+        let mut lines = self.lines_at(&given);
         Ok(Value::Array(hits.iter().map(|h| lines.location(&h.path, h.start, h.end, &h.name)).collect()))
     }
 
     fn references(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
         let Some((ident, before)) = self.ident_at(s, p)? else { return Ok(Value::Null) };
+        let given = self.given_for(p);
         let include_decl = p["context"]["includeDeclaration"].as_bool().unwrap_or(true);
         // the definition under the cursor; an unresolved cursor falls back to every textual occurrence
         let at = self.resolved_at(&mut Names::new(s)?, p, &ident, &before);
         let refs = |s: &mut Searcher, textual: bool| ops::run(s, &Op::Refs { name: ident.clone(), max_results: REFERENCES, textual, def: None });
         if let Some(def_id) = at {
             let Answer::Resolved { refs: r, .. } = refs(s, false)? else { unreachable!("resolved references") };
-            let mut lines = self.lines();
+            let mut lines = self.lines_at(&given);
             let mut out = Vec::new();
             let mut decl = None;
             if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
                 let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
                 decl = Some((d.path.clone(), l, a));
-                out.push(json!({"uri": path_to_uri(&self.given.join(&d.path)), "range": range(l, a, l, b)}));
+                out.push(json!({"uri": path_to_uri(&given.join(&d.path)), "range": range(l, a, l, b)}));
             }
             for o in r.of(def_id) {
                 let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
@@ -545,19 +564,19 @@ impl Folder {
                 // the name as asked for, whole: `helper2` starts with `helper` but is another word
                 let whole = written.strip_prefix(ident.as_str()).is_some_and(|rest| !rest.chars().next().is_some_and(|c| word(&c)));
                 let width = if whole { ident.encode_utf16().count() } else { written.chars().take_while(word).map(char::len_utf16).sum() } as u64;
-                out.push(json!({"uri": path_to_uri(&self.given.join(&o.path)), "range": range(l, a, l, a + width)}));
+                out.push(json!({"uri": path_to_uri(&given.join(&o.path)), "range": range(l, a, l, a + width)}));
             }
             return Ok(Value::Array(out));
         }
         let Answer::Refs { refs: r, .. } = refs(s, true)? else { unreachable!("textual references") };
-        let mut lines = self.lines();
+        let mut lines = self.lines_at(&given);
         let mut seen: HashSet<(String, u64, u64)> = HashSet::new();
         let mut out = Vec::new();
         for d in &r.definitions {
             let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
             seen.insert((d.path.clone(), l, a));
             if include_decl {
-                out.push(json!({"uri": path_to_uri(&self.given.join(&d.path)), "range": range(l, a, l, b)}));
+                out.push(json!({"uri": path_to_uri(&given.join(&d.path)), "range": range(l, a, l, b)}));
             }
         }
         let width = ident.encode_utf16().count() as u64;
@@ -579,7 +598,7 @@ impl Folder {
                     }
                     let (l, a) = (h.line.saturating_sub(1), byte_to_utf16(text, off));
                     if seen.insert((g.path.clone(), l, a)) {
-                        out.push(json!({"uri": path_to_uri(&self.given.join(&g.path)), "range": range(l, a, l, a + width)}));
+                        out.push(json!({"uri": path_to_uri(&given.join(&g.path)), "range": range(l, a, l, a + width)}));
                     }
                 }
             }
@@ -1107,6 +1126,60 @@ mod tests {
         assert_eq!(sorted(run(&["a", "b", "c"], 1)), ["a.py", "b.py", "c.py"]);
         let _ = std::fs::remove_dir_all(&base);
         assert_eq!(sorted(run(&["a", "b", "c", "d"], 2)), ["a.py", "b.py", "c.py", "d.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// One repository opened under two spellings, as two folders (one through a link) or as a
+    /// folder and a file named through a link, answers definition and references in the spelling
+    /// of the request's document; workspace/symbol, about no document, in the first folder's.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_under_two_spellings_answers_in_the_documents() {
+        let base = std::env::temp_dir().join(format!("scrutate_lsp_spellings_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (real, code) = (base.join("real/proj"), base.join("code/proj"));
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(base.join("real"), base.join("code")).unwrap();
+        std::fs::write(real.join("lib.py"), "def helper():\n    return 1\n").unwrap();
+        std::fs::write(real.join("app.py"), "from lib import helper\nhelper()\n").unwrap();
+        let session = Arc::new(Session::open(&real, crate::session::Every::given(None)).unwrap());
+        session.build().unwrap();
+        let server = |spellings: &[&Path]| {
+            let mut srv = Server {
+                root: base.clone(),
+                root_given: true,
+                folders: Vec::new(),
+                initialized: true,
+                shutdown: false,
+                build_wait: std::time::Duration::from_millis(300),
+                waited_out: Default::default(),
+                skipped: Default::default(),
+            };
+            for f in spellings {
+                srv.add_folder(f.to_path_buf(), false, false);
+            }
+            assert_eq!(srv.folders.len(), 1, "one repository, one index");
+            srv.folders[0].session = Some(Arc::clone(&session));
+            srv.folders[0].opened = true;
+            srv
+        };
+        let at = |dir: &Path| serde_json::json!({"textDocument": {"uri": path_to_uri(&dir.join("app.py"))}, "position": {"line": 1, "character": 0}, "context": {"includeDeclaration": true}});
+        let uris = |v: Value| -> Vec<String> {
+            v.as_array().unwrap().iter().map(|e| e["uri"].as_str().or(e["location"]["uri"].as_str()).unwrap().to_string()).collect()
+        };
+        let under = |dir: &Path, uris: &[String]| !uris.is_empty() && uris.iter().all(|u| u.starts_with(&format!("{}/", path_to_uri(dir))));
+        for spellings in [&[real.as_path(), code.as_path()][..], &[real.as_path()][..]] {
+            let mut srv = server(spellings);
+            for dir in [&code, &real] {
+                let d = uris(srv.request("textDocument/definition", &at(dir)).unwrap());
+                assert!(under(dir, &d), "{spellings:?} definition from {dir:?}: {d:?}");
+                let r = uris(srv.request("textDocument/references", &at(dir)).unwrap());
+                assert!(under(dir, &r), "{spellings:?} references from {dir:?}: {r:?}");
+            }
+            let w = uris(srv.request("workspace/symbol", &serde_json::json!({"query": "helper"})).unwrap());
+            assert!(under(&real, &w), "{w:?}");
+        }
+        drop(session);
         let _ = std::fs::remove_dir_all(&base);
     }
 

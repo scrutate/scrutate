@@ -288,6 +288,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The language server answers definition and references in the spelling of the request's
+  document when the editor names one repository in two ways (two folders, one through a link, or
+  a file named through one), where every answer named the first folder's spelling.
 - `tsquery --rewrite --write` leaves alone, and names, a file reached through a link to a
   directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
   file the link leads to; a link was already left alone only as the file itself
