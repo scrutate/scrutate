@@ -358,27 +358,50 @@ fn an_inherited_pathspec_setting_leaves_the_history_whole() {
 }
 
 /// A git wrapper that forks rather than execs leaves a child holding git's output after git
-/// exits: the lookup still ends at its bound.
+/// exits: the lookup ends when git does, and the child goes with git's process group.
 #[cfg(unix)]
 #[test]
 fn a_forked_child_of_git_does_not_hold_the_lookup() {
     let t = shaped("forked");
-    let (bin, path) = fake_git(&t, "*\" log \"*) printf '\\001%040d\\000%s\\000%s\\n' 1 2026-01-01 'the only'; sleep 30 & exit 0;;");
-    let started = std::time::Instant::now();
-    let out = Command::new(BIN)
+    let pid_file = t.root.join(".git/child.pid");
+    let (bin, path) = fake_git(
+        &t,
+        &format!("*\" log \"*) printf '\\001%040d\\000%s\\000%s\\n' 1 2026-01-01 'the only'; sleep 120 & echo $! > '{}'; exit 0;;", pid_file.display()),
+    );
+    let alive = |pid: &str| Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    let child = Command::new(BIN)
         .args(["--root", t.root.to_str().unwrap(), "read", "--symbol", "f", "--history", "--json"])
         .current_dir(&t.root)
         .envs(GIT_ENV)
         .env("SCRUTATE_SEMANTIC", "none")
         .env("PATH", path)
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .spawn()
         .unwrap();
-    let took = started.elapsed();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(child.wait_with_output()));
+    // a lookup that reads to the end of git's output waits for the child, two minutes; 60 s is 12
+    // times the lookup's own bound
+    let out = rx.recv_timeout(std::time::Duration::from_secs(60));
+    let pid = fs::read_to_string(&pid_file).unwrap_or_default().trim().to_string();
     let _ = fs::remove_dir_all(&bin);
-    assert!(took < std::time::Duration::from_secs(15), "took {took:?}");
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let Ok(out) = out else {
+        let _ = Command::new("kill").arg(&pid).status();
+        panic!("the lookup waited for the child git left");
+    };
+    let v: Value = serde_json::from_slice(&out.unwrap().stdout).unwrap();
     assert_eq!(subjects(&v["result"]["definitions"][0]), ["the only"], "{v}");
+    // killed with git's process group; it is gone once its new parent reaps it
+    assert!(!pid.is_empty(), "the fake git wrote no pid");
+    let t0 = std::time::Instant::now();
+    while alive(&pid) && t0.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if alive(&pid) {
+        let _ = Command::new("kill").arg(&pid).status();
+        panic!("the child git left outlived the lookup");
+    }
 }
 
 /// A history reads a signed commit, an attribute's textconv driver and an external diff in the
