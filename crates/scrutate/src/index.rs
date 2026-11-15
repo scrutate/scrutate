@@ -1131,8 +1131,14 @@ thread_local! {
     pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
     /// Run once right after an update loads its root's custom languages.
     pub static AFTER_LANGUAGES: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
-    /// The wait each of this thread's lock attempts was given: "cut" for a log cut, "begin" for
-    /// a write lock that must not wait.
+    /// Run once between an update's commit and its compaction.
+    pub static BEFORE_COMPACT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    /// Run once between a compaction's merge and the lock it then takes.
+    pub static AFTER_MERGE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    /// The next compaction fails once it holds the lock.
+    pub static COMPACT_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The wait each of this thread's lock attempts was given: "cut" for a log cut, "begin" and
+    /// "compact" for a write lock that must not wait.
     pub static LOCK_WAITS: std::cell::RefCell<Vec<(&'static str, Duration)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -1288,6 +1294,8 @@ pub struct Index {
     reading: bool,
     /// the last update could not truncate the log: the next one tries first
     log_left: bool,
+    /// a save that must not wait left its compaction to the next update (another writer held the lock)
+    compact_left: bool,
     lex: Option<LexStore>,
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
@@ -1423,6 +1431,7 @@ impl Index {
             cancel: Arc::default(),
             reading: false,
             log_left: false,
+            compact_left: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1497,6 +1506,7 @@ impl Index {
             cancel: Arc::default(),
             reading: false,
             log_left: false,
+            compact_left: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -2057,8 +2067,12 @@ impl Index {
                 self.lex = None;
                 self.lex_ver = None;
             }
+            #[cfg(test)]
+            if let Some(f) = BEFORE_COMPACT.with(|h| h.borrow_mut().take()) {
+                f();
+            }
             // the update is committed: a merge that fails leaves more segments, not a wrong index
-            match self.compact() {
+            match self.compact(wait) {
                 Err(e) if error_is_corruption(&e) => return Err(e),
                 Err(e) => {
                     eprintln!("[scrutate] compaction failed ({e:#}); the update is saved, the next one merges again");
@@ -2068,7 +2082,7 @@ impl Index {
                     self.lex = None;
                     self.lex_ver = None;
                 }
-                Ok(()) => {}
+                Ok(done) => self.compact_left = !done,
             }
             // as at the start: a read that must not wait tries once, and the next update cuts
             // what a reader on an older snapshot kept
@@ -2080,6 +2094,20 @@ impl Index {
             // queued on every thread, not waited for, as a thread may be busy with another call
             rayon::spawn_broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
+        } else if self.compact_left {
+            // what a save that must not wait left: nothing changed since, so this update merges it
+            match self.compact(wait) {
+                Err(e) if error_is_corruption(&e) => return Err(e),
+                Err(e) => {
+                    eprintln!("[scrutate] compaction failed ({e:#}); the next update merges again");
+                    if !self.db.is_autocommit() {
+                        let _ = self.db.execute_batch("ROLLBACK");
+                    }
+                    self.lex = None;
+                    self.lex_ver = None;
+                }
+                Ok(done) => self.compact_left = !done,
+            }
         }
         st.seconds = t0.elapsed().as_secs_f64();
         if only.is_none() {
@@ -2570,8 +2598,28 @@ impl Index {
         Ok(v)
     }
 
-    /// Drop dead segments and merge small ones so queries touch few files.
-    fn compact(&mut self) -> Result<()> {
+    /// The write lock for a compaction: waited for when the update waits, else tried once without
+    /// waiting. -> false when another writer holds it: the compaction is left to the next update.
+    fn begin_compaction(&self, wait: bool) -> Result<bool> {
+        if wait {
+            return self.begin_waiting(|_| false);
+        }
+        let no_wait = Duration::ZERO;
+        #[cfg(test)]
+        LOCK_WAITS.with(|w| w.borrow_mut().push(("compact", no_wait)));
+        self.db.busy_timeout(no_wait)?;
+        let r = self.db.execute_batch("BEGIN IMMEDIATE");
+        self.db.busy_timeout(BUSY)?;
+        match r {
+            Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::DatabaseBusy => Ok(false),
+            r => r.map(|()| true).map_err(Into::into),
+        }
+    }
+
+    /// Drop dead segments and merge small ones so queries touch few files. With `wait` false, a
+    /// compaction another writer holds the lock for is left to the next update. -> false when it
+    /// was left.
+    fn compact(&mut self, wait: bool) -> Result<bool> {
         let (names, counts, sizes, alive): (Vec<String>, Vec<usize>, Vec<usize>, Vec<Vec<bool>>) = {
             let store = self.lex()?;
             (store.names.clone(), store.alive_counts(), store.segs.iter().map(|s| s.n).collect(), store.alive.clone())
@@ -2618,11 +2666,17 @@ impl Index {
             }
         }
         if live.len() == names.len() && merge.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         let mut new_names: Vec<String> = live.iter().filter(|i| !merge.contains(i)).map(|&i| names[i].clone()).collect();
         if !merge.is_empty() {
-            self.begin_waiting(|_| false)?;
+            if !self.begin_compaction(wait)? {
+                return Ok(false);
+            }
+            #[cfg(test)]
+            if COMPACT_FAILS.with(|f| f.take()) {
+                bail!("a compaction that fails (test)");
+            }
             let dest = self.new_segment_name()?;
             retry_busy(|| self.db.execute_batch("COMMIT"))?;
             {
@@ -2634,7 +2688,17 @@ impl Index {
             }
             new_names.push(dest);
         }
-        self.begin_waiting(|_| false)?;
+        #[cfg(test)]
+        if let Some(f) = AFTER_MERGE.with(|h| h.borrow_mut().take()) {
+            f();
+        }
+        if !self.begin_compaction(wait)? {
+            // nothing refers to the merged segment yet
+            for n in new_names.iter().filter(|n| !names.contains(n)) {
+                let _ = std::fs::remove_dir_all(self.seg_dir.join(n));
+            }
+            return Ok(false);
+        }
         if self.segments() != names {
             // another writer changed the manifest while we were merging: our plan is stale. Drop the
             // merged segment (nothing refers to it) and let the next update compact again.
@@ -2644,7 +2708,7 @@ impl Index {
             }
             self.lex = None;
             self.lex_ver = None;
-            return Ok(());
+            return Ok(true);
         }
         self.set_meta("segments", &serde_json::to_string(&new_names)?)?;
         self.bump_version()?;
@@ -2657,7 +2721,7 @@ impl Index {
                 let _ = std::fs::remove_dir_all(self.seg_dir.join(n));
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     fn insert(&self, rel: &str, rows: Vec<NewRow>, mut next_id: i64) -> Result<i64> {
@@ -3667,6 +3731,149 @@ mod tests {
             }
             Err(e) => assert!(super::error_is_corruption(&e), "{e:#}"),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A save that must not wait leaves its compaction to a later update when another process
+    /// holds the write lock then, and the next update that waits does it, so segments cannot
+    /// pile up. Shown by the wait the compaction's lock was given and by the segments left.
+    #[test]
+    fn a_save_that_must_not_wait_leaves_a_compaction_another_writer_holds_up_to_a_later_update() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_compact_nowait_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(ix.segments().len(), 1, "a small index is one segment");
+        // another process takes the write lock after the save commits and holds it until the save
+        // returns, or 3 s when a save waits for it
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (go, told) = std::sync::mpsc::channel::<()>();
+        let (locked, taken) = std::sync::mpsc::channel::<()>();
+        let db = root.join(".scrutate/index.db");
+        let holder = std::thread::spawn(move || {
+            let other = rusqlite::Connection::open(db).unwrap();
+            // only once the save has committed: a lock taken before would refuse the save itself
+            told.recv().unwrap();
+            other.execute_batch("BEGIN IMMEDIATE").unwrap();
+            locked.send(()).unwrap();
+            let _ = held.recv_timeout(std::time::Duration::from_secs(3));
+            other.execute_batch("ROLLBACK").unwrap();
+        });
+        super::BEFORE_COMPACT.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                go.send(()).unwrap();
+                taken.recv().unwrap();
+            }))
+        });
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        super::LOCK_WAITS.with(|w| w.borrow_mut().clear());
+        ix.update_paths(&["a.py".into()], false).unwrap();
+        let waits = super::LOCK_WAITS.with(|w| w.borrow().clone());
+        let left = ix.segments().len();
+        let _ = release.send(());
+        holder.join().unwrap();
+        assert!(waits.contains(&("compact", std::time::Duration::ZERO)) && waits.iter().all(|(_, w)| w.is_zero()), "the locks were given {waits:?}");
+        assert_eq!(left, 2, "the compaction was left for later");
+        ix.update(false).unwrap();
+        assert_eq!(ix.segments().len(), 1, "the next update that waits compacts");
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Another connection that takes the write lock when told (`go`) and holds it until `release`
+    /// or for 3 s; -> (go, locked, release, the thread).
+    fn lock_holder(
+        db: std::path::PathBuf,
+    ) -> (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        let (go, told) = std::sync::mpsc::channel::<()>();
+        let (locked, taken) = std::sync::mpsc::channel::<()>();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let other = rusqlite::Connection::open(db).unwrap();
+            if told.recv().is_err() {
+                return;
+            }
+            other.execute_batch("BEGIN IMMEDIATE").unwrap();
+            locked.send(()).unwrap();
+            let _ = held.recv_timeout(std::time::Duration::from_secs(3));
+            other.execute_batch("ROLLBACK").unwrap();
+        });
+        (go, taken, release, holder)
+    }
+
+    /// A no-wait compaction that has merged when it finds the lock taken removes the segment it
+    /// merged: nothing names it, and no directory is left outside the segment list.
+    #[test]
+    fn a_compaction_left_after_its_merge_leaves_no_segment_behind() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_compact_merged_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        // a second file keeps the first segment partly alive, so the compaction merges
+        std::fs::write(root.join("b.py"), "def beta(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let (go, taken, release, holder) = lock_holder(root.join(".scrutate/index.db"));
+        super::AFTER_MERGE.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                go.send(()).unwrap();
+                taken.recv().unwrap();
+            }))
+        });
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        super::LOCK_WAITS.with(|w| w.borrow_mut().clear());
+        ix.update_paths(&["a.py".into()], false).unwrap();
+        let waits = super::LOCK_WAITS.with(|w| w.borrow().clone());
+        let listed = ix.segments();
+        let on_disk: Vec<String> =
+            std::fs::read_dir(&ix.seg_dir).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        let _ = release.send(());
+        holder.join().unwrap();
+        assert_eq!(waits.iter().filter(|(what, _)| *what == "compact").count(), 2, "the lock was tried before and after the merge: {waits:?}");
+        assert_eq!(listed.len(), 2, "the compaction was left for later");
+        let stray: Vec<_> = on_disk.iter().filter(|d| !listed.contains(d)).collect();
+        assert!(stray.is_empty(), "segment directories outside the list: {stray:?}");
+        ix.update(false).unwrap();
+        assert_eq!(ix.segments().len(), 1);
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A compaction left for later that then fails rolls back what it began: the write lock is
+    /// not held until the next update.
+    #[test]
+    fn a_left_compaction_that_fails_holds_no_lock() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_compact_fails_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        // a second file keeps the first segment partly alive, so the compaction merges
+        std::fs::write(root.join("b.py"), "def beta(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let (go, taken, release, holder) = lock_holder(root.join(".scrutate/index.db"));
+        super::BEFORE_COMPACT.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                go.send(()).unwrap();
+                taken.recv().unwrap();
+            }))
+        });
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        ix.update_paths(&["a.py".into()], false).unwrap();
+        let _ = release.send(());
+        holder.join().unwrap();
+        assert!(ix.compact_left, "the compaction was left for later");
+        // nothing changed since: the update runs the left compaction, which fails holding the lock
+        super::COMPACT_FAILS.with(|f| f.set(true));
+        ix.update(false).unwrap();
+        assert!(!super::COMPACT_FAILS.with(|f| f.get()), "the compaction reached its lock");
+        assert!(ix.db.is_autocommit(), "the failed compaction left its transaction open");
+        let other = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+        other.busy_timeout(std::time::Duration::ZERO).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE; ROLLBACK").expect("another process takes the lock at once");
+        drop((ix, other));
         let _ = std::fs::remove_dir_all(&root);
     }
 

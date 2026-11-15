@@ -443,7 +443,10 @@ NFC with final sigma folded.
     by the next update (an update a read makes, which must not wait, tries without waiting), and
     a cut log keeps at most 4 MB of its file;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
-    writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
+    writer moved the manifest; an update a read makes, which must not wait, tries its lock once
+    before the merge and once after it, and leaves the compaction to the next update when another
+    writer holds it (a segment it merged meanwhile is removed), which does it even when nothing
+    changed; segment **GC** with an age guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a
     database up to 64 MB (`QUICK_CHECK_MAX_BYTES` or `SCRUTATE_QUICK_CHECK_MAX_BYTES`), once per
     state of the file: a passing check is recorded in `.scrutate/checked` with the database's file
@@ -698,7 +701,9 @@ holds the lock, the read answers from the last committed index with a **pending*
 a walk that could not run. Each front end says so: the MCP text and `structuredContent.pending`,
 a `window/logMessage` warning in the language server, a Python `UserWarning`, a stderr line of a
 command a `serve` answers. Readers are opened from a repository no write holds, so a reader opened
-during a write does not wait for it ([ADR 0002](adr/0002-reads-during-a-write.md)).
+during a write does not wait for it ([ADR 0002](adr/0002-reads-during-a-write.md)). A save that
+must not wait may leave two things to the next update: the cut of the log, when a reader on an
+older commit holds it, and the compaction, when another writer holds the lock.
 
 What a scan looks at is the **change set** since the token of the last one applied
 (`fresh::Freshness::changes_since`, [ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)).

@@ -301,6 +301,9 @@ incompatible index by itself, and that is never breaking.
 - A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
   does the work itself, where a `serve` stopped or stuck at that point and a request over the
   socket's buffer (a long search with several `--alt`) left the call waiting for good.
+- A save a read makes, which must not wait, no longer waits for another process's write lock to
+  compact the index, up to 10 minutes while that process indexed: it tries once and leaves the
+  compaction to the next update, which does it even when nothing changed.
 - The language server answers definition and references in the spelling of the request's
   document when the editor names one repository in two ways (two folders, one through a link, or
   a file named through one), where every answer named the first folder's spelling.
