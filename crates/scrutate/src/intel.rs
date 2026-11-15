@@ -523,9 +523,10 @@ fn required_literals(q: &tree_sitter::Query, source: &str) -> Option<Vec<Vec<Str
     };
     (0..q.pattern_count())
         .map(|p| {
-            let text = source.get(q.start_byte_for_pattern(p)..q.end_byte_for_pattern(p))?;
+            // a predicate in a `;` comment is none
+            let text = uncommented(source.get(q.start_byte_for_pattern(p)..q.end_byte_for_pattern(p))?);
             let quantifiers = q.capture_quantifiers(p);
-            PREDICATE.captures_iter(text).find_map(|c| {
+            PREDICATE.captures_iter(&text).find_map(|c| {
                 let capture = q.capture_index_for_name(&c[2])? as usize;
                 if !matches!(quantifiers.get(capture), Some(tree_sitter::CaptureQuantifier::One | tree_sitter::CaptureQuantifier::OneOrMore)) {
                     return None;
@@ -566,22 +567,47 @@ pub(crate) fn compile_query(lang: &str, query: &str) -> Result<(&'static crate::
     Ok((spec, language, q))
 }
 
+/// `query` with each `;` comment outside a string blanked to spaces, its line ends kept: what
+/// tree-sitter reads of it.
+fn uncommented(query: &str) -> String {
+    let (mut out, mut chars) = (String::with_capacity(query.len()), query.chars());
+    while let Some(c) = chars.next() {
+        match c {
+            ';' => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                    out.push(' ');
+                }
+            }
+            '"' => {
+                out.push('"');
+                while let Some(c) = chars.next() {
+                    out.push(c);
+                    match c {
+                        '\\' => out.extend(chars.next()),
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// The line of a predicate written at the top level of `query`, outside every pattern's
 /// parentheses: tree-sitter accepts it and applies it to nothing.
 fn loose_predicate(query: &str) -> Option<usize> {
     let (mut depth, mut line) = (0usize, 1usize);
+    let query = uncommented(query);
     let mut chars = query.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
             '\n' => line += 1,
-            ';' => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        line += 1;
-                        break;
-                    }
-                }
-            }
             '"' => {
                 while let Some(c) = chars.next() {
                     match c {
@@ -1277,6 +1303,11 @@ mod literal_gate {
         assert_eq!(some(r#"((identifier) @a (#eq? @a "x")) (identifier) @b"#), None);
         // two patterns that each need one
         assert_eq!(some(r#"((identifier) @a (#eq? @a "x")) ((field_identifier) @b (#eq? @b "y"))"#), Some(vec![vec!["x".to_string()], vec!["y".to_string()]]));
+        // a predicate in a `;` comment is no predicate: it gates nothing
+        assert_eq!(some("((identifier) @i\n ; (#eq? @i \"oldname\")\n (#match? @i \"^km\"))"), None);
+        assert_eq!(some("((identifier) @i\n (#match? @i \"^km\") ; was (#eq? @i \"oldname\")\n)"), None);
+        // a `;` inside a string starts no comment
+        assert_eq!(some(r#"((identifier) @i (#eq? @i "a;b"))"#), Some(vec![vec!["a;b".to_string()]]));
     }
 
     /// Random queries over the kinds and texts of every sample's tree: alternations, quantifiers,
