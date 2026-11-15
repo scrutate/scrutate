@@ -1720,13 +1720,13 @@ impl<'a> Sink for Collector<'a> {
             });
             self.each = Some(n.max(1));
         }
-        let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
+        let line = self.shown(bytes);
         self.take_match(bytes, Text::Here(line), mat.line_number())
     }
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
         let bytes = ctx.bytes();
-        let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
+        let line = self.shown(bytes);
         if self.plain.is_some() {
             let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             let number = if self.numbered { ctx.line_number().unwrap_or(0) + self.line_base } else { 0 };
@@ -1788,6 +1788,17 @@ impl<'a> Sink for Collector<'a> {
 }
 
 impl Collector<'_> {
+    /// A line as it is reported: without its `\n`, and in plain output, as ripgrep prints it,
+    /// with the `\r` of a CRLF line kept; a record's text has neither.
+    fn shown<'b>(&self, bytes: &'b [u8]) -> &'b [u8] {
+        let line = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+        if self.plain.is_some() {
+            line
+        } else {
+            line.strip_suffix(b"\r").unwrap_or(line)
+        }
+    }
+
     /// A matching line: `bytes` as the searcher gave it, `text` without its line end, `number`
     /// the searcher's line number.
     fn take_match(&mut self, bytes: &[u8], text: Text, number: Option<u64>) -> Result<bool, std::io::Error> {

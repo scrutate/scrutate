@@ -177,7 +177,8 @@ def run(tool, a):
         p = subprocess.run(cmd, cwd=WORK, capture_output=True, timeout=20)
     except subprocess.TimeoutExpired:
         return ["<timeout>"], -9, b""
-    out = p.stdout.replace(b"\r", b"").decode("utf-8", "replace").splitlines()
+    out = p.stdout.decode("utf-8", "replace").split("\n")
+    out = out[:-1] if out and out[-1] == "" else out
     lines = [l[2:] if l.startswith("./") else l for l in out]
     return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr
 

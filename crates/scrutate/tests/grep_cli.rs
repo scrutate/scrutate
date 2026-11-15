@@ -245,11 +245,12 @@ fn max_results_statistics_count_only_the_matches_printed() {
 }
 
 #[test]
-fn context_lines_of_crlf_files_lose_the_carriage_return_too() {
-    let d = Dir::new("crlf");
+fn context_lines_of_crlf_files_keep_the_carriage_return_and_json_drops_it() {
+    let d = Dir::new("crlfctx");
     d.write("crlf.txt", b"ctx1\r\nfoo\r\nctx2\r\n");
+    // as ripgrep 15.2.0 prints them; the JSON text has no line end
     let (_, out, _) = d.run(&["grep", "-C1", "foo", "crlf.txt"]);
-    assert_eq!(out, "1-ctx1\n2:foo\n3-ctx2\n");
+    assert_eq!(out, "1-ctx1\r\n2:foo\r\n3-ctx2\r\n");
     let (_, out, _) = d.run(&["grep", "--json", "-C1", "foo", "crlf.txt"]);
     assert!(!out.contains("\\r"), "{out}");
 }
@@ -1005,6 +1006,19 @@ fn a_reader_that_stops_reading_and_then_goes_away_ends_a_json_search() {
         };
         assert_eq!(status.code(), Some(0), "{args:?} in {dir}");
     }
+}
+
+#[test]
+fn a_crlf_line_keeps_its_carriage_return_as_ripgrep_prints_it() {
+    let d = Dir::new("crlf");
+    d.write("a.txt", b"foo one\r\nbar\r\nfoo two\r\nlast foo");
+    // ripgrep 15.2.0, `rg -n ...`: the line as it is, `\r` and all; a last line without an end
+    // gets a `\n`
+    assert_eq!(d.run(&["grep", "-n", "foo", "a.txt"]).1, "1:foo one\r\n3:foo two\r\n4:last foo\n");
+    assert_eq!(d.run(&["grep", "-n", "-A1", "foo", "a.txt"]).1, "1:foo one\r\n2-bar\r\n3:foo two\r\n4:last foo\n");
+    assert_eq!(d.run(&["grep", "-n", "-v", "foo", "a.txt"]).1, "2:bar\r\n");
+    // JSON keeps the line's text without its line end
+    assert!(d.run(&["grep", "--json", "foo", "a.txt"]).1.contains("\"text\":\"foo one\""));
 }
 
 #[test]

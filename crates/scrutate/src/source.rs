@@ -462,8 +462,8 @@ fn one_line<A: ReadAt + Sync>(r: &Run, at: &A, size: u64, rel: &Arc<str>) -> Opt
     if found {
         let mut end = [0u8; 2];
         let len = match at.read_at(&mut end, size - 2) {
+            // plain output keeps a CRLF line's `\r`, as ripgrep prints it (Collector::shown)
             Ok(2) => match end {
-                [b'\r', b'\n'] => size - 2,
                 [_, b'\n'] => size - 1,
                 _ => size,
             },
