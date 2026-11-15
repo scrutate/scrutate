@@ -230,7 +230,6 @@ impl<'a> Names<'a> {
         Ok(Resolved { definitions, occurrences, truncated, notes, first_overload, outside: Default::default() })
     }
 
-    /// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.
     /// The one decision about the site of `spelled` at 1-based `line`, 0-based byte `col` of
     /// `path`: what the resolver ties it to; where the resolver does not read the language, the
     /// one definition of the name the call can reach (in the site's own file when there are more).
@@ -307,6 +306,7 @@ impl<'a> Names<'a> {
         }
     }
 
+    /// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.
     fn uses(&mut self, path: &str, lines: (i64, i64), name: &str) -> Uses {
         let site = (path.to_string(), lines.0, lines.1, name.to_string());
         if let Some(u) = self.stored.as_mut().and_then(|st| st.get(&site)) {
