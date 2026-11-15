@@ -27,6 +27,15 @@ DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then
 <!-- End of head. -->
 """
 
+def walk_floor(r):
+    """The walk-and-read floor of a row, or "-" where walkread read other files than the row searches
+    (untracked or ignored files, which it does not leave out)."""
+    w = r.get("walkread", {})
+    if w.get("files") != r["reference"].get("files_listed"):
+        return "-"
+    return ms(w.get("median"))
+
+
 TOOLS = ["scrutate", "ripgrep", "ugrep", "GNU grep", "git grep", "ag", "ack", "ast-grep"]
 
 # what closes each kind of gap; the leaderboard states the measured gap next to it
@@ -198,7 +207,7 @@ def engine_a(data, label):
             flag += f" (measured again; first: {first['status']}" + (f" {first['ratio']:.3f}" if first.get("ratio") else "") + ")"
         if r.get("resident") is not None and r["resident"] < 0.95:
             flag += f" ({r['resident']:.0%} of the files in the page cache)"
-        out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))} | {ms(r.get('walkread', {}).get('median'))} | {ratio} | {r['status']}{flag} |")
+        out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))} | {walk_floor(r)} | {ratio} | {r['status']}{flag} |")
     out.append("")
     for bid, r in data["benchmarks"].items():
         n = r["reference"].get("files_not_compared")
@@ -350,7 +359,8 @@ def main() -> int:
         "- The walk-and-read floor (`bench/walkread.c`) lists the tree and reads every file in it, skipping hidden entries and "
         "reading no ignore rule, with the same thread counts: the least a search that has to find its files does, where the "
         "read-files ceiling is handed the list. It is measured once per corpus and cache state, for the rows that search every "
-        "non-hidden file.",
+        "non-hidden file, and shows only where it read as many files as the row lists: it reads no ignore rule, so a checkout with "
+        "untracked or ignored files gives it more than the tools search.",
         "- A benchmark where some tool's block medians differed by more than 25% was disturbed by other work and measured again once, "
         "whatever its status (`leaderboard.py --redo-unstable`); its status column also gives the first measurement, and the second "
         "reflects the machine as it was by then."]

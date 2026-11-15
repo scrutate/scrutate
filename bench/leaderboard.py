@@ -597,6 +597,12 @@ def fastest_floor(cmd, cdir, a, prepare):
     return best
 
 
+def walk_files(cdir):
+    """How many files bench/walkread.c reads in `cdir` (its last line: "B bytes in N files")."""
+    out = subprocess.run([walkread_bin(), ".", "1"], cwd=cdir, capture_output=True, text=True, check=True).stdout
+    return int(out.split()[-2])
+
+
 def run_bench(b, corpora, a, cache_dir):
     cdir = os.path.join(corpora, b["corpus"])
     res = {"id": b["id"], "corpus": b["corpus"], "qtype": b["qtype"], "mode": b["mode"], "cache": a.cache, "tools": {}, "load": []}
@@ -727,6 +733,7 @@ def run_bench(b, corpora, a, cache_dir):
             wkey = f"{b['corpus']}|{a.cache}"
             if wkey not in WALKREAD:
                 WALKREAD[wkey] = fastest_floor([walkread_bin(), "."], cdir, a, prepare)
+                WALKREAD[wkey]["files"] = walk_files(cdir)
             res["walkread"] = {k: v for k, v in WALKREAD[wkey].items() if k != "times"}
     if not structural and a.cache == "warm":
         # a warm run is one whose files were in memory: on a machine short of it they are not
