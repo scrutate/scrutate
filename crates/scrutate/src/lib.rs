@@ -58,6 +58,8 @@ pub mod watch;
 /// No file events on wasi.
 #[cfg(target_os = "wasi")]
 pub mod watch {
+    pub use crate::fresh::RootReplaced;
+
     pub fn run(
         _root: &std::path::Path,
         _stop: &std::sync::atomic::AtomicBool,

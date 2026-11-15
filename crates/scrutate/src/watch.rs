@@ -816,18 +816,7 @@ impl Safety {
     }
 }
 
-/// The watched root's path names another directory now (renamed over, or removed and made
-/// again): the watch and the stores opened there belong to the old tree.
-#[derive(Debug)]
-pub struct RootReplaced;
-
-impl std::fmt::Display for RootReplaced {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the root was replaced")
-    }
-}
-
-impl std::error::Error for RootReplaced {}
+pub use crate::fresh::RootReplaced;
 
 /// What the root's path names: its device and inode where there are such, and its birth time,
 /// since ext4 can give a directory made again its old inode number. None when it cannot be read.

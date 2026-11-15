@@ -11,6 +11,20 @@ use anyhow::Result;
 use crate::files::Found;
 use crate::stores::Changes;
 
+/// The watched root's path names another directory now (renamed over, or removed and made
+/// again): the watch and the stores opened there belong to the old tree. Here, not in
+/// `watch`, since the wasi build has no watch and its callers name it all the same.
+#[derive(Debug)]
+pub struct RootReplaced;
+
+impl std::fmt::Display for RootReplaced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the root was replaced")
+    }
+}
+
+impl std::error::Error for RootReplaced {}
+
 /// A point in a freshness's history; a session keeps the token of the last change set it applied.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token(u64);
