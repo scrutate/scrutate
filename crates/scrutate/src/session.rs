@@ -1214,6 +1214,8 @@ mod windows {
         pipe: OwnedHandle,
         done: OwnedHandle,
         wait: u32,
+        /// how long a write may wait for the other end to take the bytes
+        write_wait: u32,
     }
 
     impl Pipe {
@@ -1222,7 +1224,7 @@ mod windows {
             if e.is_null() {
                 return Err(Error::last_os_error());
             }
-            Ok(Pipe { pipe, done: unsafe { OwnedHandle::from_raw_handle(e) }, wait: INFINITE })
+            Ok(Pipe { pipe, done: unsafe { OwnedHandle::from_raw_handle(e) }, wait: INFINITE, write_wait: INFINITE })
         }
 
         fn handle(&self) -> HANDLE {
@@ -1264,8 +1266,9 @@ mod windows {
 
     impl Write for Pipe {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let len = buf.len().min(u32::MAX as usize) as u32;
-            self.io(INFINITE, |h, ov| unsafe { WriteFile(h, buf.as_ptr(), len, null_mut(), ov) }).map(|n| n as usize)
+            // at most a pipe's worth per write: the wait then bounds each step of a long write, not all of it
+            let len = buf.len().min(BUFFER as usize) as u32;
+            self.io(self.write_wait, |h, ov| unsafe { WriteFile(h, buf.as_ptr(), len, null_mut(), ov) }).map(|n| n as usize)
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
@@ -1392,12 +1395,118 @@ mod windows {
                 e => return Err(format!("no session at {shown}: {}", Error::from_raw_os_error(e as i32))),
             }
         };
-        let pipe = Pipe::new(h).map_err(|e| e.to_string())?;
+        let mut pipe = Pipe::new(h).map_err(|e| e.to_string())?;
+        // a session that stops reading leaves a request over the pipe's buffer unwritten
+        pipe.write_wait = wire::REQUEST.as_millis() as u32;
         let mut pid = 0;
         if unsafe { GetNamedPipeServerProcessId(pipe.handle(), &mut pid) } == 0 || user_of_process(pid).as_ref() != Some(&user) {
             return Err("the session runs as another user".into());
         }
         wire::exchange(pipe, root, request).map(Some)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_request_a_slow_session_keeps_taking_reaches_it_whole() {
+            const NAME: &str = "session::windows::tests::a_request_a_slow_session_keeps_taking_reaches_it_whole";
+            if std::env::var_os("SCRUTATE_TEST_SLOW_READ").is_none() {
+                let out = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", NAME, "--test-threads=1"])
+                    .env("SCRUTATE_TEST_SLOW_READ", "1")
+                    .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+                    .output()
+                    .unwrap();
+                let said = String::from_utf8_lossy(&out.stdout);
+                assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+                return;
+            }
+            let root = std::env::temp_dir().join(format!("scrutate_pipe_slow_read_{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let root = std::fs::canonicalize(&root).unwrap();
+            let user = this_user().unwrap();
+            let sid = sid_text(&user).unwrap();
+            let name = wide(&pipe_name(&sid, &root));
+            let first = instance(&name, &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
+            let hello = serde_json::to_string(&Identity::here(&root).unwrap()).unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            // a session that greets, then takes 64 KB a second until the request's line ends
+            std::thread::spawn(move || {
+                let mut pipe = Pipe::new(first).unwrap();
+                // SAFETY: the pipe's own handle and an OVERLAPPED that io keeps alive until done
+                let _ = pipe.io(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) });
+                writeln!(pipe, "{hello}").unwrap();
+                wire::Conn::read_wait(&mut pipe, Duration::from_secs(10)).unwrap();
+                let (mut got, mut buf) = (Vec::new(), vec![0u8; 64 * 1024]);
+                while !got.ends_with(b"\n") {
+                    match pipe.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => got.extend_from_slice(&buf[..n]),
+                    }
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+                let _ = tx.send(got.len());
+            });
+            let request = Request {
+                op: Op::Symbol { name: "x".repeat(300_000), limit: 1, exact: true },
+                json: false,
+                max_bytes: 0,
+                offset: 0,
+                outside: None,
+                why: false,
+            };
+            let want = serde_json::to_string(&request).unwrap().len() + 1;
+            let _ = asked(&root, &request);
+            assert_eq!(rx.recv_timeout(Duration::from_secs(60)), Ok(want), "the session got the request cut");
+        }
+
+        #[test]
+        fn a_request_the_session_never_reads_is_given_up_and_the_call_does_its_own_work() {
+            const NAME: &str = "session::windows::tests::a_request_the_session_never_reads_is_given_up_and_the_call_does_its_own_work";
+            // a greeting must not be missed on a busy runner: a process of its own waits longer for it
+            if std::env::var_os("SCRUTATE_TEST_NO_READ").is_none() {
+                let out = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", NAME, "--test-threads=1"])
+                    .env("SCRUTATE_TEST_NO_READ", "1")
+                    .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+                    .output()
+                    .unwrap();
+                let said = String::from_utf8_lossy(&out.stdout);
+                assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+                return;
+            }
+            let root = std::env::temp_dir().join(format!("scrutate_pipe_no_read_{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let root = std::fs::canonicalize(&root).unwrap();
+            let user = this_user().unwrap();
+            let sid = sid_text(&user).unwrap();
+            let name = wide(&pipe_name(&sid, &root));
+            let first = instance(&name, &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
+            let hello = serde_json::to_string(&Identity::here(&root).unwrap()).unwrap();
+            // a session that greets as this root's and then reads nothing
+            std::thread::spawn(move || {
+                let mut pipe = Pipe::new(first).unwrap();
+                // SAFETY: the pipe's own handle and an OVERLAPPED that io keeps alive until done
+                let _ = pipe.io(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) });
+                writeln!(pipe, "{hello}").unwrap();
+                std::thread::sleep(Duration::from_secs(120));
+            });
+            // over the pipe's 64 KB buffer
+            let request = Request {
+                op: Op::Symbol { name: "x".repeat(200_000), limit: 1, exact: true },
+                json: false,
+                max_bytes: 0,
+                offset: 0,
+                outside: None,
+                why: false,
+            };
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || tx.send(asked(&root, &request).map(|a| a.is_some())));
+            let r = rx.recv_timeout(Duration::from_secs(30)).expect("the call still waits on a session that reads nothing");
+            assert!(r.as_ref().is_err_and(|e| e.starts_with("request not taken")), "{r:?}");
+        }
     }
 }
 

@@ -903,7 +903,7 @@ socket), the command does the work itself and says nothing;
 command waits 20 ms for the server's greeting (a server stopped in a terminal costs no more);
 `SCRUTATE_SESSION_WAIT_MS` sets another wait for a machine too busy to greet in time. A server
 that takes no request for 2 s once it greeted (stopped or stuck, with a request longer than the
-socket holds) is given up as well. Of two
+socket or, on Windows, the pipe holds) is given up as well. Of two
 servers on one root, the first offers the socket.
 
 - Every tool but `reindex` is marked read-only (`readOnlyHint`), and all as staying on this

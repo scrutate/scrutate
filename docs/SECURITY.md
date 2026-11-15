@@ -606,7 +606,8 @@ on Unix).
     `GetLastError`, and `GetNamedPipeClientProcessId` / `GetNamedPipeServerProcessId` into a
     `u32`; `GetCurrentProcess`, `OpenProcess`, `OpenProcessToken` and `GetTokenInformation(TokenUser)` into an 8-byte
     aligned 512-byte buffer whose size it passes, the SID read as `GetLengthSid` bytes from the
-    pointer the `TOKEN_USER` holds inside that buffer;
+    pointer the `TOKEN_USER` holds inside that buffer; two unit tests' `ConnectNamedPipe` for a
+    server that greets and then reads nothing or reads slowly, through the same `Pipe::io`;
   - `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 159 libSystem
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
@@ -655,7 +656,7 @@ on Unix).
   | `crates/scrutate/src/policy.rs` | 1 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
-  | `crates/scrutate/src/session.rs` | 34 |
+  | `crates/scrutate/src/session.rs` | 36 |
   | `crates/scrutate/src/shellhook.rs` | 5 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |

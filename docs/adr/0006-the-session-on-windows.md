@@ -50,7 +50,9 @@ path is also one path to test.
 - **The protocol and the identity check are the same code on both systems.** One greeting line
   (the identity), one request line, one reply line; the same waits (`HELLO` 20 ms or
   `SCRUTATE_SESSION_WAIT_MS`, `REQUEST` 2 s, `ANSWER` 60 s), done on Windows with overlapped I/O
-  and a timed wait; the same limit of 16 calls served at once. The build in the identity is the
+  and a timed wait, the command line's write of its request bounded by `REQUEST` too (a pipe
+  holds 64 KB, and a server stopped or stuck after its greeting takes no more), 64 KB at a time,
+  so the bound is on progress, as a socket's send timeout is; the same limit of 16 calls served at once. The build in the identity is the
   executable's path, size and times on Windows, where Unix uses device and inode as well.
 - **The switches stay.** `SCRUTATE_NO_SESSION=1` and `SCRUTATE_SESSION_DEBUG=1` work as on Unix.
 
