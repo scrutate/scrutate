@@ -716,6 +716,21 @@ fn symbol_lists_near_matches_when_no_definition_has_the_name() {
 }
 
 #[test]
+fn a_name_that_holds_the_query_is_a_near_match_from_three_characters_only() {
+    let r = Repo::new("near_contains");
+    r.write("src/svc.py", b"class BookingsService:\n    pass\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let hits = |q: &str| -> Vec<(String, String)> {
+        let (_, out, _) = r.run(&["symbol", "--json", q]);
+        let row = |h: &serde_json::Value| (h["name"].as_str().unwrap().to_string(), h["match"].as_str().unwrap_or("").to_string());
+        answer(&out).as_array().map(|a| a.iter().map(row).collect()).unwrap_or_default()
+    };
+    assert_eq!(hits("ice"), [("BookingsService".to_string(), "contains".to_string())]);
+    // neither a prefix nor humps of the name, and two characters: no contains match
+    assert_eq!(hits("ic"), []);
+}
+
+#[test]
 fn search_also_prints_other_repositories_by_the_path_given() {
     let outer = Repo::new("also_paths");
     let body = |doc: &str| format!("def renew_token(session):\n    \"\"\"{doc}\"\"\"\n    return session\n");
