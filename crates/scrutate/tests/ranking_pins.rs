@@ -38,6 +38,8 @@ const QUERIES: &[&str] =
 fn tree() -> PathBuf {
     let root = std::env::temp_dir().join(format!("scrutate_pins_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
+    // a repository: no index in a directory above takes it over
+    fs::create_dir_all(root.join(".git")).unwrap();
     for (rel, text) in FILES {
         let p = root.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();

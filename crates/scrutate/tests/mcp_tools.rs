@@ -36,6 +36,8 @@ impl Repo {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scrutate_mcp_tools_{}_{}_{n}", name, std::process::id()));
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(&root).unwrap();
         for (rel, body) in files {
             let p = root.join(rel);

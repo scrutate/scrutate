@@ -24,7 +24,15 @@ struct Repo {
 }
 
 impl Repo {
+    /// A repository: no index in a directory above takes it over.
     fn new(name: &str) -> Repo {
+        let r = Repo::plain(name);
+        fs::create_dir_all(r.root.join(".git")).unwrap();
+        r
+    }
+
+    /// A directory outside any repository, for a test that lays out its own.
+    fn plain(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_cli_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
@@ -739,7 +747,7 @@ fn a_name_that_holds_the_query_is_a_near_match_from_three_characters_only() {
 
 #[test]
 fn search_also_prints_other_repositories_by_the_path_given() {
-    let outer = Repo::new("also_paths");
+    let outer = Repo::plain("also_paths");
     let body = |doc: &str| format!("def renew_token(session):\n    \"\"\"{doc}\"\"\"\n    return session\n");
     outer.write("one/src/auth.py", body("Renew an expired session token.").as_bytes());
     outer.write("x/one/src/auth.py", body("Renew a token, in another repository named one.").as_bytes());
@@ -918,7 +926,7 @@ fn the_index_quota_comes_from_the_configuration_file_and_the_environment_beats_i
 
 #[test]
 fn git_file_of_worktrees_and_submodules_is_not_indexed() {
-    let r = Repo::new("gitfile");
+    let r = Repo::plain("gitfile");
     r.write(".git", b"gitdir: /somewhere/else/.git/worktrees/wt\n");
     r.write("vendor/sub/.git", b"gitdir: ../../.git/modules/sub\n");
     r.write("vendor/sub/lib.py", b"def sub_symbol():\n    pass\n");
@@ -1419,7 +1427,7 @@ fn index_commands_in_a_subdirectory_answer_from_the_index_above() {
     assert_eq!(code, 0);
     assert!(deep.join(".scrutate").exists());
     // with no index here or above, the current directory is indexed, as before
-    let bare = Repo::new("subdir_bare");
+    let bare = Repo::plain("subdir_bare");
     bare.write("a/b.py", b"def bare_fn():\n    pass\n");
     let (code, _, err) = run_in(&bare.root.join("a"), &["symbol", "bare_fn"], &[]);
     assert_eq!(code, 0, "{err}");

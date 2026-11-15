@@ -23,6 +23,8 @@ impl Repo {
         let root = std::env::temp_dir().join(format!("scrutate_rob_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(&root).unwrap();
         Repo { root }
     }

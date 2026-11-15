@@ -22,6 +22,8 @@ impl Tmp {
         let p = std::env::temp_dir().join(format!("scrutate_recovery_{}_{}", name, std::process::id()));
         tag::claim(&p);
         let _ = fs::remove_dir_all(&p);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(p.join(".git")).unwrap();
         fs::create_dir_all(&p).unwrap();
         Tmp(canon(&p))
     }

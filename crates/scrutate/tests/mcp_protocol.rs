@@ -22,6 +22,8 @@ impl Repo {
         let root = std::env::temp_dir().join(format!("scrutate_mcpp_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(root.join("pkg")).unwrap();
         for i in 0..files {
             let body = format!("import os\n\n\ndef make_widget_{i}(size):\n    return os.path.join(\"w\", str(size))\n");

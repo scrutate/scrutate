@@ -24,6 +24,8 @@ impl Repo {
         let root = std::env::temp_dir().join(format!("scrutate_shell_hook_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = std::fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(&root).unwrap();
         Repo { root }
     }

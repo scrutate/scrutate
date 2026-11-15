@@ -24,6 +24,8 @@ struct Repo {
 impl Repo {
     fn at(root: PathBuf, files: &[(&str, &[u8])]) -> Repo {
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(&root).unwrap();
         for (rel, body) in files {
             let p = root.join(rel);

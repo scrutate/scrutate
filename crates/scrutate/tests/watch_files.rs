@@ -21,7 +21,15 @@ struct Repo {
 }
 
 impl Repo {
+    /// A repository: no index in a directory above takes it over.
     fn new(name: &str) -> Repo {
+        let r = Repo::plain(name);
+        fs::create_dir_all(r.root.join(".git")).unwrap();
+        r
+    }
+
+    /// A directory outside any repository, for a test that lays out its own.
+    fn plain(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_watchfiles_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
@@ -450,7 +458,7 @@ fn a_save_of_an_ignored_file_starts_no_update() {
 
 /// Like `watched`, for a repository at `<name>/repo`; -> (`<name>`, the repository, ...).
 fn watched_below(name: &str, files: &[(&str, &str)]) -> (Repo, Repo, KillOnDrop, Receiver<String>) {
-    let above = Repo::new(name);
+    let above = Repo::plain(name);
     let r = Repo { root: above.root.join("repo") };
     for (rel, text) in files {
         r.write(rel, text.as_bytes());
@@ -550,7 +558,7 @@ fn a_save_of_a_file_an_ignore_file_above_the_repository_lists_stays_out() {
 
 #[test]
 fn a_root_outside_git_keeps_the_rules_of_a_repository_inside_it() {
-    let r = Repo::new("several");
+    let r = Repo::plain("several");
     fs::create_dir_all(r.root.join("repo1/.git")).unwrap();
     r.write("repo1/.gitignore", b"gen.py\ncov/\n");
     r.write("repo1/gen.py", b"def gen_one():\n    return 1\n");

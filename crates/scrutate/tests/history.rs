@@ -18,7 +18,15 @@ struct Tree {
 }
 
 impl Tree {
+    /// A repository: no index in a directory above takes it over.
     fn new(name: &str) -> Tree {
+        let t = Tree::plain(name);
+        fs::create_dir_all(t.root.join(".git")).unwrap();
+        t
+    }
+
+    /// A directory outside any repository, for a test that lays out its own.
+    fn plain(name: &str) -> Tree {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scrutate_history_{name}_{}_{n}", std::process::id()));
@@ -135,7 +143,7 @@ fn an_uncommitted_edit_moves_the_lines_or_marks_the_definition() {
 
 #[test]
 fn outside_a_repository_the_answer_says_why_it_has_no_history() {
-    let t = Tree::new("nogit");
+    let t = Tree::plain("nogit");
     t.write("m.py", "def f(x):\n    return x\n");
     let v = t.json(&["read", "--symbol", "f", "--history"]);
     assert!(v["history_note"].as_str().unwrap().contains("not in a git repository"), "{v}");
@@ -252,7 +260,7 @@ fn a_git_older_than_the_floor_gives_no_history_and_says_why() {
 #[test]
 fn a_shallow_clone_marks_where_its_history_is_cut() {
     let full = shaped("shallow_source");
-    let t = Tree::new("shallow");
+    let t = Tree::plain("shallow");
     let out = Command::new("git")
         .args(["clone", "-q", "--depth", "1", &format!("file://{}", full.root.display()), t.root.to_str().unwrap()])
         .envs(GIT_ENV)

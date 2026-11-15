@@ -17,6 +17,8 @@ fn set(k: &str, v: &str) {
 fn an_update_past_the_quota_fails_and_keeps_the_last_index() {
     let root = std::env::temp_dir().join(format!("scrutate_quota_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
+    // a repository: no index in a directory above takes it over
+    fs::create_dir_all(root.join(".git")).unwrap();
     fs::create_dir_all(&root).unwrap();
     let body = "def f():\n    return 1\n";
     for f in ["a.py", "b.py"] {

@@ -22,7 +22,15 @@ struct Repo {
 }
 
 impl Repo {
+    /// A repository: no index in a directory above takes it over.
     fn new(name: &str) -> Repo {
+        let r = Repo::plain(name);
+        fs::create_dir_all(r.root.join(".git")).unwrap();
+        r
+    }
+
+    /// A directory outside any repository, for a test that lays out its own.
+    fn plain(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_lsp_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
@@ -634,7 +642,7 @@ fn references_are_placed_right_after_a_byte_order_mark_or_an_invalid_byte() {
 
 #[test]
 fn a_document_that_is_not_under_the_root_is_never_read_from_disk() {
-    let r = Repo::new("confined");
+    let r = Repo::plain("confined");
     r.write("repo/a.py", "def secret_word():\n    return 1\n");
     r.write("outside/secret.py", "secret_word\n");
     let root = r.root.join("repo");

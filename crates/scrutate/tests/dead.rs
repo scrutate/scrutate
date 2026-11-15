@@ -22,6 +22,8 @@ impl Repo {
         let root = std::env::temp_dir().join(format!("scrutate_dead_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         for (rel, body) in files {
             let p = root.join(rel);
             fs::create_dir_all(p.parent().unwrap()).unwrap();

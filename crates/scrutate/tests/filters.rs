@@ -29,6 +29,8 @@ impl Repo {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scrutate_filters_{name}_{}_{n}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         for (rel, text) in files {
             let p = root.join(rel);
             fs::create_dir_all(p.parent().unwrap()).unwrap();

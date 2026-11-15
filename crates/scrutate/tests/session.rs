@@ -31,6 +31,8 @@ impl Repo {
 
     fn at(root: PathBuf) -> Repo {
         let _ = fs::remove_dir_all(&root);
+        // a repository: no index in a directory above takes it over
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(root.join("pkg")).unwrap();
         fs::write(
             root.join("pkg/geo.py"),
