@@ -148,7 +148,12 @@ on all 20, zoekt-webserver took 36 ms and `scrutate --index` 24.3 ms. Scrutate's
 `grep_code` tool, answered 4 of the 20 (two literals and two queries that match nothing) in 1,260 ms
 median, where on the same 4 `scrutate --index` took 7.6 ms, zoekt-webserver 1.4 ms and livegrep
 2.0 ms. The other 16 have more than the 5,000 lines `grep_code` returns, so they were not timed. In
-that run each `grep_code` call walked the whole tree before it searched.
+that run each `grep_code` call walked the whole tree before it searched. A server now keeps that
+look between calls (on Linux and Windows; on macOS each call still looks). Measured apart, on
+another machine (an AWS build box, 16 cores) and so not comparable with the rows above, it took the
+same 4 queries from 669.6 to 50.8 ms median: `bench/grep_code_pair.py`, the yardstick's own
+`scrutate-mcp` adapter, the build before the change and the build with it as two servers on one
+index of the Linux tree, asked in turn, 20 rounds.
 
 ## 4. Against "nothing": the code-intelligence engine
 

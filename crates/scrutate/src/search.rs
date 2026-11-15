@@ -199,6 +199,8 @@ pub struct Searcher {
     callers_cache: HashMap<String, i64>,
     /// set when the call being answered was cancelled: `search_many` stops between queries
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// a session's kept look of the tree, for a search the text index narrows (`stores::grep_files`)
+    pub look: Option<crate::files::KeptLook>,
 }
 
 /// A source of candidates. The candidates are the union of the sources' ids in `Source::ALL`
@@ -328,7 +330,7 @@ fn plain(name: &str) -> String {
 
 impl Searcher {
     pub fn new(ix: Index) -> Searcher {
-        Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default() }
+        Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default(), look: None }
     }
 
     fn sync(&mut self) -> Result<()> {

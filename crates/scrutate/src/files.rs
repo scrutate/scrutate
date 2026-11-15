@@ -501,6 +501,8 @@ pub struct Found {
 /// path: the files a search of the repository covers and the code index's set, and with `text`
 /// the text index's set too. The walk enters every directory one of those walks enters.
 pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
+    #[cfg(test)]
+    LOOKS.with(|c| c.set(c.get() + 1));
     let walk = CodeWalk::new(root);
     let rules = match text {
         true => Some(Arc::new(std::sync::Mutex::new(crate::instant::default_rules(root)?))),
@@ -534,6 +536,72 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many looks of a tree this thread took.
+    pub static LOOKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A session's look of the tree (`look(root, false)`), kept up to date with each change set its
+/// watch gives: None until a read needs one, and again after a change set of every file.
+pub type KeptLook = Arc<std::sync::Mutex<Option<Arc<Vec<Found>>>>>;
+
+/// `look(root, false)` as it is now: the kept one when there is one, else a look, which is kept.
+pub fn looked(root: &Path, kept: Option<&KeptLook>) -> anyhow::Result<Arc<Vec<Found>>> {
+    let Some(kept) = kept else { return Ok(Arc::new(look(root, false)?)) };
+    let mut k = kept.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(f) = k.as_ref() {
+        return Ok(Arc::clone(f));
+    }
+    let f = Arc::new(look(root, false)?);
+    *k = Some(Arc::clone(&f));
+    Ok(f)
+}
+
+/// Bring a kept look up to date with a change set, one `stat` per file it names; a change set of
+/// every file, or a name that is not UTF-8, drops it, so the next read looks again.
+pub fn patch_look(root: &Path, kept: &KeptLook, changes: &crate::stores::Changes) {
+    let mut k = kept.lock().unwrap_or_else(|p| p.into_inner());
+    let crate::stores::Changes::Named(n) = changes else {
+        *k = None;
+        return;
+    };
+    let Some(list) = k.as_mut() else { return };
+    let named: std::collections::BTreeSet<&String> = n.code.iter().chain(&n.text).chain(&n.repo).collect();
+    if named.is_empty() {
+        return;
+    }
+    if named.iter().any(|p| p.contains('\u{FFFD}')) {
+        *k = None;
+        return;
+    }
+    let list = Arc::make_mut(list);
+    let mut listed = crate::index::Listed::default();
+    for rel in named {
+        let at = list.binary_search_by(|f| f.path.as_str().cmp(rel));
+        // as `look` finds it: a file the repository's walk lists, with a stat when it is code
+        let full = root.join(rel);
+        let md = std::fs::symlink_metadata(&full).ok().filter(|m| m.is_file());
+        let code = n.code.contains(rel);
+        let found = md.filter(|_| code || n.repo.contains(rel)).map(|md| Found {
+            path: rel.clone(),
+            stat: code.then(|| listed.stat(&full, &md)),
+            repo: true,
+            code,
+            text: false,
+            lossy: false,
+        });
+        match (at, found) {
+            (Ok(i), Some(f)) => list[i] = f,
+            (Err(i), Some(f)) => list.insert(i, f),
+            (Ok(i), None) => {
+                list.remove(i);
+            }
+            (Err(_), None) => {}
+        }
+    }
 }
 
 /// Whether the default walk can leave out a path the code index's walk lists: a name on the way

@@ -152,6 +152,9 @@ pub struct Session {
     fresh: RwLock<Box<dyn Freshness>>,
     /// the token of the newest change set applied
     applied: Mutex<Token>,
+    /// the look of the tree a search narrowed by the text index starts from, patched with each
+    /// change set before a read (`files::patch_look`), so it costs no walk while a watch vouches
+    kept: crate::files::KeptLook,
     /// what `watch` keeps for the reads, from `open_watched`
     notes: RwLock<Option<crate::fresh::Watching>>,
     /// the socket `listen` offers this session at, while it is the root's
@@ -209,6 +212,7 @@ impl Session {
             applied: Mutex::default(),
             notes: RwLock::default(),
             listening: Mutex::default(),
+            kept: Default::default(),
             unwatch: Arc::default(),
         })
     }
@@ -326,6 +330,7 @@ impl Session {
     pub fn with_freshness(mut self, fresh: Box<dyn Freshness>) -> Session {
         self.fresh = RwLock::new(fresh);
         self.applied = Mutex::default();
+        self.kept = Default::default();
         self
     }
 
@@ -505,6 +510,7 @@ impl Session {
     fn call<T>(&self, cancel: &Arc<AtomicBool>, count: Option<&Arc<FileCount>>, wait: Option<Duration>, f: impl FnOnce(&mut Repo) -> Result<T>) -> Result<T> {
         let Some((generation, mut repo)) = self.reader(cancel, wait)? else { return Err(anyhow::anyhow!("every reader is busy")) };
         repo.set_cancel(Arc::clone(cancel));
+        repo.set_look(Some(Arc::clone(&self.kept)));
         if let Some(count) = count {
             repo.set_count(Arc::clone(count));
         }
@@ -602,6 +608,7 @@ impl Session {
     /// process is waited for up to `OWN_WRITE_WAIT`; what could not be applied by then is pending.
     fn scan(&self, repo: &mut Repo, now: bool) -> Result<(UpdateStats, Pending)> {
         let (changes, token) = self.changes();
+        crate::files::patch_look(&self.root(), &self.kept, &changes);
         let Changes::Named(n) = changes else { return self.walk_if_due(repo, token, now) };
         let mut st = UpdateStats::default();
         if !n.code.is_empty() {
@@ -1076,6 +1083,166 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
 
+    /// A session that watches the tree answers `grep_code` from its kept look, patched with each
+    /// change set, as a look of the tree each call answers it, through edits, creates, deletes
+    /// and renames of code, text, binary and unindexed files; and it takes no look meanwhile.
+    /// Under a floor (`--refresh-interval`) a new directory's files reach grep_code at once, by the
+    /// look it takes while the watches are not set again, and the code index at the next scan.
+    /// When that scan comes is the floor's: here it is asked for (`reindex`).
+    #[test]
+    fn under_a_floor_a_new_directory_reaches_grep_code_at_once_and_the_code_index_at_the_next_scan() {
+        let dir = std::env::temp_dir().join(format!("scrutate_floor_new_dir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let root = std::fs::canonicalize(&dir).unwrap();
+        std::fs::write(root.join("a.py"), "def foo():\n    return 1\n").unwrap();
+        {
+            let mut repo = crate::stores::Repo::open(&root).unwrap();
+            repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
+        }
+        let watched = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        // a test of the change set, which macOS reads do without (every read looks there)
+        if let Some(notes) = watched.notes() {
+            notes.set_order_proves(true);
+        }
+        watched.watch(false).unwrap();
+        let t0 = Instant::now();
+        while !read(&watched.fresh).watching() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let settings = crate::mcp::Settings::new(None);
+        let call = |tool: &str, args: serde_json::Value| crate::mcp::call_tool(&watched, tool, &args, &settings, &Arc::default()).text;
+        // the walk that follows the watches coming up is never held back
+        call("grep_code", serde_json::json!({"pattern": "foo"}));
+        std::fs::create_dir_all(root.join("sub/new")).unwrap();
+        std::fs::write(root.join("sub/new/y.py"), "def fn_new_y():\n    return 'tok_new_y'\n").unwrap();
+        let grep = call("grep_code", serde_json::json!({"pattern": "tok_new_y"}));
+        assert!(grep.contains("sub/new/y.py"), "grep_code: {grep}");
+        call("reindex", serde_json::json!({}));
+        let symbol = call("find_symbol", serde_json::json!({"name": "fn_new_y"}));
+        assert!(symbol.contains("sub/new/y.py"), "the code index after the scan: {symbol}");
+        drop(watched);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory an ignore rule leaves out, made while the watch runs, gets no watch and leaves
+    /// the reads on their change sets: after the call that sees it, no call looks at the tree.
+    #[test]
+    fn a_new_ignored_directory_leaves_reads_on_the_change_set() {
+        let dir = std::env::temp_dir().join(format!("scrutate_ignored_new_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let root = std::fs::canonicalize(&dir).unwrap();
+        std::fs::write(root.join(".gitignore"), "out2/\n").unwrap();
+        std::fs::write(root.join("a.py"), "def foo():\n    return 1\n").unwrap();
+        {
+            let mut repo = crate::stores::Repo::open(&root).unwrap();
+            repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
+        }
+        let watched = Session::open_watched(&root, Every::given(None)).unwrap();
+        // a test of the change set, which macOS reads do without (every read looks there)
+        if let Some(notes) = watched.notes() {
+            notes.set_order_proves(true);
+        }
+        watched.watch(false).unwrap();
+        let t0 = Instant::now();
+        while !read(&watched.fresh).watching() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let settings = crate::mcp::Settings::new(None);
+        let looks = || crate::files::LOOKS.with(|c| c.get());
+        let call = || crate::mcp::call_tool(&watched, "grep_code", &serde_json::json!({"pattern": "foo"}), &settings, &Arc::default());
+        call();
+        std::fs::create_dir_all(root.join("out2")).unwrap();
+        std::fs::write(root.join("out2/x.py"), "x = 'foo'\n").unwrap();
+        let mut per_call = Vec::new();
+        for i in 0..6 {
+            std::fs::write(root.join("a.py"), format!("def foo():\n    return {i}\n")).unwrap();
+            let before = looks();
+            call();
+            per_call.push(looks() - before);
+        }
+        assert!(per_call[1..].iter().all(|&n| n == 0), "looks per call: {per_call:?}");
+        drop(watched);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn grep_code_from_the_kept_look_answers_as_a_look_each_call_does() {
+        for with_text in [true, false] {
+            let dir = std::env::temp_dir().join(format!("scrutate_kept_look_{}_{}", std::process::id(), with_text));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("sub")).unwrap();
+            std::fs::create_dir_all(dir.join(".git")).unwrap();
+            let root = std::fs::canonicalize(&dir).unwrap();
+            let w = |rel: &str, body: &[u8]| std::fs::write(root.join(rel), body).unwrap();
+            w("a.py", b"def foo():\n    return 1\n");
+            w("b.txt", b"foo bar_1 here\n");
+            w("sub/c.rs", b"fn bar_2() {}\n");
+            {
+                let mut repo = crate::stores::Repo::open(&root).unwrap();
+                // without a text index a lockfile or a binary is in no index: a burst names it for the look alone
+                let writer = if with_text { crate::stores::Writer::Index } else { crate::stores::Writer::IndexCode };
+                repo.update_stores(writer, &crate::stores::Changes::All, false).unwrap();
+            }
+            let watched = Session::open_watched(&root, Every::given(None)).unwrap();
+            // a test of the change set, which macOS reads do without (every read looks there)
+            if let Some(notes) = watched.notes() {
+                notes.set_order_proves(true);
+            }
+            watched.watch(false).unwrap();
+            let t0 = Instant::now();
+            while !read(&watched.fresh).watching() {
+                assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let plain = Session::open(&root, Every::given(Some(0.0))).unwrap();
+            let settings = crate::mcp::Settings::new(None);
+            let looks = || crate::files::LOOKS.with(|c| c.get());
+            let watched_looks = std::cell::Cell::new(0);
+            let compare = |step: &str| {
+                for q in ["foo", "bar_[0-9]+", "zzz_no_match_anywhere", "PNG", "lock foo"] {
+                    let args = serde_json::json!({"pattern": q});
+                    let before = looks();
+                    let a = crate::mcp::call_tool(&watched, "grep_code", &args, &settings, &Arc::default());
+                    watched_looks.set(watched_looks.get() + looks() - before);
+                    let b = crate::mcp::call_tool(&plain, "grep_code", &args, &settings, &Arc::default());
+                    assert_eq!(a.text, b.text, "{step}: {q} (text index: {with_text})");
+                }
+            };
+            compare("built");
+            let first = watched_looks.get();
+            let steps: [(&str, &dyn Fn()); 10] = [
+                ("edit code", &|| w("a.py", b"def foo():\n    return bar_7\n")),
+                ("create code", &|| w("sub/new.py", b"x = 'bar_3 foo'\n")),
+                ("create binary", &|| w("pic.png", b"\x89PNG\x00\x01foo bar_4\n")),
+                ("create lockfile", &|| w("Cargo.lock", b"# lock foo\nbar_5\n")),
+                ("create hidden", &|| w(".hidden.txt", b"foo hidden bar_6\n")),
+                ("edit binary", &|| w("pic.png", b"\x89PNG\x00\x02foo\n")),
+                ("delete text", &|| std::fs::remove_file(root.join("b.txt")).unwrap()),
+                ("rename code", &|| std::fs::rename(root.join("sub/c.rs"), root.join("sub/d.rs")).unwrap()),
+                ("delete lockfile", &|| std::fs::remove_file(root.join("Cargo.lock")).unwrap()),
+                ("edit hidden", &|| w(".hidden.txt", b"nothing here\n")),
+            ];
+            for (step, change) in steps {
+                change();
+                compare(step);
+            }
+            assert_eq!(watched_looks.get(), first, "the watched session looked at the tree again");
+            // a directory made after the watch started, then a second file in it before the watch
+            // has one on it: until the watches are set again, reads look at the tree
+            std::fs::create_dir_all(root.join("sub/new")).unwrap();
+            w("sub/new/x.py", b"x = 'foo bar_8'\n");
+            compare("make directory");
+            w("sub/new/y.py", b"y = 'foo bar_9'\n");
+            compare("write in new directory");
+            drop((watched, plain));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
     /// A repository of one function, its session, and its first build done.
     fn fixture(name: &str) -> (PathBuf, Session) {
         let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
@@ -1503,7 +1670,7 @@ mod tests {
     impl crate::fresh::Freshness for Told {
         fn changes_since(&self, t: crate::fresh::Token) -> (crate::stores::Changes, crate::fresh::Token) {
             let code = std::mem::take(&mut *lock(&self.0));
-            (crate::stores::Changes::Named(crate::stores::Named { code, text: Vec::new() }), t.next())
+            (crate::stores::Changes::Named(crate::stores::Named { code, ..Default::default() }), t.next())
         }
         fn files(&self, text: bool) -> Result<Vec<crate::files::Found>> {
             crate::files::look(&std::env::temp_dir(), text)

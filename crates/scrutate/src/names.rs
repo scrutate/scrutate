@@ -95,7 +95,7 @@ impl<'a> Names<'a> {
                 q.pattern.case = crate::instant::Case::Insensitive;
             }
             // the text index, when it holds the files as the last look found them, says which can match
-            let files = crate::stores::grep_files(&s.ix, &q, &walk);
+            let files = crate::stores::grep_files(&s.ix, &q, &walk, s.look.as_ref());
             let (found, mut truncated) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
             let mut notes = Vec::new();
             let mut hits = Vec::new();

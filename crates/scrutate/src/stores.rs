@@ -71,6 +71,9 @@ pub enum Changes {
 pub struct Named {
     pub code: Vec<String>,
     pub text: Vec<String>,
+    /// every file still there that the repository's walk lists, in an index or in none (a
+    /// `.png`, a lockfile): what keeps a session's look of the tree up to date
+    pub repo: Vec<String>,
 }
 
 /// An operation that writes the stores (the rows of the table above that keep more than the code
@@ -249,6 +252,13 @@ impl Repo {
     /// Whether an update of the index went through since this was last asked.
     pub fn take_updated(&mut self) -> bool {
         std::mem::take(&mut self.updated)
+    }
+
+    /// The session's kept look of the tree, which a search the text index narrows starts from.
+    pub fn set_look(&mut self, look: Option<crate::files::KeptLook>) {
+        if let Some(s) = &mut self.searcher {
+            s.look = look;
+        }
     }
 
     /// The cancel flag of the next operation; nothing to set while the index is closed.
@@ -543,7 +553,7 @@ impl std::ops::DerefMut for Repo {
 /// those the text index holds as they are now and that can match, and every other one. None
 /// when the walk must run: no text index, a pattern its trigrams do not narrow, a glob that brings
 /// files in, a scope that is no directory of the tree, a name that is not UTF-8.
-pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::instant::Files) -> Option<crate::instant::Files> {
+pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::instant::Files, kept: Option<&files::KeptLook>) -> Option<crate::instant::Files> {
     use crate::instant::Paths;
     let Paths::Walk(roots) = &walk.paths else { return None };
     let plain = walk.hidden && !walk.no_ignore && !walk.follow_links && walk.max_filesize.is_none() && walk.max_depth.is_none();
@@ -564,8 +574,9 @@ pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::in
     };
     let cond = textindex::query_for(q).ok().filter(|c| *c != textindex::Q::All)?;
     let ti = textindex::TextIndex::open(&ix.root).ok()??;
-    // a look of this call's own, so a file written just before it is read (a kept look missed it)
-    let found = files::look(&ix.root, false).ok()?;
+    // the tree as it is now: a session's kept look, patched with the change set its watch gave
+    // before this read, else a look of this call's own
+    let found = files::looked(&ix.root, kept).ok()?;
     if found.iter().any(|f| f.repo && f.lossy) {
         return None;
     }
@@ -716,7 +727,7 @@ mod tests {
         let fresh = cases(&mut repo);
         assert!(fresh[0].0.contains("src/rare.py") && fresh[0].0.contains(".github/ci.yml") && !fresh[0].0.contains("node_modules"), "{}", fresh[0].0);
         let q = crate::instant::Query { pattern: Pattern { text: "needle_token".into(), ..Pattern::default() }, ..Default::default() };
-        let narrowed = grep_files(&repo.ix, &q, &crate::files::repository_files(&repo.root)).expect("the text index narrows a rare word");
+        let narrowed = grep_files(&repo.ix, &q, &crate::files::repository_files(&repo.root), None).expect("the text index narrows a rare word");
         let crate::instant::Paths::List { files: read, .. } = narrowed.paths else { panic!("a list") };
         // the hidden files are not in the text index: they are read directly
         assert_eq!(read, [".github/ci.yml", ".gitignore", "data.bin", "lib/other.rs", "src/rare.py"]);

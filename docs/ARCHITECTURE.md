@@ -586,7 +586,10 @@ for its event types alone. When the load or the stream fails, macOS falls back t
 own incremental check on a timer ([CLI](CLI.md#watch) has the platform details and the walk
 triggers). The watch is in place before the first update. A burst of files is decided by listing
 their directories with the indexes' own walks (`files::CodeWalk`, `textindex::walk_entries`), so
-no ignore rule is written by hand. Each walk also records the rule files it read that no event in
+no ignore rule is written by hand. A file in a directory the walks enter but the watch does not
+hold yet (made since it last listed the tree) makes the burst walk the tree. On Linux such a
+directory has no watch until the watches are set again, and a file written in it meanwhile has no
+event, so until then a read asks for every file (`watch::Notes`). Each walk also records the rule files it read that no event in
 the tree names; on Linux their directories are watched after the tree's own; on Windows they are
 watched beside the recursive watch on the root; on macOS they are polled. Whatever got no watch
 (Linux past `max_user_watches`, a rule directory, the rule files above a macOS root) goes to
@@ -636,8 +639,11 @@ set for both: a watch's events name files of either set, read by the same two wa
 
 A look at every file is one walk and one `stat` per file (`files::look`), whatever stores it
 serves: it enters each directory the code index's walk or Engine A's default walk enters, and
-gives each store the files its own walk would list. No look is kept between calls, so a file
-written just before a call is in its answer, inside a server's refresh interval too.
+gives each store the files its own walk would list. A command keeps no look between calls, so
+a file written just before a call is in its answer. A running server keeps one for `grep_code`
+and `references` (`files::KeptLook`): each change set of its watch looks at the files it names
+again, and a change set of every file drops it, so the next call takes a new look (on macOS
+every read's change set is every file, so each call looks).
 
 `Writer::text` alone decides whether a text index is kept: `index` (unless `--no-text`) and
 `grep --index --update` build it; every other writer keeps one that exists. `tsquery` keys a

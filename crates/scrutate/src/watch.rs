@@ -163,6 +163,8 @@ struct Listing {
     dirs: HashSet<PathBuf>,
     code: HashSet<PathBuf>,
     text: HashSet<PathBuf>,
+    /// every file the repository's walk lists, the code index's and the others
+    repo: HashSet<PathBuf>,
 }
 
 impl Listing {
@@ -172,9 +174,12 @@ impl Listing {
             for e in code.builder(dir).max_depth(Some(1)).build().flatten().filter(|e| e.depth() == 1) {
                 if e.file_type().is_some_and(|t| t.is_dir()) {
                     l.dirs.insert(e.into_path());
-                } else if code.keeps(&e).is_some() {
-                    l.code.insert(e.into_path());
+                    continue;
                 }
+                if code.keeps(&e).is_some() {
+                    l.code.insert(e.path().to_path_buf());
+                }
+                l.repo.insert(e.into_path());
             }
         }
         if walked.text.contains(dir) {
@@ -267,6 +272,18 @@ impl Burst {
                 return None;
             }
             if !walked.holds(parent) {
+                // a directory the walks enter that was made since the watch listed the tree: only
+                // a walk lists it (and a look kept between calls would miss what is in it)
+                let mut child = parent;
+                while let Some(up) = child.parent().filter(|up| *up == root || inside(root, up)) {
+                    if walked.holds(up) {
+                        if listed.entry(up).or_insert_with(|| Listing::of(up, code, walked)).dirs.contains(child) {
+                            return None;
+                        }
+                        break;
+                    }
+                    child = up;
+                }
                 continue;
             }
             let l = listed.entry(parent).or_insert_with(|| Listing::of(parent, code, walked));
@@ -290,6 +307,9 @@ impl Burst {
             let gone = !md.is_some_and(|m| m.is_file());
             if gone || l.code.contains(p) {
                 out.code.push(rel.clone());
+            }
+            if !gone && l.repo.contains(p) {
+                out.repo.push(rel.clone());
             }
             if gone || l.text.contains(p) {
                 out.text.push(rel);
@@ -444,6 +464,22 @@ impl Notes {
         rx
     }
 
+    /// Whether `e` changes what the watches must cover, so reads walk until they are set again: a
+    /// directory the walks enter came, went or moved, or a rule file changed. A directory an
+    /// ignore rule leaves out gets no watch and changes nothing; counting it would keep every read
+    /// walking, as no burst sets the watches again for it.
+    fn reshapes(&self, e: &Event, walked: Option<&Walked>) -> bool {
+        let root = &self.0.root;
+        let Some(w) = walked else { return moves_a_dir(root, e, None) };
+        if e.paths.iter().any(|p| w.sets_rules(root, p)) {
+            return true;
+        }
+        moves_a_dir(root, e, Some(w))
+            && e.paths
+                .iter()
+                .any(|p| !inside(root, p) || w.holds(p) || p.parent().is_some_and(|d| w.holds(d) && Listing::of(d, &self.0.code, w).dirs.contains(p)))
+    }
+
     pub(crate) fn note(&self, ev: &notify::Result<Event>) {
         let mut n = lock(&self.0.noted);
         match ev {
@@ -466,7 +502,7 @@ impl Notes {
                 if e.paths.iter().all(|p| p.starts_with(&index)) {
                     return;
                 }
-                if moves_a_dir(&self.0.root, e, n.walked.as_deref()) {
+                if self.reshapes(e, n.walked.as_deref()) {
                     n.dirs += 1;
                 }
                 if n.events.len() >= MOST_NOTED {
@@ -635,6 +671,13 @@ impl Freshness for Notes {
         }
         if !walked.poll_dirs.is_empty() {
             return all("some directories have no watch", now);
+        }
+        // a directory made since the walk behind the watches began has no watch until they are set
+        // again: a file written in it meanwhile has no event, and only a walk finds it
+        if n.dirs > n.dirs_walked {
+            // a new generation: no event moved it, and the walk is skipped for a token already applied
+            n.gen += 1;
+            return all("a directory came or went since the watches were set", n.gen);
         }
         if n.polled.iter().any(|(p, s)| seen(p) != *s) {
             return all("a rule file no watch covers changed", now);
@@ -1518,12 +1561,71 @@ mod tests {
         if b.full {
             return None;
         }
-        b.files(root, &code, &walked)
+        // the files a look lists have a test of their own
+        b.files(root, &code, &walked).map(|n| Named { repo: Vec::new(), ..n })
     }
 
     fn both(paths: &[&str]) -> Option<Named> {
         let v: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
-        Some(Named { code: v.clone(), text: v })
+        Some(Named { code: v.clone(), text: v, repo: Vec::new() })
+    }
+
+    /// A burst names every file still there that the repository's walk lists, in an index or in
+    /// none (a `.png`, a lockfile, a hidden file), and no file that is gone or ignored.
+    #[test]
+    fn a_burst_names_every_listed_file_still_there_for_the_kept_look() {
+        let root = tree("listed");
+        std::fs::write(root.join(".gitignore"), "skip.log\n").unwrap();
+        let code = CodeWalk::new(&root);
+        let walked = Walked::new(&root, &code);
+        for (rel, body) in
+            [("src/pic.png", &b"\x89PNG\x00\x01"[..]), ("Cargo.lock", b"# lock\n"), ("src/.hidden.txt", b"x\n"), ("src/a.py", b"x = 2\n"), ("skip.log", b"x\n")]
+        {
+            std::fs::write(root.join(rel), body).unwrap();
+        }
+        let gone = root.join("src/old.py");
+        let _ = std::fs::remove_file(&gone);
+        let mut b = Burst::default();
+        let modify = EventKind::Modify(notify::event::ModifyKind::Any);
+        for rel in ["src/pic.png", "Cargo.lock", "src/.hidden.txt", "src/a.py", "skip.log"] {
+            b.note(&root, &walked, &ev(modify, &[&root.join(rel)]));
+        }
+        b.note(&root, &walked, &ev(EventKind::Remove(RemoveKind::Any), &[&gone]));
+        let n = b.files(&root, &code, &walked).expect("no walk");
+        let mut repo = n.repo.clone();
+        repo.sort();
+        assert_eq!(repo, ["Cargo.lock", "src/.hidden.txt", "src/a.py", "src/pic.png"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file written in a directory the walks enter but the watch does not hold yet (made since
+    /// it last listed the tree) makes the burst walk the tree: the watch has no listing of that
+    /// directory, and a look kept between calls would miss the file. One in an ignored new
+    /// directory is still left out without a walk.
+    #[test]
+    fn a_file_in_a_directory_the_watch_does_not_hold_yet_walks_the_tree() {
+        let root = tree("unheld");
+        let create = EventKind::Create(CreateKind::File);
+        let y = root.join("src/new/y.py");
+        let made = || {
+            std::fs::create_dir_all(root.join("src/new")).unwrap();
+            std::fs::write(&y, "tok_y = 1\n").unwrap();
+        };
+        assert_eq!(burst(&root, made, &[ev(create, &[&y])]), None);
+        // right under the root too
+        let t = root.join("top/t.py");
+        let at_top = || {
+            std::fs::create_dir_all(root.join("top")).unwrap();
+            std::fs::write(&t, "t = 1\n").unwrap();
+        };
+        assert_eq!(burst(&root, at_top, &[ev(create, &[&t])]), None);
+        let g = root.join("gen/out/z.py");
+        let ignored = || {
+            std::fs::create_dir_all(root.join("gen/out")).unwrap();
+            std::fs::write(&g, "z = 1\n").unwrap();
+        };
+        assert_eq!(burst(&root, ignored, &[ev(create, &[&g])]), Some(Named::default()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1776,6 +1878,29 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// Reads walk until the watches are set again only for what changes the watches: a directory
+    /// the walks enter, or a rule file. A new directory an ignore rule leaves out gets no watch and
+    /// no walk, so reads do not walk after it for as long as the watch runs.
+    #[test]
+    fn only_a_directory_the_walks_enter_or_a_rule_file_makes_reads_walk() {
+        let root = tree("reshapes");
+        let notes = Notes::new(&root);
+        notes.watching(&Arc::new(Walked::new(&root, &CodeWalk::new(&root))), notes.dirs());
+        let made = |rel: &str| {
+            std::fs::create_dir_all(root.join(rel)).unwrap();
+            notes.note(&ev(EventKind::Create(CreateKind::Folder), &[&root.join(rel)]));
+            notes.dirs()
+        };
+        let start = notes.dirs();
+        assert_eq!(made("gen/out"), start, "an ignored directory changes no watch");
+        assert_eq!(made("gen"), start, "an ignored directory changes no watch");
+        assert_eq!(made("src/fresh"), start + 1, "a directory the walk enters");
+        std::fs::write(root.join(".gitignore"), "*.tmp\n").unwrap();
+        notes.note(&ev(EventKind::Modify(ModifyKind::Data(DataChange::Any)), &[&root.join(".gitignore")]));
+        assert_eq!(notes.dirs(), start + 2, "a rule file");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// `Poll` on `dirs` and `files` of a fresh walk, then `change`; -> the burst its next look makes.
     fn polled(root: &Path, dirs: &[&str], files: &[&str], change: impl FnOnce()) -> Burst {
         let mut walked = Walked::new(root, &CodeWalk::new(root));
@@ -1805,7 +1930,8 @@ mod tests {
         let b = polled(&root, &["src", "src/deep"], &[], change);
         assert!(!b.full);
         let walked = Walked::new(&root, &code);
-        assert_eq!(b.files(&root, &code, &walked), both(&["src/a.py", "src/deep/new.py", "src/deep/old.py"]));
+        let listed = vec!["src/a.py".to_string(), "src/deep/new.py".to_string()];
+        assert_eq!(b.files(&root, &code, &walked), both(&["src/a.py", "src/deep/new.py", "src/deep/old.py"]).map(|n| Named { repo: listed, ..n }));
         // a new directory walks the tree, as its event from a watch does
         let b = polled(&root, &["src"], &[], || std::fs::create_dir(root.join("src/sub")).unwrap());
         assert_eq!(b.files(&root, &code, &Walked::new(&root, &code)), None);
@@ -1860,7 +1986,8 @@ mod tests {
         for e in poll.check_now() {
             b.note(&root, &walked, &e);
         }
-        assert_eq!(b.files(&root, &code, &walked), both(&["src/deep/b.py"]));
+        let listed = vec!["src/deep/b.py".to_string()];
+        assert_eq!(b.files(&root, &code, &walked), both(&["src/deep/b.py"]).map(|n| Named { repo: listed, ..n }));
         let e = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
         assert!(unwatched_message(2, 4, &e).contains("fs.inotify.max_user_watches"));
         let e = notify::Error::io(std::io::Error::from_raw_os_error(13));

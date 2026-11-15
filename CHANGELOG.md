@@ -193,6 +193,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - blake2 0.11 and sha1 0.11 (digest 0.11): token keys, model signatures and file hashes are the
   same bytes as before, so an existing index stays valid.
+- The MCP `grep_code` tool and `references` of a running server read the tree's files from a look
+  the server keeps up to date with its watch, where each call walked the whole tree first: on the
+  Linux tree a call no longer pays that walk, a query that matches nothing included (on Linux and
+  Windows; on macOS every call still looks at the tree) ([CLI](docs/CLI.md#serve-mcp)).
 - A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter
   grammars with `-fjump-tables`, which GCC 15 drops at the `-O0` their `parser.c` asks for:
   parsing was 1.8 times slower (Linux's C sources, 22 s against 12 s); a build outside the

@@ -1191,7 +1191,7 @@ pub fn group_by_symbol(ix: &Index, records: Vec<crate::instant::Record>) -> Resu
 /// agent asks for (MCP `grep_code`). It stops when the call is cancelled.
 /// The text index, when there is one, says which files can hold no match (`stores::grep_files`).
 pub fn grouped_grep(s: &Searcher, q: &crate::instant::Query, files: &crate::instant::Files) -> Result<(Vec<RefGroup>, bool)> {
-    let narrowed = crate::stores::grep_files(&s.ix, q, files);
+    let narrowed = crate::stores::grep_files(&s.ix, q, files, s.look.as_ref());
     let (found, truncated) = occurrences_in(&s.ix.root, narrowed.as_ref().unwrap_or(files), q, &s.cancel)?;
     Ok((group_by_symbol(&s.ix, found)?, truncated))
 }
