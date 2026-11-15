@@ -652,10 +652,29 @@ impl Redactor {
         }
         let (mut out, mut at) = (Vec::new(), 0);
         for line in text.split_inclusive('\n') {
-            match PUBLIC_ARMOUR.captures(line) {
-                Some(c) => self.in_public = &c[1] == "BEGIN",
-                None if self.in_public => out.push((at, at + line.len())),
-                None => {}
+            if self.in_public {
+                // as the private-key pass reads a body: base64 alone, blank or header lines skipped,
+                // and anything else (an END, another file's line) ends it
+                if PUBLIC_ARMOUR.captures(line).is_some_and(|c| &c[1] == "END") {
+                    self.in_public = false;
+                } else {
+                    match key_body(line) {
+                        Body::Base64(..) => out.push((at, at + line.len())),
+                        Body::Skip => {}
+                        Body::NotKey => self.in_public = false,
+                    }
+                }
+            } else {
+                // opened only by armour that ends its line, or is followed by a written-out `\n` (a
+                // key in one string), and not closed on the same line
+                for c in PUBLIC_ARMOUR.captures_iter(line).filter(|c| &c[1] == "BEGIN") {
+                    let m = c.get(0).unwrap();
+                    let rest = line[m.end()..].trim_end_matches(['\n', '\r']);
+                    let closed = PUBLIC_ARMOUR.captures_iter(&line[m.end()..]).any(|e| &e[1] == "END");
+                    if (rest.trim().is_empty() || rest.starts_with("\\n")) && !closed {
+                        self.in_public = true;
+                    }
+                }
             }
             at += line.len();
         }
@@ -1473,6 +1492,31 @@ mod tests {
         for rule in RULES.iter() {
             rule.regex();
         }
+    }
+
+    /// Armour that does not open a public body (in code, closed on its own line, or followed by a
+    /// line of another file) leaves base64 after it to the key-material rule, as it was before.
+    #[test]
+    fn a_public_armour_in_code_leaves_the_lines_after_it_redacted() {
+        let b64 = format!("{ALNUM}+/");
+        let body = fake(93, &b64, 64);
+        for (before, line) in [
+            ("const HDR: &str = \"-----BEGIN PUBLIC KEY-----\";".to_string(), body.clone()),
+            ("let pem = \"-----BEGIN PUBLIC KEY-----\\nMIIBIjAN\\n-----END PUBLIC KEY-----\";".to_string(), body.clone()),
+            ("src/tls.rs:12:    if pem.starts_with(\"-----BEGIN CERTIFICATE-----\") {".to_string(), format!("keys/id.pem:5:{body}")),
+        ] {
+            let mut r = Redactor::default();
+            r.redact(&before);
+            let (out, marks) = r.redact(&line);
+            assert!(!out.contains(&body) && marks.iter().any(|m| m.kind == "key-material"), "after {before}: {line} -> {out}");
+        }
+        // a public key's body ends at the first line that is not base64: what follows is read again
+        let mut r = Redactor::default();
+        for l in ["-----BEGIN PUBLIC KEY-----", &fake(94, &b64, 64)] {
+            assert!(r.redact(l).1.is_empty(), "{l}");
+        }
+        r.redact("src/main.rs:3:fn main() {}");
+        assert!(r.redact(&format!("keys/id.pem:5:{body}")).1.iter().any(|m| m.kind == "key-material"));
     }
 
     /// The page as assembled is read again, so a mark must not be taken for a secret twice.

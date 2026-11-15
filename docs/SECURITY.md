@@ -491,7 +491,8 @@ takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKE
 `token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
 random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside, and public
 material: an SSH key after its type, as `known_hosts` writes it, and the body of a public key, a
-certificate or a certificate request between its armour);
+certificate or a certificate request between its armour, read as a private key's is: armour
+that ends its line opens it, and the first line that is not base64 ends it);
 `generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
 holding a common word. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
