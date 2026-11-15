@@ -363,8 +363,6 @@ struct Section {
     new: Vec<(i64, i64)>,
 }
 
-/// The files of a `-U0` patch, by the path they have after the change (before it, when deleted):
-/// their changed lines on each side and whether git found them binary.
 /// The (old count, new start, new count) of each hunk of a one-file `-U0` patch.
 fn hunks(patch: &[u8]) -> Vec<(i64, i64, i64)> {
     let side = |t: &str| -> Option<(i64, i64)> {
@@ -387,6 +385,8 @@ fn hunks(patch: &[u8]) -> Vec<(i64, i64, i64)> {
         .collect()
 }
 
+/// The files of a `-U0` patch, by the path they have after the change (before it, when deleted):
+/// their changed lines on each side and whether git found them binary.
 fn sections(patch: &[u8]) -> BTreeMap<String, Section> {
     let mut out = BTreeMap::new();
     let mut cur: Option<(String, Section)> = None;
