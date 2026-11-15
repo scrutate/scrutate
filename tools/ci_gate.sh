@@ -76,19 +76,24 @@ bindings() {
   "$target/pyvenv/bin/python" -c "import scrutate; print(scrutate.__version__)" || return 1
   (cd python && SCRUTATE_BIN="$b" "$target/pyvenv/bin/python" -m pytest -q tests)
 }
-# the config exempts no file (no allow list with paths, here or extended); gitleaks over the tree;
-# then over a copy with a token planted in a file whose lines it once let through, which it must find
+# the config exempts no file (tools/gitleaks_config.py: no allow list with paths in any spelling, no
+# .gitleaksignore); gitleaks over the tree; then over a copy with a token planted in each file the
+# old allow list exempted, each of which it must find, so a trick the config check misses fails too
 secret_scan() {
   python3 tools/gitleaks_config.py || return 1
   "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml || return 1
-  local copy; copy=$(mktemp -d)
+  local copy f missed; copy=$(mktemp -d)
   git archive HEAD | tar -x -C "$copy" || return 1
-  printf '\nconst PLANTED: &str = "ghp_%s";\n' "$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" >>"$copy/crates/scrutate/src/intel.rs"
+  for f in crates/scrutate/src/intel.rs crates/scrutate/src/secrets.rs; do
+    printf '\nconst PLANTED: &str = "ghp_%s";\n' "$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" >>"$copy/$f"
+  done
   # from inside the copy, as security.yml scans `.`: an allow list's paths are relative there
-  if (cd "$copy" && "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml >/dev/null 2>&1); then
-    echo "gitleaks let a token planted in intel.rs through"; rm -rf "$copy"; return 1
-  fi
-  rm -rf "$copy"
+  (cd "$copy" && "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml --report-format json --report-path "$copy.json" >/dev/null 2>&1)
+  missed=$(python3 -c 'import json, sys
+found = {f["File"].removeprefix("./") for f in json.load(open(sys.argv[1])) if f["RuleID"] == "github-pat"}
+print(" ".join(p for p in sys.argv[2:] if p not in found))' "$copy.json" crates/scrutate/src/intel.rs crates/scrutate/src/secrets.rs) || missed="(no report)"
+  rm -rf "$copy" "$copy.json"
+  if [ -n "$missed" ]; then echo "gitleaks let a token planted in $missed through"; return 1; fi
 }
 # tools/gate_parity.py, with PyYAML from python[test]
 parity() { pyvenv && "$target/pyvenv/bin/python" tools/gate_parity.py; }
