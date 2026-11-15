@@ -367,6 +367,8 @@ NFC with final sigma folded.
   (396 MB against 362 MB, one row per key): the initials and trigram tables then carry the whole
   key.
 - **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays, Lucene-style.
+  A directory there can be in no segment list for up to 10 minutes, after a crash or while a
+  merge writes it: an update removes one older than that (`GC_AGE_S`), and `check` notes it.
   Per field (name, qualified name, signature, docs, body, path): BM25 postings (`ptr`, `doc`,
   `tf`) over a shared 63-bit token-hash vocabulary; `ids`, `dl`; int8 semantic vectors (`vec`, two
   views per chunk: description and implementation) with one float32 scale per view (`vscale`:

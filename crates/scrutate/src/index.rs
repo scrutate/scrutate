@@ -99,6 +99,17 @@ pub struct CheckReport {
     pub files_changed: usize,
     pub files_missing: usize,
     pub problems: Vec<String>,
+    /// segment entries no segment list names: a merge in progress, or what a writer that died
+    /// left; an update removes one once it is older than `GC_AGE_S`. Not a problem.
+    pub unlisted: Vec<Unlisted>,
+}
+
+/// A segment entry no segment list names.
+#[derive(Debug, serde::Serialize)]
+pub struct Unlisted {
+    pub name: String,
+    pub bytes: u64,
+    pub age_s: u64,
 }
 
 impl Default for CheckReport {
@@ -113,6 +124,7 @@ impl Default for CheckReport {
             files_changed: 0,
             files_missing: 0,
             problems: Vec::new(),
+            unlisted: Vec::new(),
         }
     }
 }
@@ -1719,23 +1731,30 @@ impl Index {
         Ok(format!("s{n:06}"))
     }
 
-    /// Delete segment directories no manifest refers to (left by a crash), unless brand new. Call
+    /// Delete segment entries no manifest refers to (left by a crash), unless brand new. Call
     /// inside a write transaction, so no writer of this machine has one in flight uncommitted.
     fn gc_segments(&self) {
-        let keep: HashSet<String> = self.segments().into_iter().collect();
-        let Ok(rd) = std::fs::read_dir(&self.seg_dir) else {
-            return;
-        };
-        for e in rd.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if keep.contains(&name) {
-                continue;
-            }
-            let age = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(0);
+        for (e, age) in self.unlisted_segments() {
             if age > GC_AGE_S {
-                let _ = std::fs::remove_dir_all(e.path());
+                // only scrutate writes here: a plain file is a leftover too
+                let _ = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path()));
             }
         }
+    }
+
+    /// The entries of the segment directory no segment list names, each with its age in seconds.
+    fn unlisted_segments(&self) -> Vec<(std::fs::DirEntry, u64)> {
+        let keep: HashSet<String> = self.segments().into_iter().collect();
+        let Ok(rd) = std::fs::read_dir(&self.seg_dir) else {
+            return Vec::new();
+        };
+        rd.flatten()
+            .filter(|e| !keep.contains(&*e.file_name().to_string_lossy()))
+            .map(|e| {
+                let age = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(0);
+                (e, age)
+            })
+            .collect()
     }
 
     /// Which database file this is (device and inode), where the system has such a thing.
@@ -3412,6 +3431,18 @@ impl Index {
         }
         r.files_indexed = self.db.query_row("SELECT COUNT(*) FROM files WHERE hash != 'SKIP'", [], |row| row.get::<_, i64>(0))? as usize;
         r.problems.extend(self.check_store()?);
+        r.unlisted = self
+            .unlisted_segments()
+            .into_iter()
+            .map(|(e, age_s)| {
+                let len = |p: &Path| std::fs::symlink_metadata(p).map(|m| m.len()).unwrap_or(0);
+                let bytes = match std::fs::read_dir(e.path()) {
+                    Ok(files) => files.flatten().map(|f| len(&f.path())).sum(),
+                    Err(_) => len(&e.path()),
+                };
+                Unlisted { name: e.file_name().to_string_lossy().into_owned(), bytes, age_s }
+            })
+            .collect();
         if files {
             let mut st = self.db.prepare("SELECT path, hash FROM files WHERE hash != 'SKIP'")?;
             let rows: Vec<(String, String)> = st.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;

@@ -833,6 +833,49 @@ fn check_reports_consistency_and_staleness() {
     assert_eq!(code, 0);
 }
 
+/// A segment directory no segment list names (a merge in progress, or a writer that died between
+/// writing it and listing it): check notes it, with its size and age, and still says OK; an
+/// update removes one older than 10 minutes and keeps a younger one, which a merge or a reader on
+/// an older snapshot may still use.
+#[cfg(unix)]
+#[test]
+fn check_notes_unlisted_segments_and_an_update_removes_only_the_old_one() {
+    let r = python_repo("unlisted_seg");
+    r.run(&["index"]);
+    let seg = r.root.join(".scrutate/seg");
+    let listed = fs::read_dir(&seg).unwrap().flatten().find(|e| e.path().is_dir()).unwrap().path();
+    let plant = |name: &str, age: std::time::Duration| {
+        let dir = seg.join(name);
+        fs::create_dir(&dir).unwrap();
+        for f in fs::read_dir(&listed).unwrap().flatten() {
+            fs::copy(f.path(), dir.join(f.file_name())).unwrap();
+        }
+        fs::File::open(&dir).unwrap().set_modified(std::time::SystemTime::now() - age).unwrap();
+        dir
+    };
+    let old = plant("s999998", std::time::Duration::from_secs(11 * 60));
+    let young = plant("s999999", std::time::Duration::ZERO);
+    // a plain file is a leftover too: noted, and removed with the old directory
+    let stray = seg.join("stray.txt");
+    fs::write(&stray, b"x").unwrap();
+    fs::File::options().write(true).open(&stray).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(11 * 60)).unwrap();
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "an unlisted segment is no problem: {out}");
+    assert!(out.lines().any(|l| l.starts_with("note: segment s999998 (") && l.contains("11 min old") && l.ends_with("the next update removes it")), "{out}");
+    assert!(out.lines().any(|l| l.starts_with("note: segment s999999 (") && l.contains("may belong to a merge in progress")), "{out}");
+    assert!(out.lines().any(|l| l == "note: segment stray.txt (1 B, 11 min old) is in no segment list: the next update removes it"), "{out}");
+    assert!(out.lines().last() == Some("OK"), "{out}");
+    let (_, json, _) = r.run(&["check", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> = v["unlisted"].as_array().unwrap().iter().map(|u| u["name"].as_str().unwrap()).collect();
+    assert_eq!(names.len(), 3, "{json}");
+    assert!(v["unlisted"].as_array().unwrap().iter().all(|u| u["bytes"].as_u64().unwrap() > 0), "{json}");
+    assert_eq!(r.run(&["index"]).0, 0);
+    assert!(!old.exists(), "the update kept an unlisted segment older than 10 minutes");
+    assert!(!stray.exists(), "the update kept a stray file older than 10 minutes");
+    assert!(young.exists(), "the update removed an unlisted segment a merge may still be writing");
+}
+
 #[test]
 fn compaction_merges_segments_and_keeps_counts() {
     let r = python_repo("compact");

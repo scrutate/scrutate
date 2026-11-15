@@ -9,6 +9,11 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `check` notes each entry of `.scrutate/seg` no segment list names, with its size and age (`unlisted`
+  in `--json`), where it said OK and showed nothing; such an entry is a merge in progress or
+  what a stopped writer left, and an update removes it once it is older than 10 minutes, a stray
+  file too, where it kept one. It is
+  no problem and does not change the exit code ([CLI](docs/CLI.md)).
 - The language server answers every workspace folder from the index of its own repository, where
   it answered only the first folder's and looked up a name from another folder in that index. It
   takes `workspace/didChangeWorkspaceFolders`, so a folder added later is answered and a removed

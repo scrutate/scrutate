@@ -2103,6 +2103,16 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
         for p in &report.problems {
             println!("problem: {p}");
         }
+        for u in &report.unlisted {
+            let fate = if u.age_s > crate::index::GC_AGE_S {
+                "the next update removes it"
+            } else {
+                "it may belong to a merge in progress; the first update once it is 10 minutes old removes it"
+            };
+            let age = if u.age_s < 120 { format!("{} s", u.age_s) } else { format!("{} min", u.age_s / 60) };
+            let size = if u.bytes < 1024 { format!("{} B", u.bytes) } else { format!("{} KB", u.bytes.div_ceil(1024)) };
+            println!("note: segment {} ({size}, {age} old) is in no segment list: {fate}", u.name);
+        }
         println!("{}", if report.ok() { "OK" } else { "PROBLEMS FOUND (run `scrutate index` to repair; `scrutate index --force` rebuilds from scratch)" });
     }
     Ok(if report.ok() { 0 } else { 1 })
