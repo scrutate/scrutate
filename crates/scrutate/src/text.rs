@@ -322,7 +322,8 @@ const MANIFESTS: [&str; 4] = ["Cargo.toml", "go.mod", "package.json", "pnpm-work
 /// Which paths of one repository are vendored code: search ranks them lower than the project's
 /// own. A path under a directory the repository's root manifests build as its own package is not.
 pub struct Vendored {
-    own: std::sync::Arc<Vec<String>>,
+    /// each manifest's own directories, judged apart: one's `!` takes back nothing another owns
+    own: std::sync::Arc<Vec<Vec<String>>>,
 }
 
 impl Vendored {
@@ -330,7 +331,7 @@ impl Vendored {
     /// changed since the last read in this process (a workspace member added while `serve` runs).
     pub fn of(root: &std::path::Path) -> Vendored {
         type Stamps = Vec<Option<(std::time::SystemTime, u64)>>;
-        type Known = HashMap<std::path::PathBuf, (Stamps, std::sync::Arc<Vec<String>>)>;
+        type Known = HashMap<std::path::PathBuf, (Stamps, std::sync::Arc<Vec<Vec<String>>>)>;
         static OWN: LazyLock<std::sync::Mutex<Known>> = LazyLock::new(Default::default);
         let key = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         let stamps: Stamps = MANIFESTS.iter().map(|m| std::fs::metadata(key.join(m)).ok().and_then(|md| Some((md.modified().ok()?, md.len())))).collect();
@@ -338,8 +339,7 @@ impl Vendored {
         if let Some((_, own)) = known.get(&key).filter(|(seen, _)| *seen == stamps) {
             return Vendored { own: own.clone() };
         }
-        let dirs: Vec<String> =
-            MANIFESTS.iter().flat_map(|m| crate::resolve::repo_text(&key, m).map(|t| own_package_dirs(m, &t)).unwrap_or_default()).collect();
+        let dirs: Vec<Vec<String>> = MANIFESTS.iter().filter_map(|m| crate::resolve::repo_text(&key, m).map(|t| own_package_dirs(m, &t))).collect();
         let own = std::sync::Arc::new(dirs);
         known.insert(key, (stamps, own.clone()));
         Vendored { own }
@@ -347,7 +347,7 @@ impl Vendored {
 
     /// Whether `path`, relative to the repository's root, is vendored code.
     pub fn is(&self, path: &str) -> bool {
-        is_vendored_path(path) && !owns(&self.own, path)
+        is_vendored_path(path) && !self.own.iter().any(|dirs| owns(dirs, path))
     }
 }
 
@@ -588,6 +588,22 @@ mod tests {
         let v = Vendored::of(&root);
         assert!(!v.is("vendor/y/a.js"), "a package of the workspace is the repository's own");
         assert!(v.is("vendor/x/a.js"), "the directory the workspace takes out is vendored");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Each manifest is judged on its own: a pnpm workspace's `!vendor/x` takes nothing back that
+    /// Cargo's workspace owns, and a directory any one manifest owns is the repository's own.
+    #[test]
+    fn a_bang_in_one_manifest_takes_back_nothing_another_owns() {
+        let root = std::env::temp_dir().join(format!("scrutate_vendored_two_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - 'vendor/**'\n  - '!vendor/x'\n").unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"vendor/x\"]\n").unwrap();
+        let v = Vendored::of(&root);
+        assert!(!v.is("vendor/x/src/lib.rs"), "Cargo's member stays the repository's own");
+        assert!(!v.is("vendor/y/a.js"), "pnpm's package stays the repository's own");
+        assert!(v.is("node_modules/left/index.js"), "what neither owns stays vendored");
         let _ = std::fs::remove_dir_all(&root);
     }
 
