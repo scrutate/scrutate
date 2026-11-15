@@ -431,3 +431,12 @@ mod comment_script {
         assert!(missing.out.contains("fetch-depth: 0") && missing.log.is_empty(), "{}", missing.out);
     }
 }
+
+#[test]
+fn a_test_file_the_head_deletes_is_no_test_to_run() {
+    let (t, base_sha) = base("rm_test");
+    t.git(&["rm", "-q", "tests/test_other.py"]);
+    t.commit("drop a test");
+    let md = t.review(&["--base", &base_sha]);
+    assert!(!md.contains("`tests/test_other.py` (distance"), "{md}");
+}

@@ -201,7 +201,8 @@ fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>,
 }
 
 /// The test files (`is_test_path`, the index's test flag) that hold a changed symbol or a caller,
-/// and those the diff changed, each once at its smallest distance.
+/// and those the diff changed, each once at its smallest distance; a file the change deletes is
+/// none.
 fn test_files(changed: &[Changed], callers: &[Caller], files: &[String]) -> Vec<Test> {
     let mut out: BTreeMap<String, Test> = BTreeMap::new();
     let mut offer = |path: &str, distance: usize, via: Option<&Hit>| {
@@ -213,7 +214,7 @@ fn test_files(changed: &[Changed], callers: &[Caller], files: &[String]) -> Vec<
             *t = Test { path: path.to_string(), distance, via: via.cloned() };
         }
     };
-    for c in changed {
+    for c in changed.iter().filter(|c| c.status != "deleted") {
         offer(&c.hit.path, 0, (c.hit.kind != "file").then_some(&c.hit));
     }
     for c in callers {
@@ -312,7 +313,7 @@ struct Builder<'a> {
     notes: Vec<(String, String)>,
     /// chunk ids, and (path, start, kind, qualname) of what has no id, already listed
     seen: HashSet<(i64, String, i64, String, String)>,
-    /// every path the diff changed
+    /// every path the diff changed, as it is after the change: a deleted file has none
     files: Vec<String>,
     base_copies: Vec<(String, Vec<u8>)>,
     head_paths: Vec<String>,
@@ -346,7 +347,7 @@ impl Builder<'_> {
 
     fn entry(&mut self, e: &Entry, blobs: &BTreeMap<String, Vec<u8>>) -> Result<()> {
         let path = e.new.as_deref().or(e.old.as_deref()).unwrap_or_default().to_string();
-        self.files.push(path.clone());
+        self.files.extend(e.new.clone());
         self.head_paths.extend(e.new.clone());
         if let (Some(old), Some(new)) = (&e.old, &e.new) {
             if old != new {

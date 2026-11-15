@@ -533,3 +533,15 @@ fn the_line_that_more_duplicates_were_new_follows_the_duplicates_it_counts() {
     // 50 duplicate findings, then the untested copies
     assert_eq!(seen, 50 + seeds.len(), "over {pages} pages");
 }
+
+#[test]
+fn a_test_file_the_change_deletes_is_no_test_to_run() {
+    let t = chain("rm_test");
+    t.git(&["rm", "-q", "tests/test_other.py"]);
+    for args in [&[][..], &["--staged"][..]] {
+        let v = t.json(args);
+        assert!(!ids(&v, "tests").contains(&"tests/test_other.py".to_string()), "{args:?}: {v}");
+        // what it defined is still a change
+        assert!(ids(&v, "changed").iter().any(|c| c.starts_with("tests/test_other.py")), "{args:?}: {v}");
+    }
+}

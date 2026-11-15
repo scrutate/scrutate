@@ -259,6 +259,7 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - The language server names the files of its answers under the folder as the editor sent it, also

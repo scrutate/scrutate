@@ -620,7 +620,8 @@ line per item:
   and say little about what to test. The walk stops at 2,000 callers and says so.
 - `tests`: each test file (the index's test flag: a `test` or `tests` directory, `test_*.py`,
   `*_test.go` and the like) that defines a changed symbol or holds a caller, with its distance
-  and the symbol reached, and each test file the diff changed, once, at its smallest distance.
+  and the symbol reached, and each test file the diff changed, once, at its smallest distance. A
+  test file the change deletes is no test to run, though what it defined is a change.
 - `findings`: what a reviewer would want named, as `path:start-end  [kind, severity] sentence`.
   First each new duplicate group (kind `duplicate`, severity `minor`), at its member the change
   touched: the groups `dupes` finds with its defaults (`--min-tokens 30`, `--threshold 0.75`)
