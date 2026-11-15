@@ -343,11 +343,11 @@ fn a_socket_nobody_listens_on_or_that_is_no_socket_is_passed_over() {
     // a session that died without removing its socket
     drop(server);
     assert!(r.socket().exists(), "a killed server leaves its socket");
-    let t = Instant::now();
     let (got, said) = r.through(&["symbol", "helper"], &[]);
-    assert!(said.contains("no session at"), "{said}");
+    // refused at the connect, so no greeting or answer wait ran: a wait would end "no greeting"
+    // or "no answer"
+    assert!(said.contains("no session at") && said.contains("Connection refused"), "{said}");
     assert_eq!(got, want);
-    assert!(t.elapsed() < Duration::from_secs(5));
     // the next server takes the place of the stale socket
     let _server = Server::start(&r.root);
     assert_eq!(r.through(&["symbol", "helper"], &[]).1, "[scrutate] session: answered by the session");
