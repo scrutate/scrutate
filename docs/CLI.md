@@ -759,7 +759,8 @@ ReadDirectoryChangesW on Windows) names them, `--watch` or not: the call writes 
 named, then it looks at the named files alone (one `stat` each) and indexes those that changed.
 When the watch cannot vouch for fewer files (it is not in place yet, it lost events or reported an
 error, an ignore rule or a directory changed, the cookie's event took more than a second, or on
-Linux the watches were set again) the call looks at every file instead, at once. The one
+Linux a directory got its first watch, new or made again at its path) the call looks at every
+file instead, at once. The one
 exception is a `--refresh-interval` you give: it holds that walk back as below, so a new directory
 or a changed ignore rule can wait up to that interval before calls see it. The other case is a
 change that makes no event at all (a write through a memory map, a bind mount that does not pass

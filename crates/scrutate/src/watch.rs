@@ -301,7 +301,7 @@ const MOST_NOTED: usize = 10_000;
 /// event (as Watchman's sync queries do), so a file written before the read started is noted;
 /// then the events since the read's token, as `Burst` reads them, are its change set. Whatever
 /// the events cannot vouch for (lost events, an error, a rule file, a directory that came or
-/// went, the watches set again, no watch at all) makes the change set every file.
+/// went, a directory's first watch, no watch at all) makes the change set every file.
 #[derive(Clone)]
 pub struct Notes(Arc<Shared>);
 
@@ -332,6 +332,10 @@ struct Noted {
     polled: Vec<(PathBuf, Option<Seen>)>,
     /// the cookies written and not yet back: whether each one's event came
     cookies: HashMap<std::ffi::OsString, bool>,
+    /// events that made, removed or moved a directory
+    dirs: u64,
+    /// `dirs` when the walk behind the watches now began
+    dirs_walked: u64,
 }
 
 impl Noted {
@@ -415,6 +419,9 @@ impl Notes {
                 if e.paths.iter().all(|p| p.starts_with(&index)) {
                     return;
                 }
+                if moves_a_dir(&self.0.root, e, n.walked.as_deref()) {
+                    n.dirs += 1;
+                }
                 if n.events.len() >= MOST_NOTED {
                     n.walk_all("too many changes since the last read");
                     return;
@@ -426,14 +433,21 @@ impl Notes {
         }
     }
 
-    /// The watches are set from `walked`: a read that applied less walks the tree, since a file
-    /// written while they were being set may have no event. Only Linux sets them again later, one
-    /// per directory; elsewhere one watch covers the tree from the first.
-    fn watching(&self, walked: &Arc<Walked>) {
+    /// The watches are set from `walked`, whose walk began when `dirs` directory events were noted:
+    /// a read that applied less walks the tree, since a file written while they were being set may
+    /// have no event. Only Linux sets them again later, one per directory. A directory that kept
+    /// its inode keeps its watch (inotify adds to it), so reads walk only after a directory event
+    /// since the last walk began (one made again at its path may reuse its inode number, and has
+    /// no watch until now), a new path, or a rule file no watch covers; elsewhere one watch covers
+    /// the tree from the first.
+    fn watching(&self, walked: &Arc<Walked>, dirs: u64) {
         let mut n = lock(&self.0.noted);
-        if n.walked.is_none() || cfg!(target_os = "linux") {
+        let moved = n.dirs > n.dirs_walked;
+        let gained = |old: &Walked| moved || !walked.watched().is_subset(&old.watched()) || !old.poll_files.is_empty() || !walked.poll_files.is_empty();
+        if n.walked.as_deref().is_none_or(|old| cfg!(target_os = "linux") && gained(old)) {
             n.walk_all("the watches were set");
         }
+        n.dirs_walked = dirs;
         n.polled = walked.poll_files.iter().map(|p| (p.clone(), seen(p))).collect();
         n.walked = Some(Arc::clone(walked));
     }
@@ -447,6 +461,11 @@ impl Notes {
     #[cfg(test)]
     pub(crate) fn cookies_kept(&self) -> usize {
         lock(&self.0.noted).cookies.len()
+    }
+
+    /// The directory events noted so far.
+    fn dirs(&self) -> u64 {
+        lock(&self.0.noted).dirs
     }
 
     fn stopped(&self) {
@@ -483,6 +502,21 @@ impl Notes {
         drop(n);
         let _ = std::fs::remove_file(&path);
         r
+    }
+}
+
+/// Whether `e` may have made, removed or moved a directory in the tree, or a directory of rule
+/// files outside it (a watch there also sees its other entries). Linux names a directory's create
+/// and remove; a rename is a directory when its path is one now or was one the walk entered.
+fn moves_a_dir(root: &Path, e: &Event, walked: Option<&Walked>) -> bool {
+    let watched = |p: &Path| inside(root, p) || walked.is_some_and(|w| w.rules.iter().any(|r| r.parent() == Some(p)));
+    let mut paths = e.paths.iter().filter(|p| watched(p));
+    match e.kind {
+        EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder) => paths.next().is_some(),
+        EventKind::Create(CreateKind::Any | CreateKind::Other)
+        | EventKind::Remove(RemoveKind::Any | RemoveKind::Other)
+        | EventKind::Modify(ModifyKind::Name(_)) => paths.any(|p| walked.is_some_and(|w| w.holds(p)) || std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())),
+        _ => false,
     }
 }
 
@@ -920,12 +954,13 @@ pub fn run_noting(
         None => rx,
     };
     let code = CodeWalk::new(&root);
+    let mut dirs = notes.map_or(0, Notes::dirs);
     let mut walked = Arc::new(sync_watches(&mut watcher, &root, &code, None)?);
     // the cookies' directory is in no walk; elsewhere the root's watch covers it
     #[cfg(target_os = "linux")]
     let notes = notes.filter(|n| watcher.watch(&n.0.cookies, RecursiveMode::NonRecursive).is_ok());
     if let Some(n) = notes {
-        n.watching(&walked);
+        n.watching(&walked, dirs);
     }
     let mut poll = Poll::new(&walked);
     let mut safety = notes.map(|_| Safety::new(&root));
@@ -974,9 +1009,10 @@ pub fn run_noting(
         }
         let named = files.filter(|_| !walked.due(&root));
         if named.is_none() {
+            dirs = notes.map_or(0, Notes::dirs);
             walked = Arc::new(sync_watches(&mut watcher, &root, &code, Some(&walked))?);
             if let Some(n) = notes {
-                n.watching(&walked);
+                n.watching(&walked, dirs);
             }
             poll = Poll::new(&walked);
         }
@@ -1479,6 +1515,71 @@ mod tests {
         }
         std::fs::remove_file(root.join(".scrutate/text/manifest.json")).unwrap();
         assert!(w.due(&root), "the text index went away");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_same_watches_set_again_leave_reads_to_their_change_sets() {
+        let root = tree("rewatch");
+        let notes = Notes::new(&root);
+        let walk = || Arc::new(Walked::new(&root, &CodeWalk::new(&root)));
+        notes.watching(&walk(), notes.dirs());
+        let first = lock(&notes.0.noted).walk_below;
+        notes.watching(&walk(), notes.dirs());
+        assert_eq!(lock(&notes.0.noted).walk_below, first, "every directory kept its watch");
+        // a directory beside the root, made where a rule file's watch sees it
+        notes.note(&ev(EventKind::Create(CreateKind::Folder), &[&root.with_file_name("scrutate_burst_beside")]));
+        notes.watching(&walk(), notes.dirs());
+        assert_eq!(lock(&notes.0.noted).walk_below, first, "a directory outside the root");
+        std::fs::create_dir(root.join("src/new")).unwrap();
+        notes.watching(&walk(), notes.dirs());
+        assert_eq!(lock(&notes.0.noted).walk_below > first, cfg!(target_os = "linux"), "a directory got its first watch");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_directory_made_again_at_its_path_has_no_watch_so_the_next_read_walks() {
+        fn dirs(d: &Path, out: &mut Vec<PathBuf>) {
+            for e in std::fs::read_dir(d).unwrap().flatten() {
+                if e.file_type().unwrap().is_dir() {
+                    out.push(e.path());
+                    dirs(&e.path(), out);
+                }
+            }
+        }
+        let root = tree("remade");
+        let notes = Notes::new(&root);
+        let walk = || Arc::new(Walked::new(&root, &CodeWalk::new(&root)));
+        let w1 = walk();
+        notes.watching(&w1, notes.dirs());
+        let walk_below = || lock(&notes.0.noted).walk_below;
+        let first = walk_below();
+        // the same paths again, each a new directory that no watch was on when it was made, with
+        // the events the root's watch reports; ext4 may give one its old inode number
+        let mut all = vec![root.join("src")];
+        dirs(&root.join("src"), &mut all);
+        std::fs::remove_dir_all(root.join("src")).unwrap();
+        for d in &all {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let src = root.join("src");
+        notes.note(&ev(EventKind::Remove(RemoveKind::Folder), &[&src]));
+        notes.note(&ev(EventKind::Create(CreateKind::Folder), &[&src]));
+        let w2 = walk();
+        assert_eq!(w2.watched(), w1.watched(), "the same directories by path");
+        notes.watching(&w2, notes.dirs());
+        let linux = cfg!(target_os = "linux");
+        assert_eq!(walk_below() > first, linux, "a directory made again had no watch until now");
+        let second = walk_below();
+        notes.watching(&walk(), notes.dirs());
+        assert_eq!(walk_below(), second, "no directory event since that walk began");
+        // an event after the walk began may name a directory that walk did not watch
+        let began = notes.dirs();
+        notes.note(&ev(EventKind::Create(CreateKind::Folder), &[&src]));
+        notes.watching(&walk(), began);
+        let third = walk_below();
+        notes.watching(&walk(), notes.dirs());
+        assert_eq!(walk_below() > third, linux, "the next set walks for an event its walk may have missed");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

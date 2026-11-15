@@ -33,8 +33,8 @@ named, or every file.
   `Burst::files`), so there is no second copy of the membership rules.
 - Whatever those rules cannot vouch for is every file: lost events, a watcher error, an ignore or
   config file, a directory that came or went, a directory without a watch, a rule file outside
-  every watch that changed, watches set again on Linux, more than 10,000 events since the last
-  read, a cookie that took over a second. `SCRUTATE_SESSION_DEBUG=1` names the reason.
+  every watch that changed, a directory's first watch on Linux (new, or made again at its path),
+  more than 10,000 events since the last read, a cookie that took over a second. `SCRUTATE_SESSION_DEBUG=1` names the reason.
 - Every session the MCP server, the language server and the Python bindings open runs a watch,
   on a local disk only (`watch::local`: Linux `statfs` network types, macOS `MNT_LOCAL`, Windows
   `GetDriveTypeW`); inotify(7) reports no event for a change made over a network. A tree on a
