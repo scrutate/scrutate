@@ -2253,7 +2253,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         if out.json {
             let rec = serde_json::json!({"type": if context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
                 "column": h.column, "text": h.text, "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
-            writeln!(w, "{}", with_path_bytes(rec, h.path_bytes.as_deref()))?;
+            writeln!(w, "{}", with_path_bytes(rec, h.raw_path()))?;
             return Ok(());
         }
         if groups {
@@ -2269,9 +2269,9 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
             linebuf.clear();
             instant::format_plain(
                 &mut linebuf,
-                if q.with_filename { h.path_bytes.as_deref().unwrap_or(h.path.as_bytes()) } else { b"" },
+                if q.with_filename { h.raw_path().unwrap_or(h.path.as_bytes()) } else { b"" },
                 if q.line_numbers { h.line } else { 0 },
-                h.text.as_bytes(),
+                h.raw_text().unwrap_or(h.text.as_bytes()),
                 context,
             );
             w.write_all(&linebuf)?;
@@ -2816,7 +2816,7 @@ mod tests {
         assert_eq!(rec["path_bytes"], serde_json::json!([120, 255, 10, 46, 99]));
         assert!(super::with_path_bytes(serde_json::json!({"path": "a.c"}), None).get("path_bytes").is_none());
         // colour output is for a person: a line break in a name cannot start a line of its own
-        let h = crate::instant::Line { path: "x\nfake.txt:1:needle".into(), path_bytes: None, line: 3, column: 1, text: "needle".into(), spans: vec![(0, 6)] };
+        let h = crate::instant::Line { path: "x\nfake.txt:1:needle".into(), raw: None, line: 3, column: 1, text: "needle".into(), spans: vec![(0, 6)] };
         let mut w = termcolor::Buffer::ansi();
         super::write_colour(&mut w, &h, false, true, true).unwrap();
         let out = String::from_utf8(w.into_inner()).unwrap();

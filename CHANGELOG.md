@@ -316,6 +316,9 @@ incompatible index by itself, and that is never breaking.
 - `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
   fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
   row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
+- `grep`'s plain output (piped, no colour) prints a line that is not UTF-8 as its own bytes, as
+  ripgrep does (`foo \xff\xfe bar`), where it printed U+FFFD for each bad byte, with or without
+  `--sort`; `--json` text keeps U+FFFD ([CLI](docs/CLI.md#conventions)).
 - `dead` no longer lists as dead a Fortran definition called in another case in a build without
   the Fortran grammar (`call dowork()` for `subroutine DoWork`): a Fortran file ignores case by
   its extension there too, so such a definition is undecided at worst, and `refs` finds its uses

@@ -257,14 +257,42 @@ impl Files {
 pub struct Line {
     /// shared by every record of one file (a refcount per line instead of a string copy)
     pub path: Arc<str>,
-    /// the bytes of `path` when it is not UTF-8 (on Unix; `path` then shows U+FFFD in their place)
-    pub path_bytes: Option<Arc<[u8]>>,
+    /// the bytes of the path and of the line where they are not UTF-8 (`raw_path`, `raw_text`)
+    pub raw: Option<Arc<Raw>>,
     pub line: u64,
     pub column: u64,
     pub text: String,
     /// byte ranges of the matches: within `text` with `Query::text_spans`, else within the line
     /// as read (they differ where it holds invalid UTF-8, and a match may end in its line break)
     pub spans: Vec<(usize, usize)>,
+}
+
+/// The bytes of a line's path and text that are not UTF-8: on its own, so a record of UTF-8 text
+/// pays one word for them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Raw {
+    /// the path's bytes (on Unix; `Line::path` then shows U+FFFD in their place)
+    pub path: Option<Box<[u8]>>,
+    /// the line's bytes (`Line::text` then shows U+FFFD in their place): plain output prints
+    /// these, as ripgrep does
+    pub text: Option<Box<[u8]>>,
+}
+
+impl Line {
+    /// The bytes of `path` when it is not UTF-8.
+    pub fn raw_path(&self) -> Option<&[u8]> {
+        self.raw.as_ref()?.path.as_deref()
+    }
+
+    /// The bytes of `text` when they are not UTF-8.
+    pub fn raw_text(&self) -> Option<&[u8]> {
+        self.raw.as_ref()?.text.as_deref()
+    }
+}
+
+/// The side-car of a line whose path or text is not UTF-8, else None.
+fn raw_of(path: Option<&[u8]>, text: Option<&[u8]>) -> Option<Arc<Raw>> {
+    (path.is_some() || text.is_some()).then(|| Arc::new(Raw { path: path.map(Box::from), text: text.map(Box::from) }))
 }
 
 /// One result of a search; `Query::report` decides which kinds it gives.
@@ -303,7 +331,7 @@ impl Record {
 
     pub fn path_bytes(&self) -> Option<&[u8]> {
         match self {
-            Record::Match(l) | Record::Context(l) => l.path_bytes.as_deref(),
+            Record::Match(l) | Record::Context(l) => l.raw_path(),
             Record::Count { path_bytes, .. } | Record::File { path_bytes, .. } | Record::Note { path_bytes, .. } => path_bytes.as_deref(),
         }
     }
@@ -1322,7 +1350,8 @@ pub fn type_list() -> Vec<(String, Vec<String>)> {
 /// Plain `path:line:text` output written by the search threads themselves: each file's lines are
 /// formatted into a buffer and handed over in one call, so no per-line allocation or channel message.
 /// Used for the common piped case (no colour, no JSON, no sorting); the bytes are the same as the
-/// CLI's own formatting of records.
+/// CLI's own formatting of records, except that a line is written as its bytes, as ripgrep writes it
+/// (a record's text is UTF-8, with U+FFFD for what is not).
 ///
 /// Output that follows other output within `HOLD_NS` waits in a buffer, so the lines of many files
 /// leave in one write: a write per matching file wakes the reader of a pipe every time (88,000
@@ -1406,8 +1435,8 @@ impl PlainSink {
             w.write_all(before)?;
             w.write_all(head)?;
             match text {
-                Text::Here(b) => write_lossy(w, b, 1 << 18)?,
-                Text::At(at, len) => read = write_lossy_from(w, at, len)?,
+                Text::Here(b) => w.write_all(b)?,
+                Text::At(at, len) => read = write_from(w, at, len)?,
             }
             w.write_all(b"\n")
         });
@@ -1451,47 +1480,6 @@ fn lossy(b: &[u8]) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// `b` written as `lossy(b)` would be, `piece` bytes at a time: each piece is checked just before it
-/// is written, while the reader drains the previous one, instead of the whole line up front.
-fn write_lossy(w: &mut dyn Write, b: &[u8], piece: usize) -> std::io::Result<()> {
-    let mut at = 0;
-    while at < b.len() {
-        let end = b.len().min(at + piece.max(4));
-        at = end - write_lossy_part(w, &b[at..end], end < b.len())?;
-    }
-    Ok(())
-}
-
-/// `b` written as `lossy(b)` would be; with `more`, a character cut by its end is left for the
-/// next part and its length returned.
-fn write_lossy_part(w: &mut dyn Write, b: &[u8], more: bool) -> std::io::Result<usize> {
-    let mut at = 0;
-    while at < b.len() {
-        match std::str::from_utf8(&b[at..]) {
-            Ok(_) => {
-                w.write_all(&b[at..])?;
-                at = b.len();
-            }
-            Err(e) => {
-                let ok = at + e.valid_up_to();
-                w.write_all(&b[at..ok])?;
-                match e.error_len() {
-                    Some(bad) => {
-                        w.write_all("\u{FFFD}".as_bytes())?;
-                        at = ok + bad;
-                    }
-                    None if more => return Ok(b.len() - ok),
-                    None => {
-                        w.write_all("\u{FFFD}".as_bytes())?;
-                        at = b.len();
-                    }
-                }
-            }
-        }
-    }
-    Ok(0)
-}
-
 /// The text of a matching line: here, or the first `len` bytes of a source, read again in pieces
 /// instead of being held whole.
 #[derive(Clone, Copy)]
@@ -1500,25 +1488,22 @@ enum Text<'t> {
     At(&'t dyn source::ReadAt, u64),
 }
 
-/// The first `len` bytes of `at` written as `write_lossy` writes them. The outer Err is a failed
-/// write, the inner one a failed or short read (the output then stops where the read did).
-fn write_lossy_from(w: &mut dyn Write, at: &dyn source::ReadAt, len: u64) -> std::io::Result<std::io::Result<()>> {
+/// The first `len` bytes of `at`, written as they are, as ripgrep prints a line. The outer Err is
+/// a failed write, the inner one a failed or short read (the output then stops where the read did).
+fn write_from(w: &mut dyn Write, at: &dyn source::ReadAt, len: u64) -> std::io::Result<std::io::Result<()>> {
     const PIECE: usize = 1 << 18;
-    let mut buf = vec![0u8; PIECE + 3];
-    let (mut pos, mut kept) = (0u64, 0usize);
+    let mut buf = vec![0u8; PIECE];
+    let mut pos = 0u64;
     while pos < len {
         let want = (PIECE as u64).min(len - pos) as usize;
-        let got = match at.read_at(&mut buf[kept..kept + want], pos) {
+        let got = match at.read_at(&mut buf[..want], pos) {
             Ok(0) => return Ok(Err(std::io::Error::other("changed while it was searched, or a read failed"))),
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Ok(Err(e)),
         };
         pos += got as u64;
-        let end = kept + got;
-        let left = write_lossy_part(w, &buf[..end], pos < len)?;
-        buf.copy_within(end - left..end, 0);
-        kept = left;
+        w.write_all(&buf[..got])?;
     }
     Ok(Ok(()))
 }
@@ -1555,7 +1540,7 @@ pub fn format_plain(out: &mut Vec<u8>, path: &[u8], line: u64, text: &[u8], cont
 
 struct Collector<'a> {
     path: Arc<str>,
-    /// `Line::path_bytes`
+    /// `Line::raw_path`
     raw: Option<Arc<[u8]>>,
     /// None: the records stay in `batch` for the caller to take
     tx: Option<&'a mpsc::SyncSender<Vec<Record>>>,
@@ -1734,16 +1719,17 @@ impl<'a> Sink for Collector<'a> {
         if self.plain.is_some() {
             let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             let number = if self.numbered { ctx.line_number().unwrap_or(0) + self.line_base } else { 0 };
-            format_plain(&mut self.out, name, number, lossy(line).as_bytes(), true);
+            format_plain(&mut self.out, name, number, line, true);
             return Ok(true);
         }
-        let text = lossy(line).into_owned();
+        let text = lossy(line);
+        let raw = raw_of(self.raw.as_deref(), matches!(text, std::borrow::Cow::Owned(_)).then_some(line));
         self.push(Record::Context(Line {
             path: Arc::clone(&self.path),
-            path_bytes: self.raw.clone(),
+            raw,
             line: ctx.line_number().unwrap_or(0) + self.line_base,
             column: 0,
-            text,
+            text: text.into_owned(),
             spans: Vec::new(),
         }));
         Ok(true)
@@ -1844,7 +1830,7 @@ impl Collector<'_> {
             let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             match text {
                 Text::Here(line) if line.len() < 1 << 16 || self.hold || self.whole_groups || (self.multiline && memchr::memchr(b'\n', line).is_some()) => {
-                    format_plain(&mut self.out, name, number, lossy(line).as_bytes(), false);
+                    format_plain(&mut self.out, name, number, line, false);
                 }
                 _ => {
                     // a very long line is written from where it is instead of being copied into the buffer
@@ -1878,11 +1864,12 @@ impl Collector<'_> {
         if self.text_spans {
             text_offsets(&mut spans, line, &text, matches!(text, std::borrow::Cow::Borrowed(_)));
         }
+        let raw = raw_of(self.raw.as_deref(), matches!(text, std::borrow::Cow::Owned(_)).then_some(line));
         let text = text.into_owned();
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
-        let path_bytes = self.raw.clone();
-        self.push(Record::Match(Line { path: Arc::clone(&self.path), path_bytes, line: number.unwrap_or(0) + self.line_base, column, text, spans }));
+        let line = number.unwrap_or(0) + self.line_base;
+        self.push(Record::Match(Line { path: Arc::clone(&self.path), raw, line, column, text, spans }));
         if let Some(max) = self.max_results {
             if n >= max {
                 self.stop.set();
@@ -2226,7 +2213,7 @@ struct Run<'a> {
     plain: Option<&'a PlainSink>,
     /// the paths the files are reported under (`label`)
     labels: &'a [PathBuf],
-    /// the file being searched: `Line::path_bytes`
+    /// the file being searched: `Line::raw_path`
     raw: Option<&'a Arc<[u8]>>,
 }
 
@@ -3339,9 +3326,10 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn a_record_costs_no_more_than_the_line_it_carries_and_a_word() {
-        // 104 bytes: what one result took when a flag and a sentinel line number told its kind
-        assert_eq!(std::mem::size_of::<Line>(), 96);
-        assert_eq!(std::mem::size_of::<Record>(), 104);
+        // 104 bytes: what one result took when a flag and a sentinel line number told its kind; a
+        // path or text that is not UTF-8 lives in one side-car pointer (`Raw`)
+        assert_eq!(std::mem::size_of::<Line>(), 88);
+        assert_eq!(std::mem::size_of::<Record>(), 96);
     }
 
     #[test]
@@ -3606,10 +3594,10 @@ mod tests {
         assert_eq!(source::literal_in_pieces(&std::fs::File::open(&path).unwrap(), 7, &finder, 1, 8), None);
         std::fs::write(&path, b"ab\xC3\xA9cd").unwrap();
         let (mut out, file) = (Vec::new(), std::fs::File::open(&path).unwrap());
-        assert!(write_lossy_from(&mut out, &file, 6).unwrap().is_ok());
+        assert!(write_from(&mut out, &file, 6).unwrap().is_ok());
         assert_eq!(out, "ab\u{e9}cd".as_bytes());
         out.clear();
-        assert!(write_lossy_from(&mut out, &file, 9).unwrap().is_err(), "a short read");
+        assert!(write_from(&mut out, &file, 9).unwrap().is_err(), "a short read");
         assert_eq!(out, "ab\u{e9}cd".as_bytes());
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -3870,28 +3858,6 @@ mod tests {
         assert_eq!(windows_form(r"dir\a.txt"), "dir/a.txt");
         assert_eq!(windows_form(r"\\server\share\a.txt"), "//server/share/a.txt");
         assert_eq!(windows_form(r"\\?\UNC\server\share\a.txt"), "//server/share/a.txt");
-    }
-
-    #[test]
-    fn write_lossy_equals_from_utf8_lossy() {
-        let parts: &[&[u8]] = &[b"a", b"\xC3\xA9", b"\xE6\x97\xA5", b"\xF0\x9F\x98\x80", b"\xFF", b"\xC3", b"\xE6\x97", b"\xF0\x9F", b"\x80", b"\n"];
-        let mut state = 0x9E37_79B9_7F4A_7C15u64;
-        let mut next = |n: usize| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            (state % n as u64) as usize
-        };
-        for _ in 0..20_000 {
-            let mut b = Vec::new();
-            for _ in 0..next(12) {
-                b.extend_from_slice(parts[next(parts.len())]);
-            }
-            let piece = 1 + next(9);
-            let mut out = Vec::new();
-            write_lossy(&mut out, &b, piece).unwrap();
-            assert_eq!(out, String::from_utf8_lossy(&b).as_bytes(), "{b:?} piece {piece}");
-        }
     }
 
     #[test]
@@ -4320,7 +4286,7 @@ mod tests {
         sink.write(b"last:1:text\n", false, &stop);
         sink.write_line(b"", b"long:1:", Text::Here(b"x\xFFy"), false, &stop).unwrap();
         sink.flush().unwrap();
-        all.extend_from_slice("last:1:text\nlong:1:x\u{FFFD}y\n".as_bytes());
+        all.extend_from_slice(b"last:1:text\nlong:1:x\xFFy\n");
         assert_eq!(written(), all);
         assert!(!sink.broken.load(Ordering::Relaxed) && !stop.is_set());
     }

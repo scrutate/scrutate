@@ -98,6 +98,10 @@ def random_corpus(rng: random.Random, root: str) -> list[str]:
         data = text.encode("utf8")
         if rng.random() < 0.05:
             data = b"\xef\xbb\xbf" + data  # BOM
+        elif rng.random() < 0.05 and data:
+            # a Latin-1 byte: plain output prints it as it is, JSON as U+FFFD
+            at = rng.randrange(len(data))
+            data = data[:at] + b"\xe9" + data[at:]
         with open(p, "wb") as f:
             f.write(data)
     if rng.random() < 0.3:
@@ -285,6 +289,14 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 only_a = sorted(a - b)[:3]
                 only_b = sorted(b - a)[:3]
                 return f"match sets differ for {pat!r} ({mode}, flags {sf}, {shown(env)}): only scrutate {only_a}; only rg {only_b} (corpus {root})"
+            # plain output, byte for byte: the text as the file holds it
+            _, p1 = run_json([SCRUTATE, "grep", "-n", "-H", *sf, pat], root, env)
+            _, p2 = run_json([RG, "--no-messages", "--no-heading", "-n", "-H", *rf, pat, "."], root)
+            pa = sorted(p1.split(b"\n"))
+            pb = sorted(l[2:] if l.startswith(b"./") else l for l in p2.split(b"\n"))
+            if pa != pb:
+                diff = sorted(set(pa) ^ set(pb))[:3]
+                return f"plain output differs for {pat!r} ({mode}, flags {sf}, {shown(env)}): {diff} (corpus {root})"
             rc1, o1 = run_json([SCRUTATE, "grep", "-c", *sf, pat], root, env)
             ca = {l.rsplit(b":", 1)[0].decode(): int(l.rsplit(b":", 1)[1]) for l in o1.splitlines() if b":" in l}
             if ca != cb:

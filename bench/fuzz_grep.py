@@ -71,7 +71,12 @@ def make():
                 STATE["nul"].add(os.path.join(d, n))
             elif r < 0.08:
                 data = b"\xff\xfe bad " + data
-            elif r < 0.11:
+            elif r < 0.11 and data:
+                # a Latin-1 byte inside a line (\xff\xfe above is UTF-16's byte-order mark, decoded):
+                # plain output prints it as it is
+                at = rnd.randrange(len(data))
+                data = data[:at] + b"\xe9" + data[at:]
+            elif r < 0.14:
                 data = b"\xef\xbb\xbf" + data
             with open(os.path.join(WORK, d, n), "wb") as f:
                 f.write(data)
@@ -177,7 +182,8 @@ def run(tool, a):
         p = subprocess.run(cmd, cwd=WORK, capture_output=True, timeout=20)
     except subprocess.TimeoutExpired:
         return ["<timeout>"], -9, b""
-    out = p.stdout.decode("utf-8", "replace").split("\n")
+    # lossless: rg's `\xff` and a U+FFFD in its place must differ (plain output prints the bytes)
+    out = p.stdout.decode("utf-8", "surrogateescape").split("\n")
     out = out[:-1] if out and out[-1] == "" else out
     lines = [l[2:] if l.startswith("./") else l for l in out]
     return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr

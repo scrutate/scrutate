@@ -1673,3 +1673,21 @@ fn a_missing_text_index_names_the_root_as_it_is_shown() {
     assert_ne!(code, 0, "{err}");
     assert!(err.contains(&format!("no text index in {};", canon(&d.0).display())), "{err}");
 }
+
+#[test]
+fn a_line_that_is_not_utf_8_is_printed_as_its_bytes_as_ripgrep_prints_it() {
+    let d = Dir::new("rawbytes");
+    d.write("bad.txt", b"foo \xff\xfe bar\nctx \xe9\n");
+    // past 64 KiB a line is written from where it is, not from the output buffer
+    let long = [&b"foo "[..], &vec![b'x'; 70_000], b" \xff end\n"].concat();
+    d.write("long.txt", &long);
+    let raw = |args: &[&str]| Command::new(BIN).args(args).current_dir(&d.0).stdin(Stdio::null()).env_remove("NO_COLOR").output().unwrap().stdout;
+    // ripgrep 15.2.0 prints these bytes
+    assert_eq!(raw(&["grep", "-n", "foo", "bad.txt"]), b"1:foo \xff\xfe bar\n");
+    assert_eq!(raw(&["grep", "-n", "-A1", "foo", "bad.txt"]), b"1:foo \xff\xfe bar\n2-ctx \xe9\n");
+    assert_eq!(raw(&["grep", "--sort", "-n", "bar", "."]), b"./bad.txt:1:foo \xff\xfe bar\n");
+    assert_eq!(raw(&["grep", "-n", "bar", "."]), b"./bad.txt:1:foo \xff\xfe bar\n", "a walk without --sort");
+    assert_eq!(raw(&["grep", "-n", "foo", "long.txt"]), [&b"1:"[..], &long].concat());
+    // a JSON text is a string: the bytes that are not UTF-8 are U+FFFD there
+    assert!(String::from_utf8(raw(&["grep", "--json", "bar", "bad.txt"])).unwrap().contains("foo \u{FFFD}\u{FFFD} bar"));
+}
