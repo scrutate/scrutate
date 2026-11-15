@@ -1022,9 +1022,14 @@ mod tests {
             waited_out: Default::default(),
             skipped: Default::default(),
         };
-        let t0 = std::time::Instant::now();
-        let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
-        assert!(t0.elapsed() < std::time::Duration::from_secs(5), "{:?}", t0.elapsed());
+        // a request that waits the build out never returns; 100 times the wait leaves a loaded
+        // machine room to answer one that stops at the wait
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+            let _ = tx.send((r, srv));
+        });
+        let (r, mut srv) = rx.recv_timeout(std::time::Duration::from_millis(300) * 100).expect("the request waited for the build to end");
         assert_eq!(r.map_err(|e| e.0), Err(-32801));
         // shutdown is answered at once whatever the build does
         assert!(srv.request("shutdown", &Value::Null).is_ok());
@@ -1204,13 +1209,16 @@ mod tests {
             waited_out: Default::default(),
             skipped: Default::default(),
         };
+        assert_eq!(srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).map_err(|e| e.0), Err(-32801));
+        // the three queued behind it wait nothing; one that waited again would take a whole
+        // build_wait on its own
         let t0 = std::time::Instant::now();
-        for _ in 0..4 {
+        for _ in 0..3 {
             assert_eq!(srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).map_err(|e| e.0), Err(-32801));
         }
         assert!(srv.request("shutdown", &Value::Null).is_ok());
         let took = t0.elapsed();
-        assert!(took < std::time::Duration::from_millis(3500), "{took:?}");
+        assert!(took < srv.build_wait, "{took:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
