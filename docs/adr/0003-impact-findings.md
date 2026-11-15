@@ -87,3 +87,34 @@ then `report` for the sweep and the variants. Its tasks file is not committed: i
 agents' session files, from an evaluation outside this repository. A reuse kind is worth trying
 again with a signal that finds the helper as the nearest candidate far more often than 51 times
 in 281.
+
+## Rejected: a boundary kind
+
+A `boundary` finding was tried and dropped: an added import from a file F to a file T, neither a
+test file, where the two directories just below the common ancestor of F's and T's directories
+(`src/a/b.py` importing `lib/c.py` gives `src` and `lib`) both existed in the base and no file
+under the first imported a file under the second. It was held to two bars, each met with every
+repository left out in turn: at most 5 firings per 100 non-merge commits that change code, and a
+lift of at least 2, the share of the imports it names that the repository took out again within
+200 commits over the same share for the other added imports between linked directories.
+
+It was calibrated on the same 13 repositories, scrutate and Linux: the 400 first-parent commits
+after a base, each import followed for 200 more.
+
+- The rate held: 3.9 per 100 pooled (121 of 3,081 commits), 3.2 to 4.4 held out.
+- The lift failed: 134 of 904 named imports were taken out (14.8%), against 1,447 of 17,056
+  others (8.5%), a lift of 1.75 and 1.54 to 1.84 held out. Per repository it ran from 0 (mastodon)
+  and 0.54 (dolphinscheduler) to 7.2 (gitea).
+- Counted per firing (one commit and one pair of directories), the lift held out was 1.47 to 1.81
+  when any of its imports was taken out, and 1.73 to 2.43 when all of them were. Neither met the
+  bar in every held-out set.
+- Linux stopped after 305 of its 600 commits: its base alone resolved 745,252 imports and the walk
+  ran over 3 hours. None of its firings could be followed for 200 commits. The pool without Linux
+  already fails the lift (1.73), so the rest of its history cannot make the kind pass.
+
+The index keeps no table of the links between directories, which a boundary kind would have read.
+
+The numbers were measured on 2026-11-15 with scrutate built from 425d011 and
+[`bench/boundary_calibration.py`](../../bench/boundary_calibration.py): `collect` on each
+repository, then `report`. A boundary kind is worth trying again against a better sign of a bad
+import than its removal within 200 commits.
