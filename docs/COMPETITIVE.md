@@ -140,6 +140,12 @@ the index and a minimal gRPC client prints each answer), Scrutate is ahead on al
 livegrep keeps its index in a long-running server's memory and answers there, which makes its
 large queries fast; Scrutate and Zoekt start a process per query and map their index files.
 
+Kept running as servers, both rivals answer faster than Scrutate's process per query. On a 4-CPU
+Linux box (AMD EPYC-Milan, 16 GB) with the Linux tree and the 20 queries of `bench/yardstick.py`
+W3, livegrep's server answered 16 (HTTP 500 on two common literals, a phrase and a multiple-literal
+query) in 12.6 ms median. On those 16, zoekt-webserver took 13.2 ms and `scrutate --index` 17.9 ms;
+on all 20, zoekt-webserver took 36 ms and `scrutate --index` 24.3 ms.
+
 ## 4. Against "nothing": the code-intelligence engine
 
 No measured tool has a code-intelligence index, so this part has no competitor:

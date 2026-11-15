@@ -162,12 +162,18 @@ scrutate took 1.41 times its time on the Linux tree on a 4-vCPU Linux x86_64 ser
   </picture>
 </p>
 
-Against Zoekt the text index builds 25 times faster, is a tenth of the size, answers in 0.37 of the
+Against Zoekt's command-line tools on the development Mac, a fresh process per query on both
+sides, the text index builds 25 times faster, is a tenth of the size, answers in 0.37 of the
 median time and serves 1.2 times the queries per second, leading all eight indexed metrics.
 
 In a 5-CPU Linux virtual machine on the same Mac, Engine A is significantly fastest on all 14
-Linux-tree benchmarks and all 4 cold-cache ones, and the text index leads Zoekt and livegrep on
-all 8 indexed metrics.
+Linux-tree benchmarks and all 4 cold-cache ones. Run the same way, a process per query
+(`scrutate --index`, Zoekt's CLI and a livegrep client asking its `codesearch` server), the text
+index leads Zoekt and livegrep on all 8 indexed metrics.
+
+Kept running as servers, livegrep and Zoekt answer faster than that process per query: 12.6 and
+13.2 ms median against 17.9 ms for `scrutate --index`, on a 4-CPU Linux box and the 16 Linux-tree
+queries all three answered ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
 
 More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md), [docs/dashboard.html](docs/dashboard.html),
 [docs/COMPETITIVE.md](docs/COMPETITIVE.md) and [docs/QUALITY.md](docs/QUALITY.md) (see
