@@ -709,8 +709,6 @@ fn not_run(e: std::io::Error) -> anyhow::Error {
     }
 }
 
-/// The git command `args` run, past the options in front of it (`-c` and its setting,
-/// `--literal-pathspecs`); `--version` is one.
 /// git needed an object this partial clone lacks, and was told not to fetch it.
 #[derive(Debug)]
 pub(crate) struct LacksObjects(String);
@@ -732,6 +730,8 @@ fn failed(args: &[&str], why: &str) -> anyhow::Error {
     }
 }
 
+/// The git command `args` run, past the options in front of it (`-c` and its setting,
+/// `--literal-pathspecs`); `--version` is one.
 fn verb<'a>(args: &[&'a str]) -> &'a str {
     args.get(verb_at(args)).copied().unwrap_or_default()
 }
