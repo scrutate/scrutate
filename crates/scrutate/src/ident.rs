@@ -42,12 +42,25 @@ pub fn trailing(lang: &str) -> &'static str {
 /// an interpolation (`s"v$version"`), PHP's is a variable's sigil (`$current` is `current`), and a
 /// `'` before a Haskell name quotes it (`'helper`): none of them is part of the name.
 pub fn joins_before(lang: &str, c: char) -> bool {
+    if lisp(lang) {
+        return lisp_joins(lang, c);
+    }
     is_continue(c) || c == '$' && matches!(lang, "javascript" | "typescript" | "tsx" | "java")
+}
+
+/// A Lisp symbol runs to the next delimiter, as the call graph reads it (`foo-bar`, `list->vec`,
+/// `set-car!`, `*count*`); a Common Lisp package prefix is not part of it (`pkg:foo` is `foo`).
+fn lisp(lang: &str) -> bool {
+    matches!(lang, "scheme" | "racket" | "elisp" | "commonlisp")
+}
+
+fn lisp_joins(lang: &str, c: char) -> bool {
+    !(c.is_whitespace() || "()[]{}\"'`,;@".contains(c) || (c == ':' && lang == "commonlisp"))
 }
 
 /// Whether `c` right after a name makes a longer name of it: `joins_before`'s, or a prime
 /// (`foo'` in Haskell, OCaml, F# and Nix). PHP's `\` joins the parts of a qualified name, each a
-/// name of its own.
+/// name of its own. In a Lisp, `joins_before`'s rule: `foo` in `foo-bar` or `foo?` is no use of it.
 pub fn joins_after(lang: &str, c: char) -> bool {
     joins_before(lang, c) || c == '\'' && extra(lang).contains('\'')
 }

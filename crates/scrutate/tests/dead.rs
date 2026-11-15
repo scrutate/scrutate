@@ -488,3 +488,28 @@ fn a_sigil_or_a_quote_before_a_name_is_a_use_of_the_name() {
         assert!(!dead.contains(&used.to_string()), "{used} is used: {v}");
     }
 }
+
+/// A Lisp symbol runs to the next delimiter, as the call graph reads it: `foo-bar` and `foo?` are
+/// names of their own, so an unused `foo` is dead and `refs foo` lists none of their lines. A
+/// Common Lisp package prefix is not part of the name: `pkg:foo` uses `foo`.
+#[test]
+fn a_lisp_name_with_a_dash_or_a_mark_in_it_is_a_name_of_its_own() {
+    let refs = |r: &Repo, name: &str| -> Vec<String> {
+        let v = r.json(&["refs", name])["result"].clone();
+        let defs = v["definitions"].as_array().unwrap_or_else(|| panic!("{v}"));
+        let all = defs.iter().flat_map(|d| d["references"].as_array().unwrap().clone()).chain(v["unresolved"].as_array().unwrap().clone());
+        all.map(|o| format!("{}:{}", o["path"].as_str().unwrap(), o["line"])).collect()
+    };
+    let lisp = "(defun foo (x) x)\n\n(defun foo-bar (x) (+ x 1))\n\n(defun foo? (x) x)\n\n(defun main () (foo-bar 2) (foo? 3))\n";
+    let scheme = "(define (foo x) x)\n\n(define (foo-bar x) (+ x 1))\n\n(define (foo? x) x)\n\n(define (main) (foo-bar 2) (foo? 3))\n";
+    for (file, src) in [("a.el", lisp), ("b.scm", scheme), ("c.rkt", scheme), ("d.lisp", lisp)] {
+        let r = Repo::new(&format!("lisp_{}", &file[2..]), &[(file, src)]);
+        let dead = names(&r.json(&["dead"]), "dead");
+        assert!(dead.contains(&format!("{file} foo")), "{file}: {dead:?}");
+        // the definition's own line, as in every language, and no line of foo-bar or foo?
+        assert_eq!(refs(&r, "foo"), [format!("{file}:1")], "{file}");
+    }
+    let r = Repo::new("lisp_pkg", &[("e.lisp", "(defun foo (x) x)\n\n(defun main () (pkg:foo 2))\n")]);
+    assert!(!names(&r.json(&["dead"]), "dead").contains(&"e.lisp foo".to_string()));
+    assert_eq!(refs(&r, "foo"), ["e.lisp:1", "e.lisp:3"]);
+}
