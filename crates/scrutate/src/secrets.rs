@@ -295,12 +295,16 @@ static NUMBER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?:0x[0-9a-f_]+|[0-9][0-9_]*(?:\.[0-9_]+)?(?:e[+-]?[0-9]+)?)(?:[ui](?:8|16|32|64|128|size)|f32|f64|[lu]{1,3})?$").unwrap()
 });
 
-/// A bearer token: a real value with a digit in it, so a word after `Bearer` is none.
+/// A token: a real value shaped like one, mixing upper case, lower case and digits, or a run of
+/// 32 or more hex digits; a word with a number after it (`accesstoken12345678`) is none.
 fn opaque(secret: &str, whole: &str, before: &str) -> bool {
-    real_value(secret, whole, before) && secret.bytes().any(|b| b.is_ascii_digit())
+    let has = |f: fn(&u8) -> bool| secret.as_bytes().iter().any(f);
+    let mixed = has(u8::is_ascii_uppercase) && has(u8::is_ascii_lowercase) && has(u8::is_ascii_digit);
+    let hex = secret.len() >= 32 && secret.bytes().all(|b| b.is_ascii_hexdigit()) && has(u8::is_ascii_digit);
+    real_value(secret, whole, before) && (mixed || hex)
 }
 
-/// Base64 that decodes to printable `user:password`.
+/// Base64 that decodes to printable `user:password`, the password no doc's example word.
 fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
     let value = |c: u8| match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -320,8 +324,9 @@ fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
             out.push((bits >> n) as u8);
         }
     }
-    let colon = out.iter().position(|&b| b == b':');
-    colon.is_some_and(|i| i > 0 && i + 1 < out.len()) && out.iter().all(|b| (0x20..0x7f).contains(b))
+    let Some(i) = out.iter().position(|&b| b == b':').filter(|&i| i > 0 && i + 1 < out.len()) else { return false };
+    let password = String::from_utf8_lossy(&out[i + 1..]).to_ascii_lowercase();
+    out.iter().all(|b| (0x20..0x7f).contains(b)) && !matches!(password.as_str(), "password" | "passwd" | "pass" | "pwd" | "secret" | "changeme")
 }
 
 /// A `.env` value that is no placeholder and is not a name or a word alone.
@@ -997,6 +1002,12 @@ mod tests {
             "url = \"https://${USER}:${PASS}@example.com\"",
             "WWW-Authenticate: Basic realm=\"staging\"",
             "Use basic authentication over TLS only.",
+            // a word with a digit, a doc's example credentials, placeholders
+            "Authorization: Bearer accesstoken12345678",
+            "-H 'Authorization: Bearer authenticationv2scheme'",
+            "Authorization: Basic dXNlcm5hbWU6cGFzc3dvcmQ=",
+            "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+            "Authorization: Basic <base64 of username:password>",
             // a typed parameter list: the annotation stops at its parameter's comma
             "    def __init__(self, token: str, repo: Optional[str] = \"AdminUser2024\"):",
             "fun connect(token: String, user: String = \"AdminUser2024\") {",

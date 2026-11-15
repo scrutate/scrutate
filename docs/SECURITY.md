@@ -407,10 +407,13 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
-`url-token` takes a URL's user part of 20 or more characters with a digit in it, as a clone URL
+`url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
-URL that carries one (`https://user:pass@host`) with a digit or a symbol in it; `bearer-token` an opaque token after `Bearer` with a digit in it;
-`basic-auth` the base64 after `Basic` when it decodes to a printable `user:password`. `env-secret`
+URL that carries one (`https://user:pass@host`) with a digit or a symbol in it; `bearer-token` an opaque token after `Bearer`. A token here mixes
+upper case, lower case and digits, or is a run of 32 or more hex digits, so a word with a number
+after it is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
+`user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
+`changeme`). `env-secret`
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
 `KEY` or `CREDENTIALS`; `password` a quoted value of a name holding `password`, `secret` or
 `token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
