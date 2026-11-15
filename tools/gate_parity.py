@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""The gate and CI cannot drift: every `run:` step of ci.yml, security.yml and benchmarks.yml has
-an entry in tools/gate_map.json, keyed by workflow, job and a hash of the step's command, its
-environment, the job's runner and its matrix. The entry says what covers the step: `gate: NAME`
+"""The gate and CI cannot drift: every step of ci.yml, security.yml and benchmarks.yml, `run:` and
+`uses:` alike (and a job that calls another workflow), has an entry in tools/gate_map.json, keyed
+by workflow, job and a hash of what decides whether and how it runs: its command or action and
+inputs, its environment, shell, working directory, `if:` and `continue-on-error:`, the job's
+runner, matrix, `if:`, `continue-on-error:`, `needs:`, container and services, and the workflow's
+`on:`. The entry says what covers the step: `gate: NAME`
 (a step of tools/ci_gate.sh), `setup: ...` (what the box's setup installs) or `ci-only: why`. A
 step that is new or changed has no entry, an entry whose step is gone is stale, and a `gate:` name
 that tools/ci_gate.sh does not run is wrong: each fails.
@@ -24,25 +27,47 @@ KINDS = ("gate:", "setup:", "ci-only:")
 
 
 def steps():
-    """(key, label) of every run step, in file order."""
+    """(key, label) of every step, in file order."""
+    def key(wf: str, job: str, what: dict) -> str:
+        return f"{wf}:{job}:{hashlib.sha1(json.dumps(what, sort_keys=True).encode()).hexdigest()[:10]}"
+
     for wf in WORKFLOWS:
         with open(os.path.join(ROOT, ".github", "workflows", wf), encoding="utf-8") as f:
             doc = yaml.safe_load(f)
         top = doc.get("env") or {}
+        top_run = (doc.get("defaults") or {}).get("run") or {}
+        # PyYAML reads the `on:` key as True
+        triggers = doc.get(True, doc.get("on"))
         for job, j in doc["jobs"].items():
             env = {**top, **(j.get("env") or {})}
+            run_defaults = {**top_run, **((j.get("defaults") or {}).get("run") or {})}
+            of_job = {"on": triggers, "runs-on": j.get("runs-on"), "matrix": (j.get("strategy") or {}).get("matrix"), "job-if": j.get("if"),
+                      "job-continue-on-error": j.get("continue-on-error"), "needs": j.get("needs"), "container": j.get("container"), "services": j.get("services")}
+            if "uses" in j:
+                yield key(wf, job, {**of_job, "uses": j["uses"], "with": j.get("with")}), j.get("name") or j["uses"]
             for s in j.get("steps") or []:
-                if "run" not in s:
+                what = {**of_job, "env": {**env, **(s.get("env") or {})}, "if": s.get("if"), "continue-on-error": s.get("continue-on-error")}
+                if "run" in s:
+                    what |= {"run": s["run"], "shell": s.get("shell", run_defaults.get("shell")), "working-directory": s.get("working-directory", run_defaults.get("working-directory"))}
+                    label = s.get("name") or s["run"].strip().splitlines()[0][:80]
+                elif "uses" in s:
+                    what |= {"uses": s["uses"], "with": s.get("with")}
+                    label = s.get("name") or s["uses"]
+                else:
                     continue
-                what = {"run": s["run"], "env": {**env, **(s.get("env") or {})}, "runs-on": j.get("runs-on"), "matrix": (j.get("strategy") or {}).get("matrix")}
-                digest = hashlib.sha1(json.dumps(what, sort_keys=True).encode()).hexdigest()[:10]
-                yield f"{wf}:{job}:{digest}", s.get("name") or s["run"].strip().splitlines()[0][:80]
+                yield key(wf, job, what), label
 
 
 def gate_steps():
-    """The names tools/ci_gate.sh gives its steps (`step NAME ...`)."""
+    """The names tools/ci_gate.sh gives its steps: `step NAME ...` where a command starts (a line's
+    start, after `&&`, `;`, `then` or `else`), never in a comment or a string."""
+    names = set()
     with open(os.path.join(ROOT, "tools", "ci_gate.sh"), encoding="utf-8") as f:
-        return set(m.strip('"') for m in re.findall(r"\bstep (\"[^\"]+\"|\S+)", f.read()))
+        for line in f:
+            if line.lstrip().startswith("#"):
+                continue
+            names |= {m.strip('"') for m in re.findall(r'(?:^\s*|&&\s*|;\s*|\bthen\s+|\belse\s+)step\s+("[^"]+"|\S+)', line)}
+    return names
 
 
 def main() -> int:

@@ -1,290 +1,522 @@
 {
- "ci.yml:rust:2d8315deba": {
+ "ci.yml:rust:b505c5d6b4": {
   "step": "rustup toolchain install --no-self-update",
   "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
  },
- "ci.yml:rust:120ddefa01": {
+ "ci.yml:rust:b961595675": {
   "step": "cargo fmt --all --check",
   "by": "gate: fmt"
  },
- "ci.yml:rust:c1c76cce50": {
+ "ci.yml:rust:319b7b8edb": {
   "step": "cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings",
   "by": "gate: clippy, clippy-windows-gnu, clippy-scrutate-py"
  },
- "ci.yml:rust:8591cc0351": {
+ "ci.yml:rust:2fe56b266d": {
+  "step": "ripgrep 15.2.0 for the tests that compare with it",
+  "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
+ },
+ "ci.yml:rust:7fcddabe91": {
   "step": "cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast",
   "by": "gate: test"
  },
- "ci.yml:rust:f1e291af2a": {
+ "ci.yml:rust:0b22462f39": {
   "step": "cargo build --release -p scrutate --locked",
   "by": "gate: release-build"
  },
- "ci.yml:rust:ffd74fa613": {
+ "ci.yml:rust:5356efa7cb": {
   "step": "function order (Linux)",
   "by": "gate: function-order"
  },
- "ci.yml:rust:0489b2c0b3": {
+ "ci.yml:rust:0d4589416c": {
   "step": "smoke test the binary",
   "by": "gate: smoke"
  },
- "ci.yml:python:cd4d57577b": {
+ "ci.yml:rust:3a26b4a61d": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:rust:11bf205185": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:rust:3607d6855c": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: moves files between CI jobs; the gate builds and reads them in one lane"
+ },
+ "ci.yml:dependency-review:a4da8efad7": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the dependency-review job, which only CI runs"
+ },
+ "ci.yml:dependency-review:d599fcfc35": {
+  "step": "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+  "by": "ci-only: a step of the dependency-review job, which only CI runs"
+ },
+ "ci.yml:python:d9b9e635d6": {
   "step": "doc comments stay on their items",
   "by": "gate: doc-shift"
  },
- "ci.yml:python:1d0cb75e2a": {
+ "ci.yml:python:bab2069666": {
   "step": "rustup toolchain install --no-self-update",
   "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
  },
- "ci.yml:python:83972ac1fc": {
+ "ci.yml:python:3950f02323": {
   "step": "python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check &",
   "by": "gate: doc-assets"
  },
- "ci.yml:python:639b1fd750": {
+ "ci.yml:python:91a12ada07": {
   "step": "for f in LICENSE-APACHE LICENSE-MIT; do cmp \"$f\" \"crates/scrutate/$f\" && cmp \"$f",
   "by": "gate: licences"
  },
- "ci.yml:python:d5b3bcc38e": {
+ "ci.yml:python:8a12708bdd": {
   "step": "pip install -e \"python[test]\" maturin ruff -c python/constraints.txt",
   "by": "gate: python-bindings"
  },
- "ci.yml:python:dbbdd00819": {
+ "ci.yml:python:a22c9bba4e": {
   "step": "every CI step is in the gate's map",
   "by": "gate: gate-parity"
  },
- "ci.yml:python:71dd47d722": {
+ "ci.yml:python:d9d20f6623": {
   "step": "ruff check --select F .",
   "by": "gate: ruff"
  },
- "ci.yml:python:39b2c92bd8": {
+ "ci.yml:python:c6324ab08c": {
   "step": "cargo build --release -p scrutate --locked",
   "by": "gate: release-build"
  },
- "ci.yml:python:4f3fc57643": {
+ "ci.yml:python:8700a89490": {
   "step": "bindings wheel (abi3) and tests",
   "by": "gate: python-bindings"
  },
- "ci.yml:python:c1f78675a9": {
+ "ci.yml:python:a5d8deeddf": {
   "step": "yardstick smoke",
   "by": "gate: yardstick-smoke"
  },
- "ci.yml:python:2100ef0b04": {
-  "step": "differential test against ripgrep",
-  "by": "gate: differential"
- },
- "ci.yml:python:d8938962ca": {
-  "step": "random checks against ripgrep and a fresh index",
-  "by": "gate: fuzz-grep, fuzz-incremental"
- },
- "ci.yml:python:ce4c73bf32": {
-  "step": "ranking quality against its recorded floor",
-  "by": "gate: quality-floor"
- },
- "ci.yml:wheels:599a591f0a": {
-  "step": "rustup toolchain install --no-self-update",
-  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
- },
- "ci.yml:wheels:ba0fc4b03d": {
-  "step": "python -m pip install maturin pytest -c python/constraints.txt",
-  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
- },
- "ci.yml:wheels:f76aa698b7": {
-  "step": "cargo build --release -p scrutate --locked",
-  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
- },
- "ci.yml:wheels:bda0d74e9a": {
-  "step": "build, install and test the wheel",
-  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
- },
- "ci.yml:musl:e217526b33": {
-  "step": "rustup toolchain install --no-self-update && rustup target add x86_64-unknown-li",
-  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
- },
- "ci.yml:musl:081d3ef580": {
-  "step": "sudo apt-get -o Acquire::Retries=5 install -y musl-tools",
-  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
- },
- "ci.yml:musl:39b2c92bd8": {
-  "step": "cargo build --release -p scrutate --locked",
-  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
- },
- "ci.yml:musl:d0f74ecd67": {
-  "step": "cargo build --release -p scrutate --locked --target x86_64-unknown-linux-musl",
-  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
- },
- "ci.yml:musl:c0ae8b690f": {
-  "step": "static, identical output, performance difference",
-  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
- },
- "ci.yml:wasi:7518851679": {
-  "step": "rustup toolchain install --no-self-update && rustup target add wasm32-wasip1",
-  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
- },
- "ci.yml:wasi:ad6fa469d0": {
-  "step": "wasi-sdk, the C compiler for SQLite and the tree-sitter grammars",
-  "by": "setup: the box's ci_setup.sh installs wasi-sdk in ~/wasi-sdk"
- },
- "ci.yml:wasi:305a3197db": {
-  "step": "cargo build --release --target wasm32-wasip1 -p scrutate --no-default-features -",
-  "by": "gate: wasm32-wasip1"
- },
- "ci.yml:wasi:b50520a05b": {
-  "step": "cargo clippy -p scrutate --all-targets --no-default-features --locked -- -D warn",
-  "by": "gate: clippy-no-default-features"
- },
- "ci.yml:compat:1d0cb75e2a": {
-  "step": "rustup toolchain install --no-self-update",
-  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
- },
- "ci.yml:compat:bd7b464772": {
-  "step": "cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast",
-  "by": "gate: test-extra-langs"
- },
- "ci.yml:compat:2e77ae6aa2": {
-  "step": "build with the rust-version Cargo.toml declares",
-  "by": "gate: msrv-$msrv"
- },
- "ci.yml:fuzz:3f0f74371b": {
-  "step": "rustup toolchain install \"$NIGHTLY\" --profile minimal --no-self-update",
-  "by": "ci-only: the nightly sanitizer build and the crash inputs need nightly-2026-10-26 and cargo-fuzz; fuzz-check compiles the targets on stable"
- },
- "ci.yml:fuzz:27494b708e": {
-  "step": "cargo install cargo-fuzz --version 0.13.2 --locked",
-  "by": "ci-only: the nightly sanitizer build and the crash inputs need nightly-2026-10-26 and cargo-fuzz; fuzz-check compiles the targets on stable"
- },
- "ci.yml:fuzz:7b34504e87": {
-  "step": "cargo \"+$NIGHTLY\" fuzz build -O",
-  "by": "gate: fuzz-check"
- },
- "ci.yml:fuzz:fcfec5af0e": {
-  "step": "every input that once crashed a target",
-  "by": "ci-only: the nightly sanitizer build and the crash inputs need nightly-2026-10-26 and cargo-fuzz; fuzz-check compiles the targets on stable"
- },
- "ci.yml:vscode:a9c7b012c3": {
-  "step": "the extension folder, then the packaged .vsix installed with --install-extension",
-  "by": "ci-only: the extension tests download VS Code and need a display (xvfb) and Node, which the boxes lack"
- },
- "ci.yml:neovim:a8e5bc969b": {
-  "step": "the plugin in a headless Neovim",
-  "by": "ci-only: the plugin test needs Neovim, which the boxes lack"
- },
- "ci.yml:action:226c6f82c4": {
-  "step": "the CI binary packed as release v0.1.0, which curl then serves",
-  "by": "ci-only: the composite action runs on a GitHub runner, with its own toolkit and PATH"
- },
- "ci.yml:action:54b7329dca": {
-  "step": "exit codes in the output, and the installed binary on PATH",
-  "by": "ci-only: the composite action runs on a GitHub runner, with its own toolkit and PATH"
- },
- "ci.yml:gitlab-template:2f44d61aa2": {
-  "step": "the template on a merge request that adds a duplicate, in debian:bookworm-slim",
-  "by": "ci-only: the template runs in a debian:bookworm-slim container, and the boxes run no docker for the gate"
- },
- "ci.yml:pre-commit:05e27c7a66": {
-  "step": "the hook from this commit passes without duplicates and fails with one",
-  "by": "gate: pre-commit"
- },
- "ci.yml:bitbucket-template:d013163e72": {
-  "step": "the template on a push, in debian:bookworm-slim",
-  "by": "ci-only: the template runs in a debian:bookworm-slim container, and the boxes run no docker for the gate"
- },
- "security.yml:deny:76f5add2e9": {
-  "step": "rustup toolchain install --no-self-update",
-  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
- },
- "security.yml:deny:9d2db54a36": {
-  "step": "cargo deny --locked check",
-  "by": "gate: cargo-deny"
- },
- "security.yml:unsafe:d683604df9": {
-  "step": "python3 tools/unsafe_count.py",
-  "by": "gate: unsafe-count"
- },
- "security.yml:gitleaks:5faa479de9": {
-  "step": "curl -fsSL -o \"$RUNNER_TEMP/gitleaks.tar.gz\" https://github.com/gitleaks/gitleak",
-  "by": "setup: the box's ci_setup.sh puts gitleaks 8.30.1 in SCRUTATE_GATE_TOOLS"
- },
- "security.yml:gitleaks:3fc60456d2": {
-  "step": "python3 tools/gitleaks_config.py",
-  "by": "gate: secret-scan"
- },
- "security.yml:gitleaks:89531704e7": {
-  "step": "\"$RUNNER_TEMP/gitleaks\" dir . --no-banner --redact --config .gitleaks.toml",
-  "by": "gate: secret-scan"
- },
- "security.yml:actionlint:c3e03217e0": {
-  "step": "curl -fsSL -o \"$RUNNER_TEMP/actionlint.tar.gz\" https://github.com/rhysd/actionli",
-  "by": "setup: the box's ci_setup.sh puts actionlint 1.7.12 and shellcheck in SCRUTATE_GATE_TOOLS"
- },
- "security.yml:actionlint:87cd63b287": {
-  "step": "\"$RUNNER_TEMP/actionlint\"",
-  "by": "gate: actionlint"
- },
- "benchmarks.yml:scope:6dcdce5b13": {
-  "step": "if [ \"$MODE\" != compare ]; then",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:build:fb70a61b30": {
-  "step": "rustup toolchain install --no-self-update",
-  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
- },
- "benchmarks.yml:build:91435ad967": {
-  "step": "mkdir -p bin/new bin/old",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:walltime:12892a45dc": {
-  "step": "hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:walltime:b2eee0d6f2": {
-  "step": "chmod +x \"$RUNNER_TEMP\"/bin/*/scrutate",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:walltime:176486060d": {
-  "step": "corpora (pinned revisions)",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:walltime:e59fa687b7": {
-  "step": "leaderboard suite, the change and its base in the same blocks",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:walltime:7d25696d07": {
-  "step": "gate",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:counts:90af16b282": {
-  "step": "sudo apt-get -o Acquire::Retries=5 update",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:counts:ef88fab37a": {
-  "step": "chmod +x \"$RUNNER_TEMP\"/bin/*/scrutate",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:counts:5b12550935": {
-  "step": "corpora (pinned revisions)",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:counts:cea53ed2e6": {
-  "step": "gate",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "benchmarks.yml:gate:be6a96a8ed": {
-  "step": "echo \"scope build walltime counts: $RESULTS\"",
-  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
- },
- "ci.yml:rust:16b0087d8b": {
-  "step": "ripgrep 15.2.0 for the tests that compare with it",
-  "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
- },
- "ci.yml:python:d40ecf430a": {
+ "ci.yml:python:f222f6e089": {
   "step": "ripgrep for the differential and random checks",
   "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
  },
- "ci.yml:compat:d5aed2b0c6": {
+ "ci.yml:python:915dbbde9c": {
+  "step": "differential test against ripgrep",
+  "by": "gate: differential"
+ },
+ "ci.yml:python:89706004a2": {
+  "step": "random checks against ripgrep and a fresh index",
+  "by": "gate: fuzz-grep, fuzz-incremental"
+ },
+ "ci.yml:python:010a270877": {
+  "step": "ranking quality against its recorded floor",
+  "by": "gate: quality-floor"
+ },
+ "ci.yml:python:18cc48b5fe": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:python:3c02814dcf": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:python:5f5be1a7d0": {
+  "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+  "by": "setup: the box's python3, and the lane venv the gate makes"
+ },
+ "ci.yml:python:3994fa9216": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: moves files between CI jobs; the gate builds and reads them in one lane"
+ },
+ "ci.yml:wheels:5187de8b7f": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "ci.yml:wheels:09673e960c": {
+  "step": "python -m pip install maturin pytest -c python/constraints.txt",
+  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
+ },
+ "ci.yml:wheels:089759143a": {
+  "step": "cargo build --release -p scrutate --locked",
+  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
+ },
+ "ci.yml:wheels:595f140ff2": {
+  "step": "build, install and test the wheel",
+  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
+ },
+ "ci.yml:wheels:dcd60fa063": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:wheels:a1755cac9b": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:wheels:aab96a7ae1": {
+  "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+  "by": "setup: the box's python3, and the lane venv the gate makes"
+ },
+ "ci.yml:musl:486d348485": {
+  "step": "rustup toolchain install --no-self-update && rustup target add x86_64-unknown-li",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "ci.yml:musl:7757cfb2e0": {
+  "step": "sudo apt-get -o Acquire::Retries=5 install -y musl-tools",
+  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
+ },
+ "ci.yml:musl:c6324ab08c": {
+  "step": "cargo build --release -p scrutate --locked",
+  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
+ },
+ "ci.yml:musl:383967c523": {
+  "step": "cargo build --release -p scrutate --locked --target x86_64-unknown-linux-musl",
+  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
+ },
+ "ci.yml:musl:0e461d9540": {
+  "step": "static, identical output, performance difference",
+  "by": "ci-only: the boxes have no x86_64-unknown-linux-musl target or musl-tools"
+ },
+ "ci.yml:musl:b47b498bfe": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:musl:3c02814dcf": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:musl:b8baa028a7": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: moves files between CI jobs; the gate builds and reads them in one lane"
+ },
+ "ci.yml:wasi:837ff73697": {
+  "step": "rustup toolchain install --no-self-update && rustup target add wasm32-wasip1",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "ci.yml:wasi:bd84262f36": {
+  "step": "wasi-sdk, the C compiler for SQLite and the tree-sitter grammars",
+  "by": "setup: the box's ci_setup.sh installs wasi-sdk in ~/wasi-sdk"
+ },
+ "ci.yml:wasi:0527b7e831": {
+  "step": "cargo build --release --target wasm32-wasip1 -p scrutate --no-default-features -",
+  "by": "gate: wasm32-wasip1"
+ },
+ "ci.yml:wasi:c8b964f483": {
+  "step": "cargo clippy -p scrutate --all-targets --no-default-features --locked -- -D warn",
+  "by": "gate: clippy-no-default-features"
+ },
+ "ci.yml:wasi:3a8eb51331": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:wasi:2d531f96cc": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:compat:bab2069666": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "ci.yml:compat:1ebfe3c44d": {
   "step": "ripgrep 15.2.0 for the tests that compare with it",
   "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
  },
- "ci.yml:fuzz:fa6b4dc967": {
+ "ci.yml:compat:a9159a33bc": {
+  "step": "cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast",
+  "by": "gate: test-extra-langs"
+ },
+ "ci.yml:compat:00235584ef": {
+  "step": "build with the rust-version Cargo.toml declares",
+  "by": "gate: msrv-$msrv"
+ },
+ "ci.yml:compat:b47b498bfe": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:compat:3c02814dcf": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:fuzz:1c9e1af3bc": {
+  "step": "rustup toolchain install \"$NIGHTLY\" --profile minimal --no-self-update",
+  "by": "ci-only: the nightly sanitizer build and the crash inputs need nightly-2026-10-26 and cargo-fuzz; fuzz-check compiles the targets on stable"
+ },
+ "ci.yml:fuzz:1944792189": {
+  "step": "cargo install cargo-fuzz --version 0.13.2 --locked",
+  "by": "ci-only: the nightly sanitizer build and the crash inputs need nightly-2026-10-26 and cargo-fuzz; fuzz-check compiles the targets on stable"
+ },
+ "ci.yml:fuzz:8568e82c8a": {
   "step": "the fuzz lock is current and the root lock's",
   "by": "gate: fuzz-check"
+ },
+ "ci.yml:fuzz:1506079785": {
+  "step": "cargo \"+$NIGHTLY\" fuzz build -O",
+  "by": "gate: fuzz-check"
+ },
+ "ci.yml:fuzz:b59c123877": {
+  "step": "every input that once crashed a target",
+  "by": "ci-only: the nightly sanitizer build and the crash inputs need nightly-2026-10-26 and cargo-fuzz; fuzz-check compiles the targets on stable"
+ },
+ "ci.yml:fuzz:8366ece64c": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:fuzz:951aa3531a": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "setup: the lane keeps its target directory between runs"
+ },
+ "ci.yml:vscode:e3bc3d45d8": {
+  "step": "the extension folder, then the packaged .vsix installed with --install-extension",
+  "by": "ci-only: the extension tests download VS Code and need a display (xvfb) and Node, which the boxes lack"
+ },
+ "ci.yml:vscode:b092fc6431": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the vscode job, which only CI runs"
+ },
+ "ci.yml:vscode:0f1f04270b": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the vscode job, which only CI runs"
+ },
+ "ci.yml:vscode:7a91aef00b": {
+  "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+  "by": "ci-only: a step of the vscode job, which only CI runs"
+ },
+ "ci.yml:neovim:e77f01e09a": {
+  "step": "the plugin in a headless Neovim",
+  "by": "ci-only: the plugin test needs Neovim, which the boxes lack"
+ },
+ "ci.yml:neovim:3a3c01b1f3": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the neovim job, which only CI runs"
+ },
+ "ci.yml:neovim:1b43dceda4": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the neovim job, which only CI runs"
+ },
+ "ci.yml:action:8abf1bbcb2": {
+  "step": "the CI binary packed as release v0.1.0, which curl then serves",
+  "by": "ci-only: the composite action runs on a GitHub runner, with its own toolkit and PATH"
+ },
+ "ci.yml:action:c44b011524": {
+  "step": "exit codes in the output, and the installed binary on PATH",
+  "by": "ci-only: the composite action runs on a GitHub runner, with its own toolkit and PATH"
+ },
+ "ci.yml:action:f22b154f46": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:action:2c75c7f879": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:action:afc8bb3bfe": {
+  "step": "./.github/actions/scrutate",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:action:a801aaee4c": {
+  "step": "./.github/actions/scrutate",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:action:1ffeca7979": {
+  "step": "./.github/actions/scrutate",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:action:14e235d19d": {
+  "step": "./.github/actions/scrutate",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:action:52f924a3dc": {
+  "step": "./.github/actions/scrutate",
+  "by": "ci-only: a step of the action job, which only CI runs"
+ },
+ "ci.yml:gitlab-template:0a79fa550d": {
+  "step": "the template on a merge request that adds a duplicate, in debian:bookworm-slim",
+  "by": "ci-only: the template runs in a debian:bookworm-slim container, and the boxes run no docker for the gate"
+ },
+ "ci.yml:gitlab-template:f6f0fd0ba4": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the gitlab-template job, which only CI runs"
+ },
+ "ci.yml:gitlab-template:1c0f15a4c7": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the gitlab-template job, which only CI runs"
+ },
+ "ci.yml:pre-commit:0cda1f5064": {
+  "step": "the hook from this commit passes without duplicates and fails with one",
+  "by": "gate: pre-commit"
+ },
+ "ci.yml:pre-commit:f6f0fd0ba4": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "ci.yml:pre-commit:1c0f15a4c7": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: moves files between CI jobs; the gate builds and reads them in one lane"
+ },
+ "ci.yml:pre-commit:214864c448": {
+  "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+  "by": "setup: the box's python3, and the lane venv the gate makes"
+ },
+ "ci.yml:bitbucket-template:bd22164cfc": {
+  "step": "the template on a push, in debian:bookworm-slim",
+  "by": "ci-only: the template runs in a debian:bookworm-slim container, and the boxes run no docker for the gate"
+ },
+ "ci.yml:bitbucket-template:f6f0fd0ba4": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the bitbucket-template job, which only CI runs"
+ },
+ "ci.yml:bitbucket-template:1c0f15a4c7": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the bitbucket-template job, which only CI runs"
+ },
+ "ci.yml:bitbucket-template:214864c448": {
+  "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+  "by": "ci-only: a step of the bitbucket-template job, which only CI runs"
+ },
+ "security.yml:deny:a768160f76": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "security.yml:deny:3131f22a1f": {
+  "step": "cargo deny --locked check",
+  "by": "gate: cargo-deny"
+ },
+ "security.yml:deny:f12a043d52": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "security.yml:deny:564996af01": {
+  "step": "taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519",
+  "by": "setup: the box's ci_setup.sh puts cargo-deny 0.20.2 in SCRUTATE_GATE_TOOLS"
+ },
+ "security.yml:zizmor:f12a043d52": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "security.yml:zizmor:8bd06ddc91": {
+  "step": "zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd",
+  "by": "gate: zizmor"
+ },
+ "security.yml:actionlint:c6527e0036": {
+  "step": "curl -fsSL -o \"$RUNNER_TEMP/actionlint.tar.gz\" https://github.com/rhysd/actionli",
+  "by": "setup: the box's ci_setup.sh puts actionlint 1.7.12 and shellcheck in SCRUTATE_GATE_TOOLS"
+ },
+ "security.yml:actionlint:94bb116f25": {
+  "step": "\"$RUNNER_TEMP/actionlint\"",
+  "by": "gate: actionlint"
+ },
+ "security.yml:actionlint:f12a043d52": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "security.yml:unsafe:4551fda2b2": {
+  "step": "python3 tools/unsafe_count.py",
+  "by": "gate: unsafe-count"
+ },
+ "security.yml:unsafe:f12a043d52": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "security.yml:gitleaks:70cc87fcc5": {
+  "step": "curl -fsSL -o \"$RUNNER_TEMP/gitleaks.tar.gz\" https://github.com/gitleaks/gitleak",
+  "by": "setup: the box's ci_setup.sh puts gitleaks 8.30.1 in SCRUTATE_GATE_TOOLS"
+ },
+ "security.yml:gitleaks:4cda10c014": {
+  "step": "python3 tools/gitleaks_config.py",
+  "by": "gate: secret-scan"
+ },
+ "security.yml:gitleaks:5669578e78": {
+  "step": "\"$RUNNER_TEMP/gitleaks\" dir . --no-banner --redact --config .gitleaks.toml",
+  "by": "gate: secret-scan"
+ },
+ "security.yml:gitleaks:f12a043d52": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "benchmarks.yml:scope:0583b1b9a0": {
+  "step": "if [ \"$MODE\" != compare ]; then",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:scope:3c38548f6c": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the scope job, which only CI runs"
+ },
+ "benchmarks.yml:build:7d549ec2a5": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "benchmarks.yml:build:ff8da3e6a1": {
+  "step": "mkdir -p bin/new bin/old",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:build:386f75ed31": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "benchmarks.yml:build:1ad483ab07": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: moves files between CI jobs; the gate builds and reads them in one lane"
+ },
+ "benchmarks.yml:walltime:8a8f6bbfcc": {
+  "step": "hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:walltime:c26a169d3e": {
+  "step": "chmod +x \"$RUNNER_TEMP\"/bin/*/scrutate",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:walltime:ac912fff26": {
+  "step": "corpora (pinned revisions)",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:walltime:007c7e3911": {
+  "step": "leaderboard suite, the change and its base in the same blocks",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:walltime:2612383bb6": {
+  "step": "gate",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:walltime:63d4557860": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the walltime job, which only CI runs"
+ },
+ "benchmarks.yml:walltime:38ea22523b": {
+  "step": "astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2",
+  "by": "ci-only: a step of the walltime job, which only CI runs"
+ },
+ "benchmarks.yml:walltime:e80d3b0ec3": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the walltime job, which only CI runs"
+ },
+ "benchmarks.yml:walltime:422c0f633a": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: a step of the walltime job, which only CI runs"
+ },
+ "benchmarks.yml:counts:162335bf22": {
+  "step": "sudo apt-get -o Acquire::Retries=5 update",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:counts:17409eee90": {
+  "step": "chmod +x \"$RUNNER_TEMP\"/bin/*/scrutate",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:counts:147f91988a": {
+  "step": "corpora (pinned revisions)",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:counts:b372706bec": {
+  "step": "gate",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "benchmarks.yml:counts:f8987343aa": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: a step of the counts job, which only CI runs"
+ },
+ "benchmarks.yml:counts:6a2c47bbc0": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: a step of the counts job, which only CI runs"
+ },
+ "benchmarks.yml:counts:e368a2e5e2": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: a step of the counts job, which only CI runs"
+ },
+ "benchmarks.yml:gate:f7fcdca18a": {
+  "step": "echo \"scope build walltime counts: $RESULTS\"",
+  "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  }
 }

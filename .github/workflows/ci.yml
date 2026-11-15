@@ -144,7 +144,7 @@ jobs:
           python3 -c "import sys; v = open('integrations/vscode/LICENSE').read(); sys.exit(not all(open(f).read().strip() in v for f in ('LICENSE-MIT', 'LICENSE-APACHE')))"
       # the versions the Python tests were last run with
       - run: pip install -e "python[test]" maturin ruff -c python/constraints.txt
-      # tools/ci_gate.sh, the gate a Linux box runs, covers every run step or names why only CI does
+      # tools/ci_gate.sh, the gate a Linux box runs, covers every step or names why only CI does
       - name: every CI step is in the gate's map
         run: python3 tools/gate_parity.py
       # pyflakes over every Python file in the tree: undefined names, unused imports and variables

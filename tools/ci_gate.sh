@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The checks of .github/workflows/ci.yml, security.yml and benchmarks.yml that a Linux box can run,
-# for the commit checked out here. tools/gate_map.json names, for every `run:` step of those
-# workflows, the step below that covers it or why only CI runs it; tools/gate_parity.py (the
+# for the commit checked out here. tools/gate_map.json names, for every step of those workflows
+# (`run:` and `uses:`), the step below that covers it or why only CI runs it; tools/gate_parity.py (the
 # gate-parity step) fails when a workflow step is missing from the map, so the two cannot drift.
 #   bash tools/ci_gate.sh [--quick|--bench]
 #   (no flag)  every step below
@@ -121,7 +121,7 @@ pre_commit() {
   PATH="$(dirname "$(realpath "$bin")"):$target/pyvenv/bin:$PATH" bash tools/test_precommit.sh "$PWD"
 }
 if [ "$mode" != "--bench" ]; then
-  # every run step of the three workflows is in tools/gate_map.json, covered here or CI-only
+  # every step of the three workflows is in tools/gate_map.json, covered here or CI-only
   step gate-parity parity
   # security.yml's checks: the unsafe inventory in docs/SECURITY.md, cargo deny, zizmor, actionlint
   [ -f tools/unsafe_count.py ] && step unsafe-count python3 tools/unsafe_count.py
