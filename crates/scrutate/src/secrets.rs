@@ -58,10 +58,12 @@ const CODE_END: &str = r#"(?:[`'"\s;]|\\[nr]|$)"#;
 /// A typed assignment's annotation and `=` (`: &str =`, `?: string | undefined =`, `!: string =`,
 /// `: HashMap<String, Vec<u8>> =`): printable ASCII but `=`, `;`, `{`, `}`, `!` and quotes (a
 /// lifetime's `'a` aside), and `,`, `(` and `)` only inside angle brackets, so no language's syntax
-/// is listed and a run never passes a value or another parameter. `find` drops a match whose
-/// annotation (group `ann`) is over `TYPED_MAX`: a bounded repetition here is slow to build.
+/// is listed and a run never passes a value or another parameter. A colon only as a path's `::`:
+/// a run stops at the next `key:`, so a long line of `key: value` pairs is read once, not once
+/// per pair. `find` drops a match whose annotation (group `ann`) is over `TYPED_MAX`: a bounded
+/// repetition here is slow to build.
 /// Taken first where an assignment rule takes `=` or `:`.
-const TYPED: &str = r#"[?!]?:(?P<ann>(?:[\t\x20\x23-\x26\x2a\x2b\x2d-\x3a\x3f-\x5f\x61-\x7a\x7c\x7e]|'[A-Za-z_]|<(?:[\t\x20\x23-\x26\x28-\x3a\x3f-\x5f\x61-\x7a\x7c\x7e]|<[\t\x20\x23-\x26\x28-\x3a\x3f-\x5f\x61-\x7a\x7c\x7e]*>)*>)+)="#;
+const TYPED: &str = r#"[?!]?:(?P<ann>(?:[\t\x20\x23-\x26\x2a\x2b\x2d-\x39\x3f-\x5f\x61-\x7a\x7c\x7e]|::|'[A-Za-z_]|<(?:[\t\x20\x23-\x26\x28-\x39\x3f-\x5f\x61-\x7a\x7c\x7e]|::|<(?:[\t\x20\x23-\x26\x28-\x39\x3f-\x5f\x61-\x7a\x7c\x7e]|::)*>)*>)+)="#;
 const TYPED_MAX: usize = 80;
 
 /// A value wrapped in up to two constructors (`Some("...")`, `Some(String::from("..."))`,
@@ -1104,6 +1106,9 @@ mod tests {
             format!("let authToken: string | undefined = \"{v}\";"),
             format!("let client_secret: Option<&str> = Some(\"{v}\");"),
             format!("let api_secret: String = String::from(\"{v}\");"),
+            // a path type: the annotation takes `::`
+            format!("let api_secret: std::string::String = String::from(\"{v}\");"),
+            format!("static SECRET_TOKEN: std::sync::LazyLock<std::string::String> = \"{v}\";"),
             format!("let api_secret: String = \"{v}\".to_string();"),
             format!("Optional<String> apiToken = Optional.of(\"{v}\");"),
             format!("  apiToken!: string = \"{v}\";"),
@@ -1234,6 +1239,24 @@ mod tests {
         }
         for line in ["https://deploy@git.example.com/app.git", "ssh://git@github.com/org/app.git", "https://user_name_2024@example.com/"] {
             assert!(redact(line).1.iter().all(|m| m.kind != "url-token"), "{line}");
+        }
+    }
+
+    /// One line of `keyword: word` pairs with no `=` costs time in proportion to its length: no
+    /// rule's match attempt at one pair runs on to the end of the line.
+    #[test]
+    #[ignore]
+    fn the_cost_of_a_long_line_of_keyword_pairs() {
+        for key in ["password", "secret", "token", "api_key"] {
+            let pair = format!("{key}: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ");
+            let mut times = Vec::new();
+            for kib in [128, 256, 512, 1024] {
+                let line = pair.repeat(kib * 1024 / pair.len());
+                let t = std::time::Instant::now();
+                std::hint::black_box(redact(&line));
+                times.push(format!("{kib} KiB {:.3} s", t.elapsed().as_secs_f64()));
+            }
+            println!("{key}: {}", times.join(", "));
         }
     }
 
