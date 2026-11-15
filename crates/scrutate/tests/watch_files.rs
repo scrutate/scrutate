@@ -241,7 +241,7 @@ fn a_root_replaced_by_a_rename_is_indexed_and_watched_in_its_place() {
 fn a_watch_through_a_link_follows_the_link_to_its_new_target() {
     use std::os::unix::fs::symlink;
     for how in ["renamed_over", "unlinked_and_linked", "dangling_first"] {
-        let r = Repo::new(&format!("linkswap_{how}"));
+        let r = Repo::plain(&format!("linkswap_{how}"));
         let (v1, v2) = (r.root.join("releases/v1"), r.root.join("releases/v2"));
         fs::create_dir_all(&v1).unwrap();
         fs::write(v1.join("a.py"), b"def alpha():\n    return 1\n").unwrap();
