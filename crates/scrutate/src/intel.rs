@@ -497,8 +497,6 @@ fn scopes(top: &Path, roots: &[PathBuf]) -> Vec<String> {
     roots.iter().map(|r| from_top(r).unwrap_or_else(|| r.to_string_lossy().into_owned())).collect()
 }
 
-/// A tree-sitter query compiled for `lang`, refused when it is empty, has no capture or uses a
-/// predicate tree-sitter does not evaluate.
 /// For each pattern of `q`, strings one of which a file's text holds whenever the pattern matches
 /// in it: the strings of an `#eq?` or `#any-of?` on a capture that is in every match (quantifier
 /// one, or one or more). None when some pattern has none, so that every file is parsed.
@@ -544,6 +542,8 @@ fn may_match(required: &[Vec<String>], text: &str) -> bool {
     required.iter().any(|one_of| one_of.iter().any(|l| text.contains(l.as_str())))
 }
 
+/// A tree-sitter query compiled for `lang`, refused when it is empty, has no capture or uses a
+/// predicate tree-sitter does not evaluate.
 pub(crate) fn compile_query(lang: &str, query: &str) -> Result<(&'static crate::langs::LangSpec, tree_sitter::Language, tree_sitter::Query)> {
     let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {} (see `scrutate languages`)", echo(lang)))?;
     if query.trim().is_empty() {
