@@ -1,0 +1,9 @@
+{
+ "startup/no match": {
+  "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
+  "limit": 1.02,
+  "since": "2026-11-16",
+  "audit": "R3X-17a",
+  "reason": "what 0.1.0 adds at start: 1,209,775 -> 1,226,735 instructions (1.0140) from e7d6c9d9 to 54ac083c, measured on the AWS build box; one commit over 0.25% (e043cd1e, Names::tie, +0.36%), the rest in steps under 3 K instructions each"
+ }
+}

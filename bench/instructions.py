@@ -3,7 +3,7 @@
 under Valgrind's cachegrind for the change and once for its base.
 
 usage: instructions.py --corpora DIR --new BIN --base BIN --out FILE.json
-                       [--only PREFIX...] [--skip PREFIX...] [--tolerance T]
+                       [--only PREFIX...] [--skip PREFIX...] [--tolerance T] [--base-commit SHA]
 
 Text searches run with -j1 and tsquery with RAYON_NUM_THREADS=1: Valgrind runs one thread at a
 time, so with more threads the count would depend on how they were scheduled. A "4 at once" row
@@ -13,6 +13,10 @@ same length (argv[0] lands on the stack), and address randomisation is off.
 A row regresses when new / base instructions exceeds 1 + tolerance, is faster below 1 - tolerance,
 and is the same otherwise. A command that exits other than 0 or 1 fails its row. Exit status 1
 when anything failed, 2 when nothing was compared.
+
+bench/instructions_accepted.json holds rises accepted on review: a row's `limit` replaces
+1 + tolerance, only while --base-commit is the `base` the rise was measured against, so it lapses
+once that base moves on (a later rise then fails at 1%). A row within its limit reads "accepted".
 """
 from __future__ import annotations
 
@@ -53,15 +57,28 @@ def count(cmd, cwd, env):
         return total, p.returncode, p.stdout.count(b"\n")
 
 
-def verdict(new, base, tolerance):
+def verdict(new, base, tolerance, limit=None):
     r = new / base
-    return r, "REGRESSION" if r > 1 + tolerance else "faster" if r < 1 - tolerance else "same"
+    if limit is not None and 1 + tolerance < r <= limit:
+        return r, "accepted"
+    return r, "REGRESSION" if r > max(1 + tolerance, limit or 0) else "faster" if r < 1 - tolerance else "same"
+
+
+ACCEPTED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "instructions_accepted.json")
+
+
+def accepted_limits(base_commit, path=ACCEPTED):
+    """-> {row: limit} of the accepted rises measured against `base_commit`."""
+    entries = json.load(open(path)) if os.path.exists(path) else {}
+    return {row: e["limit"] for row, e in entries.items() if base_commit and e["base"] == base_commit}
 
 
 def _selfcheck():
     assert verdict(1011, 1000, 0.01)[1] == "REGRESSION"
     assert verdict(1010, 1000, 0.01)[1] == "same" and verdict(1000, 1000, 0.01) == (1.0, "same")
     assert verdict(989, 1000, 0.01)[1] == "faster"
+    assert verdict(1014, 1000, 0.01, 1.02)[1] == "accepted" and verdict(1021, 1000, 0.01, 1.02)[1] == "REGRESSION"
+    assert verdict(1005, 1000, 0.01, 1.02)[1] == "same"
 
 
 def main() -> int:
@@ -76,7 +93,9 @@ def main() -> int:
     ap.add_argument("--skip", nargs="*", default=[])
     # a same-binary run reads 1.000 on every row; 1% is under the 2.66% wall-time noise of shared runners
     ap.add_argument("--tolerance", type=float, default=0.01)
+    ap.add_argument("--base-commit", help="the base's commit; selects the accepted rises measured against it")
     a = ap.parse_args()
+    limits = accepted_limits(a.base_commit)
     rows, bad = {}, 0
     for b in suite():
         bid = b["id"]
@@ -97,8 +116,10 @@ def main() -> int:
             row["verdict"] = "skip"
             print(f"skip       {bid}: the base exits {row['base']['exit']}")
         else:
-            row["ratio"], row["verdict"] = verdict(row["new"]["instructions"], row["base"]["instructions"], a.tolerance)
+            row["ratio"], row["verdict"] = verdict(row["new"]["instructions"], row["base"]["instructions"], a.tolerance, limits.get(bid))
             differs = "" if row["new"]["lines"] == row["base"]["lines"] else f"; output {row['base']['lines']} -> {row['new']['lines']} lines"
+            if bid in limits:
+                differs += f"; accepted up to {limits[bid]} against this base (bench/instructions_accepted.json)"
             print(f"{row['verdict']:10} {bid}: {row['base']['instructions']:,} -> {row['new']['instructions']:,} instructions (ratio {row['ratio']:.4f}){differs}",
                   flush=True)
         bad += row["verdict"] in ("FAIL", "REGRESSION")

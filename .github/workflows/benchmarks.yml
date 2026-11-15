@@ -195,6 +195,7 @@ jobs:
             only: ripgrep/ rgbuilt/ patho/ binheavy/ smallfiles/ bigfile/ startup/
             skip: ""
     env:
+      BASE: ${{ needs.scope.outputs.base }}
       GROUP: ${{ matrix.group }}
       CORPORA: ${{ matrix.corpora }}
       ONLY: ${{ matrix.only }}
@@ -222,7 +223,7 @@ jobs:
           s=0
           # shellcheck disable=SC2086 # the lists split into arguments
           python3 bench/instructions.py --corpora "$RUNNER_TEMP/corpora" --new "$RUNNER_TEMP/bin/new/scrutate" --base "$RUNNER_TEMP/bin/old/scrutate" \
-            --out "instructions-$GROUP.json" --only $ONLY --skip $SKIP || s=$?
+            --out "instructions-$GROUP.json" --only $ONLY --skip $SKIP --base-commit "$BASE" || s=$?
           if [ "$MODE" != planted ]; then exit "$s"; fi
           [ "$s" = 1 ] || { echo "::error::the planted slowdown did not fail the instruction gate (exit $s)"; exit 1; }
           echo "the planted slowdown failed the gate, as it must"

@@ -165,7 +165,10 @@ Then read the results:
   alike. The instruction job runs every benchmark of the suite, `linux/` and `llvm/` included,
   once per binary under Valgrind's cachegrind (`bench/instructions.py`): text searches with
   `-j1`, tsquery with `RAYON_NUM_THREADS=1`, since Valgrind runs one thread at a time. A row
-  regresses past 1% more instructions. The counts are "highly reproducible" (Valgrind's manual),
+  regresses past 1% more instructions, or past the limit `bench/instructions_accepted.json`
+  gives it on review: each entry names the base it was measured against, its limit, reason, date
+  and audit ID, and applies only while the run's base is that commit, so it lapses when the base
+  moves on. The counts are "highly reproducible" (Valgrind's manual),
   where wall time on shared runners varies by 2.66% run to run, so 1% catches what the wall-time
   gate's 10% cannot. A pull request that changes nothing under `crates/`, `vendor/`, `bench/`,
   the Cargo files, `.cargo/`, `rust-toolchain.toml` or the workflow passes without measuring.
