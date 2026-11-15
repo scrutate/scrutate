@@ -963,6 +963,36 @@ fn on_path(name: &str) -> Option<std::path::PathBuf> {
 /// The most bytes of one line read at a time.
 const PIECE: usize = 1 << 20;
 
+/// `line` as it goes out, redacted: a key's body line grep shows without its armour is read back
+/// from its file; `public`, a line of a public body `Redactor::hold` released.
+fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, line: &[u8], public: bool) -> Vec<u8> {
+    // a line that is not UTF-8 (one stray byte, a piece cut inside a character) is read
+    // lossily; it goes out as written unless that finds a secret, then lossily, redacted
+    let (text, exact) = match std::str::from_utf8(line) {
+        Ok(t) => (std::borrow::Cow::Borrowed(t), true),
+        Err(_) => (String::from_utf8_lossy(line), false),
+    };
+    let mut t = text.to_string();
+    let (prefix, rest) = crate::secrets::split_line(&t);
+    if crate::secrets::could_be_key_line(rest) {
+        if let Some((path, n)) = crate::secrets::grep_place(prefix) {
+            if let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok()) {
+                let end = if rest.ends_with('\n') { "\n" } else { "" };
+                t = format!("{prefix}{key}{end}");
+                *r.counts.entry("private-key").or_default() += k;
+            }
+        }
+    }
+    let (redacted, marks) = if public { r.redact_public(&t) } else { r.redact(&t) };
+    let marks = marks.len();
+    let t = redacted.into_owned();
+    if exact || marks > 0 || t != text {
+        t.into_bytes()
+    } else {
+        line.to_vec()
+    }
+}
+
 /// Streams the child's standard output to ours, line by line, with secrets redacted. With a
 /// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
 /// the child wrote that were read, the bytes sent)
@@ -981,52 +1011,59 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     // a line of a key's body grep shows without its armour, read back from its file
     let mut keys = crate::secrets::KeyFiles::default();
     let (mut read, mut sent, mut cut) = (0usize, 0usize, false);
+    // the lines of a public key's or a certificate's body, until its END shows they are one
+    let mut held: Vec<Vec<u8>> = Vec::new();
     let mut line = Vec::new();
-    loop {
+    let mut send = |shown: &[u8], sent: &mut usize| {
+        if room.is_some_and(|room| *sent + shown.len() > room) {
+            return Err(true);
+        }
+        so.write_all(shown).map_err(|_| false)?;
+        *sent += shown.len();
+        Ok(())
+    };
+    let mut done = false;
+    while !done {
         line.clear();
         // a line longer than this (a minified file, a device with no line ends) comes in pieces,
         // each redacted, so memory stays bounded
-        match (&mut reader).take(PIECE as u64).read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => read += n,
-        }
-        let shown: Vec<u8> = if !redact {
-            line.clone()
-        } else {
-            // a line that is not UTF-8 (one stray byte, a piece cut inside a character) is read
-            // lossily; it goes out as written unless that finds a secret, then lossily, redacted
-            let (text, exact) = match std::str::from_utf8(&line) {
-                Ok(t) => (std::borrow::Cow::Borrowed(t), true),
-                Err(_) => (String::from_utf8_lossy(&line), false),
-            };
-            let mut t = text.to_string();
-            let (prefix, rest) = crate::secrets::split_line(&t);
-            if crate::secrets::could_be_key_line(rest) {
-                if let Some((path, n)) = crate::secrets::grep_place(prefix) {
-                    if let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok()) {
-                        let end = if rest.ends_with('\n') { "\n" } else { "" };
-                        t = format!("{prefix}{key}{end}");
-                        *r.counts.entry("private-key").or_default() += k;
-                    }
-                }
-            }
-            let mut one = [t];
-            let marks: usize = r.redact_shown(&mut one, 0, usize::MAX).iter().sum();
-            let [t] = one;
-            if exact || marks > 0 || t != text {
-                t.into_bytes()
-            } else {
-                line.clone()
+        let at_end = match (&mut reader).take(PIECE as u64).read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => true,
+            Ok(n) => {
+                read += n;
+                false
             }
         };
-        if room.is_some_and(|room| sent + shown.len() > room) {
-            cut = true;
-            break;
+        let public = match redact {
+            _ if at_end => Some(false),
+            false => None,
+            true => match r.hold(&String::from_utf8_lossy(&line)) {
+                crate::secrets::Hold::Line => {
+                    held.push(line.clone());
+                    continue;
+                }
+                crate::secrets::Hold::Release { public } => Some(public),
+            },
+        };
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        if let Some(public) = public {
+            out.extend(held.drain(..).map(|h| shown(&mut r, &mut keys, &h, public)));
         }
-        if so.write_all(&shown).is_err() {
-            break;
+        if at_end {
+            done = true;
+        } else {
+            out.push(if redact { shown(&mut r, &mut keys, &line, false) } else { line.clone() });
         }
-        sent += shown.len();
+        for o in &out {
+            match send(o, &mut sent) {
+                Ok(()) => {}
+                Err(over) => {
+                    cut = over;
+                    done = true;
+                    break;
+                }
+            }
+        }
     }
     if cut {
         let _ = child.kill();

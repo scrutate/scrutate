@@ -559,13 +559,114 @@ fn unslash(text: &str) -> (String, Vec<usize>) {
     (out, map)
 }
 
+/// The most lines and bytes of a public key's or a certificate's body held for its END: past
+/// either, it is read as any base64 (a 4096-bit certificate's body is about 30 lines).
+const PUBLIC_LINES: usize = 64;
+const PUBLIC_BYTES: usize = 8 << 10;
+
+/// What `Redactor::hold` says to do with a line of a stream.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Hold {
+    /// keep it back with the lines held before it
+    Line,
+    /// the lines held go out first, as a public body's or as any lines, then this one as usual
+    Release { public: bool },
+}
+
+/// The body of a public key or a certificate being read: only armour that ends its line (or is
+/// followed by a written-out `\n`, a key in one string) and is not closed on it opens one; base64
+/// alone, blank and header lines are its body; its END shows it was one, anything else ends it.
+#[derive(Default)]
+struct PublicBody {
+    open: bool,
+    /// its base64 lines so far: (text, start, end)
+    held: Vec<(usize, usize, usize)>,
+    lines: usize,
+    bytes: usize,
+}
+
+enum Seen {
+    Held,
+    /// the END: the lines held are a public body
+    Released,
+    /// something else ended it: the lines held are not shown to be one
+    Dropped,
+    Other,
+}
+
+impl PublicBody {
+    fn line(&mut self, ti: usize, at: usize, line: &str) -> Seen {
+        if self.open {
+            if PUBLIC_ARMOUR.captures(line).is_some_and(|c| &c[1] == "END") {
+                self.open = false;
+                return Seen::Released;
+            }
+            let body = key_body(line);
+            if !matches!(body, Body::NotKey) && self.lines < PUBLIC_LINES && self.bytes + line.len() <= PUBLIC_BYTES {
+                self.lines += 1;
+                self.bytes += line.len();
+                if let Body::Base64(..) = body {
+                    self.held.push((ti, at, at + line.len()));
+                }
+                return Seen::Held;
+            }
+            self.open = false;
+            self.held.clear();
+            self.opens(line);
+            return Seen::Dropped;
+        }
+        self.opens(line);
+        Seen::Other
+    }
+
+    fn opens(&mut self, line: &str) {
+        for c in PUBLIC_ARMOUR.captures_iter(line).filter(|c| &c[1] == "BEGIN") {
+            let m = c.get(0).unwrap();
+            let rest = line[m.end()..].trim_end_matches(['\n', '\r']);
+            let closed = PUBLIC_ARMOUR.captures_iter(&line[m.end()..]).any(|e| &e[1] == "END");
+            if (rest.trim().is_empty() || rest.starts_with("\\n")) && !closed {
+                *self = PublicBody { open: true, ..PublicBody::default() };
+            }
+        }
+    }
+}
+
+/// `text` as the rules read it: JSON may write `/` as `\/` (PHP does).
+fn seen(text: &str) -> Cow<'_, str> {
+    if text.contains("\\/") {
+        Cow::Owned(unslash(text).0)
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
+/// For each of `texts`, the byte ranges (as the rules read it) of the lines of a public key's or a
+/// certificate's body whose END comes later in `texts`: a body cut off before it is no public one.
+fn public_in(texts: &[&str]) -> Vec<Vec<(usize, usize)>> {
+    let mut body = PublicBody::default();
+    let mut out = vec![Vec::new(); texts.len()];
+    for (ti, text) in texts.iter().enumerate() {
+        if !body.open && !text.contains("-----") {
+            continue;
+        }
+        let mut at = 0;
+        for line in seen(text).split_inclusive('\n') {
+            if let Seen::Released = body.line(ti, at, line) {
+                body.held.drain(..).for_each(|(t, a, b)| out[t].push((a, b)));
+            }
+            at += line.len();
+        }
+    }
+    out
+}
+
 /// Redacts texts in order, a private key's body carried from one text into the next (the lines of
 /// a file as an answer's items).
 #[derive(Default)]
 pub struct Redactor {
     in_key: bool,
-    /// inside the armour of a public key or a certificate, whose body is no secret
-    in_public: bool,
+    /// the public body a stream of lines (`hold`) is inside
+    stream: PublicBody,
     /// the redactions the page `ops::Answer::text_page` last made shows, in either form
     pub shown: usize,
     /// redactions made, by kind
@@ -575,7 +676,29 @@ pub struct Redactor {
 impl Redactor {
     /// `text` with its secrets replaced, and where each marker is.
     pub fn redact<'a>(&mut self, text: &'a str) -> (Cow<'a, str>, Vec<Mark>) {
-        let spans = self.find(text);
+        let public = public_in(&[text]).remove(0);
+        self.redact_with(text, &public)
+    }
+
+    /// `text` redacted as a line of a public key's or a certificate's body, which `hold` released.
+    pub fn redact_public<'a>(&mut self, text: &'a str) -> (Cow<'a, str>, Vec<Mark>) {
+        self.redact_with(text, &[(0, usize::MAX)])
+    }
+
+    /// For a stream of lines, read one at a time (`hook run`): whether `line` is to be held back
+    /// with the lines held before it, as the body of a public key or a certificate whose END has
+    /// not come yet; else whether those go out first as that (`redact_public`) or as any line.
+    pub fn hold(&mut self, line: &str) -> Hold {
+        match self.stream.line(0, 0, &seen(line)) {
+            Seen::Held => Hold::Line,
+            Seen::Released => Hold::Release { public: true },
+            Seen::Dropped | Seen::Other => Hold::Release { public: false },
+        }
+    }
+
+    /// `redact`, with the byte ranges of `text` (as the rules read it) that are a public body.
+    fn redact_with<'a>(&mut self, text: &'a str, public: &[(usize, usize)]) -> (Cow<'a, str>, Vec<Mark>) {
+        let spans = self.find(text, public);
         if spans.is_empty() {
             return (Cow::Borrowed(text), Vec::new());
         }
@@ -595,7 +718,7 @@ impl Redactor {
     }
 
     /// The secrets in `text`, as byte ranges of it with their kinds, in order, none inside another.
-    fn find(&mut self, text: &str) -> Vec<(usize, usize, &'static str)> {
+    fn find(&mut self, text: &str, public: &[(usize, usize)]) -> Vec<(usize, usize, &'static str)> {
         // JSON may write `/` as `\/` (PHP does): the rules read the text with it as `/`
         let unslashed = text.contains("\\/").then(|| unslash(text));
         let (seen, map) = match &unslashed {
@@ -605,7 +728,6 @@ impl Redactor {
         let mut spans: Vec<(usize, usize, &'static str)> = Vec::new();
         self.private_keys(seen, &mut spans);
         known_key_lines(seen, &mut spans);
-        let public = self.public_bodies(seen);
         let mut wanted: Vec<bool> = RULES.iter().map(|r| r.keywords.is_empty()).collect();
         let starts: Vec<usize> = RULES.iter().scan(0, |n, r| Some(std::mem::replace(n, *n + r.keywords.len()))).collect();
         for m in PREFILTER.find_overlapping_iter(seen) {
@@ -643,42 +765,6 @@ impl Redactor {
             keep
         });
         spans
-    }
-
-    /// The byte ranges of `text`'s lines inside the armour of a public key or a certificate.
-    fn public_bodies(&mut self, text: &str) -> Vec<(usize, usize)> {
-        if !self.in_public && !text.contains("-----") {
-            return Vec::new();
-        }
-        let (mut out, mut at) = (Vec::new(), 0);
-        for line in text.split_inclusive('\n') {
-            if self.in_public {
-                // as the private-key pass reads a body: base64 alone, blank or header lines skipped,
-                // and anything else (an END, another file's line) ends it
-                if PUBLIC_ARMOUR.captures(line).is_some_and(|c| &c[1] == "END") {
-                    self.in_public = false;
-                } else {
-                    match key_body(line) {
-                        Body::Base64(..) => out.push((at, at + line.len())),
-                        Body::Skip => {}
-                        Body::NotKey => self.in_public = false,
-                    }
-                }
-            } else {
-                // opened only by armour that ends its line, or is followed by a written-out `\n` (a
-                // key in one string), and not closed on the same line
-                for c in PUBLIC_ARMOUR.captures_iter(line).filter(|c| &c[1] == "BEGIN") {
-                    let m = c.get(0).unwrap();
-                    let rest = line[m.end()..].trim_end_matches(['\n', '\r']);
-                    let closed = PUBLIC_ARMOUR.captures_iter(&line[m.end()..]).any(|e| &e[1] == "END");
-                    if (rest.trim().is_empty() || rest.starts_with("\\n")) && !closed {
-                        self.in_public = true;
-                    }
-                }
-            }
-            at += line.len();
-        }
-        out
     }
 
     /// The bodies of private keys: from a BEGIN armour that ends its line (or is followed by a
@@ -747,13 +833,14 @@ impl Redactor {
     pub fn redact_shown(&mut self, texts: &mut [String], first: usize, room: usize) -> Vec<usize> {
         let first = first.min(texts.len());
         texts[..first].iter().for_each(|t| self.track(t));
+        let public = public_in(&texts[first..].iter().map(String::as_str).collect::<Vec<_>>());
         let mut marks = vec![0; texts.len()];
         let mut used = 0;
-        for (t, n) in texts[first..].iter_mut().zip(&mut marks[first..]) {
+        for ((t, n), public) in texts[first..].iter_mut().zip(&mut marks[first..]).zip(&public) {
             if used > room {
                 break;
             }
-            let (redacted, m) = self.redact(t);
+            let (redacted, m) = self.redact_with(t, public);
             *n = m.len();
             if let Cow::Owned(s) = redacted {
                 *t = s;
@@ -821,7 +908,7 @@ pub fn detectors() -> Vec<(&'static str, &'static str)> {
 
 /// The secrets in `text` (one line or more), as byte ranges of it with their kinds, in order.
 pub fn spans(text: &str) -> Vec<(usize, usize, &'static str)> {
-    Redactor::default().find(text)
+    Redactor::default().find(text, &public_in(&[text]).remove(0))
 }
 
 /// `text` with its secrets replaced, and where each marker is.
@@ -1284,16 +1371,16 @@ mod tests {
         assert!(redact(&host).1.is_empty(), "{host}");
         let mut r = Redactor::default();
         for what in ["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"] {
-            let lines = [
+            let mut lines = [
                 format!("-----BEGIN {what}-----"),
                 fake(71, &b64, 64),
                 fake(72, &b64, 64),
                 format!("{}==", fake(73, &b64, 20)),
                 format!("-----END {what}-----"),
             ];
-            for line in &lines {
-                assert!(r.redact(line).1.is_empty(), "{what}: {line}");
-            }
+            // whole: as the lines of one answer, and as one text
+            assert!(r.redact(&lines.join("\n")).1.is_empty(), "{what}");
+            assert_eq!(r.redact_shown(&mut lines, 0, usize::MAX), [0; 5], "{what}");
         }
         let body = fake(74, &b64, 64);
         let out: Vec<String> = [armour("BEGIN", ""), body.clone(), armour("END", "")].iter().map(|l| r.redact(l).0.into_owned()).collect();
@@ -1512,11 +1599,37 @@ mod tests {
         }
         // a public key's body ends at the first line that is not base64: what follows is read again
         let mut r = Redactor::default();
-        for l in ["-----BEGIN PUBLIC KEY-----", &fake(94, &b64, 64)] {
-            assert!(r.redact(l).1.is_empty(), "{l}");
-        }
+        r.redact_shown(&mut ["-----BEGIN PUBLIC KEY-----".to_string(), fake(94, &b64, 64)], 0, usize::MAX);
         r.redact("src/main.rs:3:fn main() {}");
         assert!(r.redact(&format!("keys/id.pem:5:{body}")).1.iter().any(|m| m.kind == "key-material"));
+    }
+
+    /// Over one call's texts a public body is left as written only when its END comes later in
+    /// them: cut off, or one line over the 64 held, it is marked; two back to back are each left.
+    #[test]
+    fn a_public_body_is_left_as_written_only_up_to_its_end_in_what_one_call_is_given() {
+        let b64 = format!("{ALNUM}+/");
+        let pem = |body: &[String]| [vec!["-----BEGIN PUBLIC KEY-----".to_string()], body.to_vec(), vec!["-----END PUBLIC KEY-----".to_string()]].concat();
+        let short: Vec<String> = (0..6).map(|i| fake(100 + i, &b64, 64)).collect();
+        let long: Vec<String> = (0..65).map(|i| fake(110 + i, &b64, 64)).collect();
+        let marks = |lines: &[String]| Redactor::default().redact_shown(&mut lines.to_vec(), 0, usize::MAX).iter().sum::<usize>();
+        let whole = pem(&short);
+        assert_eq!(marks(&whole), 0);
+        assert_eq!(marks(&whole[..whole.len() - 1]), short.len(), "cut off before the END");
+        assert_eq!(marks(&pem(&long)), long.len(), "one line over the cap");
+        assert_eq!(marks(&[pem(&short), pem(&short[..3])].concat()), 0, "back to back");
+        // one text, the same
+        assert!(redact(&whole.join("\n")).1.is_empty());
+        assert_eq!(redact(&whole[..whole.len() - 1].join("\n")).1.len(), short.len());
+        // a stream holds the body and says what to do with it at its END, or at anything else
+        let mut r = Redactor::default();
+        let steps: Vec<Hold> = whole.iter().map(|l| r.hold(l)).collect();
+        assert_eq!(steps[0], Hold::Release { public: false });
+        assert!(steps[1..=short.len()].iter().all(|s| *s == Hold::Line));
+        assert_eq!(steps[short.len() + 1], Hold::Release { public: true });
+        let mut r = Redactor::default();
+        let steps: Vec<Hold> = pem(&long).iter().map(|l| r.hold(l)).collect();
+        assert_eq!(steps[65], Hold::Release { public: false }, "the 65th body line ends the hold");
     }
 
     /// The page as assembled is read again, so a mark must not be taken for a secret twice.

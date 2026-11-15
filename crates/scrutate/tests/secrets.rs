@@ -746,6 +746,110 @@ fn an_indexed_key_s_lines_are_found_by_their_text_through_hook_run() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A public key's body is left as written only up to its END. Without the END in the answer, base64
+/// after it may be another file's private key (`grep -h` names no file), so it stays marked: a
+/// public key (also with CRLF line ends or spaces after its BEGIN) or a certificate, then a private
+/// key's body, through `hook run`. A public key alone, whole, stays as written.
+#[cfg(unix)]
+#[test]
+fn a_public_body_whose_end_is_not_shown_leaves_the_base64_after_it_marked_through_hook_run() {
+    let b64 = format!("{ALNUM}+/");
+    let seed = &mut 81u64;
+    let mut private: Vec<String> = (0..25).map(|_| chars(seed, &b64, 64)).collect();
+    private.push(format!("{}==", chars(seed, &b64, 30)));
+    let mut public: Vec<String> = (0..6).map(|_| chars(seed, &b64, 64)).collect();
+    public.push(format!("{}=", chars(seed, &b64, 11)));
+    let pem = |what: &str, begin_tail: &str, eol: &str, body: &[String]| {
+        let mut t = format!("-----BEGIN {what}-----{begin_tail}{eol}");
+        body.iter().for_each(|l| t.push_str(&format!("{l}{eol}")));
+        t + &format!("-----END {what}-----{eol}")
+    };
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_public_end_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let hook = |root: &Path, args: &[&str]| {
+        let home = root.with_extension("home");
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(args)
+            .current_dir(root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for (case, public_pem) in [
+        ("public key", pem("PUBLIC KEY", "", "\n", &public)),
+        ("CRLF public key", pem("PUBLIC KEY", "", "\r\n", &public)),
+        ("spaces after BEGIN", pem("PUBLIC KEY", "   ", "\n", &public)),
+        ("certificate", pem("CERTIFICATE", "", "\n", &public)),
+    ] {
+        let root = base.join(case.replace(' ', "_"));
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("a.pem"), &public_pem).unwrap();
+        fs::write(root.join("b.pem"), pem(&format!("{} KEY", "PRIVATE"), "", "\n", &private)).unwrap();
+        // as many raw as with the private key alone (a short last line is no key-material)
+        let raw = |files: &[&str]| {
+            let out = hook(&root, &[&["grep", "-h", "-v", "-e", "END", "-e", "PRIVATE"][..], files].concat());
+            (private.iter().filter(|l| out.contains(l.as_str())).count(), out)
+        };
+        let ((alone, _), (after, out)) = (raw(&["b.pem"]), raw(&["a.pem", "b.pem"]));
+        assert!(alone <= 1, "the private key alone: {alone} raw");
+        assert_eq!(after, alone, "{case}: {after} of {} private body lines raw:\n{out}", private.len());
+        // the public key whole, its END shown, is left as written
+        let out = hook(&root, &["grep", "-h", "", "a.pem"]);
+        assert!(public.iter().all(|l| out.contains(l.as_str())), "{case} alone:\n{out}");
+    }
+    let _ = fs::remove_dir_all(&base);
+}
+
+/// `hook run` holds a public body's lines for its END: cut off by the end of the output, or one
+/// line over the 64 it holds, they go out marked, all of them and in order; two public keys back to
+/// back are each left as written.
+#[cfg(unix)]
+#[test]
+fn hook_run_releases_a_public_body_at_its_end_and_marks_it_otherwise() {
+    let b64 = format!("{ALNUM}+/");
+    let seed = &mut 82u64;
+    let mut body = |n: usize| -> Vec<String> { (0..n).map(|_| chars(seed, &b64, 64)).collect() };
+    let pem = |body: &[String]| format!("-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n", body.join("\n"));
+    let (short, other, long) = (body(6), body(5), body(65));
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_public_hold_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("a.pem"), pem(&short)).unwrap();
+    fs::write(root.join("c.pem"), pem(&other)).unwrap();
+    fs::write(root.join("long.pem"), pem(&long)).unwrap();
+    let home = root.with_extension("home");
+    let hook = |args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let marked = |out: &str, lines: &[String]| lines.iter().all(|l| !out.contains(l.as_str())) && out.matches("[redacted:key-material]").count() == lines.len();
+    // the end of the output before the END
+    let out = hook(&["grep", "-h", "-v", "END", "a.pem"]);
+    assert!(marked(&out, &short), "cut off:\n{out}");
+    // one line over: every line marked, the armour around them where it was
+    let out = hook(&["grep", "-h", "", "long.pem"]);
+    assert!(marked(&out, &long), "65 lines:\n{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!((lines.len(), lines[0], lines[66]), (68, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----"), "{out}");
+    // back to back
+    let out = hook(&["grep", "-h", "", "a.pem", "c.pem"]);
+    assert!(short.iter().chain(&other).all(|l| out.contains(l.as_str())) && !out.contains("[redacted"), "two keys:\n{out}");
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// A recursive grep or rg through `hook run` leaves scrutate's own index directory out: its
 /// caches hold the repository's text in binary records, where a secret runs straight into the next
 /// field's bytes and no detector can tell where it ends.
