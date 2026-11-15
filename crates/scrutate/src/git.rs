@@ -105,7 +105,36 @@ pub(crate) fn own_env() -> Vec<(String, String)> {
 impl Git {
     /// git in this process's environment, a relative value of `FROM_START` read where it was set.
     pub(crate) fn new(root: &Path) -> Result<Git> {
-        Git::overriding(root, own_env())
+        let set = own_env();
+        let given = |name: &str| set.iter().any(|(n, v)| n == name && !v.is_empty());
+        let dir_alone = given("GIT_DIR") && !given("GIT_WORK_TREE");
+        let git = Git::overriding(root, set)?;
+        if dir_alone {
+            git.root_s_own_git_dir(root)?;
+        }
+        Ok(git)
+    }
+
+    /// With GIT_DIR and no GIT_WORK_TREE git takes `root`, where it runs, as the work tree: the
+    /// git directory must be `root`'s own, or name the tree in core.worktree, or the answers are
+    /// another repository's history laid over this tree.
+    fn root_s_own_git_dir(&self, root: &Path) -> Result<()> {
+        let dir_of = |git: &Git| {
+            let (ok, out, _) = git.output(&["rev-parse", "--absolute-git-dir"]).ok()?;
+            let dir = PathBuf::from(String::from_utf8_lossy(out.trim_ascii_end()).into_owned());
+            ok.then(|| std::fs::canonicalize(&dir).unwrap_or(dir))
+        };
+        let own = Git { dir: plain_dir(root), env: Env::Given(Vec::new()), filters: Default::default() };
+        // none: `checked` already refused it, or git reports no repository
+        let Some(named) = dir_of(self) else { return Ok(()) };
+        if dir_of(&own).as_ref() == Some(&named) || self.output(&["config", "--get", "core.worktree"]).is_ok_and(|(ok, _, _)| ok) {
+            return Ok(());
+        }
+        bail!(
+            "GIT_DIR names {}, which is not the git directory of {}: set GIT_WORK_TREE to the tree it belongs to, or unset GIT_DIR",
+            crate::paths::plain_path(&named).display(),
+            crate::paths::plain_path(root).display()
+        );
     }
 
     fn overriding(root: &Path, set: Vec<(String, String)>) -> Result<Git> {

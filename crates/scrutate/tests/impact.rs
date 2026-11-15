@@ -422,6 +422,60 @@ fn a_relative_git_dir_set_in_a_subdirectory_is_read_from_there() {
 }
 
 #[test]
+fn with_git_dir_alone_a_subdirectory_answers_as_the_root_and_another_repository_s_git_dir_is_refused() {
+    let t = chain("git_dir_alone");
+    // one committed change for review and history, one uncommitted for impact
+    t.write("lib/core.py", "def deepest(x):\n    return x + 2\n\n\ndef spare(x):\n    return x\n");
+    t.commit("second");
+    t.write("lib/core.py", "def deepest(x):\n    return x + 3\n\n\ndef spare(x):\n    return x\n");
+    let run = |dir: &Path, args: &[&str], vars: &[(&str, &str)]| {
+        let out = Command::new(BIN)
+            .args(["--root", t.root.to_str().unwrap()])
+            .args(args)
+            .current_dir(dir)
+            .envs(GIT_ENV)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .envs(vars.iter().copied())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let sub = t.root.join("lib");
+    let calls: [&[&str]; 3] = [&["impact"], &["review", "--base", "HEAD~1"], &["read", "--symbol", "deepest", "--history"]];
+    let answers = |dir: &Path, vars: &[(&str, &str)]| calls.map(|args| run(dir, args, vars)).map(|(code, out, _)| (code, out));
+    let from_root = answers(&t.root, &[]);
+    assert!(from_root.iter().all(|(code, _)| *code == Some(0)), "{from_root:?}");
+    assert!(from_root.iter().take(2).all(|(_, out)| out.contains("deepest")), "{from_root:?}");
+    assert!(from_root[2].1.contains("(history: changed since HEAD)"), "{}", from_root[2].1);
+    // git runs at the root, so it takes the root as the work tree, as from the root itself
+    assert_eq!(answers(&sub, &[("GIT_DIR", "../.git")]), from_root);
+    assert_eq!(answers(&sub, &[("GIT_DIR", "../.git"), ("GIT_WORK_TREE", "..")]), from_root);
+    // another repository's history is never laid over this tree
+    let other = Tree::new("git_dir_other");
+    other.git(&["init", "-q"]);
+    other.write("lib/core.py", "def deepest(x):\n    return x\n");
+    other.commit("other");
+    let other_dir = other.root.join(".git");
+    for dir in [&t.root, &sub] {
+        let (code, text, err) = run(dir, &["impact"], &[("GIT_DIR", other_dir.to_str().unwrap())]);
+        assert_eq!(code, Some(2), "{text}{err}");
+        assert!(err.contains("is not the git directory of") && err.contains("GIT_WORK_TREE"), "{err}");
+    }
+    // a bare repository has no work tree at all
+    let bare = t.root.with_file_name(format!("impact_git_dir_bare_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&bare);
+    t.git(&["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+    let (code, text, err) = run(&sub, &["impact"], &[("GIT_DIR", bare.to_str().unwrap())]);
+    let _ = fs::remove_dir_all(&bare);
+    assert_eq!(code, Some(2), "{text}{err}");
+    assert!(err.contains("not in a git repository"), "{err}");
+    // a configured core.worktree names the tree for git dirs of every kind
+    t.git(&["config", "core.worktree", t.root.to_str().unwrap()]);
+    assert_eq!(answers(&sub, &[("GIT_DIR", "../.git")]), from_root);
+}
+
+#[test]
 fn a_new_copy_of_a_function_and_a_change_no_test_reaches_are_its_findings() {
     let t = chain("findings");
     t.write("lib/text.py", &long_fn("unique", "beta"));

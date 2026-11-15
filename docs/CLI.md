@@ -670,7 +670,11 @@ runs in the command's own environment. Git runs at the root, and a relative `GIT
 `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` is read from the directory the command
 runs in, as git reads it; `GIT_INDEX_FILE` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are read at the
 work tree's top, as git reads them. With `GIT_DIR` and no `GIT_WORK_TREE`, git takes the directory
-it starts in, the root, as the work tree's top. The MCP tool `impact` takes `base`, `staged` and `depth`
+it starts in, the root, as the work tree's top (unless `core.worktree` names one), so from a
+subdirectory the answers are the root's, where git started there would take that subdirectory as
+the top. A `GIT_DIR` that is not the root's own git directory and has no `core.worktree` stops
+the command with exit 2 (`read --history` gives that as its note): its history laid over this
+tree would be another repository's; set `GIT_WORK_TREE` with it. The MCP tool `impact` takes `base`, `staged` and `depth`
 and gives the same answer, findings included.
 
 ### `review`

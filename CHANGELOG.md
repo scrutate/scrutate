@@ -301,6 +301,10 @@ incompatible index by itself, and that is never breaking.
 - The language server answers definition and references in the spelling of the request's
   document when the editor names one repository in two ways (two folders, one through a link, or
   a file named through one), where every answer named the first folder's spelling.
+- `impact` and `review` with a `GIT_DIR` that is not the root's own git directory, no
+  `GIT_WORK_TREE` and no `core.worktree` stop with exit 2 and say to set `GIT_WORK_TREE`
+  (`read --history` gives that as its note), where they read that repository's history against
+  this tree.
 - `tsquery --rewrite --write` leaves alone, and names, a file reached through a link to a
   directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
   file the link leads to; a link was already left alone only as the file itself
