@@ -271,11 +271,13 @@ fn an_explicit_refresh_interval_is_a_floor() {
     fs::write(r.root.join("pkg/late.py"), "def arrived_late():\n    return 1\n").unwrap();
     assert!(floor.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "a named file within the interval");
     assert!(default.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"));
-    // a new directory needs a walk of every file, which the floor holds back
+    // a new directory needs a walk of every file, which the floor holds back; on macOS every call
+    // looks at the tree, since FSEvents' order proves no change set, so nothing is held back
     fs::create_dir_all(r.root.join("pkg/new_dir")).unwrap();
     fs::write(r.root.join("pkg/new_dir/later.py"), "def arrived_later():\n    return 1\n").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(!floor.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "no walk within the interval");
+    let seen = floor.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py");
+    assert_eq!(seen, cfg!(target_os = "macos"), "a walk within the interval on macOS alone");
     assert!(default.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "a walk the watch asks for comes at once by default");
 }
 

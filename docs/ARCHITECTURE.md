@@ -620,7 +620,7 @@ set for both: a watch's events name files of either set, read by the same two wa
 | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 | an index command, `batch` | every file before the first operation; never waits | code index |
-| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives; when that is every file (or there is no watch), every file at most once per refresh interval; waits up to 250 ms for a write of its own process, never for another process: past that it answers from the last committed index and says which files are pending | code index |
+| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives (on macOS every file at every call); when that is every file (or there is no watch), every file at most once per refresh interval; waits up to 250 ms for a write of its own process, never for another process: past that it answers from the last committed index and says which files are pending | code index |
 | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); waits as a tool call does, and says on stderr which files are pending | code index |
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
@@ -718,7 +718,8 @@ config file, a directory that came or went, a directory left without a watch, a 
 every watch that changed, the watches set (the first time, and on Linux each time again, since a
 file written while they were set may have no event), more than 10,000 events since the last read,
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
-floor the user gave. A named file costs one `stat` (`UpdateStats::files_looked`
+floor the user gave and the change sets are a proof (`Freshness::order_proves`): on macOS every
+read walks whatever the interval. A named file costs one `stat` (`UpdateStats::files_looked`
 counts them) and a read with nothing named costs no lock. A safety walk on the watch's thread
 (`watch::Safety`, every 60 s or 50 times its own cost) feeds in, as events, what changed with no
 event since its last walk.

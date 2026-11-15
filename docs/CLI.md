@@ -812,7 +812,8 @@ error, an ignore rule or a directory changed, the cookie's event took more than 
 Linux a directory got its first watch, new or made again at its path) the call looks at every
 file instead, at once. The one
 exception is a `--refresh-interval` you give: it holds that walk back as below, so a new directory
-or a changed ignore rule can wait up to that interval before calls see it. The other case is a
+or a changed ignore rule can wait up to that interval before calls see it (not on macOS, where
+every call looks at every file whatever the interval). The other case is a
 change that makes no event at all (a write through a memory map, a bind mount that does not pass
 events on): a walk in the background, off the calls' path, finds those within 60 s, or within 50
 times what one walk of the tree takes when that is longer. `SCRUTATE_SESSION_DEBUG=1` says why a

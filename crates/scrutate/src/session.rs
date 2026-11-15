@@ -539,10 +539,11 @@ impl Session {
         Ok((st, Pending::default()))
     }
 
-    /// A watch that asks for a walk gets it at once, unless the interval is a floor the user gave.
+    /// A watch that asks for a walk gets it at once, unless the interval is a floor the user gave
+    /// and the watch's change sets are a proof (the floor holds back what they cannot vouch for).
     fn walk_if_due(&self, repo: &mut Repo, token: Token, now: bool) -> Result<(UpdateStats, Pending)> {
         let watching = self.fresh.watching();
-        let asked = now || watching && !self.every.floor;
+        let asked = now || watching && (!self.every.floor || !self.fresh.order_proves());
         let nothing = Ok((UpdateStats::default(), Pending::default()));
         if !asked && !self.due() {
             return nothing;
@@ -1379,6 +1380,27 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         courier.join().unwrap();
         assert!(a.is_ok_and(|a| !a.is_empty()), "the write was missed");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Where the order proves nothing a read looks at the tree whatever floor the user gave: the
+    /// floor holds back only what a proven change set cannot vouch for.
+    #[test]
+    fn a_write_just_before_a_read_is_in_its_answer_under_a_user_floor_where_the_order_proves_nothing() {
+        let root = std::env::temp_dir().join(format!("scrutate_session_floor_look_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/w.py"), "def written_0():\n    return 0\n").unwrap();
+        let s = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        let notes = s.notes.clone().unwrap();
+        notes.in_place_without_a_watcher();
+        notes.set_order_proves(false);
+        for i in 1..=20 {
+            std::fs::write(root.join("src/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
+            let a = s.run(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }, &Arc::default()).unwrap();
+            assert!(!a.is_empty(), "write {i} missed under the floor");
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

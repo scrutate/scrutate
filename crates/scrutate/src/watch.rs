@@ -622,6 +622,10 @@ impl Freshness for Notes {
     fn watching(&self) -> bool {
         lock(&self.0.noted).walked.is_some()
     }
+
+    fn order_proves(&self) -> bool {
+        self.0.order_proves.load(Ordering::Relaxed)
+    }
 }
 
 /// An entry as `Poll` last saw it. A directory's own times change with each entry, which is seen

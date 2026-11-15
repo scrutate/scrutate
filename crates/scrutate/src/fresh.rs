@@ -59,6 +59,12 @@ pub trait Freshness: Send + Sync {
     fn watching(&self) -> bool {
         false
     }
+
+    /// Whether a change set of named files proves what changed. Where it does not (macOS), every
+    /// answer is every file and a read looks at the tree whatever the refresh interval.
+    fn order_proves(&self) -> bool {
+        true
+    }
 }
 
 /// What feeds a session's freshness from a watch: the watch's notes, on targets with a file watcher.
