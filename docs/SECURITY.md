@@ -452,6 +452,11 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `twilio-api-key` | gitleaks twilio-api-key |
 | `sendgrid-api-key` | gitleaks sendgrid-api-token (SendGrid's 22.43 layout) |
 | `mailgun-api-key` | gitleaks mailgun-private-api-token |
+| `huggingface-token` | gitleaks huggingface-access-token, huggingface-organization-api-token |
+| `shopify-token` | gitleaks shopify-access-token, shopify-custom-access-token, shopify-private-app-access-token, shopify-shared-secret |
+| `digitalocean-token` | gitleaks digitalocean-pat, digitalocean-access-token, digitalocean-refresh-token |
+| `vault-token` | gitleaks vault-service-token (the `hvs.` form), vault-batch-token |
+| `telegram-bot-token` | gitleaks telegram-bot-api-token |
 | `database-password` | secretlint-rule-database-connection-string |
 | `url-token` | scrutate |
 | `url-password` | scrutate |
@@ -515,7 +520,8 @@ lines too; no byte of any secret comes back, each kind is marked, and with `SCRU
 every one does. The CLI's `--json` stays one JSON document with it on.
 
 Not detected: token families outside the table (any
-vendor's format scrutate has no rule for).
+vendor's format scrutate has no rule for), and Vault's legacy `s.` service tokens, whose keyword
+would send nearly every line of code to the regex.
 
 Not covered, in assignments: a quoted value that reads as a name (a file path with an
 extension, or capitalized words run together with up to four digits after them, so a password

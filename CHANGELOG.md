@@ -75,7 +75,8 @@ incompatible index by itself, and that is never breaking.
   detectors are ports of gitleaks and secretlint rules and scrutate's own, one kind each: AWS
   access key ids and secret keys, GitHub tokens (classic and fine-grained), GitLab tokens, Slack
   tokens and webhooks, Stripe keys, Google API keys, OpenAI and Anthropic keys, npm and PyPI
-  tokens, JWTs, Twilio, SendGrid and Mailgun keys, database URL passwords, a token as a URL's
+  tokens, JWTs, Twilio, SendGrid and Mailgun keys, Hugging Face, Shopify, DigitalOcean, Vault and
+  Telegram bot tokens, database URL passwords, a token as a URL's
   user, other URL passwords, `Bearer` and `Authorization: Token` tokens, `curl -u` passwords,
   HTTP Basic credentials, `.env` lines, quoted passwords, a key's base64 body read without its
   armour, a generic assignment rule, and private keys ([the table](docs/SECURITY.md#secrets-in-answers)).
