@@ -408,6 +408,40 @@ fn hook_run_by_hand_runs_only_a_read_only_rg_grep_or_find() {
 }
 
 #[test]
+fn a_sort_value_is_read_as_ripgrep_reads_it() {
+    if !have_rg() {
+        eprintln!("skipped: no rg on PATH");
+        return;
+    }
+    // `path` is --sort's value: read as the pattern, `config` and `src` would turn into paths
+    let r = Repo::new("sort_value");
+    r.write("src/a.txt", "load config here\nthe path to it\n");
+    r.write("config/x.toml", "path = 1\n");
+    r.write("TODO", "TODO: path\n");
+    for cmd in [
+        "rg --sort path config",
+        "rg --sort path src",
+        "rg --sort path TODO .",
+        "rg --sort=path config",
+        "rg --sortr path config",
+        "rg --sort none config",
+        "rg -n --sort modified src",
+        "rg --sort path -n path",
+    ] {
+        let (want, _, want_code) = sh(&r.root, cmd);
+        let got = rewrite(&r.root, cmd).map(|new| sh(&r.root, &new));
+        if let Some((got, _, got_code)) = got {
+            let sorted = |s: &str| {
+                let mut v: Vec<String> = s.lines().map(str::to_string).collect();
+                v.sort();
+                v
+            };
+            assert_eq!((sorted(&got), got_code), (sorted(&want), want_code), "{cmd}");
+        }
+    }
+}
+
+#[test]
 fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
     if !have_rg() {
         return;
@@ -416,9 +450,10 @@ fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
     r.write("src/a.rs", "fn foo() {}\nlet a.b = 1;\nFOO\nfoo_bar\n// TODO x\nreturn 1\n");
     r.write("src/b.py", "def foo():\n    return 'foo'\n\nfoo = 2\nFoo = 3\n");
     r.write("docs/c.md", "the foo is here\nnothing\nfoo again\nTODO later\n");
+    r.write("config/x.toml", "path = 1\nfoo = 2\n");
     let corpus = include_str!("shell_hook_corpus.txt");
     let cmds: Vec<&str> = corpus.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).collect();
-    assert_eq!(cmds.len(), 206);
+    assert_eq!(cmds.len(), 210);
     // a word that names a flag that runs a program: such a line is never rewritten
     let runs = |c: &str| {
         c.split(' ').any(|w| {

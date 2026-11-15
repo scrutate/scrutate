@@ -1,4 +1,4 @@
-# 206 shell searches for the Bash hook's acceptance test: the shapes of real Claude Code search commands
+# 210 shell searches for the Bash hook's acceptance test: the shapes of real Claude Code search commands
 # (program, flags, pipes, redirections and chains kept) with every pattern, path and flag value
 # replaced by one of the fixture's, so no text of the sessions they came from is kept.
 grep -n TODO docs | cut -d: -f1 | cut -d: -f1 && echo done
@@ -207,3 +207,7 @@ rg --regexp -- --pre=./p foo src/a.rs
 rg -e -- -z foo src
 rg --glob -- --pre-glob=x foo src
 rg -iz foo src
+rg --sort path config
+rg --sort=path foo src
+rg --sortr path foo src
+rg --sort none foo src

@@ -288,6 +288,10 @@ incompatible index by itself, and that is never breaking.
   folder inside another folder once, from the inner folder, where the outer folder's index listed
   them a second time and each took two of the 200 places
   ([CLI](docs/CLI.md#lsp)).
+- The Bash hook reads `rg --sort path PATTERN DIR` as ripgrep does, where it took `path` for the
+  pattern and answered another search with exit 0; `--sort none` and the last `--sort` given are
+  honoured, and `--sortr` or an order other than path runs `rg` itself
+  ([CLI](docs/CLI.md#bash-hook)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.

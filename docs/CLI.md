@@ -1445,7 +1445,9 @@ It answers the search as the program would. `rg` goes to `scrutate grep -N` with
 arguments (line numbers only when asked, as `rg` writing to a pipe), with no scrutate
 configuration file or `SCRUTATE_*` setting in play, when `scrutate grep` takes those arguments
 and every path they name is there; otherwise `rg` itself runs, so its own message and code come
-back.
+back. `rg --sort` takes a value where `scrutate grep --sort` is a flag: `--sort path` becomes
+`--sort`, `--sort none` is dropped (the last one wins), and any other order (`--sortr`,
+`--sort modified`) runs `rg`.
 `grep` and `find` run as given: GNU and BSD grep word binary files, their own regular expressions
 and `-c` in ways a translation could not match exactly. Secrets are redacted unless
 `SCRUTATE_REDACT=off` (see below), with the closing line that counts them, also when a pipe takes

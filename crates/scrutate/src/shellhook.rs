@@ -422,6 +422,53 @@ fn only_known(flags: &Flags, args: &[String]) -> bool {
     true
 }
 
+/// Whether the word after `a` is `a`'s value in `flags`: a long flag that takes one without `=`, or
+/// a cluster of short flags that ends in one that takes a value.
+fn value_follows(flags: &Flags, a: &str) -> bool {
+    if a.starts_with("--") {
+        return !a.contains('=') && flags.long.iter().any(|(n, t)| *n == a && *t == Takes::Value);
+    }
+    let Some(shorts) = a.strip_prefix('-') else { return false };
+    shorts.char_indices().find(|(_, c)| flags.valued.contains(*c)).is_some_and(|(i, c)| i + c.len_utf8() == shorts.len())
+}
+
+/// `rg`'s arguments (all of them known, `only_known`) as `scrutate grep` reads them, after its
+/// `-N`. rg's `--sort` takes a value and grep's is a flag: `--sort path` is grep's `--sort`,
+/// `--sort none` none, the last one winning; None for an order grep does not give (`--sortr`,
+/// `--sort modified`), so rg answers.
+fn grep_words(args: &[String]) -> Option<Vec<String>> {
+    let mut out = vec!["-N".to_string()];
+    let mut sort = false;
+    let mut words = args.iter();
+    while let Some(a) = words.next() {
+        if a == "--" {
+            out.extend(std::iter::once(a).chain(words).cloned());
+            break;
+        }
+        let (name, joined) = a.split_once('=').map_or((a.as_str(), None), |(n, v)| (n, Some(v)));
+        if name == "--sort" || name == "--sortr" {
+            let v = match joined {
+                Some(v) => v,
+                None => words.next()?.as_str(),
+            };
+            sort = match (name, v) {
+                ("--sort", "path") => true,
+                ("--sort", "none") => false,
+                _ => return None,
+            };
+            continue;
+        }
+        out.push(a.clone());
+        if value_follows(&RG_FLAGS, a) {
+            out.extend(words.next().cloned());
+        }
+    }
+    if sort {
+        out.insert(1, "--sort".to_string());
+    }
+    Some(out)
+}
+
 /// find's expressions that only read and print; any other (`-exec`, `-execdir`, `-ok`, `-okdir`,
 /// `-delete`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`, ...) leaves the command alone.
 const FIND_READS: [&str; 46] = [
@@ -617,9 +664,8 @@ pub fn bash_main() -> i32 {
 /// else, and for every `grep` and `find`, the program itself runs, so its own lines, messages and
 /// code come back. None when the program is on no allowed directory of PATH.
 fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
-    let mut args = vec!["-N".to_string()];
-    args.extend(argv[1..].iter().cloned());
-    let mut c = if argv[0] == "rg" && crate::cli::grep_takes(&args) {
+    let grep = if argv[0] == "rg" { grep_words(&argv[1..]).filter(|a| crate::cli::grep_takes(a)) } else { None };
+    let mut c = if let Some(args) = grep {
         let mut c = Command::new(exe);
         // ripgrep writing to a pipe shows no line numbers unless asked; a later `-n` still wins
         c.arg("grep").args(&args);
