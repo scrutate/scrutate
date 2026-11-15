@@ -18,7 +18,7 @@ What each gives on Windows:
 |---|---|---|
 | available | Windows 10 1803+, Server 2019+; Rust's std has no `UnixStream` there, so raw Winsock or a crate | every Windows; `windows-sys` (already a dependency) |
 | owner only | an ACL on the socket file, set after `bind` (a window where the file has the directory's inherited ACL) | a security descriptor given to `CreateNamedPipeW` itself: no window |
-| who is at the other end | `SIO_AF_UNIX_GETPEERPID` (a process id, newer builds only), then its token | `GetNamedPipeClientProcessId` / `GetNamedPipeServerProcessId`, then its token |
+| who is at the other end | `SIO_AF_UNIX_GETPEERPID` (a process id, newer builds only), then its token | the client: its connection's own token (`ImpersonateNamedPipeClient`); the server: `GetNamedPipeServerProcessId`, then its token |
 | a server that died | its socket file stays behind and must be cleaned up | the name goes away with the last handle; nothing is left |
 | remote callers | none | rejected with `PIPE_REJECT_REMOTE_CLIENTS` |
 | testable under Wine | partly | yes |
@@ -37,9 +37,14 @@ path is also one path to test.
   current user's SID and a mandatory label at the server's integrity level (SDDL
   `D:P(A;;GA;;;<sid>)S:(ML;;NW;;;S-1-16-<level>)`), so no other account can open it and no lower
   process write to it, and with `PIPE_REJECT_REMOTE_CLIENTS`.
-- **Both ends checked, as on Unix.** The server takes the client's process id from the pipe,
-  opens that process's token and compares its user SID with its own; another user's process gets
-  nothing, not even the greeting. The client does the same with the server's process id before it
+- **Both ends checked, as on Unix.** The client writes one byte first; the server reads it,
+  impersonates the client at the identification level the client allows, reads that token (the
+  connection's own, where a process id could name another process by the time it is looked up)
+  and reverts. A client of another user, below the server's integrity level, restricted or an
+  AppContainer one gets nothing, not even the greeting, and so does a client that opened the
+  pipe for reading alone (a Low process may: the pipe's label forbids it only to write), which
+  cannot send the byte. A connection's request, all of it, comes within 2 s, and each write to
+  the other end waits at most 2 s. The client does the same with the server's process id before it
   reads the greeting, so a pipe of the same name made first by another account (pipe squatting)
   is passed over. The client also reads the pipe's label and drops a pipe below its own level
   (the label stays with the pipe, where a process id can name another process by then), and it reads the server's integrity level and drops a server below its

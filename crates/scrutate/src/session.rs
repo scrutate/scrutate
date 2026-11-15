@@ -829,8 +829,8 @@ mod wire {
     }
     /// How long the command line waits for an answer before it does the work itself.
     const ANSWER: Duration = Duration::from_secs(60);
-    /// How long a session waits for a request after its greeting, and a command line for the
-    /// session to take it.
+    /// How long a session waits for a request after its greeting (all of it), and either end for
+    /// the other to take what it writes.
     pub(super) const REQUEST: Duration = Duration::from_secs(2);
     const MAX_REQUEST: u64 = 1 << 20;
     /// Connections served at once; one more is closed, and its command line does the work.
@@ -839,6 +839,24 @@ mod wire {
     /// A connected end: bytes both ways, and how long the next read may wait.
     pub(super) trait Conn: Read + Write {
         fn read_wait(&mut self, d: Duration) -> std::io::Result<()>;
+    }
+
+    /// `conn` read with one deadline for all its reads, where each read alone would wait the whole
+    /// time: a caller that sends a byte now and then cannot hold a connection.
+    struct Until<'a, C: Conn> {
+        conn: &'a mut C,
+        until: Instant,
+    }
+
+    impl<C: Conn> Read for Until<'_, C> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let left = self.until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            self.conn.read_wait(left)?;
+            self.conn.read(buf)
+        }
     }
 
     /// One caller of the session listening for `root`: greeted, its request read and answered.
@@ -850,9 +868,9 @@ mod wire {
         answer: fn(Answer, &Request, &Path) -> Result<Printed>,
     ) -> Result<()> {
         writeln!(conn, "{hello}")?;
-        conn.read_wait(REQUEST)?;
         let mut line = Vec::new();
-        BufReader::new((&mut conn).take(MAX_REQUEST)).read_until(b'\n', &mut line)?;
+        let until = Instant::now() + REQUEST;
+        BufReader::new(Until { conn: &mut conn, until }.take(MAX_REQUEST)).read_until(b'\n', &mut line)?;
         let request: Request = serde_json::from_slice(&line)?;
         // greeted for `root`, which the session may have left since for another tree; checked
         // again on the reader the call runs on, which a move may swap in after this
@@ -1063,7 +1081,10 @@ mod unix {
                     open.fetch_add(1, Ordering::AcqRel);
                     let (session, hello, done, root) = (Arc::clone(&session), hello.clone(), Arc::clone(&open), root.clone());
                     let served = std::thread::Builder::new().name("scrutate-session-call".into()).spawn(move || {
-                        let _ = wire::serve_one(&session, conn, &hello, &root, answer);
+                        // a caller that stops reading its answer holds no connection
+                        if conn.set_write_timeout(Some(wire::REQUEST)).is_ok() {
+                            let _ = wire::serve_one(&session, conn, &hello, &root, answer);
+                        }
                         done.fetch_sub(1, Ordering::AcqRel);
                     });
                     if served.is_err() {
@@ -1160,20 +1181,21 @@ mod windows {
         ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1, SE_KERNEL_OBJECT,
     };
     use windows_sys::Win32::Security::{
-        GetAce, GetLengthSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsTokenRestricted, TokenIntegrityLevel, TokenIsAppContainer,
-        TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SYSTEM_MANDATORY_LABEL_ACE, TOKEN_MANDATORY_LABEL,
-        TOKEN_QUERY, TOKEN_USER,
+        GetAce, GetLengthSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsTokenRestricted, RevertToSelf, TokenIntegrityLevel,
+        TokenIsAppContainer, TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SYSTEM_MANDATORY_LABEL_ACE,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
         SECURITY_SQOS_PRESENT,
     };
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE,
+        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, ImpersonateNamedPipeClient, WaitNamedPipeW, PIPE_READMODE_BYTE,
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateEventW, GetCurrentProcess, OpenProcess, OpenProcessToken, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
+        CreateEventW, GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken, WaitForSingleObject, INFINITE,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
@@ -1192,13 +1214,45 @@ mod windows {
         sandboxed: bool,
     }
 
+    impl Peer {
+        /// Whether `self`, the other end, may see what `me` sends: the same user, at `me`'s
+        /// integrity level or above, and neither restricted nor an AppContainer.
+        fn trusted_by(&self, me: &Peer) -> bool {
+            self.user == me.user && self.integrity >= me.integrity && !self.sandboxed
+        }
+    }
+
     fn peer_of(process: HANDLE) -> Option<Peer> {
         let mut token: HANDLE = null_mut();
         if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
             return None;
         }
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
-        let t = token.as_raw_handle();
+        peer_of_token(token.as_raw_handle())
+    }
+
+    /// The client of a connected pipe, from the connection's own token (a process id can be
+    /// another process's by the time it is looked up): the server impersonates the client at the
+    /// identification level it allows, reads the thread's token and reverts. Windows lets a server
+    /// impersonate only once it has read from the pipe.
+    fn peer_of_connection(pipe: HANDLE) -> Option<Peer> {
+        if unsafe { ImpersonateNamedPipeClient(pipe) } == 0 {
+            return None;
+        }
+        let mut token: HANDLE = null_mut();
+        let opened = unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token) } != 0;
+        if unsafe { RevertToSelf() } == 0 {
+            // this thread would go on as the client
+            std::process::abort();
+        }
+        if !opened {
+            return None;
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        peer_of_token(token.as_raw_handle())
+    }
+
+    fn peer_of_token(t: HANDLE) -> Option<Peer> {
         // a TOKEN_USER or TOKEN_MANDATORY_LABEL and the SID it points into (at most 68 bytes), 8-byte aligned
         let mut buf = [0u64; 64];
         let mut len = 0u32;
@@ -1269,10 +1323,6 @@ mod windows {
         }
         let p = unsafe { OwnedHandle::from_raw_handle(p) };
         peer_of(p.as_raw_handle())
-    }
-
-    fn user_of_process(pid: u32) -> Option<Vec<u8>> {
-        peer_of_process(pid).map(|p| p.user)
     }
 
     /// One end of a pipe opened for overlapped I/O, so that a read can be given up after a wait.
@@ -1377,8 +1427,8 @@ mod windows {
             debug("no identity to offer");
             return None;
         };
-        let user = mine.user;
-        let sid = sid_text(&user)?;
+        let sid = sid_text(&mine.user)?;
+        let mine = Arc::new(mine);
         let root = session.root();
         let shown = pipe_name(&sid, &root);
         let (name, sddl) = (wide(&shown), wide(&sddl(&sid, mine.integrity)));
@@ -1407,16 +1457,22 @@ mod windows {
                     if !connected {
                         continue;
                     }
-                    let mut pid = 0;
-                    let client = unsafe { GetNamedPipeClientProcessId(pipe.handle(), &mut pid) } != 0;
-                    // another user's process gets nothing, not even the greeting
-                    if !client || user_of_process(pid).as_ref() != Some(&user) || open.load(Ordering::Acquire) >= MAX_CONNECTIONS {
+                    if open.load(Ordering::Acquire) >= MAX_CONNECTIONS {
                         continue;
                     }
                     open.fetch_add(1, Ordering::AcqRel);
-                    let (session, hello, done, root) = (Arc::clone(&session), hello.clone(), Arc::clone(&open), root.clone());
+                    let (session, hello, done, mine, root) = (Arc::clone(&session), hello.clone(), Arc::clone(&open), Arc::clone(&mine), root.clone());
                     let served = std::thread::Builder::new().name("scrutate-session-call".into()).spawn(move || {
-                        let _ = wire::serve_one(&session, pipe, &hello, &root, answer);
+                        let mut pipe = pipe;
+                        // the caller's first byte, then its connection's token: a caller of
+                        // another user, of less trust, or one that can only read gets nothing,
+                        // not even the greeting
+                        let mut first = [0u8; 1];
+                        let read = wire::Conn::read_wait(&mut pipe, wire::REQUEST).and_then(|()| pipe.read(&mut first));
+                        if matches!(read, Ok(1)) && peer_of_connection(pipe.handle()).is_some_and(|p| p.trusted_by(&mine)) {
+                            pipe.write_wait = wire::REQUEST.as_millis() as u32;
+                            let _ = wire::serve_one(&session, pipe, &hello, &root, answer);
+                        }
                         done.fetch_sub(1, Ordering::AcqRel);
                     });
                     if served.is_err() {
@@ -1486,6 +1542,8 @@ mod windows {
             Some(level) if level >= me.integrity => {}
             level => return Err(format!("the session's pipe has less trust: label {level:x?} (this call {:#x})", me.integrity)),
         }
+        // the session reads the connection's token only after the caller wrote to it
+        pipe.write_all(b"?").map_err(|e| format!("request not taken: {e}"))?;
         wire::exchange(pipe, root, request).map(Some)
     }
 
@@ -1583,6 +1641,60 @@ mod windows {
                 instance(&wide(&format!(r"\\.\pipe\scrutate-label-test-{}-plain", std::process::id())), &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
             // no label of its own: Medium, as Windows reads it
             assert_eq!(label_of(plain.as_raw_handle()), Some(0x2000));
+        }
+
+        // fails under Wine, which has no integrity levels: the copy exits 4
+        #[test]
+        fn a_low_integrity_reader_of_the_pipe_gets_no_greeting() {
+            const NAME: &str = "session::windows::tests::a_low_integrity_reader_of_the_pipe_gets_no_greeting";
+            fn never(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+                unreachable!("no request comes")
+            }
+            match std::env::var("LOW_READER_ROOT") {
+                // the Low copy: opens the session's pipe for reading, as its label lets it, and
+                // exits 5 when a byte of the greeting reaches it
+                Ok(root) if std::env::var_os("LOW_READER").is_some() => {
+                    let me = this_process().unwrap();
+                    if me.integrity != LOW {
+                        std::process::exit(4);
+                    }
+                    let name = wide(&pipe_name(&sid_text(&me.user).unwrap(), Path::new(&root)));
+                    // SAFETY: a nul-terminated name; the handle is taken into an OwnedHandle once
+                    let h = unsafe { CreateFileW(name.as_ptr(), GENERIC_READ, 0, null(), OPEN_EXISTING, FILE_FLAG_OVERLAPPED, null_mut()) };
+                    if h == INVALID_HANDLE_VALUE {
+                        std::process::exit(6);
+                    }
+                    let mut pipe = Pipe::new(unsafe { OwnedHandle::from_raw_handle(h) }).unwrap();
+                    wire::Conn::read_wait(&mut pipe, Duration::from_secs(10)).unwrap();
+                    let mut buf = [0u8; 64];
+                    std::process::exit(if matches!(pipe.read(&mut buf), Ok(n) if n > 0) { 5 } else { 0 });
+                }
+                _ => {
+                    let root = std::env::temp_dir().join(format!("scrutate_pipe_low_reader_{}", std::process::id()));
+                    std::fs::create_dir_all(&root).unwrap();
+                    std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
+                    let root = std::fs::canonicalize(&root).unwrap();
+                    let s = Arc::new(Session::open(&root, Every::given(Some(3600.0))).unwrap());
+                    s.build().unwrap();
+                    let _listening = listen(&s, never).expect("the session listens");
+                    std::env::set_var("LOW_READER_ROOT", &root);
+                    std::env::set_var("LOW_READER", "1");
+                    let low = low_copy(NAME);
+                    let t0 = Instant::now();
+                    let code = loop {
+                        if let Some(code) = exited(&low) {
+                            break Some(code);
+                        }
+                        if t0.elapsed() > Duration::from_secs(60) {
+                            break None;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    };
+                    assert_ne!(code, Some(4), "the copy did not run at Low integrity");
+                    assert_ne!(code, Some(6), "the copy could not open the pipe for reading");
+                    assert_eq!(code, Some(0), "a Low reader of the pipe got the greeting (5) or still waits (None)");
+                }
+            }
         }
 
         // fails under Wine, which has no integrity levels: the copy exits 4
@@ -1699,7 +1811,8 @@ mod windows {
                 outside: None,
                 why: false,
             };
-            let want = serde_json::to_string(&request).unwrap().len() + 1;
+            // the caller's opening byte, the request, its newline
+            let want = 1 + serde_json::to_string(&request).unwrap().len() + 1;
             let _ = asked(&root, &request);
             assert_eq!(rx.recv_timeout(Duration::from_secs(60)), Ok(want), "the session got the request cut");
         }
@@ -2098,6 +2211,47 @@ mod tests {
         assert!(s.reopen().unwrap());
         assert_eq!(replies(&s), 1, "only the greeting once the root moved");
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_caller_that_sends_a_byte_now_and_then_is_dropped_when_the_requests_time_is_up() {
+        struct Trickle;
+        impl std::io::Read for Trickle {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(300));
+                buf[0] = b'x';
+                Ok(1)
+            }
+        }
+        impl std::io::Write for Trickle {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl wire::Conn for Trickle {
+            fn read_wait(&mut self, _: Duration) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        fn never(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+            unreachable!("no request comes")
+        }
+        let (root, s) = fixture("trickle");
+        let s = Arc::new(s);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let served = Arc::clone(&s);
+        std::thread::spawn(move || {
+            let t0 = Instant::now();
+            let r = wire::serve_one(&served, Trickle, "{}", &served.root(), never);
+            let _ = tx.send((t0.elapsed(), r.is_err()));
+        });
+        let (took, failed) = rx.recv_timeout(Duration::from_secs(30)).expect("the caller still holds its connection after 30 s");
+        assert!(failed && took < Duration::from_secs(5), "{took:?}");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

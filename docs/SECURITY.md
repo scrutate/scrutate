@@ -132,8 +132,12 @@ handle: nothing is left behind to clean up.
 Checks, at both ends:
 
 - The server asks the system who the peer is (`getpeereid` on macOS and the BSDs, `SO_PEERCRED`
-  on Linux; on Windows the client's process id from the pipe, then that process's token user
-  SID) and closes a connection from another user before it reads or writes a byte.
+  on Linux) and closes a connection from another user before it reads or writes a byte. On
+  Windows the client writes one byte first, and the server reads the connection's own token
+  (`ImpersonateNamedPipeClient` at the identification level the client allows, then
+  `RevertToSelf`) and closes a connection from another user, from below its own integrity level,
+  or from a restricted or AppContainer token before it writes a byte; a process that opened the
+  pipe for reading alone cannot send that byte and gets nothing.
 - The command line connects only to a socket, in a `.scrutate` directory, both owned by its own
   user and neither a symbolic link (`lstat`, no link followed), then drops a peer of another user.
   On Windows it opens the pipe for identification only (`SECURITY_SQOS_PRESENT |
@@ -147,8 +151,9 @@ Checks, at both ends:
   time; on Windows its path, size and times), the version, the index schema and content revisions, the model signatures, every
   `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
   when all match its own.
-- A request is one line of at most 1 MB, read within 2 seconds (and the command line gives a
-  session 2 seconds to take it); at most 16 connections at once, a
+- A request is one line of at most 1 MB, read within 2 seconds in all (a caller that sends a byte
+  now and then is closed then too); the command line gives a session 2 seconds to take it, and
+  the server's write of its answer waits at most 2 seconds for the caller to take it; at most 16 connections at once, a
   further one closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`), an answer slower
   than 60 s, a closed connection or any error makes the command line do the work itself.
 
@@ -607,8 +612,11 @@ on Unix).
     stack and an event the `Pipe` owns, always waited out with `GetOverlappedResult` (after
     `CancelIoEx` when the wait ran out) before the `OVERLAPPED` or the buffer goes away, the length
     passed being the buffer's; `CreateEventW`, `WaitForSingleObject`, `WaitNamedPipeW`,
-    `GetLastError`, and `GetNamedPipeClientProcessId` / `GetNamedPipeServerProcessId` into a
-    `u32`; `GetCurrentProcess`, `OpenProcess`, `OpenProcessToken` and `GetTokenInformation`
+    `GetLastError`, and `GetNamedPipeServerProcessId` into a `u32`; `ImpersonateNamedPipeClient`
+    on a connected pipe after a byte was read from it, `OpenThreadToken(GetCurrentThread(),
+    TOKEN_QUERY, open as self)` taken into an `OwnedHandle` once, and `RevertToSelf` before any
+    other use of the thread (the process aborts when it fails); a unit test's `CreateFileW` of the
+    pipe for reading alone, from a Low copy; `GetCurrentProcess`, `OpenProcess`, `OpenProcessToken` and `GetTokenInformation`
     (`TokenUser`, then `TokenIntegrityLevel`) into an 8-byte aligned 512-byte buffer whose size it
     passes, the SID read as `GetLengthSid` bytes from the pointer the `TOKEN_USER` holds inside
     that buffer and the level as the last of `GetSidSubAuthorityCount` sub-authorities of the
@@ -671,7 +679,7 @@ on Unix).
   | `crates/scrutate/src/policy.rs` | 1 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
-  | `crates/scrutate/src/session.rs` | 53 |
+  | `crates/scrutate/src/session.rs` | 58 |
   | `crates/scrutate/src/shellhook.rs` | 5 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
