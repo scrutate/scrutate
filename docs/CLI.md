@@ -244,18 +244,29 @@ Where tools differ in the details, scrutate does what ripgrep does:
 | `-m N`, `--max-results N` | `-m N` stops a file at its Nth matching line; the trailing context after it prints, and a match inside that context shows as a match. `--max-results N` stops after N matching lines in total, with `-c` and `-l` too; with `--sort` they are the first N in path order, the same every run. The trailing context of the Nth prints too, as `-m N` prints its own: a match inside it shows as a match and does not count toward N |
 | NUL byte | A file named on the command line is searched as ripgrep searches it. Where ripgrep maps it into memory (Linux, Windows) it is one slice: a NUL in its first 64 KiB is seen before any line prints, past that the first matched or context line holding a NUL ends the line output, and a NUL ends no line (`-v -c` counts `bar\0baz` as one line). On macOS, where ripgrep does not map a file, it is read, and a NUL ends a line. A process that stays up (`serve`, `lsp`, a session) maps no file: it reads a named file whole up to 64 MiB, the same slice, and reads a larger one as on macOS. Either way counts and lists include the file, and line output ends with `binary file matches (found "\0" byte around offset N)` (with `--json`, a record `{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is searched as ripgrep reads it, up to the read that meets the NUL; ripgrep's first read of a file is its first 3 bytes, taken alone by its BOM check (encoding_rs_io's `BomPeeker`), so a match on a line that ends within them prints and one further on does not (`x\r\n...foo x...\0` prints line 1 only). Such a file is left out of `-c`, and `-l` lists it only when a match came before that read, so `-v -l`, `-v` and `-v -c` agree. Where such a file stops at a NUL past its first 64 KiB does not depend on the files searched before it: ripgrep's reads grow with a line longer than its 64 KiB buffer, and every later file on that thread then stops further on, so its answer changes with the walk order and the thread a file lands on (`rg -j1 PAT long/ binary/` against `rg -j1 PAT binary/`). scrutate gives every file the answer ripgrep gives it searched alone. When such a file's search stops at a NUL byte after a match, a last line says so: `path: WARNING: stopped searching binary file after match (found "\0" byte around offset N)` (a `binary` record with `--json`) |
 | `-c`, `-l` | one record per path given: a file two paths reach is counted or listed twice |
-| UTF-16 file of odd length | its last byte, which has no pair, is printed as a whole U+FFFD in every search. ripgrep 15.2.0 prints that U+FFFD cut to its first byte, `EF`, which is not UTF-8, under `-v -U` with a pattern that can match a line break when it reads the file (`rg --no-mmap -v -U 'x\ny'` on the bytes `FF FE` and ` bad \r\n`: every file on macOS, a walked one on Linux), and whole when it maps the file or the pattern cannot match a line break |
 | CRLF line | printed as it is, its `\r` before the `\n` (`1:foo\r`), streamed, sorted (`--sort`), cut (`--max-bytes`) or in colour alike; the text of a `--json` record or an MCP answer has no line end |
 | `-i`, `-S` | smart case folds only a pattern that has a literal and no uppercase letter, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. The later of `-i` and `-S` wins; `SCRUTATE_GREP_SMART_CASE` applies only when neither is given |
 | `-A`, `-B`, `-C` | `-A` and `-B` win over `-C` in either order, as in ripgrep (`-C1 -A3` shows one line before and three after); a line `--` separates groups that are not adjacent, and different files (not in `--json`). With context on several threads a file's lines leave a group at a time, so another file's lines never stand between them; a file searched alone still streams |
 | `-g` | one glob per value, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` is split at commas outside braces |
 
-Two differences. A `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path,
-where ripgrep matches it from the current directory. A `.scrutate.toml`'s globs match from that
-file's directory (see Configuration above). And line numbers print by default to a pipe or a file
-too, where ripgrep prints them only to a terminal (`1:foo` against `foo`): an agent reads that
-output, and the number lets it open the file at the line. `-N` turns them off; the Bash hook's
-`rg` rewrite adds it, so a rewritten `rg` prints what `rg` prints.
+Five differences:
+
+- A `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path, where ripgrep
+  matches it from the current directory.
+- A `.scrutate.toml`'s globs match from that file's directory (see Configuration above).
+- Line numbers print by default to a pipe or a file too, where ripgrep prints them only to a
+  terminal (`1:foo` against `foo`): an agent reads that output, and the number lets it open the
+  file at the line. `-N` turns them off; the Bash hook's `rg` rewrite adds it, so a rewritten
+  `rg` prints what `rg` prints.
+- Where a walked file stops at a NUL past its first 64 KiB is ripgrep's answer for that file
+  searched alone, whatever was searched before it (see NUL byte above); ripgrep's own answer
+  changes with the walk order and its threads.
+- A UTF-16 file of odd length: its last byte, which has no pair, prints as a whole U+FFFD in every
+  search. ripgrep 15.2.0 sometimes prints that U+FFFD cut short, to `EF` or `EF BF`, which is not
+  UTF-8, under `-v -U` with a pattern that can match a line break. It does so reading a named file
+  with `--no-mmap` (`rg --no-mmap -v -U 'x\ny'` on the bytes `FF FE` and ` bad \r\n`), and on some
+  runs or on every run for a file found by a walk; it printed the whole U+FFFD for a mapped file in
+  every run measured.
 
 `--index` answers from Engine B's text index (`scrutate index`): its trigram postings name the
 files that can contain a match, and Engine A's matcher searches only those, so the output is what
