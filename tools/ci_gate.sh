@@ -106,6 +106,8 @@ smoke() {
 # link with that order, checked; the unordered link must fail the same check
 function_order() {
   local order="$target/startup.order.elf"
+  # build.rs orders the link whenever the file exists: a lane's last run must not order the first link
+  rm -f "$order" "$order.map"
   SCRUTATE_LINUX_ORDER=$order cargo build --release -p scrutate --locked || return 1
   cp "$order.map" "$target/unordered.map" || return 1
   python3 tools/order_file.py --elf "$order.map" "$order" || return 1
