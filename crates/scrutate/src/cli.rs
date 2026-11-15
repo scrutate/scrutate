@@ -2422,6 +2422,9 @@ fn with_path_bytes(mut rec: serde_json::Value, bytes: Option<&[u8]>) -> serde_js
 fn write_colour(w: &mut impl WriteColor, h: &instant::Line, context: bool, path: bool, number: bool) -> std::io::Result<()> {
     let sep = if context { "-" } else { ":" };
     let text = h.text.as_str();
+    // a CRLF line ends with its `\r`, as ripgrep prints it
+    let cr = h.raw_text().is_some_and(|r| r.ends_with(b"\r"));
+    let last = text.split('\n').count() - 1;
     let mut start = 0;
     for (k, part) in text.split('\n').enumerate() {
         let end = start + part.len();
@@ -2450,7 +2453,8 @@ fn write_colour(w: &mut impl WriteColor, h: &instant::Line, context: bool, path:
             w.reset()?;
             pos = y;
         }
-        writeln!(w, "{}", &text[pos..end])?;
+        write!(w, "{}", &text[pos..end])?;
+        writeln!(w, "{}", if cr && k == last { "\r" } else { "" })?;
         start = end + 1;
     }
     Ok(())

@@ -299,6 +299,13 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
             if pa != pb:
                 diff = sorted(set(pa) ^ set(pb))[:3]
                 return f"plain output differs for {pat!r} ({mode}, flags {sf}, {shown(env)}): {diff} (corpus {root})"
+            # sorted output is printed from records, a path of its own: in its order, byte for byte
+            _, s1 = run_json([SCRUTATE, "grep", "--sort", "-n", "-H", *sf, pat], root, env)
+            _, s2 = run_json([RG, "--no-messages", "--no-heading", "--sort", "path", "-n", "-H", *rf, pat, "."], root)
+            sb = [l[2:] if l.startswith(b"./") else l for l in s2.split(b"\n")]
+            if s1.split(b"\n") != sb:
+                diff = [x for x in zip(s1.split(b"\n"), sb) if x[0] != x[1]][:2]
+                return f"sorted output differs for {pat!r} ({mode}, flags {sf}, {shown(env)}): {diff} (corpus {root})"
             rc1, o1 = run_json([SCRUTATE, "grep", "-c", *sf, pat], root, env)
             ca = {l.rsplit(b":", 1)[0].decode(): int(l.rsplit(b":", 1)[1]) for l in o1.splitlines() if b":" in l}
             if ca != cb:

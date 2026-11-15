@@ -280,6 +280,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep --sort`, `--max-bytes` and colour output print a CRLF line with its `\r`, as streamed
+  output and ripgrep do, where they dropped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.

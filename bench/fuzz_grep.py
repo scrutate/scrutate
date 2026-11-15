@@ -29,7 +29,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--bin", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "target", "release", "scrutate"))
 ap.add_argument("--seconds", type=float, default=60)
 ap.add_argument("--seed", type=int, default=1)
-ap.add_argument("--ordered", action="store_true")
+ap.add_argument("--ordered", action="store_true", help="accepted as before: every case now also runs with --sort")
 a_ = ap.parse_args()
 BIN, SECONDS, SEED, ORDERED = os.path.abspath(a_.bin), a_.seconds, a_.seed, a_.ordered
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -263,9 +263,10 @@ while time.time() - t0 < SECONDS:
     make()
     for _ in range(6):
         a = paths(args())
-        if ORDERED and rnd.random() < 0.4:
-            a.insert(0, "--sort")
         compare(a)
+        # sorted output is printed from records, a path of its own: each case runs both ways
+        if "--sort" not in a:
+            compare(["--sort", *a])
 shutil.rmtree(WORK, ignore_errors=True)
 print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
 if not diffs:

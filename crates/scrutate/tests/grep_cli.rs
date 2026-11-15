@@ -1726,3 +1726,15 @@ fn a_path_that_cannot_be_read_exits_2_as_ripgrep_does() {
     assert_eq!(code(&["grep", "-L", "foo", "."]), 2);
     assert_eq!(code(&["grep", "foo", "."]), 0, "without -L a link is not followed");
 }
+
+#[test]
+fn a_crlf_line_keeps_its_carriage_return_in_sorted_and_cut_output() {
+    // --sort and --max-bytes print from records: the `\r` must survive them, as in streamed output
+    let d = Dir::new("crlfsort");
+    d.write("a.txt", b"foo one\r\nbar\r\nfoo two\r\n");
+    let raw = |args: &[&str]| Command::new(BIN).args(args).current_dir(&d.0).stdin(Stdio::null()).env_remove("NO_COLOR").output().unwrap().stdout;
+    // ripgrep 15.2.0 `rg -n --sort path foo .`, and with -A1
+    assert_eq!(raw(&["grep", "-n", "--sort", "foo", "."]), b"./a.txt:1:foo one\r\n./a.txt:3:foo two\r\n");
+    assert_eq!(raw(&["grep", "-n", "--sort", "-A1", "foo", "."]), b"./a.txt:1:foo one\r\n./a.txt-2-bar\r\n./a.txt:3:foo two\r\n");
+    assert_eq!(raw(&["grep", "-n", "--max-bytes", "1000", "foo", "a.txt"]), b"1:foo one\r\n3:foo two\r\n");
+}

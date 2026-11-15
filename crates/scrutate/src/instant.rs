@@ -273,8 +273,8 @@ pub struct Line {
 pub struct Raw {
     /// the path's bytes (on Unix; `Line::path` then shows U+FFFD in their place)
     pub path: Option<Box<[u8]>>,
-    /// the line's bytes (`Line::text` then shows U+FFFD in their place): plain output prints
-    /// these, as ripgrep does
+    /// the line's bytes where `Line::text` does not hold them (U+FFFD in their place, or a CRLF
+    /// line's `\r`, which a record's text drops): plain output prints these, as ripgrep does
     pub text: Option<Box<[u8]>>,
 }
 
@@ -1723,7 +1723,7 @@ impl<'a> Sink for Collector<'a> {
             return Ok(true);
         }
         let text = lossy(line);
-        let raw = raw_of(self.raw.as_deref(), matches!(text, std::borrow::Cow::Owned(_)).then_some(line));
+        let raw = raw_of(self.raw.as_deref(), self.raw_text(bytes, line, matches!(text, std::borrow::Cow::Owned(_))));
         self.push(Record::Context(Line {
             path: Arc::clone(&self.path),
             raw,
@@ -1787,6 +1787,13 @@ impl Collector<'_> {
         } else {
             line.strip_suffix(b"\r").unwrap_or(line)
         }
+    }
+
+    /// The bytes plain output prints for a record's line, where `text` cannot hold them: not UTF-8
+    /// (`lossy`), or a CRLF line, whose `\r` the record's text drops.
+    fn raw_text<'b>(&self, bytes: &'b [u8], line: &[u8], lossy: bool) -> Option<&'b [u8]> {
+        let full = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+        (lossy || full.len() != line.len()).then_some(full)
     }
 
     /// A matching line: `bytes` as the searcher gave it, `text` without its line end, `number`
@@ -1864,7 +1871,7 @@ impl Collector<'_> {
         if self.text_spans {
             text_offsets(&mut spans, line, &text, matches!(text, std::borrow::Cow::Borrowed(_)));
         }
-        let raw = raw_of(self.raw.as_deref(), matches!(text, std::borrow::Cow::Owned(_)).then_some(line));
+        let raw = raw_of(self.raw.as_deref(), self.raw_text(bytes, line, matches!(text, std::borrow::Cow::Owned(_))));
         let text = text.into_owned();
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
