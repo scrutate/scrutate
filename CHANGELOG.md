@@ -224,6 +224,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callees` of a function whose every callee is outside the repository no longer prints
+  `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `refs`, `callers` and `callees` take one decision per call site, so they agree: `refs` of a
   constructor lists its class's instantiations (`new Box(1)`, `Point(1)`, Ruby `Invoice.new`,
   JavaScript `super(..)`), which `callers` already listed; in a language the resolver does not

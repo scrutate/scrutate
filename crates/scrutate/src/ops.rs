@@ -1711,7 +1711,7 @@ impl Answer {
                 ..Parts::default()
             },
             Answer::Callees { resolved, external, stopped, .. } => Parts {
-                head: if resolved.is_empty() { "(no results)".to_string() } else { String::new() },
+                head: if resolved.is_empty() && external.is_empty() { "(no results)".to_string() } else { String::new() },
                 brief: hits_brief(resolved),
                 brief_tail: Some(joined(
                     match external.len() {

@@ -107,6 +107,15 @@ fn a_location_selects_that_one_definition() {
 }
 
 #[test]
+fn callees_that_are_all_external_say_no_no_results_in_either_form() {
+    let mut r = Repo::new("only_external", &[("a.py", "import os\n\ndef run():\n    return os.getcwd()\n")]);
+    for form in ["concise", "detailed"] {
+        let text = r.ok("callees", json!({"name": "run", "response_format": form}));
+        assert!(!text.contains("no results") && text.contains("external"), "{form}: {text}");
+    }
+}
+
+#[test]
 fn calls_do_not_cross_languages_or_unknown_qualifiers() {
     let mut r = Repo::new(
         "langs",
@@ -729,7 +738,7 @@ fn a_method_call_on_a_value_of_a_type_from_outside_calls_no_namesake_of_the_repo
     assert_eq!(names(&r.ok("callers", json!({"name": "src/lib.rs:11-13"}))), ["free_len"]);
     for f in ["vec_len", "str_len"] {
         let callees = r.ok("callees", json!({"name": f}));
-        assert!(callees.starts_with("(no results)") && callees.contains("external: len"), "{f}: {callees}");
+        assert!(!callees.contains("(no results)") && callees.contains("external: len"), "{f}: {callees}");
     }
     assert_eq!(names(&r.ok("callers", json!({"name": "Box.size"}))), ["box_size"]);
     assert_eq!(names(&r.ok("callers", json!({"name": "box.py:6-7"}))), ["free_size"]);

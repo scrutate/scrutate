@@ -492,6 +492,13 @@ fn a_ruby_predicate_and_a_rust_raw_identifier_have_their_callers() {
 }
 
 #[test]
+fn callees_that_are_all_external_are_listed_without_no_results() {
+    let r = Repo::new("only_external", &[("a.py", "import os\n\ndef run():\n    return os.getcwd()\n")]);
+    let (code, out) = r.run(&["callees", "run"]);
+    assert_eq!((code, out.trim()), (0, "external: getcwd"));
+}
+
+#[test]
 fn a_macro_of_the_repository_is_a_callee() {
     let c = "#define SQUARE(x) ((x) * (x))\n\nint twice(int v) {\n    return v * 2;\n}\n\nint use(int v) {\n    return SQUARE(v) + twice(v);\n}\n";
     let rs = "macro_rules! square {\n    ($x:expr) => {\n        $x * $x\n    };\n}\n\npub fn area(v: i32) -> i32 {\n    square!(v)\n}\n";
