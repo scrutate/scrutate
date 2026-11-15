@@ -192,7 +192,7 @@ each. Also:
 | `-U` | multiline: each line of a multi-line match is printed with its own number; `-c` counts each match, with `$`, `\B` and `-w` read against the text after the matched lines, as ripgrep counts |
 | `-g GLOB` | `!` excludes |
 | `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type. A language's type also takes the extensions it shares with another language and is told apart in by content: `.h` for `cpp` and `objc` as for `c`, `.m` for `objc` and `matlab`, `.pp` for `pascal` and `puppet`, as ripgrep's `cpp` takes `.h` |
-| `-n` / `-N` | line numbers or none; the later wins, and `--json` keeps them |
+| `-n` / `-N` | line numbers or none; numbers by default, to a terminal and to a pipe or file alike (see below); the later wins, and `--json` keeps them |
 | `--max-bytes BYTES`, `--offset N` | a bounded answer in path order, see "Answers from the index" below |
 | `--stats` | with `-l` each file is searched only to its first match, so it prints `N of M files match` and the JSON summary gives `"matches": null` |
 | `--symbols` | groups lines by the enclosing function using the index, when one exists; a file whose search a NUL byte stopped after a match ends its last group with a `note:` line, `"note"` in the JSON `symbol_group` |
@@ -243,9 +243,12 @@ Where tools differ in the details, scrutate does what ripgrep does:
 | `-A`, `-B`, `-C` | `-A` and `-B` win over `-C` in either order, as in ripgrep (`-C1 -A3` shows one line before and three after); a line `--` separates groups that are not adjacent, and different files (not in `--json`). With context on several threads a file's lines leave a group at a time, so another file's lines never stand between them; a file searched alone still streams |
 | `-g` | one glob per value, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` is split at commas outside braces |
 
-One difference: a `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path,
+Two differences. A `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path,
 where ripgrep matches it from the current directory. A `.scrutate.toml`'s globs match from that
-file's directory (see Configuration above).
+file's directory (see Configuration above). And line numbers print by default to a pipe or a file
+too, where ripgrep prints them only to a terminal (`1:foo` against `foo`): an agent reads that
+output, and the number lets it open the file at the line. `-N` turns them off; the Bash hook's
+`rg` rewrite adds it, so a rewritten `rg` prints what `rg` prints.
 
 `--index` answers from Engine B's text index (`scrutate index`): its trigram postings name the
 files that can contain a match, and Engine A's matcher searches only those, so the output is what
