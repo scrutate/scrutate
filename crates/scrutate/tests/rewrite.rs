@@ -274,6 +274,26 @@ fn a_file_through_a_directory_link_inside_the_root_is_left_alone() {
     assert_eq!((code, out.as_str()), (0, "real/b.py: 1 replaced\n"), "{err}");
 }
 
+/// A link that leads back to the root, or up to it from below, is a link on the path too: the file
+/// it reaches is left alone, and the root's own copy is untouched.
+#[cfg(unix)]
+#[test]
+fn a_file_through_a_link_back_to_the_root_is_left_alone() {
+    let t = Tree::new("dirlink_self");
+    t.write("n.py", "print(x)\n");
+    t.write("a/keep.txt", "");
+    std::os::unix::fs::symlink(".", t.root.join("self")).unwrap();
+    std::os::unix::fs::symlink("..", t.root.join("a/up")).unwrap();
+    for named in ["self/n.py", "a/up/n.py", "self"] {
+        let (code, out, err) = t.run(&["tsquery", "python", PRINT, named, "--rewrite", "log$args", "--write"]);
+        assert_eq!((code, out.as_str()), (2, ""), "{named}: {err}");
+        assert!(err.contains("a directory on its path is a link, left alone"), "{named}: {err}");
+        assert_eq!(t.read("n.py"), "print(x)\n", "{named}");
+    }
+    let (code, out, err) = t.run(&["tsquery", "python", PRINT, "n.py", "--rewrite", "log$args", "--write"]);
+    assert_eq!((code, out.as_str()), (0, "n.py: 1 replaced\n"), "{err}");
+}
+
 /// A directory swapped for a link to somewhere outside the root between the read and the write
 /// leaves the file alone: the write goes through the directories as they were opened, never
 /// through a link, and leaves nothing outside.

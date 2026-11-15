@@ -74,15 +74,18 @@ fn template(t: &str, names: &[&str]) -> Result<Vec<Piece>> {
 }
 
 /// Whether a directory between the canonical root `top` and the file `path` is a link (on
-/// Windows a link or a junction).
+/// Windows a link or a junction), one that leads back to the root (`self -> .`) included; a link
+/// that is the root's own name, its parent outside the root, is not one.
 fn through_link(path: &Path, top: &Path) -> bool {
-    for d in path.ancestors().skip(1) {
-        let d = if d.as_os_str().is_empty() { Path::new(".") } else { d };
-        if std::fs::canonicalize(d).is_ok_and(|c| c == top) {
-            return false;
-        }
-        if std::fs::symlink_metadata(d).is_ok_and(|m| m.file_type().is_symlink()) {
+    let here = |d: &'_ Path| if d.as_os_str().is_empty() { Path::new(".").to_path_buf() } else { d.to_path_buf() };
+    for d in path.ancestors().skip(1).map(here) {
+        let link = std::fs::symlink_metadata(&d).is_ok_and(|m| m.file_type().is_symlink());
+        let parent_inside = d.parent().map(here).and_then(|p| std::fs::canonicalize(p).ok()).is_some_and(|p| p.starts_with(top));
+        if link && parent_inside {
             return true;
+        }
+        if std::fs::canonicalize(&d).is_ok_and(|c| c == top) {
+            return false;
         }
     }
     false
