@@ -79,19 +79,19 @@
   "step": "ranking quality against its recorded floor",
   "by": "gate: quality-floor"
  },
- "ci.yml:wheels:fdf5e79220": {
+ "ci.yml:wheels:599a591f0a": {
   "step": "rustup toolchain install --no-self-update",
   "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
  },
- "ci.yml:wheels:eef4122a8c": {
+ "ci.yml:wheels:ba0fc4b03d": {
   "step": "python -m pip install maturin pytest -c python/constraints.txt",
   "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },
- "ci.yml:wheels:c666df4426": {
+ "ci.yml:wheels:f76aa698b7": {
   "step": "cargo build --release -p scrutate --locked",
   "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },
- "ci.yml:wheels:0879a528fa": {
+ "ci.yml:wheels:bda0d74e9a": {
   "step": "build, install and test the wheel",
   "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },

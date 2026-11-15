@@ -184,8 +184,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
-        # the cp39-abi3 wheel on standard CPython, the cp314t wheel on free-threaded 3.14
-        python: ["3.13", "3.14t"]
+        # the cp39-abi3 wheel on standard CPython, the cp314t wheel on free-threaded 3.14, and the
+        # abi3t wheel release.yml builds for 3.15 and newer, on both builds
+        python: ["3.13", "3.14t", "3.15", "3.15t"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
