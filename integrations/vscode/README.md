@@ -16,7 +16,8 @@ user settings (a machine setting: a repository's own settings cannot name the pr
 The first start builds the index (`.scrutate/`); the server's log is in *Output → Scrutate*. On a
 folder below the top of a repository, the server and the commands use the index at the top (the
 directory `scrutate config --json` names), so results outside the folder open too and **Grep**
-searches the whole repository. With several folders open, the first one decides.
+searches the whole repository. With several folders open, the server answers each one from its
+own repository's index; the extension's own commands use the first folder.
 
 Commands (Command Palette): **Scrutate: Search**, **Grep**, **Go to symbol definition**,
 **Who calls this?**, **References**, **Update index**. Results open in a Quick Pick that jumps to

@@ -119,8 +119,8 @@
   index `is outside the repository`. `grep --index` from a subdirectory answers for that
   subdirectory, and from a directory the index never enters (hidden or ignored) says so and exits
   2. `tsquery` walks from the current directory and keeps its cache in the root's index; `serve`
-  and `watch` use the index above. The language server applies the same rule to the editor's
-  first workspace folder (else `rootUri`).
+  and `watch` use the index above. The language server applies the same rule to each of the
+  editor's workspace folders (else `rootUri`).
 - **Shell completion**: `scrutate completions bash|zsh|fish|powershell|elvish`.
 - **Cancellation**: Ctrl-C stops a search between files and exits 130, and a second Ctrl-C
   ends the process at once; a closed pipe
