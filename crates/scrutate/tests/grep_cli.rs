@@ -1907,3 +1907,30 @@ fn a_search_whose_filters_leave_no_file_exits_2_and_says_why() {
         assert!(!err.contains("no files were searched"), "{args:?}: {err}");
     }
 }
+
+/// With -v the context lines are the pattern's matches, and --json lists their spans, as rg 15.2.0
+/// lists them as submatches; the selected lines have none. The expected spans are rg's.
+#[test]
+fn json_context_lines_of_an_inverted_search_carry_their_matches() {
+    let d = Dir::new("json_invert_spans");
+    d.write("a.txt", b"foo 1\nx\nfoo 2 foo\ny\n");
+    // one "type line [(start, end), ...]" per record
+    let spans = |args: &[&str]| -> Vec<String> {
+        let (_, out, err) = d.run(&[&["grep", "--json"][..], args, &["foo", "a.txt"]].concat());
+        out.lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| v["type"] == "match" || v["type"] == "context")
+            .map(|v| {
+                let s: Vec<(u64, u64)> = v["spans"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{err}"))
+                    .iter()
+                    .map(|s| (s["start"].as_u64().unwrap(), s["end"].as_u64().unwrap()))
+                    .collect();
+                format!("{} {} {s:?}", v["type"].as_str().unwrap(), v["line"])
+            })
+            .collect()
+    };
+    assert_eq!(spans(&["-v", "-C1"]), ["context 1 [(0, 3)]", "match 2 []", "context 3 [(0, 3), (6, 9)]", "match 4 []"]);
+    assert_eq!(spans(&["-C1"]), ["match 1 [(0, 3)]", "context 2 []", "match 3 [(0, 3), (6, 9)]", "context 4 []"]);
+}

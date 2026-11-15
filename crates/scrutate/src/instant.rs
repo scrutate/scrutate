@@ -1923,12 +1923,13 @@ impl Collector<'_> {
             return Ok(more);
         }
         let text = lossy(line);
-        let mut spans = if !matched || self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
+        // the pattern's matches in the line: a selected line's, or with -v a context line's, as rg lists them
+        let mut spans = if matched == self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
         if self.text_spans && !spans.is_empty() {
             text_offsets(&mut spans, line, &text, matches!(text, std::borrow::Cow::Borrowed(_)));
         }
         let raw = raw_of(self.raw.as_deref(), self.raw_text(bytes, line, matches!(text, std::borrow::Cow::Owned(_))));
-        let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
+        let column = if matched { spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0) } else { 0 };
         let l = Line { path: Arc::clone(&self.path), raw, line: number.unwrap_or(0) + self.line_base, column, text: text.into_owned(), spans };
         self.push(if matched { Record::Match(l) } else { Record::Context(l) });
         Ok(more)
