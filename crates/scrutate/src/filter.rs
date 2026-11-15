@@ -93,6 +93,45 @@ impl Compiled {
         })
     }
 
+    /// `files` split into the ones whose names the globs, the types and the languages can keep,
+    /// and the rest. A file whose extension languages share is kept, and `admits_path` reads its
+    /// text to decide. Every extension starts with a dot, so a name's language is judged once
+    /// for each ending from its first dot, or each name a language claims whole.
+    pub fn split_by_name<'a>(&self, files: &'a [String]) -> (Vec<&'a str>, Vec<&'a str>) {
+        let custom = crate::custom::current();
+        let mut by_name: HashMap<(bool, String), bool> = HashMap::new();
+        files.iter().map(String::as_str).partition(|rel: &&str| {
+            if crate::instant::filtered_out(&self.ov, rel) || self.types.matched(rel, false).is_ignore() {
+                return false;
+            }
+            if self.filter.langs.is_empty() {
+                return true;
+            }
+            let base = rel.rsplit('/').next().unwrap_or(rel);
+            let whole = crate::langs::LANGS.iter().any(|s| s.files.iter().any(|f| f.eq_ignore_ascii_case(base)));
+            let key = match base.find('.') {
+                Some(i) if i > 0 && !whole => (false, base[i..].to_lowercase()),
+                _ => (true, base.to_lowercase()),
+            };
+            *by_name.entry(key).or_insert_with(|| {
+                let lower = base.to_lowercase();
+                if crate::langs::BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e)) {
+                    return true;
+                }
+                let lang = match custom.for_path(rel) {
+                    Some(l) => Some(l.id.clone()),
+                    None => crate::langs::spec_for(rel).map(|s| s.id.to_string()),
+                };
+                lang.is_some_and(|l| self.filter.langs.contains(&l))
+            })
+        })
+    }
+
+    /// The kinds the filter keeps, none for any.
+    pub fn kinds(&self) -> Vec<&str> {
+        self.filter.kinds.iter().map(String::as_str).collect()
+    }
+
     /// Whether the filter keeps files by name or language.
     pub fn has_files(&self) -> bool {
         !(self.filter.globs.is_empty() && self.filter.types.is_empty() && self.filter.langs.is_empty())

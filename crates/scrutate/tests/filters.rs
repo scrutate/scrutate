@@ -181,7 +181,6 @@ fn a_filter_keeps_k_results_when_k_pass_it() {
     let got: Vec<&str> = hits.as_array().unwrap().iter().map(|h| h["path"].as_str().unwrap()).collect();
     assert_eq!(got.len(), 5, "{hits}");
     assert!(got.iter().all(|p| p.starts_with("keep/")), "{got:?}");
-    // a kind is no file the pools can be drawn from: the search looks again with wider pools
     let classes = r.json(&["search", "ledger balance", "-k", "5", "--kind", "class"]);
     let kinds: Vec<&str> = classes.as_array().unwrap().iter().map(|h| h["kind"].as_str().unwrap()).collect();
     assert_eq!(kinds, ["class"; 5], "{classes}");
@@ -208,4 +207,81 @@ fn the_mcp_tools_take_the_same_filters() {
     assert_eq!(paths(&v["result"]), ["src/geo/shape.rs"], "{text}");
     let (failed, text, _) = call("find_symbol", json!({"name": "Shape", "kinds": ["clas"]}));
     assert!(failed && text.contains("unknown kind \"clas\""), "{text}");
+}
+
+/// The MCP tool's answer for `args`, its `result`, on a tree its own session indexes.
+fn mcp(root: &std::path::Path, tool: &str, args: Value) -> Value {
+    let session = scrutate::session::Session::open(root, scrutate::session::Every::given(Some(3600.0))).unwrap();
+    session.build().unwrap();
+    let c = scrutate::mcp::call_tool(&session, tool, &args, &scrutate::mcp::Settings::new(None), &Default::default());
+    assert!(!c.is_error, "{tool} {args}: {}", c.text);
+    c.structured["result"].clone()
+}
+
+/// 8,000 definitions that rank above the ones a filter keeps: the filter still finds every one.
+fn zebras(name: &str, indexed: bool) -> Repo {
+    let mut files = Vec::new();
+    for i in 0..10 {
+        let defs: String = (0..800).map(|j| format!("def zebra_{i}_{j}(zebra):\n    '''zebra zebra'''\n    return zebra\n\n\n")).collect();
+        files.push((format!("noise/n{i}.py"), defs));
+    }
+    let words = |w: &str| (0..300).map(|i| if i == 150 { w.to_string() } else { format!("word{i}") }).collect::<Vec<_>>().join(" ");
+    let mut keep = String::new();
+    for i in 0..3 {
+        keep.push_str(&format!("class Keeper{i}:\n    '''{}'''\n\n\n", words("zebra")));
+        keep.push_str(&format!("def keeper_{i}():\n    '''{}'''\n    return {i}\n\n\n", words("zebra")));
+    }
+    files.push(("keep/k00.py".to_string(), keep));
+    for i in 1..11 {
+        files.push((format!("keep/k{i:02}.py"), format!("def other_{i}():\n    '''{}'''\n    return {i}\n", words("giraffe"))));
+    }
+    let files: Vec<(&str, String)> = files.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
+    if indexed {
+        Repo::new(name, &files)
+    } else {
+        Repo::unindexed(name, &files)
+    }
+}
+
+#[test]
+fn a_filter_finds_its_results_below_thousands_that_rank_higher() {
+    let r = zebras("zebras", true);
+    let hits = |args: &[&str]| -> Vec<(String, String)> {
+        let v = r.json(&[&["search", "zebra", "-k", "10"], args].concat());
+        v.as_array().unwrap().iter().map(|h| (h["path"].as_str().unwrap().to_string(), h["kind"].as_str().unwrap().to_string())).collect()
+    };
+    let classes = hits(&["--kind", "class"]);
+    assert_eq!(classes.len(), 3, "{classes:?}");
+    assert!(classes.iter().all(|(p, k)| p == "keep/k00.py" && k == "class"), "{classes:?}");
+    assert_eq!(hits(&["-t", "py", "--kind", "class"]), classes);
+    let kept = hits(&["-g", "keep/**"]);
+    assert_eq!(kept.len(), 6, "{kept:?}");
+    // a glob that keeps more than half the files
+    let broad = hits(&["-g", "!noise/**"]);
+    assert_eq!(broad.len(), 6, "{broad:?}");
+    // a glob and a kind that each keep most of what they judge
+    let fns = hits(&["-g", "keep/**", "--kind", "function"]);
+    assert_eq!(fns.len(), 3, "{fns:?}");
+    assert!(fns.iter().all(|(p, k)| p == "keep/k00.py" && k == "function"), "{fns:?}");
+    // a kind no definition has answers at once, with nothing: exit code 1, as an empty answer
+    let (code, out, _) = r.run(&["search", "zebra", "-k", "10", "--kind", "trait", "--json"]);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["result"], json!([]));
+    let u = zebras("zebras_mcp", false);
+    let v = mcp(&u.root, "search_code", json!({"query": "zebra", "k": 10, "kinds": ["class"]}));
+    assert_eq!(v.as_array().unwrap().len(), 3, "{v}");
+}
+
+#[test]
+fn a_custom_language_is_a_language_filter_too() {
+    let files = [
+        (".scrutate.toml", "[[language]]\nname = \"mylang\"\nextensions = [\"myl\"]\nline_comment = \"--\"\ndefinitions = [\n  { kind = \"function\", pattern = '^\\s*fn\\s+([A-Za-z_][A-Za-z0-9_]*)' },\n]\n".to_string()),
+        ("a.myl", "fn alpha\n  -- the first letter\n".to_string()),
+        ("b.py", "def alpha():\n    return 1\n".to_string()),
+    ];
+    let r = Repo::new("custom", &files);
+    assert_eq!(paths(&r.json(&["symbol", "alpha", "--lang", "mylang"])), ["a.myl"]);
+    assert_eq!(paths(&r.json(&["symbol", "alpha", "--lang", "python"])), ["b.py"]);
+    let u = Repo::unindexed("custom_mcp", &files);
+    assert_eq!(paths(&mcp(&u.root, "find_symbol", json!({"name": "alpha", "langs": ["mylang"]}))), ["a.myl"]);
 }

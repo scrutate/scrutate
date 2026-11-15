@@ -300,11 +300,12 @@ comma-separated list. The values of one flag are any of them; every flag given m
   occurrences that resolve to them, so `refs --textual` takes none.
 
 An unknown type, language or kind is an error that says where the names are listed. `search`
-filters its candidates before it ranks them. When `-g`, `-t` or `--lang` keeps at most half the
-indexed files, its lexical and semantic candidates are drawn from those files alone; and while
-fewer than `-k` pass, it looks again with candidate pools 8 and then 64 times as large. `symbol` reads more definitions until `--limit`
-pass. `refs` walks only the files the globs and types (or, with no type, the languages' file
-names) admit, so `--max-results` counts only those.
+returns `-k` results whenever that many pass: a filter that keeps an eighth of the files or the
+definitions or fewer draws the lexical and semantic candidates from those alone, and a broader
+one filters a first search's candidates, then draws them from what it keeps when too few pass. A
+kind no definition has, or a filter that keeps no file, answers at once. `symbol` reads more definitions until `--limit` pass. `refs`
+walks only the files the globs and types (or, with no type, the languages' file names) admit, so
+`--max-results` counts only those.
 
 The code index holds every file the ignore rules let through, hidden files included, except:
 

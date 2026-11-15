@@ -807,28 +807,47 @@ pub struct LexStore {
     pub avgdl: f64,
 }
 
-/// The chunks a search may return, one bit per chunk id.
+/// The chunks a search may return: one bit per chunk id in each part, a part holding the ids it
+/// allows or the ones it leaves out, whichever were fewer; an id passes every part.
 pub struct Allow {
-    bits: Vec<u64>,
+    parts: Vec<(Vec<u64>, bool)>,
 }
 
 impl Allow {
+    /// These chunks and no other.
     pub fn of(ids: &[i64]) -> Allow {
-        let top = ids.iter().copied().filter(|&i| i >= 0).max().map_or(0, |m| m as usize / 64 + 1);
-        let mut bits = vec![0u64; top];
-        for &i in ids.iter().filter(|&&i| i >= 0) {
-            bits[i as usize / 64] |= 1 << (i as usize % 64);
-        }
-        Allow { bits }
+        Allow { parts: vec![(bits(ids), false)] }
+    }
+
+    /// Every chunk but these.
+    pub fn except(ids: &[i64]) -> Allow {
+        Allow { parts: vec![(bits(ids), true)] }
+    }
+
+    /// The chunks both allow.
+    pub fn and(mut self, other: Allow) -> Allow {
+        self.parts.extend(other.parts);
+        self
     }
 
     pub fn has(&self, id: i64) -> bool {
-        id >= 0 && self.bits.get(id as usize / 64).is_some_and(|w| w >> (id as usize % 64) & 1 == 1)
+        let set = |b: &[u64]| id >= 0 && b.get(id as usize / 64).is_some_and(|w| w >> (id as usize % 64) & 1 == 1);
+        self.parts.iter().all(|(b, except)| set(b) != *except)
     }
 
+    /// Whether a part allows nothing.
     pub fn is_empty(&self) -> bool {
-        self.bits.iter().all(|w| *w == 0)
+        self.parts.iter().any(|(b, except)| !except && b.iter().all(|w| *w == 0))
     }
+}
+
+fn bits(ids: &[i64]) -> Vec<u64> {
+    let top = ids.iter().copied().filter(|&i| i >= 0).max().map_or(0, |m| m as usize / 64 + 1);
+    let mut bits = vec![0u64; top];
+    for &i in ids.iter().filter(|&&i| i >= 0) {
+        bits[i as usize / 64] |= 1 << (i as usize % 64);
+    }
+    bits
 }
 
 impl LexStore {
@@ -1288,12 +1307,52 @@ impl LexStore {
 mod tests {
     use super::*;
 
+    /// The semantic pool from an allow set is the unfiltered pool's order kept to the chunks it
+    /// holds, in a segment read whole and in one with an inverted-file index read in full.
+    #[test]
+    fn a_semantic_lookup_returns_the_best_chunks_an_allow_set_holds() {
+        for n in [300, IVF_MIN_ROWS] {
+            let k = 8;
+            let mut rng = Rng(11);
+            let mut v = QVecs::default();
+            for _ in 0..n {
+                v.q.extend((0..2 * k).map(|_| (rng.below(255) as i64 - 127) as i8));
+                v.scale.extend([(1 + rng.below(64)) as f32 / 1024.0, (1 + rng.below(64)) as f32 / 1024.0]);
+            }
+            let ids: Vec<i64> = (0..n as i64).collect();
+            let fields: Vec<(Vec<i32>, Vec<i64>, Vec<u8>)> = (0..NF).map(|_| (Vec::new(), Vec::new(), Vec::new())).collect();
+            let base = std::env::temp_dir().join(format!("scrutate_lex_allow_{n}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base).unwrap();
+            write_segment(&|| false, &base.join("s000001"), &ids, &vec![1.0; n], &fields, Some((&v, k)), true).unwrap();
+            let mut lex = LexStore::open(&base, &["s000001".to_string()]).unwrap();
+            lex.prepare(None).unwrap();
+            assert_eq!(lex.segs[0].ivf.is_some(), n >= IVF_MIN_ROWS);
+            let q: Vec<f32> = (0..k).map(|_| rng.below(1000) as f32 / 1000.0 - 0.5).collect();
+            let kept: Vec<i64> = ids.iter().copied().filter(|i| i % 7 == 3).collect();
+            let allow = Allow::of(&kept);
+            let all = lex.semantic_top(&q, n, Some(usize::MAX)).unwrap();
+            let want: Vec<i64> = all.iter().copied().filter(|i| allow.has(*i)).take(10).collect();
+            assert_eq!(lex.semantic_top_in(&q, 10, Some(usize::MAX), Some(&allow)).unwrap(), want, "{n} rows");
+            let left = Allow::except(&kept);
+            let got = lex.semantic_top_in(&q, 10, None, Some(&left)).unwrap();
+            assert!(got.len() == 10 && got.iter().all(|i| !allow.has(*i)), "{n} rows: {got:?}");
+            drop(lex);
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
     #[test]
     fn an_allow_set_holds_the_ids_it_was_made_of() {
         let a = Allow::of(&[3, 64, 200, 3]);
         assert!(a.has(3) && a.has(64) && a.has(200));
         assert!(!a.has(0) && !a.has(4) && !a.has(63) && !a.has(201) && !a.has(100_000) && !a.has(-1));
         assert!(!a.is_empty() && Allow::of(&[]).is_empty());
+        let not = Allow::except(&[3, 64]);
+        assert!(!not.has(3) && !not.has(64) && not.has(4) && not.has(100_000) && !not.is_empty());
+        let both = Allow::of(&[3, 4, 5]).and(Allow::except(&[4]));
+        assert!(both.has(3) && !both.has(4) && both.has(5) && !both.has(6));
+        assert!(Allow::except(&[]).has(7) && Allow::of(&[1]).and(Allow::of(&[])).is_empty());
     }
 
     #[test]

@@ -21,7 +21,9 @@ pub const LEX_LIMIT: usize = 100;
 pub const SEM_LIMIT: usize = 100;
 /// Candidates the exact source gives.
 const EXACT_LIMIT: usize = 60;
-/// How much larger a filtered search makes its pools each time too few hits pass, and the most.
+/// A part of a filter that keeps at most 1/NARROW of the files or the chunks is cheap to gather.
+const NARROW: usize = 8;
+/// How much larger a filtered search makes its exact pool each time too few hits pass, and the most.
 const FILTER_WIDEN: usize = 8;
 const FILTER_WIDEN_MAX: usize = 64;
 /// What a vendored hit loses from its ranker score: the bench/quality sweep put 0.5 and 1 at the
@@ -386,8 +388,8 @@ impl Searcher {
         self.candidates_in(query, use_literal, 1, None, None)
     }
 
-    /// `candidates` from pools `widen` times their size, the lexical and semantic ones drawn from
-    /// the chunks `allow` holds, keeping the rows `filter` admits.
+    /// `candidates` keeping the rows `filter` admits, the lexical and semantic pools drawn from the
+    /// chunks `allow` holds and the exact pool `widen` times its size.
     fn candidates_in(
         &mut self,
         query: &str,
@@ -526,8 +528,8 @@ impl Searcher {
     fn find(&mut self, source: Source, q: &QueryInfo, keys: &[i64], qz: Option<&[f32]>, widen: usize, allow: Option<&crate::lex::Allow>) -> Result<Vec<i64>> {
         Ok(match (source, qz) {
             (Source::Exact, _) => self.exact(q, EXACT_LIMIT * widen)?,
-            (Source::Lexical, _) => self.ix.lex()?.search_in(keys, LEX_LIMIT * widen, allow)?.0,
-            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_top_in(z, SEM_LIMIT * widen, None, allow)?,
+            (Source::Lexical, _) => self.ix.lex()?.search_in(keys, LEX_LIMIT, allow)?.0,
+            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_top_in(z, SEM_LIMIT, None, allow)?,
             (Source::Semantic, None) => Vec::new(),
         })
     }
@@ -626,20 +628,37 @@ impl Searcher {
         self.hits(&c, &scores, k, with_text)
     }
 
-    /// `search` keeping the definitions `filter` admits. When it keeps at most half the files,
-    /// the lexical and semantic pools are drawn from their chunks alone (`allowed`). The pools
-    /// are cut before the rest of the filter sees them, so while fewer than `k` hits pass, the
-    /// search runs again with pools `FILTER_WIDEN` times as large, until the lexical and exact
-    /// pools come back short.
+    /// `search` keeping the definitions `filter` admits. Its lexical and semantic pools are drawn
+    /// from the chunks the filter can keep, so they hold `k` that pass whenever that many exist. A
+    /// part of the filter that keeps at most 1/`NARROW` of the files or the chunks narrows the
+    /// pools at once; a broader one, whose ids cost more to gather, first filters the candidates
+    /// of a search, and narrows the pools only when fewer than `k` of those pass. The exact pool
+    /// is filtered as its rows load, so while fewer than `k` hits pass, the search runs again with
+    /// an exact pool `FILTER_WIDEN` times as large, until it comes back short.
     pub fn search_filtered(&mut self, query: &str, k: usize, with_text: bool, filter: &crate::filter::Compiled) -> Result<Vec<Hit>> {
-        let allow = self.allowed(filter)?;
-        if allow.as_ref().is_some_and(|a| a.is_empty()) {
+        let files = if filter.has_files() { self.ix.files()? } else { Vec::new() };
+        let parts = self.parts(filter, &files)?;
+        if parts.iter().any(Part::keeps_nothing) {
             return Ok(Vec::new());
         }
+        let narrow = self.allow_of(parts.iter().filter(|p| p.narrow()))?;
+        if parts.iter().any(|p| !p.narrow()) {
+            let c = self.candidates_in(query, true, 1, Some(filter), narrow.as_ref())?;
+            let scores = self.score(&c.x)?;
+            let hits = self.hits(&c, &scores, k, with_text)?;
+            if hits.len() >= k {
+                return Ok(hits);
+            }
+        }
+        let broad = self.allow_of(parts.iter().filter(|p| !p.narrow()))?;
+        let allow = match (narrow, broad) {
+            (Some(a), Some(b)) => Some(a.and(b)),
+            (a, b) => a.or(b),
+        };
         let mut widen = 1;
         loop {
             let c = self.candidates_in(query, true, widen, Some(filter), allow.as_ref())?;
-            let short = c.found[Source::Exact as usize].len() < EXACT_LIMIT * widen && c.found[Source::Lexical as usize].len() < LEX_LIMIT * widen;
+            let short = c.found[Source::Exact as usize].len() < EXACT_LIMIT * widen;
             let scores = self.score(&c.x)?;
             let hits = self.hits(&c, &scores, k, with_text)?;
             if hits.len() >= k || short || widen >= FILTER_WIDEN_MAX {
@@ -649,18 +668,43 @@ impl Searcher {
         }
     }
 
-    /// The chunks of the files `filter` keeps, when it keeps at most half of them: past that, most
-    /// candidates pass and the pools lose little to it.
-    fn allowed(&self, filter: &crate::filter::Compiled) -> Result<Option<crate::lex::Allow>> {
-        if !filter.has_files() {
-            return Ok(None);
+    /// The parts of `filter`'s allow set: the files of `files` whose names it can keep, and the
+    /// chunks of its kinds.
+    fn parts<'a>(&mut self, filter: &'a crate::filter::Compiled, files: &'a [String]) -> Result<Vec<Part<'a>>> {
+        let mut parts = Vec::new();
+        if filter.has_files() {
+            let (kept, out) = filter.split_by_name(files);
+            parts.push(Part::Files { kept, out });
         }
-        let files = self.ix.files()?;
-        let kept: Vec<&str> = files.iter().map(String::as_str).filter(|p| filter.admits_path(p)).collect();
-        if kept.len() * 2 > files.len() {
-            return Ok(None);
+        if filter.has_kinds() {
+            let kinds = filter.kinds();
+            let some = self.ix.kind_count(&kinds)?;
+            let all = if some == 0 { 0 } else { self.ix.lex()?.alive_counts().iter().sum() };
+            parts.push(Part::Kinds { kinds, some, all });
         }
-        Ok(Some(crate::lex::Allow::of(&self.ix.chunk_ids_in(&kept)?)))
+        Ok(parts)
+    }
+
+    /// The allow set of `parts`, each built from the fewer ids, the ones kept or the ones left out.
+    fn allow_of<'p, 'a: 'p>(&self, parts: impl Iterator<Item = &'p Part<'a>>) -> Result<Option<crate::lex::Allow>> {
+        use crate::lex::Allow;
+        let mut allow: Option<Allow> = None;
+        for p in parts {
+            let part = match p {
+                Part::Files { kept, out } if kept.len() <= out.len() => Allow::of(&self.ix.chunk_ids_in(kept)?),
+                Part::Files { out, .. } => Allow::except(&self.ix.chunk_ids_in(out)?),
+                Part::Kinds { kinds, some, all } if some * 2 <= *all => Allow::of(&self.ix.chunk_ids_of_kinds(kinds)?),
+                Part::Kinds { kinds, .. } => {
+                    let others: Vec<&str> = crate::filter::kinds().into_iter().filter(|k| !kinds.contains(k)).collect();
+                    Allow::except(&self.ix.chunk_ids_of_kinds(&others)?)
+                }
+            };
+            allow = Some(match allow {
+                Some(a) => a.and(part),
+                None => part,
+            });
+        }
+        Ok(allow)
     }
 
     /// Several phrasings of one need (synonyms, guessed identifiers): rank-fuse the results.
@@ -763,6 +807,30 @@ impl Searcher {
     /// -> (resolved definitions, unresolved external names), as the `callees` tool answers.
     pub fn callees(&self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
         crate::names::Names::new(self)?.callees(name, limit).map(|(resolved, external, _)| (resolved, external))
+    }
+}
+
+/// A part of a filter's allow set.
+enum Part<'a> {
+    /// the indexed files whose names the filter can keep, and the rest
+    Files { kept: Vec<&'a str>, out: Vec<&'a str> },
+    /// the filter's kinds, how many chunks have them, and how many chunks there are
+    Kinds { kinds: Vec<&'a str>, some: usize, all: usize },
+}
+
+impl Part<'_> {
+    fn keeps_nothing(&self) -> bool {
+        match self {
+            Part::Files { kept, .. } => kept.is_empty(),
+            Part::Kinds { some, .. } => *some == 0,
+        }
+    }
+
+    fn narrow(&self) -> bool {
+        match self {
+            Part::Files { kept, out } => kept.len() * NARROW <= kept.len() + out.len(),
+            Part::Kinds { some, all, .. } => some * NARROW <= *all,
+        }
     }
 }
 

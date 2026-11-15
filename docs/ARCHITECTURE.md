@@ -909,10 +909,12 @@ file's new stat and reads it. The MCP server has no tool for it.
 A filter (`filter.rs`, from `-g`, `-t`, `--lang` and `--kind`, or the MCP arrays) narrows
 `search`, `symbol` and `refs`: `Op::Scoped` wraps the operation, and `Filter::compile` checks
 its names and builds grep's override and type matchers once. Search draws its lexical and semantic
-pools from the chunks of the admitted files (`lex::Allow`, one bit per chunk id, applied with the
-live rows) when the filter keeps at most half the files, drops the candidates it does not admit
-as their rows load, before features and the ranker, and widens its pools while fewer than `k`
-pass; symbol reads more definitions until enough pass; refs hands Engine A a walk
+pools from the chunks the filter can keep (`lex::Allow`, applied with the live rows: one bit per
+chunk id, of the chunks kept or of the ones left out, whichever are fewer, by file name and by
+kind through the `chunks_kind` index; a part keeping more than an eighth of the files or the
+chunks first filters a search's candidates and narrows the pools only when fewer than `k` pass),
+drops the candidates it does not admit as their rows load, before features and the ranker, and
+widens the exact pool while fewer than `k` pass; symbol reads more definitions until enough pass; refs hands Engine A a walk
 narrowed to the files the globs and types can admit (`Compiled::walk`), then drops the
 definitions and occurrences outside the filter.
 

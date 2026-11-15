@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS chunks(
 CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path, start);
 CREATE INDEX IF NOT EXISTS chunks_name ON chunks(name_key);
 CREATE INDEX IF NOT EXISTS chunks_qual ON chunks(qual_key);
+CREATE INDEX IF NOT EXISTS chunks_kind ON chunks(kind);
 CREATE TABLE IF NOT EXISTS refs(chunk_id INTEGER NOT NULL, callee TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS refs_callee ON refs(callee);
 CREATE INDEX IF NOT EXISTS refs_chunk ON refs(chunk_id);
@@ -3090,6 +3091,24 @@ impl Index {
             }
         }
         Ok(out)
+    }
+
+    /// The ids of the chunks of these kinds (through `chunks_kind`).
+    pub fn chunk_ids_of_kinds(&self, kinds: &[&str]) -> Result<Vec<i64>> {
+        if kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ph = vec!["?"; kinds.len()].join(",");
+        let mut st = self.db.prepare(&format!("SELECT id FROM chunks WHERE kind IN ({ph})"))?;
+        let ids = st.query_map(params_from_iter(kinds.iter()), |r| r.get::<_, i64>(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
+    /// How many chunks have these kinds (through `chunks_kind`).
+    pub fn kind_count(&self, kinds: &[&str]) -> Result<usize> {
+        let ph = vec!["?"; kinds.len().max(1)].join(",");
+        let some: i64 = self.db.query_row(&format!("SELECT COUNT(*) FROM chunks WHERE kind IN ({ph})"), params_from_iter(kinds.iter()), |r| r.get(0))?;
+        Ok(some as usize)
     }
 
     /// The indexed files, the skipped ones aside, in table order.
