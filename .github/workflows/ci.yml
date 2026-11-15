@@ -142,7 +142,7 @@ jobs:
       - run: python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check
       # the licence texts that ship with the crate, the wheels and the editor extension are copies of the root ones
       - run: |
-          for f in LICENSE-APACHE LICENSE-MIT; do cmp "$f" "crates/scrutate/$f" && cmp "$f" "crates/scrutate-py/$f" && cmp "$f" "python/$f"; done
+          for f in LICENSE-APACHE LICENSE-MIT; do cmp "$f" "crates/scrutate/$f" && cmp "$f" "crates/scrutate-py/$f" && cmp "$f" "python/$f" || exit 1; done
           python3 -c "import sys; v = open('integrations/vscode/LICENSE').read(); sys.exit(not all(open(f).read().strip() in v for f in ('LICENSE-MIT', 'LICENSE-APACHE')))"
       # the versions the Python tests were last run with
       - run: pip install -e "python[test]" maturin ruff -c python/constraints.txt
