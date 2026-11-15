@@ -484,7 +484,9 @@ number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the ba
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
 `KEY` or `CREDENTIALS`; `password` a quoted value of a name holding `password`, `secret` or
 `token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
-random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside);
+random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside, and public
+material: an SSH key after its type, as `known_hosts` writes it, and the body of a public key, a
+certificate or a certificate request between its armour);
 `generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
 holding a common word. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
@@ -512,8 +514,7 @@ pages of 24,000 and 700 bytes, a page from inside a key among them, and the Grep
 lines too; no byte of any secret comes back, each kind is marked, and with `SCRUTATE_REDACT=off`
 every one does. The CLI's `--json` stays one JSON document with it on.
 
-Marked although no secret: the body of a public key (an SSH `known_hosts` line, `PUBLIC KEY`
-armour), read as key material, which costs readability only. Not detected: token families outside the table (any
+Not detected: token families outside the table (any
 vendor's format scrutate has no rule for).
 
 Not covered, in assignments: a quoted value that reads as a name (a file path with an

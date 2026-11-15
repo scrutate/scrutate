@@ -405,8 +405,13 @@ fn quoted(secret: &str, whole: &str, before: &str) -> bool {
 fn alone_on_its_line(_: &str, _: &str, before: &str) -> bool {
     let line = &before[before.rfind('\n').map_or(0, |i| i + 1)..];
     let text = split_line(line).1;
-    !HASH_PREFIX.is_match(before) && (text.is_empty() || text.ends_with([' ', '\t', ':', '"', '\'']))
+    !HASH_PREFIX.is_match(before) && !SSH_PUBLIC.is_match(before) && (text.is_empty() || text.ends_with([' ', '\t', ':', '"', '\'']))
 }
+
+/// An SSH public key's type, as `known_hosts` and `authorized_keys` write it before the key.
+static SSH_PUBLIC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:ssh-(?:rsa|dss|ed25519|ed448)|ecdsa-sha2-[A-Za-z0-9-]+|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)[ \t]+$").unwrap()
+});
 
 static HASH_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:h1:|sha(?:1|224|256|384|512)[-:=]|md5[-:=])$").unwrap());
 
@@ -426,6 +431,9 @@ static PREFILTER: LazyLock<aho_corasick::AhoCorasick> = LazyLock::new(|| {
 });
 
 static PEM_BEGIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----").unwrap());
+/// The armour of material that is public: a public key, a certificate, a certificate request.
+static PUBLIC_ARMOUR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i-u)-----(BEGIN|END)[ A-Z0-9_-]{0,100}(?:PUBLIC KEY|CERTIFICATE(?: REQUEST)?|X509 CRL)-----").unwrap());
 static PEM_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----").unwrap());
 static BASE64_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/=]{4,}").unwrap());
 /// What an answer writes before a line of a file: read_code's `    7  ` (a range's `1-2  `),
@@ -500,6 +508,8 @@ fn unslash(text: &str) -> (String, Vec<usize>) {
 #[derive(Default)]
 pub struct Redactor {
     in_key: bool,
+    /// inside the armour of a public key or a certificate, whose body is no secret
+    in_public: bool,
     /// the redactions the page `ops::Answer::text_page` last made shows, in either form
     pub shown: usize,
     /// redactions made, by kind
@@ -539,6 +549,7 @@ impl Redactor {
         let mut spans: Vec<(usize, usize, &'static str)> = Vec::new();
         self.private_keys(seen, &mut spans);
         known_key_lines(seen, &mut spans);
+        let public = self.public_bodies(seen);
         let mut wanted: Vec<bool> = RULES.iter().map(|r| r.keywords.is_empty()).collect();
         let starts: Vec<usize> = RULES.iter().scan(0, |n, r| Some(std::mem::replace(n, *n + r.keywords.len()))).collect();
         for m in PREFILTER.find_overlapping_iter(seen) {
@@ -560,6 +571,8 @@ impl Redactor {
                 spans.push((g.start(), g.end(), r.kind));
             }
         }
+        // base64 alone on a line is a key's body only outside a public key or a certificate
+        spans.retain(|&(a, _, k)| k != "key-material" || !public.iter().any(|&(s, e)| s <= a && a < e));
         if let Some(map) = map {
             spans = spans.into_iter().map(|(a, b, k)| (map[a], map[b - 1] + 1, k)).collect();
         }
@@ -574,6 +587,23 @@ impl Redactor {
             keep
         });
         spans
+    }
+
+    /// The byte ranges of `text`'s lines inside the armour of a public key or a certificate.
+    fn public_bodies(&mut self, text: &str) -> Vec<(usize, usize)> {
+        if !self.in_public && !text.contains("-----") {
+            return Vec::new();
+        }
+        let (mut out, mut at) = (Vec::new(), 0);
+        for line in text.split_inclusive('\n') {
+            match PUBLIC_ARMOUR.captures(line) {
+                Some(c) => self.in_public = &c[1] == "BEGIN",
+                None if self.in_public => out.push((at, at + line.len())),
+                None => {}
+            }
+            at += line.len();
+        }
+        out
     }
 
     /// The bodies of private keys: from a BEGIN armour that ends its line (or is followed by a
@@ -1165,6 +1195,33 @@ mod tests {
         }
     }
 
+    /// A public key or a certificate is no secret: its body stays as written, while a private
+    /// key after it is still redacted.
+    #[test]
+    fn public_keys_and_certificates_are_not_redacted() {
+        let b64 = format!("{ALNUM}+/");
+        let host = format!("github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI{}", fake(70, &b64, 43));
+        assert!(redact(&host).1.is_empty(), "{host}");
+        let mut r = Redactor::default();
+        for what in ["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"] {
+            let lines = [
+                format!("-----BEGIN {what}-----"),
+                fake(71, &b64, 64),
+                fake(72, &b64, 64),
+                format!("{}==", fake(73, &b64, 20)),
+                format!("-----END {what}-----"),
+            ];
+            for line in &lines {
+                assert!(r.redact(line).1.is_empty(), "{what}: {line}");
+            }
+        }
+        let body = fake(74, &b64, 64);
+        let out: Vec<String> = [armour("BEGIN", ""), body.clone(), armour("END", "")].iter().map(|l| r.redact(l).0.into_owned()).collect();
+        assert_eq!(out[1], "[redacted:private-key]");
+        // a line of base64 alone outside any armour is still taken for key material
+        assert!(redact(&fake(75, &b64, 64)).1.iter().any(|m| m.kind == "key-material"));
+    }
+
     /// A process that serves two repositories finds the key lines of both, whichever it read last.
     #[test]
     fn the_key_lines_of_every_root_read_are_known() {
@@ -1416,7 +1473,20 @@ mod tests {
         let t0 = std::time::Instant::now();
         LazyLock::force(&RULES);
         LazyLock::force(&PREFILTER);
-        for re in [&NOT_SECRET_NAMES, &IDENTIFIER, &UUID, &NOT_A_PASSWORD, &NUMBER, &HASH_PREFIX, &PEM_BEGIN, &PEM_END, &BASE64_RUN, &LINE_PREFIX] {
+        for re in [
+            &NOT_SECRET_NAMES,
+            &IDENTIFIER,
+            &UUID,
+            &NOT_A_PASSWORD,
+            &SSH_PUBLIC,
+            &PUBLIC_ARMOUR,
+            &NUMBER,
+            &HASH_PREFIX,
+            &PEM_BEGIN,
+            &PEM_END,
+            &BASE64_RUN,
+            &LINE_PREFIX,
+        ] {
             LazyLock::force(re);
         }
         println!("building the detectors, once a process: {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
