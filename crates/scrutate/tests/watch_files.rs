@@ -233,6 +233,47 @@ fn a_root_replaced_by_a_rename_is_indexed_and_watched_in_its_place() {
     let _ = fs::remove_dir_all(&old);
 }
 
+/// The root renamed away and back: back within the 2 s grace, the watch goes on in it and a
+/// change after it is indexed well before the 30 s re-walk; back well after it (the grace starts
+/// when the watch sees the root missing, which a loaded machine delays), the watch has ended
+/// saying the root is gone.
+#[cfg(unix)]
+#[test]
+fn a_root_renamed_away_and_back_is_watched_again_or_gone() {
+    for (away_ms, back_in_time) in [(600, true), (6000, false)] {
+        let r = Repo::new(&format!("rootback_{away_ms}"));
+        r.write("a.py", b"def alpha():\n    return 1\n");
+        assert_eq!(r.run(&["index"]), 0);
+        let (mut child, rx) = start_watch(&r.root);
+        wait_watching(&rx);
+        let away = r.root.with_extension("away");
+        fs::rename(&r.root, &away).unwrap();
+        std::thread::sleep(Duration::from_millis(away_ms));
+        fs::rename(&away, &r.root).unwrap();
+        let t0 = Instant::now();
+        if back_in_time {
+            std::thread::sleep(Duration::from_millis(500));
+            r.write("b.py", b"def beta_after_the_trip():\n    return 2\n");
+            while !r.indexed("beta_after_the_trip") {
+                assert!(t0.elapsed() < Duration::from_secs(15), "{away_ms} ms: no change indexed after the trip: {:?}", rx.try_iter().collect::<Vec<_>>());
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert!(child.0.try_wait().unwrap().is_none(), "{away_ms} ms: watch ended");
+        } else {
+            let status = loop {
+                if let Some(s) = child.0.try_wait().unwrap() {
+                    break s;
+                }
+                assert!(t0.elapsed() < Duration::from_secs(20), "{away_ms} ms: watch keeps running after the grace");
+                std::thread::sleep(Duration::from_millis(100));
+            };
+            let err: Vec<String> = rx.iter().collect();
+            assert_eq!(status.code(), Some(2), "{away_ms} ms: {err:?}");
+            assert!(err.iter().any(|l| l.contains("is gone")), "{away_ms} ms: {err:?}");
+        }
+    }
+}
+
 /// A deploy's `current` link pointed at another release while `watch current` runs, by a new link
 /// renamed over it (`mv -T`), by unlink and link (`ln -sfn`), and through a moment when it names
 /// nothing: the watch follows the link, says so, and indexes the release it names now.

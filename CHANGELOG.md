@@ -353,6 +353,9 @@ incompatible index by itself, and that is never breaking.
 - `watch` and `serve --watch` notice a directory put in place of the root (`mv repo repo.old; mv
   repo.new repo`, or the root removed and made again), say `root replaced; watching the new tree`,
   and index and watch the new tree, where they went on watching the old one and indexed nothing.
+- On Linux, `watch` goes on indexing a root renamed away and back within 2 s, where it kept
+  running and indexed nothing after it, with no message: the watch of a directory above the
+  root saw the rename and every watch of the tree was dropped.
 - The yardstick times every rival of a form against one named scrutate adapter (resident:
   `scrutate-mcp`), and each row names its `base`, where the last scrutate adapter of the form won,
   so W5's refs rows were against `scrutate-lsp`, its callers rows against `scrutate-mcp`, and the

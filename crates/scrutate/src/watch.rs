@@ -227,7 +227,9 @@ impl Burst {
         let moved = !matches!(e.kind, EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Any));
         let mut wanted = false;
         for p in &e.paths {
-            if walked.sets_rules(root, p) {
+            // the root itself renamed or removed, seen from a rule directory above it: notify
+            // dropped the watches of the whole tree, so it is walked and watched again
+            if walked.sets_rules(root, p) || moved && p == root {
                 self.full = true;
                 wanted = true;
             } else if inside(root, p) {
