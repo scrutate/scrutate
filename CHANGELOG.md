@@ -141,6 +141,9 @@ incompatible index by itself, and that is never breaking.
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- `tsquery` does not parse a file that holds none of the strings every match of the query needs
+  (`#eq?`, `#any-of?`): on Linux's tree a `kmalloc` call query takes 21 to 34 s against 95 to
+  146 s on four threads, the same answer.
 - The text index is format 4, as it also records the hash of every line of a private key's body:
   one an earlier version wrote is rebuilt once, the cost of a first build (about 12 s on Linux's
   tree on an 8-vCPU server, 8% more CPU than format 3).

@@ -1043,6 +1043,12 @@ visits every file keeps only the entries it used, so edited and deleted files do
 The directory is bounded at 128 MB: beyond it the least recently used query files are deleted,
 and a query whose results alone exceed it is not cached. The cache is safe to delete at any time.
 
+A file that holds none of the strings every match of the query needs is not parsed either: when
+each pattern compares a capture that is in every match with strings (`(#eq? @f "kmalloc")`,
+`(#any-of? @k "get" "set")`), a file whose text has none of them answers with no captures, as
+parsing it would. A pattern with no such predicate (a capture compared with a capture, `#match?`,
+a `not-` or `any-` form, an optional capture) leaves every file parsed.
+
 ### `tsquery --rewrite`
 `scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE [--write]` replaces each match of the
 query with TEMPLATE. The replaced text is the capture named `@match`; a match without one

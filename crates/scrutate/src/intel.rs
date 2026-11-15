@@ -500,6 +500,51 @@ fn scopes(top: &Path, roots: &[PathBuf]) -> Vec<String> {
 
 /// A tree-sitter query compiled for `lang`, refused when it is empty, has no capture or uses a
 /// predicate tree-sitter does not evaluate.
+/// For each pattern of `q`, strings one of which a file's text holds whenever the pattern matches
+/// in it: the strings of an `#eq?` or `#any-of?` on a capture that is in every match (quantifier
+/// one, or one or more). None when some pattern has none, so that every file is parsed.
+fn required_literals(q: &tree_sitter::Query, source: &str) -> Option<Vec<Vec<String>>> {
+    static PREDICATE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r#"\(#(eq|any-of)\?\s+@([\w.-]+)\s+((?:"(?:[^"\\]|\\.)*"\s*)+)\)"#).unwrap());
+    static STRING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r#""((?:[^"\\]|\\.)*)""#).unwrap());
+    let unescape = |s: &str| {
+        let (mut out, mut chars) = (String::new(), s.chars());
+        while let Some(c) = chars.next() {
+            out.push(match (c, c == '\\') {
+                (_, true) => match chars.next() {
+                    Some('n') => '\n',
+                    Some('t') => '\t',
+                    Some('r') => '\r',
+                    Some('0') => '\0',
+                    Some(other) => other,
+                    None => return None,
+                },
+                (c, false) => c,
+            });
+        }
+        Some(out)
+    };
+    (0..q.pattern_count())
+        .map(|p| {
+            let text = source.get(q.start_byte_for_pattern(p)..q.end_byte_for_pattern(p))?;
+            let quantifiers = q.capture_quantifiers(p);
+            PREDICATE.captures_iter(text).find_map(|c| {
+                let capture = q.capture_index_for_name(&c[2])? as usize;
+                if !matches!(quantifiers.get(capture), Some(tree_sitter::CaptureQuantifier::One | tree_sitter::CaptureQuantifier::OneOrMore)) {
+                    return None;
+                }
+                let strings: Vec<String> = STRING.captures_iter(&c[3]).map(|s| unescape(&s[1])).collect::<Option<_>>()?;
+                (&c[1] == "any-of" || strings.len() == 1).then_some(strings).filter(|s| !s.is_empty())
+            })
+        })
+        .collect()
+}
+
+/// Whether a file's text holds a literal of some pattern (`required_literals`).
+fn may_match(required: &[Vec<String>], text: &str) -> bool {
+    required.iter().any(|one_of| one_of.iter().any(|l| text.contains(l.as_str())))
+}
+
 pub(crate) fn compile_query(lang: &str, query: &str) -> Result<(&'static crate::langs::LangSpec, tree_sitter::Language, tree_sitter::Query)> {
     let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {} (see `scrutate languages`)", echo(lang)))?;
     if query.trim().is_empty() {
@@ -814,6 +859,8 @@ pub fn tsquery_each(
         bail!("tsquery is not in the wasi build: it needs threads");
     }
     let (spec, language, q) = compile_query(lang, query)?;
+    // a file that holds none of the literals every match needs is not parsed: its answer is empty
+    let gate = required_literals(&q, query);
     let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
     // the code index's record saves reading a file whose captures are cached
     let recorded = cache_root.map(crate::stores::recorded).unwrap_or_default();
@@ -845,6 +892,7 @@ pub fn tsquery_each(
     let delivered = std::thread::scope(|scope| -> usize {
         let files_ref = &files;
         let q_ref = &q;
+        let gate_ref = &gate;
         let names_ref = &names;
         let language_ref = &language;
         let stop_ref = &stop;
@@ -880,6 +928,10 @@ pub fn tsquery_each(
                                 key = cached.map(|_| crate::tscache::key(&crate::index::content_hash(raw), rel));
                                 if let Some(caps) = hit(key) {
                                     let _ = tx.send((i, key, caps, true));
+                                    return;
+                                }
+                                if gate_ref.as_ref().is_some_and(|g| !may_match(g, &src)) {
+                                    let _ = tx.send((i, key, Vec::new(), true));
                                     return;
                                 }
                                 if let Some(tree) = parser.parse(src.as_bytes(), None) {
@@ -1177,4 +1229,169 @@ pub fn bare_name(s: &Searcher, name: &str) -> Result<String> {
         Some(n) => n.to_string(),
         None => crate::search::dotted(typed).rsplit('.').next().unwrap_or(typed).to_string(),
     })
+}
+
+#[cfg(test)]
+mod literal_gate {
+    use super::{may_match, required_literals};
+
+    fn query(lang: &crate::langs::LangSpec, q: &str) -> Option<tree_sitter::Query> {
+        tree_sitter::Query::new(&(lang.language)(), q).ok()
+    }
+
+    #[test]
+    fn only_a_literal_every_match_needs_gates_a_file() {
+        let rust = crate::langs::by_id("rust").unwrap();
+        let some = |q: &str| required_literals(&query(rust, q).unwrap(), q);
+        assert_eq!(some(r#"((identifier) @i (#eq? @i "kmalloc"))"#), Some(vec![vec!["kmalloc".to_string()]]));
+        assert_eq!(some(r#"((identifier) @i (#any-of? @i "a" "b\"c"))"#), Some(vec![vec!["a".to_string(), "b\"c".to_string()]]));
+        // nothing every match needs: every file is parsed
+        assert_eq!(some("(identifier) @i"), None);
+        assert_eq!(some(r#"((identifier) @i (#not-eq? @i "x"))"#), None);
+        assert_eq!(some(r#"((identifier) @i (#eq? @i @i))"#), None);
+        assert_eq!(some(r#"((identifier) @i (#match? @i "^x$"))"#), None);
+        assert_eq!(some(r#"((line_comment)* @c . (identifier) @i (#eq? @c "x"))"#), None);
+        assert_eq!(some(r#"((identifier) @a (#eq? @a "x")) (identifier) @b"#), None);
+        // two patterns that each need one
+        assert_eq!(some(r#"((identifier) @a (#eq? @a "x")) ((field_identifier) @b (#eq? @b "y"))"#), Some(vec![vec!["x".to_string()], vec!["y".to_string()]]));
+    }
+
+    /// Random queries over the kinds and texts of every sample's tree: alternations, quantifiers,
+    /// several patterns, `#eq?`, `#any-of?`, `#match?` (case-insensitive too), `not-` forms and a
+    /// capture compared with a capture. Wherever the gate turns a file away, the query has no
+    /// match in it, so the answer with the gate is the answer without it.
+    #[test]
+    fn random_queries_answer_the_same_with_the_gate() {
+        use tree_sitter::StreamingIterator;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples");
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move |n: usize| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as usize) % n.max(1)
+        };
+        let (mut compiled, mut gated, mut turned_away) = (0, 0, 0);
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            let Some(lang) = crate::parse::spec_for(&path.to_string_lossy(), &src) else { continue };
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&(lang.language)()).unwrap();
+            let tree = parser.parse(&src, None).unwrap();
+            // the named kinds and some short texts of this tree
+            let (mut kinds, mut texts) = (Vec::new(), Vec::new());
+            let mut cursor = tree.walk();
+            let mut stack = vec![tree.root_node()];
+            while let Some(n) = stack.pop() {
+                if n.is_named() && !kinds.contains(&n.kind()) {
+                    kinds.push(n.kind());
+                }
+                if n.child_count() == 0 {
+                    if let Ok(t) = n.utf8_text(src.as_bytes()) {
+                        if !t.is_empty() && t.len() < 20 && !t.contains(['"', '\\', '\n']) && texts.len() < 50 {
+                            texts.push(t.to_string());
+                        }
+                    }
+                }
+                stack.extend(n.children(&mut cursor));
+            }
+            if kinds.is_empty() || texts.is_empty() {
+                continue;
+            }
+            for _ in 0..30 {
+                let patterns = 1 + next(2);
+                let mut text = String::new();
+                for p in 0..patterns {
+                    let (a, b) = (format!("a{p}"), format!("b{p}"));
+                    let kind = kinds[next(kinds.len())];
+                    let other = kinds[next(kinds.len())];
+                    let quant = ["", "", "", "*", "?", "+"][next(6)];
+                    let node = match next(3) {
+                        0 => format!("({kind}){quant} @{a}"),
+                        1 => format!("[({kind}) ({other})]{quant} @{a}"),
+                        _ => format!("({kind}) @{a} ({other}) @{b}"),
+                    };
+                    // a third of the literals are in no file
+                    let pick =
+                        |next: &mut dyn FnMut(usize) -> usize| if next(3) == 0 { "zzqqxx_absent".to_string() } else { texts[next(texts.len())].clone() };
+                    let (lit, lit2) = (pick(&mut next), pick(&mut next));
+                    let predicate = match next(9) {
+                        0 => String::new(),
+                        1 | 2 => format!("(#eq? @{a} \"{lit}\")"),
+                        3 => format!("(#any-of? @{a} \"{lit}\" \"{lit2}\")"),
+                        4 => format!("(#match? @{a} \"^{}$\")", regex::escape(&lit).replace('\\', "\\\\")),
+                        5 => format!("(#match? @{a} \"(?i){}\")", regex::escape(&lit.to_uppercase()).replace('\\', "\\\\")),
+                        6 => format!("(#not-eq? @{a} \"{lit}\")"),
+                        7 => format!("(#eq? @{a} @{a})"),
+                        _ => format!("(#any-eq? @{a} \"{lit}\")"),
+                    };
+                    text.push_str(&format!("({node} {predicate})\n"));
+                }
+                let Ok(q) = tree_sitter::Query::new(&(lang.language)(), &text) else { continue };
+                compiled += 1;
+                let Some(gate) = required_literals(&q, &text) else { continue };
+                gated += 1;
+                if may_match(&gate, &src) {
+                    continue;
+                }
+                turned_away += 1;
+                let mut qc = tree_sitter::QueryCursor::new();
+                let mut it = qc.matches(&q, tree.root_node(), src.as_bytes());
+                assert!(it.next().is_none(), "{}: the gate turned away a file that matches:\n{text}", path.display());
+            }
+        }
+        println!("{compiled} queries compiled, {gated} gated, {turned_away} files turned away");
+        assert!(compiled > 1000 && gated > 100 && turned_away > 30, "{compiled} compiled, {gated} gated, {turned_away} turned away");
+    }
+
+    /// Over every sample file: a file the gate turns away has no match, so the answer with the gate
+    /// is the answer without it.
+    #[test]
+    fn a_file_turned_away_has_no_match() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            let Some(lang) = crate::parse::spec_for(&path.to_string_lossy(), &src) else { continue };
+            let Some(all) = query(lang, "(identifier) @i") else { continue };
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&(lang.language)()).unwrap();
+            let tree = parser.parse(&src, None).unwrap();
+            let matches = |q: &tree_sitter::Query| {
+                use tree_sitter::StreamingIterator;
+                let mut cursor = tree_sitter::QueryCursor::new();
+                let mut it = cursor.matches(q, tree.root_node(), src.as_bytes());
+                let mut n = 0;
+                while it.next().is_some() {
+                    n += 1;
+                }
+                n
+            };
+            let words: Vec<String> = {
+                use tree_sitter::StreamingIterator;
+                let mut cursor = tree_sitter::QueryCursor::new();
+                let mut it = cursor.captures(&all, tree.root_node(), src.as_bytes());
+                let mut w = Vec::new();
+                while let Some((m, i)) = it.next() {
+                    w.push(m.captures[*i].node.utf8_text(src.as_bytes()).unwrap().to_string());
+                }
+                w.truncate(5);
+                w
+            };
+            for word in words.iter().map(String::as_str).chain(["zzqqxx_absent", ""]) {
+                for text in [format!(r#"((identifier) @i (#eq? @i "{word}"))"#), format!(r#"((identifier) @i (#any-of? @i "{word}" "zzqqxx_other"))"#)] {
+                    let q = query(lang, &text).unwrap();
+                    let gate = required_literals(&q, &text).expect("a literal");
+                    if !may_match(&gate, &src) {
+                        assert_eq!(matches(&q), 0, "{}: {text}", path.display());
+                    }
+                    if !word.is_empty() && words.iter().any(|w| w == word) {
+                        assert!(may_match(&gate, &src) && matches(&q) > 0, "{}: {text}", path.display());
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 100, "{checked}");
+    }
 }
