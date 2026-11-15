@@ -444,9 +444,10 @@ NFC with final sigma folded.
     a cut log keeps at most 4 MB of its file;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; an update a read makes, which must not wait, tries its lock once
-    before the merge and once after it, and leaves the compaction to the next update when another
-    writer holds it (a segment it merged meanwhile is removed), which does it even when nothing
-    changed; segment **GC** with an age guard inside the update's transaction;
+    before the merge and once after it (only the second when there is nothing to merge), and
+    leaves the compaction to the next update when another writer holds it (a segment it merged
+    meanwhile is removed), which does it even when nothing changed; segment **GC** with an age
+    guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a
     database up to 64 MB (`QUICK_CHECK_MAX_BYTES` or `SCRUTATE_QUICK_CHECK_MAX_BYTES`), once per
     state of the file: a passing check is recorded in `.scrutate/checked` with the database's file
