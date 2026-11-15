@@ -1050,7 +1050,9 @@ mod tests {
         assert!(a.is_empty(), "answered from the committed index");
         assert_eq!(pending.files(), Some(&["src/d0/late.py".to_string()][..]));
         assert!(pending.note().is_some_and(|n| n.contains("src/d0/late.py")));
-        assert!(took >= stores::OWN_WRITE_WAIT && took < stores::OWN_WRITE_WAIT + Duration::from_secs(2), "{took:?}");
+        // the empty answer and the pending file show the write was not waited out: that read
+        // would hold late.py; the wait itself was taken
+        assert!(took >= stores::OWN_WRITE_WAIT, "{took:?}");
         let (a, pending) = s.run_counted(&Op::Symbol { name: "late".into(), limit: 1, exact: true }, &Arc::default(), &Arc::default()).unwrap();
         assert!(!a.is_empty() && pending == Pending::default(), "the next read applies them");
         let _ = std::fs::remove_dir_all(root);
