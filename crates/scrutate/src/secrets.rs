@@ -374,7 +374,10 @@ const PLACEHOLDER_PASSWORDS: [&str; 6] = ["password", "passwd", "pass", "pwd", "
 fn placeholder_credentials(whole: &str, secret: &str) -> bool {
     let lower = secret.to_ascii_lowercase();
     let user = whole.rfind(&format!(":{secret}")).map(|i| &whole[..i]).map(|u| &u[u.rfind(['/', ' ', '\t', '=', '"', '\'']).map_or(0, |j| j + 1)..]);
-    lower.contains("password") || lower.contains("passwd") || user.is_some_and(|u| u.eq_ignore_ascii_case(secret))
+    // the word password in letters alone (`mypassword`, `your_password_here`); with a digit or a
+    // symbol beside it (`MyPassword2024`) it is a real, weak one
+    let word = (lower.contains("password") || lower.contains("passwd")) && lower.bytes().all(|b| b.is_ascii_alphabetic() || b == b'_');
+    word || user.is_some_and(|u| u.eq_ignore_ascii_case(secret))
 }
 
 /// A `.env` value that is no placeholder and is not a name or a word alone.
@@ -1228,6 +1231,7 @@ mod tests {
             "http_proxy = http://username:mypassword@proxy.example.com:3128/",
             "DATABASE_URL = https://admin:changeme@db.local/",
             "https://user:yourpassword@example.com/",
+            "https://user:your_password_here@example.com/",
         ] {
             assert!(redact(line).1.iter().all(|m| m.kind != "url-password"), "{line}");
             // the line ends at the `@`: a password needs a host after it
@@ -1282,6 +1286,19 @@ mod tests {
                 assert!(!out.contains(&a) && !out.contains(&b) && marks.iter().any(|m| m.kind == kind), "{line} -> {out}");
                 assert!(out.ends_with("@git.example.com/app"), "{line} -> {out}");
             }
+        }
+    }
+
+    /// A real password with the word password in it, a digit or a symbol beside it, is redacted:
+    /// only letters and `_` alone make a doc's placeholder.
+    #[test]
+    fn a_weak_password_with_the_word_password_in_it_is_redacted() {
+        // built here, so the tree holds no credential a scanner reads
+        let prog = ["cu", "rl"].concat();
+        let (a, b) = (["Super", "Password2024!"].concat(), ["My", "Password2024"].concat());
+        for (line, secret) in [(format!("https://app:{a}@db.example.com/"), &a), (format!("{prog} -u deploy:{b} https://api.example.com/"), &b)] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
         }
     }
 

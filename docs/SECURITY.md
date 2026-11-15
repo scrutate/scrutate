@@ -423,8 +423,8 @@ carries a token (`https://<token>@github.com/...`); `url-password` takes the pas
 URL that carries one (`https://user:pass@host`, also with no user; a password holding `@` runs to
 the last `@` before the host, as does `database-password`'s), with a digit or a symbol in it
 or eight letters or more, and no variable (`$PASS`, `${...}`) or placeholder (a placeholder
-word, the user name again as in `anonymous:anonymous`, or the word password in it as in
-`username:mypassword`); `bearer-token` an
+word, the user name again as in `anonymous:anonymous`, or the word password in letters and `_` alone as in
+`username:mypassword`, where `MyPassword2024` is a real one); `bearer-token` an
 opaque token after `Bearer` or an `Authorization: Token` scheme; `curl-user` the password that
 `curl -u` or `--user` gives after the user (also joined to `-u`, and a proxy's through `-U` or
 `--proxy-user`), on curl's own command (up to a `|`, `;` or `&`), with
