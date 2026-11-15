@@ -165,6 +165,10 @@ incompatible index by itself, and that is never breaking.
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- `grep` prints a CRLF line with its `\r`, matched and context lines alike, in streamed, sorted
+  (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
+  dropped the `\r`; `--json` and MCP text still carry no line end
+  ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter
   grammars with `-fjump-tables`, which GCC 15 drops at the `-O0` their `parser.c` asks for:
   parsing was 1.8 times slower (Linux's C sources, 22 s against 12 s); a build outside the
@@ -280,8 +284,6 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
-- `grep --sort`, `--max-bytes` and colour output print a CRLF line with its `\r`, as streamed
-  output and ripgrep do, where they dropped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
@@ -818,7 +820,7 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - A `-g` glob is taken whole, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` and
   the configuration file's `globs` split at commas outside braces.
 - With `-A`, `-B` or `-C`, a line `--` separates groups, as in ripgrep.
-- `-c` with `-U` counts as ripgrep does; context lines of CRLF files drop the `\r`.
+- `-c` with `-U` counts as ripgrep does.
 - A pattern or option value that is not UTF-8 is an error (a path may be any bytes).
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with nine changes, listed in the workspace
   `Cargo.toml`; an idle walker thread first waits 10 µs instead of 1 ms (a 598-file package:
