@@ -1101,9 +1101,9 @@ impl Langs<'_> {
         id
     }
 
-    /// Whether a definition of `path` is named in any case (`langs::ignores_case`).
+    /// Whether a definition of `path` is named in any case (`langs::ignores_case_at`).
     fn folds(&self, path: &str, kind: &str) -> bool {
-        crate::langs::ignores_case(self.id(path), kind)
+        crate::langs::ignores_case_at(path, self.id(path), kind)
     }
 
     /// A file of no known language may call or be called by any.

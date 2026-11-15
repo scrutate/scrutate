@@ -446,3 +446,16 @@ fn a_longer_name_of_the_language_is_no_use_of_the_shorter_one() {
     }
     assert!(!dead.iter().any(|d| d == "r.rb a" || d.starts_with("User.php")), "{v}");
 }
+
+#[test]
+fn a_fortran_definition_called_in_another_case_is_not_dead_without_the_grammar() {
+    // Fortran ignores case; a build without its grammar still reads `call dowork()` as naming
+    // `DoWork`, so the answer is undecided at worst
+    let r = Repo::new(
+        "fortran_case",
+        &[("m.f90", "program main\n  call dowork()\nend program main\n\nsubroutine DoWork()\n  call CALLER()\nend subroutine DoWork\n\nsubroutine caller()\nend subroutine caller\n")],
+    );
+    let v = r.json(&["dead"]);
+    let dead = names(&v, "dead");
+    assert!(!dead.iter().any(|d| d.ends_with("DoWork") || d.ends_with("caller")), "{v}");
+}

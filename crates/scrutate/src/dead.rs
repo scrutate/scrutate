@@ -80,7 +80,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
     let mut lang_of: HashMap<&str, Option<&'static str>> = HashMap::new();
     for (s, &id) in wanted.iter().zip(&id_of).filter(|(s, _)| s.name.is_ascii()) {
         let lang = *lang_of.entry(s.path.as_str()).or_insert_with(|| crate::langs::detect_at(root, &s.path).map(|l| l.id));
-        if !crate::langs::ignores_case(lang, &s.kind) {
+        if !crate::langs::ignores_case_at(&s.path, lang, &s.kind) {
             continue;
         }
         let ids = folded.entry(looked_for(&s.name).0.to_ascii_lowercase()).or_default();

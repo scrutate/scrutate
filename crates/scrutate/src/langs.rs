@@ -1630,7 +1630,7 @@ const EXTRA: &[LangSpec] = &[
     },
     LangSpec {
         id: "fortran",
-        exts: &[".f", ".f90", ".f95", ".f03", ".f08", ".for", ".F", ".F90"],
+        exts: FORTRAN_EXTS,
         files: &[],
         language: || tree_sitter_fortran::LANGUAGE.into(),
         defs: &[
@@ -2331,6 +2331,17 @@ pub fn ignores_case(lang: Option<&str>, kind: &str) -> bool {
         Some("php") => matches!(kind, "function" | "method" | "class" | "interface" | "trait" | "enum"),
         _ => false,
     }
+}
+
+/// The extensions of Fortran, whose grammar only a build with `extra-langs` has.
+pub const FORTRAN_EXTS: &[&str] = &[".f", ".f90", ".f95", ".f03", ".f08", ".for", ".F", ".F90"];
+
+/// `ignores_case` for a definition of the file `path` in `lang` (`detect_at`): a Fortran file is
+/// Fortran by its extension in a build without the grammar too, so a call in another case is
+/// still read as naming it.
+pub fn ignores_case_at(path: &str, lang: Option<&str>, kind: &str) -> bool {
+    let fortran = || FORTRAN_EXTS.iter().any(|e| path.ends_with(e));
+    ignores_case(lang.or_else(|| fortran().then_some("fortran")), kind)
 }
 
 /// The grammar of the repository file `rel` as the parser takes it: by its name, and by its text

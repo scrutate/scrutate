@@ -316,6 +316,10 @@ incompatible index by itself, and that is never breaking.
 - `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
   fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
   row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
+- `dead` no longer lists as dead a Fortran definition called in another case in a build without
+  the Fortran grammar (`call dowork()` for `subroutine DoWork`): a Fortran file ignores case by
+  its extension there too, so such a definition is undecided at worst, and `refs` finds its uses
+  in any case ([CLI](docs/CLI.md#engine-b)).
 - `dead` and `refs` read a name as its file's language writes it: `foo'` in Haskell, `$init` in
   JavaScript and `push!` in Julia are other names, so an unused `foo`, `init` or `push` is dead
   and `refs` no longer lists the longer name's lines as its unresolved uses. Lua's `width-margin`
