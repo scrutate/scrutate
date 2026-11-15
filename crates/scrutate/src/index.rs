@@ -1204,6 +1204,16 @@ fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result
     }
 }
 
+/// The tables SCHEMA creates, in its order, but `meta`, which a rebuild keeps.
+fn data_tables() -> Vec<&'static str> {
+    SCHEMA
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("CREATE TABLE IF NOT EXISTS ").or_else(|| l.trim().strip_prefix("CREATE VIRTUAL TABLE IF NOT EXISTS ")))
+        .map(|rest| rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or(""))
+        .filter(|t| !t.is_empty() && *t != "meta")
+        .collect()
+}
+
 /// The `art` column and its index, on a `files` table an older schema made without it; another
 /// process adding it at the same time is no error.
 fn add_art(db: &Connection) -> rusqlite::Result<()> {
@@ -1535,10 +1545,12 @@ impl Index {
             return Ok(());
         }
         let old = self.segments();
-        self.db.execute_batch(
-            "DELETE FROM refs; DELETE FROM dupkeys; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts; \
-             DELETE FROM names; INSERT INTO names_tri(names_tri) VALUES('delete-all');",
-        )?;
+        // the tables go and come back from SCHEMA: emptied in place, a table an older schema made
+        // keeps its shape under `CREATE ... IF NOT EXISTS`, and the next write fails on it
+        let drop: String = data_tables().iter().rev().map(|t| format!("DROP TABLE IF EXISTS {t};")).collect();
+        self.db.execute_batch(&drop)?;
+        self.db.execute_batch(SCHEMA)?;
+        add_art(&self.db)?;
         self.set_meta("segments", "[]")?;
         let ver = self.bump_version()?;
         self.set_meta("chunks_at", &format!("{ver} 0 0"))?;
@@ -3505,8 +3517,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A check another binary recorded says nothing of the schema work this one does: an open by
-    /// a binary whose schema differs checks once, then trusts its own record.
+    #[test]
+    fn an_index_of_an_older_table_shape_is_rebuilt_in_the_current_one() {
+        // the names table as FEAT-1's binary made it (one row per key) under schema 16: a rebuild
+        // that only empties the tables keeps that shape, and every later update then fails
+        let root = std::env::temp_dir().join(format!("scrutate_ix_old_shape_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def setup():\n    return 1\n\n\ndef setUp():\n    return 2\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        ix.db
+            .execute_batch(
+                "DROP TABLE names_tri; DROP TABLE names; \
+                 CREATE TABLE names(name_key TEXT PRIMARY KEY, name TEXT NOT NULL, initials TEXT NOT NULL, n INTEGER NOT NULL); \
+                 CREATE INDEX names_initials ON names(initials); \
+                 CREATE VIRTUAL TABLE names_tri USING fts5(name_key, content='names', content_rowid='rowid', tokenize='trigram', detail='none', columnsize=0);",
+            )
+            .unwrap();
+        ix.set_meta("schema_version", "16").unwrap();
+        drop(ix);
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
+        let spellings: Vec<String> =
+            ix.db.prepare("SELECT name FROM names ORDER BY name").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(spellings, ["setUp", "setup"], "the names table in the current shape, filled");
+        std::fs::write(root.join("a.py"), "def setup():\n    return 3\n").unwrap();
+        ix.update(false).unwrap();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn the_schema_sql_and_its_version_change_together() {
         // an index of another shape under the same version is opened as current, and its writes
@@ -3519,6 +3561,8 @@ mod tests {
         );
     }
 
+    /// A check another binary recorded says nothing of the schema work this one does: an open by
+    /// a binary whose schema differs checks once, then trusts its own record.
     #[test]
     fn a_check_recorded_by_another_schema_is_checked_again_once() {
         let root = checked_repo("schema_mark");
