@@ -422,6 +422,56 @@ fn only_known(flags: &Flags, args: &[String]) -> bool {
     true
 }
 
+/// The words of `args` that are no flag and no flag's value, and whether a flag gave the pattern
+/// (`-e`, `-f`, `--regexp`, `--file`), as `only_known` reads them.
+fn operands<'a>(flags: &Flags, args: &'a [String]) -> (Vec<&'a str>, bool) {
+    let (mut out, mut pattern_given, mut words) = (Vec::new(), false, args.iter());
+    while let Some(a) = words.next() {
+        if a == "--" {
+            out.extend(words.by_ref().map(String::as_str));
+        } else if a.starts_with("--") {
+            let name = a.split_once('=').map_or(a.as_str(), |(n, _)| n);
+            pattern_given |= matches!(name, "--regexp" | "--file");
+            if value_follows(flags, a) {
+                words.next();
+            }
+        } else if a.len() > 1 && a.starts_with('-') {
+            pattern_given |= a[1..].chars().find(|c| flags.valued.contains(*c)).is_some_and(|c| matches!(c, 'e' | 'f'));
+            if value_follows(flags, a) {
+                words.next();
+            }
+        } else {
+            out.push(a.as_str());
+        }
+    }
+    (out, pattern_given)
+}
+
+/// What makes `argv`'s grep or rg reach scrutate's index directory, which `--exclude-dir` and
+/// `--glob` do not cover: a path named on the command line that lies inside it (as written, in any
+/// case, or once `..` and links are resolved), or, for a walk that follows links (`grep -R`,
+/// `rg -L`), a link under a searched directory that leads into it.
+fn names_the_index_dir(argv: &[String]) -> Option<String> {
+    let (flags, follows): (&Flags, fn(&str) -> bool) = match argv.first()?.as_str() {
+        "grep" => (&GREP_FLAGS, |a| a == "--dereference-recursive" || (a.starts_with('-') && !a.starts_with("--") && a.contains('R'))),
+        "rg" => (&RG_FLAGS, |a| a == "--follow" || (a.starts_with('-') && !a.starts_with("--") && a.contains('L'))),
+        _ => return None,
+    };
+    let (words, pattern_given) = operands(flags, &argv[1..]);
+    let paths = if pattern_given { &words[..] } else { words.get(1..).unwrap_or(&[]) };
+    if let Some(p) = paths.iter().find(|p| crate::files::inside_index_dir(std::path::Path::new(p))) {
+        return Some(p.to_string());
+    }
+    let flag_words = argv[1..].iter().take_while(|a| *a != "--");
+    if flag_words.filter(|a| !words.contains(&a.as_str())).any(|a| follows(a)) {
+        let roots: Vec<&std::path::Path> = if paths.is_empty() { vec![std::path::Path::new(".")] } else { paths.iter().map(std::path::Path::new).collect() };
+        if let Some(link) = crate::files::link_into_index_dir(&roots) {
+            return Some(format!("{} (a link the walk follows)", link.display()));
+        }
+    }
+    None
+}
+
 /// Whether the word after `a` is `a`'s value in `flags`: a long flag that takes one without `=`, or
 /// a cluster of short flags that ends in one that takes a value.
 fn value_follows(flags: &Flags, a: &str) -> bool {
@@ -939,6 +989,13 @@ pub fn run_main(args: &[String]) -> i32 {
     let argv = &args[(i + 1).min(args.len())..];
     if !allowed(argv) {
         eprintln!("scrutate hook run: only a search by {} that runs no program and writes no file is answered", TOOLS.join(", "));
+        return 2;
+    }
+    if let Some(p) = names_the_index_dir(argv) {
+        eprintln!(
+            "scrutate hook run: {p} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
+            crate::files::INDEX_DIR
+        );
         return 2;
     }
     let Ok(exe) = std::env::current_exe() else { return 2 };

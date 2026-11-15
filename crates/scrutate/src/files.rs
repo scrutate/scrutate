@@ -12,6 +12,39 @@ use crate::parse::is_indexable;
 /// Where the indexes live under the repository root; no walk enters it.
 pub const INDEX_DIR: &str = ".scrutate";
 
+/// Whether `path` lies inside an index directory: a component equal to `INDEX_DIR` in any case (a
+/// case-insensitive file system opens `.SCRUTATE` as `.scrutate`), as written or once `..` and
+/// links are resolved. Its files hold the repository's text, so no search or read shows them.
+pub fn inside_index_dir(path: &Path) -> bool {
+    inside_index_dir_named(path) || std::fs::canonicalize(path).is_ok_and(|c| inside_index_dir_named(&c))
+}
+
+/// Whether one of `path`'s own components, as written, is `INDEX_DIR` in any case.
+pub fn inside_index_dir_named(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(INDEX_DIR)))
+}
+
+/// A link under `roots`, at any depth, that leads into an index directory, for a walk that follows
+/// links (`grep -R`, `rg -L`), where the walk's own exclusion matches only a directory's name.
+pub fn link_into_index_dir(roots: &[&Path]) -> Option<PathBuf> {
+    for root in roots {
+        // the index directory itself and .git are not entered; a link is looked at, not followed
+        let walk = ignore::WalkBuilder::new(root)
+            .standard_filters(false)
+            .follow_links(false)
+            .filter_entry(|e| {
+                !(e.file_type().is_some_and(|t| t.is_dir()) && e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(INDEX_DIR) || n == ".git"))
+            })
+            .build();
+        for e in walk.flatten() {
+            if e.path_is_symlink() && inside_index_dir(e.path()) {
+                return Some(e.into_path());
+            }
+        }
+    }
+    None
+}
+
 /// An error unless `root` is an existing directory.
 pub fn root_dir(root: &Path) -> anyhow::Result<()> {
     if !root.is_dir() {

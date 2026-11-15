@@ -1444,8 +1444,13 @@ in the directories of its `PATH` given as absolute paths and outside the current
 git work tree, never the current directory, a relative entry, a repository's own `bin` or
 scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
 `LD_AUDIT` and every `DYLD_*` variable removed. A `grep` gets `--exclude-dir=.scrutate` and an
-`rg` `--glob=!.scrutate` in front of its arguments: scrutate's own index directory, at any depth,
-is never searched (its caches hold the repository's text, see [Security](SECURITY.md)). A line
+`rg` `--glob=!.scrutate` in front of its arguments, so a walk at any depth leaves scrutate's own
+index directory out (its caches hold the repository's text, see [Security](SECURITY.md)). It
+exits 2 with a line that says why, and runs nothing, when a `grep` or `rg` names a path inside it
+(as written, in any case, absolute, through `..` or through a link), or when a walk that follows
+links (`grep -R` or `--dereference-recursive`, `rg -L` or `--follow`) would meet a link under a
+searched directory that leads into it. A search for the text `.scrutate`, the pattern and not a
+path, runs. A line
 with `\r` or another control character but tab and line feed is left alone.
 
 It answers the search as the program would. `rg` goes to `scrutate grep -N` with the same

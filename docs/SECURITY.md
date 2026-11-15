@@ -372,9 +372,12 @@ around a use is cut from it, so the window never shows a value without its name.
 writes its lines through `hook::redacted`; `hook run` redacts what the search program prints, line
 by line as it streams, and leaves `.scrutate/` out of a `grep` or `rg` it runs: the index and the
 `tsquery` cache hold the repository's text in binary records, where a secret runs straight into
-the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends. A command that
-reads those files itself (`find .scrutate -type f`, then a `cat` the shell hook does not answer)
-gets them as stored. A path that holds a secret (a file named with a token) is redacted like any
+the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends. A `grep` or `rg` that names a
+path inside `.scrutate/` (in any case, absolute, through `..` or through a link) is refused, and so
+is a walk that follows links when a link under it leads there; `read_code` and `grep_code` refuse
+such a path the same way (`files::inside_index_dir`). Not the hook's to stop: a command it does
+not answer, such as `cat` or `strings` of those files, gets them as stored, and `find` through
+`hook run` prints their names. A path that holds a secret (a file named with a token) is redacted like any
 other text, so that path cannot be opened from the answer.
 
 The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,

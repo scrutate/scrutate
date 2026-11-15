@@ -393,6 +393,16 @@ impl Scope {
             let p = repo_rel(root, std::path::Path::new(&*p)).map_or(p, std::borrow::Cow::Owned);
             // a link that leaves the repository reads as a missing path, as read_code answers it
             match std::fs::canonicalize(root.join(&*p)) {
+                Ok(c)
+                    if c.strip_prefix(root).is_ok_and(crate::files::inside_index_dir_named)
+                        || crate::files::inside_index_dir_named(std::path::Path::new(&*p)) =>
+                {
+                    bail!(
+                        "{} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
+                        echo(&p),
+                        crate::files::INDEX_DIR
+                    )
+                }
                 Ok(c) if c.starts_with(root) => f.paths = crate::instant::Paths::Walk(vec![root.join(&*p)]),
                 _ => bail!("no such file or directory in the repository: {}", echo(&p)),
             }
@@ -1026,6 +1036,9 @@ pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec
         Ok(c) if c.starts_with(&s.ix.root) => c,
         _ => bail!("cannot read {shown}"),
     };
+    if canon.strip_prefix(&s.ix.root).is_ok_and(crate::files::inside_index_dir_named) || crate::files::inside_index_dir_named(std::path::Path::new(path)) {
+        bail!("{shown} is inside scrutate's index directory ({}), whose files hold the repository's text: not read", crate::files::INDEX_DIR);
+    }
     if !canon.is_file() {
         bail!("{shown} is not a regular file");
     }

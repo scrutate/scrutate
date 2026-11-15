@@ -607,6 +607,75 @@ fn hook_run_searches_nothing_under_the_index_directory() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A grep or rg through `hook run` that names a path inside scrutate's index directory, as written,
+/// absolute, through `..` or through a link, is refused with a line that says why; a search for
+/// the text `.scrutate` is not.
+#[cfg(unix)]
+#[test]
+fn hook_run_refuses_a_named_path_inside_the_index_directory() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_index_named_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("app.py"), "# see .scrutate for the index\n").unwrap();
+    let secret = chars(&mut 63, &format!("{ALNUM}/+"), 40);
+    let mut record = b"\0\0\0assignment@\0\0\0aws_secret_access_key = ".to_vec();
+    record.extend_from_slice(secret.as_bytes());
+    record.extend_from_slice(b"4\0\0\0\0\0\0\0\x01\0\0\0a\n");
+    for dir in [".scrutate/tsquery", "sub/.scrutate/tsquery"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+        fs::write(root.join(dir).join("c.bin"), &record).unwrap();
+    }
+    std::os::unix::fs::symlink(root.join(".scrutate/tsquery/c.bin"), root.join("cache-link")).unwrap();
+    std::os::unix::fs::symlink(root.join(".scrutate"), root.join("index-link")).unwrap();
+    let root = fs::canonicalize(&root).unwrap();
+    let abs = root.join(".scrutate/tsquery/c.bin").to_string_lossy().into_owned();
+    let home = root.with_extension("home");
+    let run = |ask: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(ask)
+            .current_dir(root.join("sub"))
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let mut asks: Vec<Vec<&str>> = vec![
+        vec!["grep", "-a", "aws", ".scrutate/tsquery/c.bin"],
+        vec!["grep", "-a", "-H", "aws", "../sub/.scrutate/tsquery/c.bin"],
+        vec!["grep", "-a", "aws", "../.scrutate/tsquery/c.bin"],
+        vec!["grep", "-a", "aws", &abs],
+        vec!["grep", "-a", "aws", "../cache-link"],
+        vec!["grep", "-a", "-r", "aws", "../index-link"],
+        vec!["grep", "-a", "-e", "aws", "--", ".scrutate/tsquery/c.bin"],
+    ];
+    // a directory named, a name in another case, and a walk that follows a link into it
+    asks.push(vec!["grep", "-a", "-r", "aws", ".scrutate"]);
+    asks.push(vec!["grep", "-a", "aws", "../.SCRUTATE/tsquery/c.bin"]);
+    asks.push(vec!["grep", "-a", "-R", "aws", ".."]);
+    asks.push(vec!["grep", "-a", "--dereference-recursive", "aws", ".."]);
+    if rg::have_rg() {
+        asks.push(vec!["rg", "-a", "aws", ".scrutate/tsquery/c.bin"]);
+        asks.push(vec!["rg", "-a", "aws", ".scrutate"]);
+        asks.push(vec!["rg", "-a", "aws", "../index-link"]);
+        asks.push(vec!["rg", "-a", "-uuu", "aws", "../index-link"]);
+        asks.push(vec!["rg", "-a", "-L", "aws", ".."]);
+    }
+    for ask in &asks {
+        let (code, out, err) = run(ask);
+        assert!(!out.contains(&secret), "hook run {ask:?}: the cache's secret came back:\n{out}");
+        assert!(code == Some(2) && err.contains("index directory"), "hook run {ask:?}: {code:?} {err}");
+    }
+    // the text `.scrutate` is a pattern, not a path, and a walk that does not follow links runs
+    let (code, out, _) = run(&["grep", "-rn", ".scrutate", ".."]);
+    assert!(code == Some(0) && out.contains("app.py"), "{code:?} {out}");
+    let (code, out, _) = run(&["grep", "-a", "-r", "aws", ".."]);
+    assert!(code == Some(1) && !out.contains(&secret), "{code:?} {out}");
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// A line that is not UTF-8 (a stray byte, or a long line's piece cut inside a character) has its
 /// secrets redacted by `hook run` too.
 #[cfg(unix)]

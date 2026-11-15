@@ -1226,3 +1226,38 @@ fn a_resident_grep_of_a_named_file_with_a_nul_byte_answers_as_one_mapped_slice()
     let cli = String::from_utf8_lossy(&out.stdout);
     assert_eq!(cli.contains("x mid"), maps, "the CLI maps it where it maps: {cli}");
 }
+
+/// read_code and grep_code refuse a path inside scrutate's index directory, a text file there too,
+/// as written, in another case, through `..` and through a link: its files hold the repository's
+/// text.
+#[test]
+fn read_code_and_grep_code_refuse_the_index_directory() {
+    let mut r = Repo::new("index_dir", &[("app.py", "def f():\n    return 1\n")]);
+    let token = format!("ghp_{}", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5");
+    fs::create_dir_all(r.root.join(".scrutate/notes")).unwrap();
+    fs::write(r.root.join(".scrutate/notes/t.txt"), format!("TOKEN = \"{token}\"\nplain text\n")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(r.root.join(".scrutate/notes"), r.root.join("notes-link")).unwrap();
+    let mut asks = vec![
+        ("read_code", json!({"path": ".scrutate/notes/t.txt"})),
+        ("read_code", json!({"path": "sub/../.scrutate/notes/t.txt"})),
+        ("grep_code", json!({"pattern": "plain", "path": ".scrutate"})),
+        ("grep_code", json!({"pattern": "plain", "path": ".scrutate/notes"})),
+    ];
+    if cfg!(target_os = "macos") {
+        // a case-insensitive file system opens it under another case
+        asks.push(("read_code", json!({"path": ".SCRUTATE/notes/t.txt"})));
+    }
+    if cfg!(unix) {
+        asks.push(("read_code", json!({"path": "notes-link/t.txt"})));
+        asks.push(("grep_code", json!({"pattern": "plain", "path": "notes-link"})));
+    }
+    fs::create_dir_all(r.root.join("sub")).unwrap();
+    for (tool, args) in asks {
+        let text = r.err(tool, args.clone());
+        assert!(text.contains("index directory") && !text.contains("plain text") && !text.contains(&token), "{tool} {args}: {text}");
+    }
+    // a search of the whole repository never reaches it
+    let all = r.ok("grep_code", json!({"pattern": "plain"}));
+    assert!(!all.contains("t.txt"), "{all}");
+}
