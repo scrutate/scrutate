@@ -836,8 +836,9 @@ pub fn decode_source(raw: &[u8]) -> Option<std::borrow::Cow<'_, str>> {
 const CHECKED: &str = "checked";
 
 /// The identity of the database at `db_path` whose data version is `ver`: its file (device and
-/// inode, size, mtime, change time) and its log while the log holds anything. Any write to
-/// either file, ours or another's, changes it.
+/// inode, size, mtime, change time), its log while the log holds anything, and the schema work
+/// a trusted open skips (`SCHEMA_VERSION` and a hash of the SQL), so a binary whose schema work
+/// differs checks once. Any write to either file, ours or another's, changes it.
 fn check_mark(db_path: &Path, ver: &str) -> String {
     let wal = db_path.with_extension("db-wal");
     let stat = |p: &Path| match std::fs::symlink_metadata(p) {
@@ -848,7 +849,9 @@ fn check_mark(db_path: &Path, ver: &str) -> String {
         }
         Err(_) => "empty".to_string(),
     };
-    format!("{} | {} | {ver}\n", stat(db_path), stat(&wal))
+    // the SQL a trusted open skips: an in-place layout change (as `add_art`'s) adds its SQL here
+    let schema = Sha1::digest([SCHEMA, ART_INDEX].concat());
+    format!("{} | {} | {ver} | schema {SCHEMA_VERSION} {:x}\n", stat(db_path), stat(&wal), schema)
 }
 
 /// Record `mark` as the state of a passing check (a new file, renamed into place) -> whether it is.
@@ -3270,6 +3273,29 @@ mod tests {
         assert_eq!(checks(), c0 + 2, "a changed database is checked again");
         ix.update(false).unwrap();
         assert_eq!(ix.named("beta").unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A check another binary recorded says nothing of the schema work this one does: an open by
+    /// a binary whose schema differs checks once, then trusts its own record.
+    #[test]
+    fn a_check_recorded_by_another_schema_is_checked_again_once() {
+        let root = checked_repo("schema_mark");
+        let checks = || super::QUICK_CHECKS.with(|c| c.get());
+        let open = || super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        let mut ix = open();
+        ix.update(false).unwrap();
+        drop(ix);
+        drop(open());
+        let record = root.join(".scrutate").join(super::CHECKED);
+        let mark = std::fs::read_to_string(&record).unwrap();
+        // the record of the same state as a binary that wrote no schema into the mark
+        std::fs::write(&record, format!("{}\n", mark.split(" | schema ").next().unwrap().trim_end())).unwrap();
+        let c0 = checks();
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "a record of another schema is checked again");
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "then this binary's own record is trusted");
         let _ = std::fs::remove_dir_all(&root);
     }
 

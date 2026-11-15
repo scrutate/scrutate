@@ -428,9 +428,10 @@ NFC with final sigma folded.
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a
     database up to 64 MB (`QUICK_CHECK_MAX_BYTES` or `SCRUTATE_QUICK_CHECK_MAX_BYTES`), once per
     state of the file: a passing check is recorded in `.scrutate/checked` with the database's file
-    identity (device, inode, size, mtime, change time, and its log's while it holds anything) and
-    data version, an open that finds both unchanged skips the walk and the schema work, an update
-    of this process that started from that state records the state it leaves, and a failing
+    identity (device, inode, size, mtime, change time, and its log's while it holds anything), its
+    data version, and the schema version with a hash of the schema SQL (so a binary whose schema
+    work differs walks once); an open that finds all of it unchanged skips the walk and the schema
+    work, an update of this process that started from that state records the state it leaves, and a failing
     `check`, a forced update, a rebuild or any recovery deletes the record; a larger
     one when an error shows damage and in `scrutate check`; structural validation of every array
     on segment open, deep validation in `scrutate check`; also a chunk text that does not inflate,
