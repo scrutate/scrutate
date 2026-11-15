@@ -329,6 +329,9 @@ incompatible index by itself, and that is never breaking.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
 - `review`'s comment puts a renamed file's old path in a code span, as every other path: a name
   such as `x<!--.py` hid the rest of the comment, and `@name` notified a user.
+- `review`'s cut comment keeps the line that says the walk stopped, and its last line names the
+  base and head (`--head` when it is not `HEAD`) of the command that prints the whole report, in a
+  code span.
 - A walk stopped at 2,000 callers lists them by distance, path and line, and names no
   `untested-change`, which its partial calls could not decide.
 - `dupes` lists each group's members by path and line, and cuts near pairs at `--limit` after

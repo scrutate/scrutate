@@ -181,7 +181,7 @@ impl Review {
         section("Notes".into(), i.notes.iter().map(|(p, n)| format!("- {}: {}", at(p, None), n.text(code))).collect());
         // the stopped line explains a comment that names no untested change: the cut keeps it
         let last = if i.stopped { vec![String::new(), format!("_The walk stopped at {} callers._", crate::impact::MAX_CALLERS)] } else { Vec::new() };
-        cap(lines, &last, &i.against)
+        cap(lines, &last, &i.against, &self.head)
     }
 
     pub fn json(&self) -> Value {
@@ -208,8 +208,9 @@ impl Review {
 
 /// The lines joined, then `last`, which is always kept: cut before the line that would pass
 /// `MAX_COMMENT`, with the note that says so.
-fn cap(lines: Vec<String>, last: &[String], base: &str) -> String {
-    let note = format!("\n_Cut at {MAX_COMMENT} characters: {} prints the whole report._\n", code(&format!("scrutate review --base {base}")));
+fn cap(lines: Vec<String>, last: &[String], base: &str, head: &str) -> String {
+    let and_head = if head == "HEAD" { String::new() } else { format!(" --head {head}") };
+    let note = format!("\n_Cut at {MAX_COMMENT} characters: {} prints the whole report._\n", code(&format!("scrutate review --base {base}{and_head}")));
     let tail: String = last.iter().map(|l| format!("{l}\n")).collect();
     let mut out = String::new();
     for l in &lines {
@@ -238,9 +239,9 @@ mod tests {
     #[test]
     fn a_long_report_is_cut_with_a_note_under_the_limit() {
         let lines: Vec<String> = (0..20_000).map(|n| format!("- line {n}")).collect();
-        let out = cap(lines, &[], "main");
+        let out = cap(lines, &[], "main", "HEAD");
         assert!(out.len() <= MAX_COMMENT && out.ends_with("prints the whole report._\n"), "{}", out.len());
-        assert_eq!(cap(vec!["a".into()], &[], "main"), "a\n");
+        assert_eq!(cap(vec!["a".into()], &[], "main", "HEAD"), "a\n");
     }
 
     #[test]

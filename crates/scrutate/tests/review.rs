@@ -519,3 +519,14 @@ fn the_cut_note_quotes_the_base_it_names() {
         assert!(md.contains(&format!("`` scrutate review --base {base} ``")), "{base}: {}", &md[md.len() - 300..]);
     }
 }
+
+/// The cut note's command prints the whole report of the same comparison: the head too, when it
+/// is not HEAD.
+#[test]
+fn the_cut_note_names_the_head_it_reviewed() {
+    let (t, _) = many_callers("capped_head", "base");
+    t.git(&["branch", "feat"]);
+    t.git(&["checkout", "-q", "base"]);
+    let md = t.review(&["--base", "base", "--head", "feat", "--depth", "1"]);
+    assert!(md.contains("`scrutate review --base base --head feat`"), "{}", &md[md.len() - 300..]);
+}
