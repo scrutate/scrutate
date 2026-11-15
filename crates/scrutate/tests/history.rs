@@ -285,3 +285,24 @@ fn a_history_lookup_rewrites_no_index_and_runs_no_clean_filter() {
     assert!(fs::read(t.root.join(".git/index")).unwrap() == index, ".git/index was rewritten");
     assert!(!log.exists(), "the clean filter ran {} times", fs::read_to_string(&log).unwrap_or_default().lines().count());
 }
+
+/// git refuses `--literal-pathspecs` beside a global glob or case-folding pathspec setting, so
+/// one inherited from the caller's environment must not reach the history's git.
+#[test]
+fn an_inherited_pathspec_setting_leaves_the_history_whole() {
+    let t = shaped("pathspec_env");
+    for var in ["GIT_GLOB_PATHSPECS", "GIT_ICASE_PATHSPECS", "GIT_NOGLOB_PATHSPECS"] {
+        let out = Command::new(BIN)
+            .args(["--root", t.root.to_str().unwrap(), "read", "--symbol", "f", "--history", "--json"])
+            .current_dir(&t.root)
+            .envs(GIT_ENV)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env(var, "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{var}: {e}: {}", String::from_utf8_lossy(&out.stderr)));
+        let def = &v["result"]["definitions"][0];
+        assert_eq!(subjects(def), ["edit f again", "edit f", "add f and g"], "{var}: {def}");
+    }
+}

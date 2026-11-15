@@ -46,6 +46,9 @@ pub(crate) struct Git {
     filters: std::sync::OnceLock<Vec<String>>,
 }
 
+/// The pathspec settings git refuses beside `--literal-pathspecs`, never passed on.
+const PATHSPEC_ENV: [&str; 3] = ["GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"];
+
 /// The git commands `Git` runs: each only reads. A porcelain `diff` or `status` refreshes the
 /// index and writes it back.
 const READS: [&str; 9] = ["--version", "rev-parse", "merge-base", "config", "ls-files", "cat-file", "diff-index", "diff-tree", "log"];
@@ -174,6 +177,10 @@ impl Git {
         // a partial clone would fetch an object it lacks: network, a write to .git/objects, and
         // the remote's upload program from the configuration (git 2.44 and later read this)
         c.env("GIT_NO_LAZY_FETCH", "1");
+        // git refuses `--literal-pathspecs` beside a global glob or case-folding pathspec setting
+        for name in PATHSPEC_ENV {
+            c.env_remove(name);
+        }
         c
     }
 
@@ -853,6 +860,7 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let mut want: BTreeMap<String, Option<String>> = SIX.iter().map(|n| n.to_string()).chain(own).map(|n| (n, None)).collect();
         want.insert("GIT_DIR".into(), Some(dir.to_string_lossy().into_owned()));
         want.insert("GIT_NO_LAZY_FETCH".into(), Some("1".into()));
+        want.extend(PATHSPEC_ENV.map(|n| (n.to_string(), None)));
         assert_eq!(got, want);
         let own: BTreeMap<String, Option<String>> = Git::new(&root)
             .unwrap()
@@ -863,6 +871,7 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
             .collect();
         let mut want: BTreeMap<String, Option<String>> = own_env().into_iter().map(|(n, v)| (n, Some(v))).collect();
         want.insert("GIT_NO_LAZY_FETCH".into(), Some("1".into()));
+        want.extend(PATHSPEC_ENV.map(|n| (n.to_string(), None)));
         assert_eq!(own, want);
     }
 
