@@ -79,7 +79,10 @@ jobs:
           python3 tools/order_file.py --elf "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER"
           cargo build --release -p scrutate --locked
           python3 tools/order_file.py --elf-check "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER"
-          python3 tools/order_file.py --elf-check "$RUNNER_TEMP/unordered.map" "$SCRUTATE_LINUX_ORDER" > /dev/null || echo "without the order they lie elsewhere, as expected"
+          # the unordered link must fail the check, or the check above proves nothing
+          if python3 tools/order_file.py --elf-check "$RUNNER_TEMP/unordered.map" "$SCRUTATE_LINUX_ORDER" > /dev/null; then
+            echo "the check passes a link without the order"; exit 1
+          fi
           [ -x /usr/bin/time ] || sudo apt-get -o Acquire::Retries=5 install -y time
           faults() { for _ in 1 2 3 4 5 6 7; do /usr/bin/time -f %R -o "$RUNNER_TEMP/t" "$@" > /dev/null; cat "$RUNNER_TEMP/t"; done | sort -n | sed -n 4p; }
           for b in "$RUNNER_TEMP/unordered" target/release/scrutate; do
