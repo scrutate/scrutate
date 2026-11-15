@@ -1262,7 +1262,7 @@ mod tests {
             // a doc's example credentials, as url-password and basic-auth leave them
             format!("{prog} -u admin:admin https://localhost:9200/"),
             format!("{prog} -u elastic:changeme https://localhost:9200/"),
-            // a later command's `-u` is not curl's
+            // a later command's `-u` is not this program's
             format!("{prog} -s https://example.com/list | sort -u key:value"),
             format!("{prog} -s https://example.com/a; ssh -u ops:deploy2024x host"),
         ] {
