@@ -761,6 +761,13 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
     match &l.from {
         From::Other(how) => bail!("{} {} comes from {}, which --deps does not read", l.name, l.version, crate::fmt::echo(how)),
         From::Path(dir) => {
+            // judged by its text first: a drive or a share is never looked at (Windows would connect)
+            let named = |d: &str| {
+                d.contains(['\\', ':']) || d.starts_with('/') || Path::new(d).components().any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+            };
+            if named(dir) {
+                return Err(refused(&l, &format!("its path dependency {} names a drive, a share or a root", crate::fmt::echo(dir))));
+            }
             let dir = dir.trim_start_matches("./").trim_end_matches('/');
             let full = std::fs::canonicalize(root.join(dir)).ok().filter(|d| d.starts_with(&root));
             let Some(full) = full else {

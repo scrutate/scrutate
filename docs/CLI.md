@@ -812,7 +812,8 @@ The version is never another one: when the installed package has another version
 the locked one (exit 2). A path dependency (a Cargo `path`, an npm `link`, a uv `editable`,
 `directory` or `path` source, a poetry `directory`, a Go `replace` with a directory) answers from
 the repository's own index, kept to that directory, when it is inside the repository, and is an
-error when it is outside. A git or URL source is an error. A package is read once: its files are
+error when it is outside; one that names a drive, a share or a root (a `\`, a `:`, a leading `/`)
+is refused by its text, with nothing looked at. A git or URL source is an error. A package is read once: its files are
 copied to `deps/ECO/NAME@VERSION/src` in the user cache (`SCRUTATE_CACHE_DIR`, else
 `$XDG_CACHE_HOME/scrutate`, `~/Library/Caches/scrutate` on macOS, `%LOCALAPPDATA%\scrutate` on
 Windows, `~/.cache/scrutate` elsewhere; directories of mode 0700), into a temporary directory

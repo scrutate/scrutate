@@ -549,7 +549,9 @@ refused when it resolves outside it. A store inside the repository (`node_module
 be one and none a link, so a `node_modules` or a `site-packages` that links out, or a package in
 `node_modules` that does, is refused before a file is read. Of a Python distribution only the
 files its `RECORD` lists are copied, none that is a link or lies under one. A path dependency is read from the repository's own index when it is
-inside the root and refused when it is outside. The package is copied to the user cache
+inside the root and refused when it is outside; one that names a drive, a share or a root (a `\`,
+a `:`, a leading `/`) is refused by its text before any file is looked at, so Windows never
+connects to a share a lockfile names. The package is copied to the user cache
 (`deps/` under `SCRUTATE_CACHE_DIR` or the platform's cache directory, mode 0700 on Unix): a
 linked file is copied only when it resolves inside the package, a linked directory is never
 followed, and a copy over 20,000 files or 256 MiB is refused with nothing kept. Its answers are

@@ -524,3 +524,14 @@ fn lockfile_text_reaches_no_answer_or_error_unescaped() {
         assert!(!raw(&out, &err), "{name}: {out:?} {err:?}");
     }
 }
+
+#[test]
+fn a_path_dependency_that_names_a_drive_a_share_or_a_root_is_refused_by_its_text() {
+    for dir in [r"\\\\host\\share\\pkg", r"//host/share/pkg", "C:/pkg", "c:pkg", "/etc", r"..\\x"] {
+        let t = Tree::new("path_text");
+        t.npm_lock(&format!(r#""node_modules/ok": {{"resolved": "{dir}", "link": true}}"#));
+        let (code, out, err) = t.run(&["symbol", "--deps", "ok.leak"]);
+        assert_eq!(code, 2, "{dir}: {out}{err}");
+        assert!(err.contains("refused") && err.contains("a drive, a share or a root"), "{dir}: {err}");
+    }
+}
