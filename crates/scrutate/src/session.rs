@@ -35,6 +35,9 @@ use crate::Repo;
 /// (well under the 60 s after which Codex gives a call up).
 pub const BUILD_WAIT: Duration = Duration::from_secs(20);
 
+/// How often a watched session's idle readers let go of segments another process replaced.
+const RELEASE_EVERY: Duration = Duration::from_secs(5);
+
 /// A call that panicked; the session goes on.
 #[derive(Debug)]
 pub struct Panicked;
@@ -209,6 +212,16 @@ impl Session {
     /// Start the watch of a session `open_watched` opened; with `apply` (`serve --watch`) each
     /// burst also brings the stores up to date.
     pub fn watch(self: &Arc<Self>, apply: bool) -> Result<()> {
+        // an idle reader is in no call that would see another process's compaction; without
+        // this it keeps the deleted segment files mapped, their disk space held, until it is used
+        let (session, stop) = (Arc::downgrade(self), Arc::clone(&self.unwatch));
+        std::thread::Builder::new().name("scrutate-release".into()).spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(RELEASE_EVERY);
+                let Some(s) = session.upgrade() else { break };
+                s.release_replaced();
+            }
+        })?;
         let notes = self.notes.clone();
         if notes.is_none() && !apply {
             return Ok(());
@@ -492,6 +505,19 @@ impl Session {
     fn release_idle(&self, names: &[String]) {
         for r in lock(&self.pool).idle.iter_mut() {
             r.ix.release_segments_other_than(names);
+        }
+    }
+
+    /// The idle readers, and the writes' repository when no write runs, close their segment
+    /// store unless it holds the segments the index names now, which another process may have
+    /// changed.
+    fn release_replaced(&self) {
+        let mut pool = lock(&self.pool);
+        let Some(names) = pool.idle.iter().find(|r| r.ix.held_segments().is_some()).map(|r| r.ix.segments()) else { return };
+        pool.idle.iter_mut().for_each(|r| r.ix.release_segments_other_than(&names));
+        drop(pool);
+        if let Ok(mut seed) = self.seed.try_lock() {
+            seed.ix.release_segments_other_than(&names);
         }
     }
 
@@ -1066,6 +1092,42 @@ mod tests {
         std::fs::write(root.join("src/more.py"), "def another_point():\n    return 2\n").unwrap();
         s.write(|repo| repo.update(false)).unwrap();
         assert!(held().iter().all(Option::is_none), "{:?}", held());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Files under `root` this process still maps after they were deleted.
+    fn deleted_maps(root: &Path) -> Vec<String> {
+        let root = root.to_string_lossy().into_owned();
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
+        maps.lines().filter(|l| l.contains(&root) && l.ends_with(" (deleted)")).map(|l| l.rsplit(' ').nth(1).unwrap_or(l).to_string()).collect()
+    }
+
+    #[test]
+    fn an_idle_reader_lets_go_of_segments_another_process_replaced() {
+        let (root, s) = watched("idle_other", 40, Every::given(Some(3600.0)));
+        s.read(&Arc::default(), false, |searcher| searcher.search("made", 5, false)).unwrap();
+        let held = || lock(&s.pool).idle.iter().filter_map(|r| r.ix.held_segments().map(<[String]>::to_vec)).collect::<Vec<_>>();
+        let before = held();
+        assert!(!before.is_empty(), "the reader holds the segments it searched");
+        let mut other = Repo::open(s.root()).unwrap();
+        for k in 0..3 {
+            std::fs::write(root.join(format!("src/other{k}.py")), format!("def other_{k}():\n    return {k}\n")).unwrap();
+            other.update(false).unwrap();
+        }
+        let now = other.ix.segments();
+        drop(other);
+        assert!(before.iter().all(|b| *b != now), "the other process replaced the segments: {before:?} -> {now:?}");
+        let t0 = Instant::now();
+        while (held().iter().any(|h| *h != now) || !deleted_maps(s.root()).is_empty()) && t0.elapsed() < Duration::from_secs(20) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            held().iter().all(|h| *h == now),
+            "an idle reader still holds {:?}, the index has {now:?}; deleted files mapped: {}",
+            held(),
+            deleted_maps(s.root()).len()
+        );
+        assert_eq!(deleted_maps(s.root()), Vec::<String>::new(), "deleted files of the index still mapped");
         let _ = std::fs::remove_dir_all(root);
     }
 

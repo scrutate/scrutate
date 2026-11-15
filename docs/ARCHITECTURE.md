@@ -685,7 +685,10 @@ reader: a SQLite connection with its statement cache, the segment maps and stati
 (`LexStore`) and the searcher's caches, none of which threads can share. Readers are opened as
 calls need them, from the open index without its triage (`Index::another`, about one SQLite
 open), up to the limit [CLI](CLI.md#serve-mcp) gives, and kept; the model set is shared
-(`Arc<ModelSet>`). Writes take the shared writer lock; a read beside a write sees the index as of
+(`Arc<ModelSet>`). An idle reader lets go of segment maps a write replaced: at once after a write
+of this process, and within 5 s (`RELEASE_EVERY`) of another process's, as the writes' own
+repository does when no write runs, so the deleted files' disk space is freed while the session
+waits for calls. Writes take the shared writer lock; a read beside a write sees the index as of
 its last commit (WAL, one transaction per update, the segment manifest swapped in that
 transaction). The scan before a read is a write, and a call that waited for another call's scan
 does not scan again. The scan waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this

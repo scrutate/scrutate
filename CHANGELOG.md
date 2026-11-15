@@ -305,6 +305,9 @@ incompatible index by itself, and that is never breaking.
   `GIT_WORK_TREE` and no `core.worktree` stop with exit 2 and say to set `GIT_WORK_TREE`
   (`read --history` gives that as its note), where they read that repository's history against
   this tree.
+- An idle `serve` or `lsp` lets go of the index segments another process
+  replaced within 5 s, where it kept the deleted files mapped, their disk space held, until its
+  next call.
 - `tsquery --rewrite --write` leaves alone, and names, a file reached through a link to a
   directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
   file the link leads to; a link was already left alone only as the file itself
