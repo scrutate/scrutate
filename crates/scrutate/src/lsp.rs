@@ -1056,14 +1056,17 @@ mod tests {
     fn workspace_symbol_lists_a_nested_folder_once() {
         let base = std::env::temp_dir().join(format!("scrutate_lsp_nested_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        // `building`: how many of the deepest folders are in their first build
+        // `building`: how many of the deepest folders are in their first build. The deepest
+        // folder's symbol is the exact match `shared`, so an outer folder ranks it first: an outer
+        // folder that kept it would list it ahead of its own
         let run = |levels: &[&str], building: usize| {
             let mut dir = base.clone();
             let mut folders = Vec::new();
-            for name in levels {
+            for (n, name) in levels.iter().enumerate() {
                 dir = dir.join(name);
                 std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(dir.join(format!("{name}.py")), format!("def shared_{name}():\n    return 1\n")).unwrap();
+                let def = if n == levels.len() - 1 { "shared".to_string() } else { format!("shared_{name}") };
+                std::fs::write(dir.join(format!("{name}.py")), format!("def {def}():\n    return 1\n")).unwrap();
             }
             let mut dir = base.clone();
             for (n, name) in levels.iter().enumerate() {
@@ -1087,20 +1090,23 @@ mod tests {
                 skipped: Default::default(),
             };
             let r = srv.request("workspace/symbol", &serde_json::json!({"query": "shared"})).unwrap();
-            let mut files: Vec<String> =
-                r.as_array().unwrap().iter().map(|e| e["location"]["uri"].as_str().unwrap().rsplit('/').next().unwrap().to_string()).collect();
-            files.sort();
-            files
+            // in answer order: each folder's after the one before
+            r.as_array().unwrap().iter().map(|e| e["location"]["uri"].as_str().unwrap().rsplit('/').next().unwrap().to_string()).collect::<Vec<_>>()
         };
-        assert_eq!(run(&["outer", "inner"], 0), ["inner.py", "outer.py"]);
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        // each folder lists its own file, the outer one first
+        assert_eq!(run(&["outer", "inner"], 0), ["outer.py", "inner.py"]);
         let _ = std::fs::remove_dir_all(&base);
         assert_eq!(run(&["a", "b", "c"], 0), ["a.py", "b.py", "c.py"]);
         let _ = std::fs::remove_dir_all(&base);
-        assert_eq!(run(&["outer", "inner"], 1), ["inner.py", "outer.py"]);
+        assert_eq!(sorted(run(&["outer", "inner"], 1)), ["inner.py", "outer.py"]);
         let _ = std::fs::remove_dir_all(&base);
-        assert_eq!(run(&["a", "b", "c"], 1), ["a.py", "b.py", "c.py"]);
+        assert_eq!(sorted(run(&["a", "b", "c"], 1)), ["a.py", "b.py", "c.py"]);
         let _ = std::fs::remove_dir_all(&base);
-        assert_eq!(run(&["a", "b", "c", "d"], 2), ["a.py", "b.py", "c.py", "d.py"]);
+        assert_eq!(sorted(run(&["a", "b", "c", "d"], 2)), ["a.py", "b.py", "c.py", "d.py"]);
         let _ = std::fs::remove_dir_all(&base);
     }
 
