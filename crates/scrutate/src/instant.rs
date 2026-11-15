@@ -318,6 +318,8 @@ pub enum Record {
         path: Arc<str>,
         path_bytes: Option<Arc<[u8]>>,
         text: String,
+        /// a group of context lines had begun when the note ended them: line output prints `--`
+        after_break: bool,
     },
 }
 
@@ -1573,6 +1575,8 @@ struct Collector<'a> {
     convert: bool,
     /// where the searcher first saw a NUL byte
     binary_at: Option<u64>,
+    /// records only: a group break no line has followed yet
+    broke: bool,
     /// a match may span lines (otherwise a matched line holds no line break)
     multiline: bool,
     /// context lines are asked for and this file has written no plain output yet
@@ -1730,6 +1734,8 @@ impl<'a> Sink for Collector<'a> {
             self.first = true;
         } else if self.plain.is_some() {
             self.out.extend_from_slice(b"--\n");
+        } else {
+            self.broke = true;
         }
         Ok(true)
     }
@@ -1756,7 +1762,8 @@ impl<'a> Sink for Collector<'a> {
                 self.out.extend_from_slice(note.as_bytes());
                 self.out.push(b'\n');
             } else {
-                self.push(Record::Note { path: Arc::clone(&self.path), path_bytes: self.raw.clone(), text: note });
+                let after_break = self.broke;
+                self.push(Record::Note { path: Arc::clone(&self.path), path_bytes: self.raw.clone(), text: note, after_break });
             }
         }
         self.flush();
@@ -1922,6 +1929,7 @@ impl Collector<'_> {
     }
 
     fn push(&mut self, h: Record) {
+        self.broke = false;
         self.batch.push(h);
         if self.batch.len() >= 512 {
             self.flush();
@@ -2276,6 +2284,7 @@ impl<'a> Run<'a> {
             binary: false,
             convert: false,
             binary_at: None,
+            broke: false,
             multiline: o.pattern.multiline,
             first: o.before > 0 || o.after > 0,
             whole_groups: (o.before > 0 || o.after > 0) && self.p.threads() > 1 && !self.c.alone.load(Ordering::Relaxed),

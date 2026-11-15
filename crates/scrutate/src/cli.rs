@@ -2238,7 +2238,11 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         let (h, context) = match r {
             Record::Match(h) => (h, false),
             Record::Context(h) => (h, true),
-            Record::Note { path, path_bytes, text } => {
+            Record::Note { path, path_bytes, text, after_break } => {
+                if *after_break && groups && !out.json {
+                    // as ripgrep: the `--` of a group a NUL byte ended before its first line
+                    w.write_all(b"--\n")?;
+                }
                 if out.json {
                     let rec = serde_json::json!({"type": "binary", "schema": SCHEMA, "path": path, "text": text});
                     writeln!(w, "{}", with_path_bytes(rec, path_bytes.as_deref()))?;

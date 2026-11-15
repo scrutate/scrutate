@@ -1096,6 +1096,26 @@ fn a_named_file_with_a_nul_byte_is_searched_as_ripgrep_searches_it() {
 }
 
 #[test]
+fn a_context_group_a_nul_ends_keeps_its_separator_in_sorted_output() {
+    // the next match's context lines start at the NUL: ripgrep prints the group's `--`, then stops
+    let d = Dir::new("nulbreak");
+    let mut text = b"foobar here\nToken\n".to_vec();
+    for _ in 0..1000 {
+        text.extend_from_slice(&[b'z'; 80]);
+        text.push(b'\n');
+    }
+    text.extend_from_slice(b"\0bin tail\nx y\nmore FOO\n");
+    d.write("a.txt", &text);
+    // ripgrep 15.2.0, on Linux and macOS alike (`rg -n -B2 'foobar|FOO' a.txt`, with and without
+    // `--sort path`)
+    let want = ["1:foobar here", "--", "binary file matches (found \"\\0\" byte around offset 81018)"];
+    for sort in [&[][..], &["--sort"]] {
+        let (code, out, err) = d.run(&[&["grep", "-n", "-B2"][..], sort, &["foobar|FOO", "a.txt"]].concat());
+        assert_eq!((code, out.lines().collect::<Vec<_>>()), (0, want.to_vec()), "{sort:?} {err}");
+    }
+}
+
+#[test]
 fn a_walked_file_with_an_early_nul_byte_is_searched_as_ripgrep_reads_it() {
     // ripgrep reads a file's first 3 bytes on their own (its BOM check, encoding_rs_io's BomPeeker)
     // and stops at the read that meets the NUL: a match on a line ending in those 3 bytes prints
