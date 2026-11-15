@@ -266,6 +266,10 @@ incompatible index by itself, and that is never breaking.
   `untested-change`, which its partial calls could not decide.
 - `dupes` lists each group's members by path and line, and cuts near pairs at `--limit` after
   ordering them, so an index brought up to date answers as a fresh one of the same tree.
+- `impact` and `review` read the diff with git's plumbing (`diff-index`, `diff-tree`), which never
+  writes `.git/index`, and with every filter driver emptied, so a touched file no longer has git
+  rewrite the index (holding `index.lock` against your own `git add`) or run a clean filter such as
+  Git LFS's ([Security](docs/SECURITY.md#running-git)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - The language server names the files of its answers under the folder as the editor sent it, also

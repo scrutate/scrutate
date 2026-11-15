@@ -812,14 +812,16 @@ cost 0.6 s (8.3 billion).
 
 `impact` (`impact.rs`) is an operation like the others, so it scans first and pages and prints as
 they do. It reads the diff through `git.rs`, which runs `git` in the root, the one program Engine B
-starts: `git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the changed
-lines of each side, `git ls-files --others --exclude-standard` for untracked files, `git
-rev-parse` and `git merge-base` for the base commit, and one `git cat-file --batch` for the base
-copies (and, with `--staged`, the staged copies). `read --history` reads a definition's commits
-through it too: `git log -L start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first
-found there through `git diff -U0 HEAD -- path` when the file has uncommitted edits
-(`Git::at_head`); in a shallow clone the commits the history stops at (`Git::shallow_boundaries`)
-are marked as the cut, never as a change. Every call passes `--no-optional-locks`,
+starts: `git diff-index --raw -z` (`git diff-tree` between two commits) for each file's status,
+modes and blob ids, the same with `-p -U0` for the changed lines of each side, `git ls-files
+--others --exclude-standard` for untracked files, `git rev-parse` and `git merge-base` for the
+base commit, and one `git cat-file --batch` for the base copies (and, with `--staged`, the staged
+copies). `read --history` reads a definition's commits through it too: `git log -L
+start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first found there through `git diff
+-U0 HEAD -- path` when the file has uncommitted edits (`Git::at_head`); in a shallow clone the
+commits the history stops at (`Git::shallow_boundaries`) are marked as the cut, never as a change.
+The diff is plumbing, which never refreshes the index, and every filter driver the configuration
+names is emptied for it (`Git::no_filters`); every call passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
 helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
 a commit id, which every later call uses. Git sees this process's environment, a relative
@@ -853,7 +855,7 @@ reaches is one from which no test file is
 found going up the calls the walk met.
 
 `review` (`review.rs`) is a command line answer, not an operation: it serves CI, so no MCP tool or
-session runs it. It asks `impact::between` for the diff of two commits (`git diff BASE HEAD`, each
+session runs it. It asks `impact::between` for the diff of two commits (`git diff-tree BASE HEAD`, each
 side parsed from git's copies, as `--staged` reads the staged side) and renders that answer,
 findings included, three ways (Markdown, JSON, GitLab, methods of `Review`;
 [CLI](CLI.md#review)).

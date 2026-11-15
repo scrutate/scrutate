@@ -581,3 +581,32 @@ fn a_walk_cut_at_its_limit_sorts_its_callers_and_claims_no_untested_change() {
     let untested: Vec<&Value> = v["findings"].as_array().unwrap().iter().filter(|f| f["kind"] == "untested-change").collect();
     assert!(untested.is_empty(), "{untested:?}");
 }
+
+/// Reading a change writes nothing of the repository's and starts no program its configuration
+/// names: a touched file is no reason to rewrite .git/index, and a clean filter never runs.
+#[test]
+fn impact_rewrites_no_index_and_runs_no_clean_filter() {
+    let t = chain("no_filter");
+    t.write(".gitattributes", "*.py filter=logged\n");
+    t.git(&["config", "filter.logged.clean", "sh -c 'echo ran >> .git/filter.log; cat'"]);
+    t.git(&["config", "filter.logged.required", "true"]);
+    t.commit("filtered");
+    let log = t.root.join(".git/filter.log");
+    let _ = fs::remove_file(&log);
+    // a stat change alone, and an edit
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    fs::File::options().write(true).open(t.root.join("lib/top.py")).unwrap().set_modified(later).unwrap();
+    t.write("lib/mid.py", "from lib.core import deepest\n\n\ndef middle(x):\n    return deepest(x) * 3\n");
+    let unchanged = |args: &[&str]| {
+        let index = fs::read(t.root.join(".git/index")).unwrap();
+        let v = t.json(args);
+        assert_eq!(ids(&v, "changed"), ["lib/mid.py:4-5"], "{args:?}: {v}");
+        assert!(fs::read(t.root.join(".git/index")).unwrap() == index, "{args:?}: .git/index was rewritten");
+        assert!(!log.exists(), "{args:?}: the clean filter ran {} times", fs::read_to_string(&log).unwrap_or_default().lines().count());
+    };
+    unchanged(&[]);
+    // staging runs the filter itself, so its log starts again after it
+    t.git(&["add", "lib/mid.py"]);
+    let _ = fs::remove_file(&log);
+    unchanged(&["--staged"]);
+}

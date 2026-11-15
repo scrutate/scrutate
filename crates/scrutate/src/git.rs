@@ -33,9 +33,11 @@ pub(crate) struct Entry {
     pub(crate) new_lines: Vec<(i64, i64)>,
 }
 
-/// The `git` program run in the repository. Nothing it runs writes: no optional locks, no file
-/// system monitor, no external diff or text conversion. A revision is checked before it is
-/// passed, so it never reaches git as an option.
+/// The `git` program run in the repository. Nothing it runs writes, or starts a program of the
+/// configuration's: no optional locks, no file system monitor, no external diff or text
+/// conversion, a diff that never refreshes the index (`diff-index`, `diff-tree`), and no clean or
+/// process filter. A revision is checked before it is passed, so it never reaches git as an
+/// option.
 pub(crate) struct Git {
     dir: PathBuf,
     env: Env,
@@ -154,7 +156,7 @@ impl Git {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
         match self.output(args)? {
             (true, out, _) => Ok(out),
-            (false, _, why) => bail!("git {}: {why}", args[0]),
+            (false, _, why) => bail!("git {}: {why}", verb(args)),
         }
     }
 
@@ -183,9 +185,12 @@ impl Git {
 
     /// The files that differ from `base`, with their changed lines, and the untracked files.
     pub(crate) fn diff(&self, base: &str, new: &New) -> Result<Vec<Entry>> {
-        let common = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-M", "--src-prefix=a/", "--dst-prefix=b/"];
+        // plumbing, which never refreshes the index and so never writes it back
+        let mut common = self.no_filters()?;
+        common.push(if matches!(new, New::Commit(_)) { "diff-tree" } else { "diff-index" }.to_string());
+        common.extend(["-r", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-M", "--src-prefix=a/", "--dst-prefix=b/"].map(String::from));
         let with = |more: &[&str]| -> Vec<String> {
-            let mut v: Vec<String> = common.iter().chain(more).map(|s| s.to_string()).collect();
+            let mut v: Vec<String> = common.iter().cloned().chain(more.iter().map(|s| s.to_string())).collect();
             if matches!(new, New::Staged) {
                 v.push("--cached".into());
             }
@@ -197,7 +202,7 @@ impl Git {
             v
         };
         let raw = self.run(&with(&["--raw", "-z", "--no-abbrev"]).iter().map(String::as_str).collect::<Vec<_>>())?;
-        let patch = self.run(&with(&["-U0", "--inter-hunk-context=0"]).iter().map(String::as_str).collect::<Vec<_>>())?;
+        let patch = self.run(&with(&["-p", "-U0", "--inter-hunk-context=0"]).iter().map(String::as_str).collect::<Vec<_>>())?;
         let mut entries = raw_entries(&raw)?;
         let sections = sections(&patch);
         // a file whose stat alone changed is in the raw list and has no section: nothing changed
@@ -345,6 +350,31 @@ impl Git {
             }
         }
         Ok(AtHead::Lines(start - shift, end - shift))
+    }
+
+    /// `-c` options that empty every filter driver the configuration names, so reading a file of
+    /// the working tree runs no clean or process filter (git-lfs's among them). A file such a
+    /// filter would turn back into its committed text is compared as it is on disk.
+    fn no_filters(&self) -> Result<Vec<String>> {
+        let (_, out, _) = self.output(&["config", "-z", "--get-regexp", r"^filter\."])?;
+        let mut names = BTreeSet::new();
+        for entry in out.split(|&b| b == 0) {
+            let key = String::from_utf8_lossy(entry.split(|&b| b == b'\n').next().unwrap_or_default()).into_owned();
+            if let Some((name, _)) = key.strip_prefix("filter.").and_then(|k| k.rsplit_once('.')) {
+                names.insert(name.to_string());
+            }
+        }
+        let mut args = Vec::new();
+        for name in names {
+            // `-c` ends the key at its first `=`: such a driver could not be emptied
+            if name.contains('=') {
+                bail!("git: the filter driver {} has a name with `=`, which a diff cannot turn off", echo(&name));
+            }
+            for set in ["clean=", "smudge=", "process=", "required=false"] {
+                args.extend(["-c".to_string(), format!("filter.{name}.{set}")]);
+            }
+        }
+        Ok(args)
     }
 
     /// The contents of these blobs, by id, read by one `git cat-file --batch`.
@@ -571,6 +601,15 @@ fn not_run(e: std::io::Error) -> anyhow::Error {
     } else {
         anyhow!("cannot run git: {e}")
     }
+}
+
+/// The git command `args` run, past the `-c` options in front of it.
+fn verb<'a>(args: &[&'a str]) -> &'a str {
+    let mut i = 0;
+    while args.get(i) == Some(&"-c") {
+        i += 2;
+    }
+    args.get(i).copied().unwrap_or_default()
 }
 
 fn first_line(b: &[u8]) -> String {

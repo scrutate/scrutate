@@ -71,16 +71,18 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 ## Running git
 
 `impact` and `review` run the `git` program found on `PATH` (on Windows the current directory is
-not searched first) in the root: `rev-parse`, `merge-base`, `diff` (raw and `-U0`),
-`ls-files --others` and one `cat-file --batch`. `read --history` runs `--version`, `rev-parse
---is-shallow-repository` (and in a shallow clone `rev-parse --git-path shallow`, whose file of
-commit ids it reads), `cat-file -e`,
-`diff -U0 HEAD` with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of
-an indexed file, never a path the caller writes: inside `-L start,end:path`, `HEAD:./path` and
-after `--`, a path that starts with `-` or holds a colon reads as a path. Nothing in the repository names this program or
-its arguments. Every call only reads: `--no-optional-locks` (git writes no index file),
-`-c core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and `--no-textconv`
-(no external diff or text conversion program from git's configuration).
+not searched first) in the root: `rev-parse`, `merge-base`, `config --get-regexp`, `diff-index`
+(`diff-tree` between two commits; raw and `-U0`), `ls-files --others` and one `cat-file --batch`.
+`read --history` runs `--version`, `rev-parse --is-shallow-repository` (and in a shallow clone
+`rev-parse --git-path shallow`, whose file of commit ids it reads), `cat-file -e`, `diff -U0 HEAD`
+with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of an indexed
+file, never a path the caller writes: inside `-L start,end:path`, `HEAD:./path` and after `--`, a
+path that starts with `-` or holds a colon reads as a path. Nothing in the repository names this
+program or its arguments. Every call only reads: `--no-optional-locks` (git writes no index file),
+the diff by plumbing that never refreshes the index (`git diff` writes `.git/index` back when a
+file's stat changed, holding `index.lock` against your own `git add` meanwhile), `-c
+core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and `--no-textconv` (no
+external diff or text conversion program from git's configuration).
 
 The one argument a caller gives is a revision (`--base`, the tool's `base`, `review --head`). An
 empty one, or one starting with `-`, is refused before git runs, so `--base=--output=x` cannot
@@ -92,10 +94,14 @@ Of the environment, only a relative `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRE
 `GIT_COMMON_DIR` changes: it is made absolute against the command's working directory, where git
 itself reads it, so starting git at the root does not point it at another repository.
 
-What remains is git's trust in its own configuration: a clean filter the user's git configuration
-defines (Git LFS, for example) runs on a working tree file `.gitattributes` assigns to it, as in
-`git diff`. A repository can select such a filter but not define one: a clone carries no
-`.git/config`.
+No filter program runs either. `.gitattributes` can assign a working tree file to a filter that
+git's configuration defines (Git LFS's, for example), and git would run its clean command to
+compare that file. So every driver `git config --get-regexp '^filter\.'` lists gets
+`-c filter.<name>.clean= -c filter.<name>.smudge= -c filter.<name>.process= -c
+filter.<name>.required=false` on the diff, and the file is read as it is on disk. One touched
+since git last looked at it (by a build or a checkout) is then compared with its committed text
+unfiltered: an LFS file shows as a changed binary file. A driver whose name holds `=` cannot be
+emptied that way, and `impact` stops with an error rather than run it.
 
 ## The session socket
 
