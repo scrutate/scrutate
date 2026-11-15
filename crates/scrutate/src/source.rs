@@ -204,18 +204,6 @@ pub(super) fn make_searcher(q: &Query, binary: BinaryDetection, heap: Option<usi
         .build()
 }
 
-/// What the reader needs of a walked file `b`, whose first NUL is at `at`: in quit mode it stops
-/// at the read that meets the NUL, and its second read takes up to 64 KiB, so a NUL before that
-/// is met by then and nothing after it is ever read; copying the rest into the reader's buffer
-/// only cost time. (A named file's reader turns the NUL into a line break and reads on.)
-fn up_to_the_nul(b: &[u8], at: usize) -> &[u8] {
-    if at < (64 << 10) - 8 {
-        &b[..=at]
-    } else {
-        b
-    }
-}
-
 /// Files up to this size are read with one call (`first`) instead of reading until a zero-length
 /// read; within it the searcher's binary check covers the whole file.
 pub(super) const SMALL_FILE: u64 = 64 << 10;
@@ -240,6 +228,18 @@ fn splittable(o: &Query) -> bool {
 /// UTF-8 and UTF-16 byte-order marks: only the stream reader transcodes them.
 fn starts_with_bom(b: &[u8]) -> bool {
     b.starts_with(&[0xEF, 0xBB, 0xBF]) || b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF])
+}
+
+/// What the reader needs of a walked file `b`, whose first NUL is at `at`: in quit mode it stops
+/// at the read that meets the NUL, and its second read takes up to 64 KiB, so a NUL before that
+/// is met by then and nothing after it is ever read; copying the rest into the reader's buffer
+/// only cost time. (A named file's reader turns the NUL into a line break and reads on.)
+fn up_to_the_nul(b: &[u8], at: usize) -> &[u8] {
+    if at < (64 << 10) - 8 {
+        &b[..=at]
+    } else {
+        b
+    }
 }
 
 /// Search `src`, reported as `rel`, and send what it finds. `named`: a root that is a file, or
