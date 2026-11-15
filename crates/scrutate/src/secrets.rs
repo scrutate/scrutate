@@ -229,8 +229,17 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["bearer", "authorization"],
             opaque,
         ),
-        // the password after the user that `curl -u` or `--user` gives
-        rule("curl-user", "scrutate", r#"(?i)\bcurl\b[^\n]*?\s(?:-u|--user)(?:[ \t]+|=)["']?[^\s:"']+:([^\s"']+)"#, 1, 0.0, &["curl"], real_value),
+        // the password after the user that curl's `-u`, `--user` (a value joined to `-u` too) or a
+        // proxy's `-U`, `--proxy-user` gives
+        rule(
+            "curl-user",
+            "scrutate",
+            r#"(?i)\bcurl\b[^\n|;&]*?\s(?:-u[ \t]*|--(?:proxy-)?user(?:[ \t]+|=))["']?[^\s:"']+:([^\s"']+)"#,
+            1,
+            0.0,
+            &["curl"],
+            url_password,
+        ),
         // HTTP Basic credentials: base64 of `user:password`
         rule("basic-auth", "scrutate", r"(?i)\bbasic[ \t]+([A-Za-z0-9+/]{8,}={0,2})", 1, 0.0, &["basic"], user_and_password),
         // a `.env` line (`NAME=value`, the name upper case): the value may hold any symbol
@@ -283,7 +292,7 @@ static NOT_SECRET_NAMES: LazyLock<Regex> = LazyLock::new(|| {
 fn real_value(secret: &str, _: &str, _: &str) -> bool {
     let lower = secret.to_ascii_lowercase();
     let first = secret.chars().next().unwrap_or(' ');
-    !(matches!(lower.as_str(), "true" | "false" | "null" | "none" | "password" | "pass" | "secret")
+    !(matches!(lower.as_str(), "true" | "false" | "null" | "none" | "password" | "pass" | "secret" | "changeme")
         || secret.chars().all(|c| c == first)
         || secret.starts_with(['$', '{', '%', '<', '/'])
         || lower.starts_with("os."))
@@ -1217,17 +1226,27 @@ mod tests {
             (format!("{prog} -u deploy:{a} https://api.example.com/"), &a),
             (format!("{prog} --user admin:{b} https://api.example.com/"), &b),
             (format!("{prog} -s --user=\"ci:{a}\" -X POST https://api.example.com/"), &a),
+            // the value joined to the flag, and a proxy's credentials, which are a secret too
+            (format!("{prog} -udeploy:{a} https://api.example.com/"), &a),
+            (format!("{prog} -x http://proxy:3128 -U proxyuser:{b} https://api.example.com/"), &b),
+            (format!("{prog} --proxy-user proxyuser:{b} https://api.example.com/"), &b),
         ] {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && marks.iter().any(|m| m.kind == "curl-user"), "{line} -> {out}");
         }
         for line in [
-            "curl -u $USER:$PASS https://api.example.com/",
-            "curl -u \"${API_USER}:${API_TOKEN}\" https://x",
-            "curl -u user:password https://x",
-            "curl -u deploy https://x",
+            format!("{prog} -u $USER:$PASS https://api.example.com/"),
+            format!("{prog} -u \"${{API_USER}}:${{API_TOKEN}}\" https://x"),
+            format!("{prog} -u user:password https://x"),
+            format!("{prog} -u deploy https://x"),
+            // a doc's example credentials, as url-password and basic-auth leave them
+            format!("{prog} -u admin:admin https://localhost:9200/"),
+            format!("{prog} -u elastic:changeme https://localhost:9200/"),
+            // a later command's `-u` is not curl's
+            format!("{prog} -s https://example.com/list | sort -u key:value"),
+            format!("{prog} -s https://example.com/a; ssh -u ops:deploy2024x host"),
         ] {
-            assert!(redact(line).1.iter().all(|m| m.kind != "curl-user"), "{line}");
+            assert!(redact(&line).1.iter().all(|m| m.kind != "curl-user"), "{line}");
         }
     }
 

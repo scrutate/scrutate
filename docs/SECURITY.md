@@ -420,7 +420,10 @@ carries a token (`https://<token>@github.com/...`); `url-password` takes the pas
 URL that carries one (`https://user:pass@host`, also with no user), with a digit or a symbol in it
 or eight letters or more, and no variable (`$PASS`, `${...}`) or placeholder word; `bearer-token` an
 opaque token after `Bearer` or an `Authorization: Token` scheme; `curl-user` the password that
-`curl -u` or `--user` gives after the user, unless it is a variable. A token here mixes upper
+`curl -u` or `--user` gives after the user (also joined to `-u`, and a proxy's through `-U` or
+`--proxy-user`), on curl's own command (up to a `|`, `;` or `&`), with
+url-password's test of the value, so a variable and a doc's example (`admin:admin`,
+`elastic:changeme`) stay. A token here mixes upper
 case, lower case and digits, or runs letters and digits through each other (one case with digits, a
 change between them three times or more), or is a UUID or 32 or more hex digits, so a word with a
 number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
