@@ -37,23 +37,30 @@ pub fn trailing(lang: &str) -> &'static str {
     }
 }
 
-/// Whether `c` beside a name makes a longer name of it in the language: `'` in Haskell, `$` in
-/// JavaScript. PHP's `$` is a variable's sigil (`$current` is `current`) and its `\` joins the
-/// parts of a qualified name, each a name of its own.
-pub fn joins(lang: &str, c: char) -> bool {
-    !(lang == "php" && (c == '$' || c == '\\')) && is_continue_in(lang, c)
+/// Whether `c` right before a name makes a longer name of it: a name character, or the `$` a
+/// JavaScript, TypeScript or Java name can start with (`$init`). Scala's and Groovy's `$` opens
+/// an interpolation (`s"v$version"`), PHP's is a variable's sigil (`$current` is `current`), and a
+/// `'` before a Haskell name quotes it (`'helper`): none of them is part of the name.
+pub fn joins_before(lang: &str, c: char) -> bool {
+    is_continue(c) || c == '$' && matches!(lang, "javascript" | "typescript" | "tsx" | "java")
 }
 
-/// Whether `text[a..b]` is part of a longer name of the language at either end (`joins`): `foo`
-/// in `foo'`, `init` in `$init`, `valid` in `valid?`. A mark before `=` or `~` is an operator
-/// (`a != b`).
+/// Whether `c` right after a name makes a longer name of it: `joins_before`'s, or a prime
+/// (`foo'` in Haskell, OCaml, F# and Nix). PHP's `\` joins the parts of a qualified name, each a
+/// name of its own.
+pub fn joins_after(lang: &str, c: char) -> bool {
+    joins_before(lang, c) || c == '\'' && extra(lang).contains('\'')
+}
+
+/// Whether `text[a..b]` is part of a longer name of the language at either end (`joins_before`,
+/// `joins_after`): `foo` in `foo'`, `init` in `$init`, `valid` in `valid?`. A mark before `=` or
+/// `~` is an operator (`a != b`).
 pub fn inside_name(lang: &str, text: &str, a: usize, b: usize) -> bool {
-    let joins = |c: char| joins(lang, c);
     let (Some(before), Some(rest)) = (text.get(..a), text.get(b..)) else { return false };
     let mut after = rest.chars();
-    before.chars().next_back().is_some_and(joins)
+    before.chars().next_back().is_some_and(|c| joins_before(lang, c))
         || match after.next() {
-            Some(c) if joins(c) => true,
+            Some(c) if joins_after(lang, c) => true,
             Some(c) if trailing(lang).contains(c) => !after.next().is_some_and(|n| n == '=' || n == '~'),
             _ => false,
         }
@@ -152,6 +159,11 @@ mod tests {
         assert!(!inside_name("ruby", "a != b", 0, 1) && !inside_name("ruby", "a!=b", 0, 1) && inside_name("ruby", "a? b", 0, 1));
         assert!(!inside_name("php", r"\App\User", 5, 9), "a part of a qualified name is a name");
         assert!(!inside_name("php", "User::$current", 7, 14), "a sigil is not part of the name");
+        assert!(!inside_name("scala", "s\"v$version\"", 4, 11) && !inside_name("groovy", "\"v$release\"", 3, 10), "an interpolation");
+        assert!(!inside_name("haskell", "varE 'helper", 6, 12) && inside_name("haskell", "helper' x", 0, 6), "a quote before, a prime after");
+        for lang in ["ocaml", "fsharp", "nix"] {
+            assert!(inside_name(lang, "foo' 1", 0, 3) && !inside_name(lang, "'foo", 1, 4), "{lang}: a prime joins after a name only");
+        }
     }
 
     #[test]

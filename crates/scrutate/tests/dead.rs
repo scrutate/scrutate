@@ -459,3 +459,26 @@ fn a_fortran_definition_called_in_another_case_is_not_dead_without_the_grammar()
     let dead = names(&v, "dead");
     assert!(!dead.iter().any(|d| d.ends_with("DoWork") || d.ends_with("caller")), "{v}");
 }
+
+#[test]
+fn a_sigil_or_a_quote_before_a_name_is_a_use_of_the_name() {
+    // Scala's and Groovy's `$version` in a string interpolates `version`; Haskell's `'helper` in a
+    // Template Haskell quote names `helper` (a trailing prime still makes another name: the
+    // Haskell case of a_longer_name_of_the_language_is_no_use_of_the_shorter_one)
+    let r = Repo::new(
+        "sigils",
+        &[
+            ("App.scala", "object App {\n  private def version = \"1.0\"\n  def main(args: Array[String]): Unit = println(s\"v$version\")\n}\n"),
+            ("G.groovy", "class G {\n  def release() { return \"1.0\" }\n  def show() { return \"v$release\" }\n}\n"),
+            (
+                "Main.hs",
+                "{-# LANGUAGE TemplateHaskell #-}\nmodule Main where\n\nimport Language.Haskell.TH\n\nhelper :: Int -> Int\nhelper x = x\n\nmain :: IO ()\nmain = print $(varE 'helper)\n",
+            ),
+        ],
+    );
+    let v = r.json(&["dead"]);
+    let dead = names(&v, "dead");
+    for used in ["App.scala App.version", "G.groovy G.release", "Main.hs helper"] {
+        assert!(!dead.contains(&used.to_string()), "{used} is used: {v}");
+    }
+}

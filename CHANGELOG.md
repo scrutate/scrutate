@@ -331,7 +331,8 @@ incompatible index by itself, and that is never breaking.
 - `dead` and `refs` read a name as its file's language writes it: `foo'` in Haskell, `$init` in
   JavaScript and `push!` in Julia are other names, so an unused `foo`, `init` or `push` is dead
   and `refs` no longer lists the longer name's lines as its unresolved uses. Lua's `width-margin`
-  is a use of `width` where no definition has that name ([CLI](docs/CLI.md#engine-b)).
+  is a use of `width` where no definition has that name; `$version` in a Scala or Groovy string and
+  Haskell's quote `'helper` still name `version` and `helper` ([CLI](docs/CLI.md#engine-b)).
 - `impact` lists a caller of a deleted definition that calls it through an import alias
   (`from util import helper as h`, JavaScript `import { helper as h }`) or, where names ignore
   case, in another case (PHP `dothing()` for a deleted `DoThing`), as `callers` does for a live

@@ -239,12 +239,16 @@ fn occurrences(
             out.extend(folded.get(&w.to_ascii_lowercase()).into_iter().flatten().filter(|&&n| hit != Some(n)).map(|&n| (n, line)));
         }
     };
-    // a word is the name the file's language writes: `foo'`, `$init` and `push!` are names of
-    // their own (`ident::inside_name`)
-    let joins = |c: char| lang.map_or(word_char(c), |l| crate::ident::joins(l, c));
+    // a word is the name the file's language writes (`ident::inside_name`): `foo'`, `$init` and
+    // `push!` are names of their own, `'helper` and `s"v$version"` name `helper` and `version`
+    let joins = |c: char, inside: bool| match lang {
+        Some(l) if inside => crate::ident::joins_after(l, c),
+        Some(l) => crate::ident::joins_before(l, c),
+        None => word_char(c),
+    };
     let marks = lang.map_or("", crate::ident::trailing);
     for (i, c) in src.char_indices() {
-        if joins(c) {
+        if joins(c, start.is_some()) {
             start.get_or_insert(i);
             continue;
         }

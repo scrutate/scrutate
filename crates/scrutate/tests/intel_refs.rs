@@ -2293,3 +2293,18 @@ fn a_longer_name_of_the_language_is_no_occurrence_of_the_shorter_one() {
     at("init", &[("a.js:1", "a.js")]);
     at("width", &[("w.lua:1", "w.lua"), ("w.lua:6", "w.lua"), ("w.lua:7", "w.lua")]);
 }
+
+#[test]
+fn a_sigil_or_a_quote_before_a_name_is_an_occurrence_of_the_name() {
+    // `s"v$version"` interpolates `version`; `'helper` in a Template Haskell quote names `helper`
+    let r = Repo::new(
+        "sigils",
+        &[
+            ("App.scala", "object App {\n  private def version = \"1.0\"\n  def main(args: Array[String]): Unit = println(s\"v$version\")\n}\n"),
+            ("Main.hs", "module Main where\n\nhelper :: Int -> Int\nhelper x = x\n\nmain :: IO ()\nmain = print $(varE 'helper)\n"),
+        ],
+    );
+    let lines = |name: &str| -> Vec<String> { r.resolved(name).into_iter().map(|(at, _)| at).collect() };
+    assert!(lines("version").contains(&"App.scala:3".to_string()), "{:?}", lines("version"));
+    assert!(lines("helper").contains(&"Main.hs:7".to_string()), "{:?}", lines("helper"));
+}
