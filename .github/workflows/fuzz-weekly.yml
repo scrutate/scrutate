@@ -64,6 +64,9 @@ jobs:
               break
             fi
           done
+      # the fuzz workspace builds from its committed lock, the root lock's versions plus its own crates
+      - name: the fuzz lock is current and the root lock's
+        run: python3 tools/fuzz_lock.py --check && cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
       - run: cargo "+$NIGHTLY" fuzz build -O "$TARGET"
       - run: cargo "+$NIGHTLY" fuzz run -O "$TARGET" -- -max_total_time=2700 -print_final_stats=1
       - if: always()

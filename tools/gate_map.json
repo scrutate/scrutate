@@ -270,5 +270,9 @@
  "ci.yml:compat:d5aed2b0c6": {
   "step": "ripgrep 15.2.0 for the tests that compare with it",
   "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
+ },
+ "ci.yml:fuzz:fa6b4dc967": {
+  "step": "the fuzz lock is current and the root lock's",
+  "by": "gate: fuzz-check"
  }
 }

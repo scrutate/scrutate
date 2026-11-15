@@ -143,7 +143,7 @@ if [ "$mode" = "full" ]; then
   step test-extra-langs $fast cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
   # ci.yml fuzz job's targets on stable: fuzz/ is a workspace of its own, which no clippy above
   # compiles; the nightly sanitizer build and the crash inputs stay CI's
-  step fuzz-check env CARGO_TARGET_DIR="$target/fuzz" cargo check --manifest-path fuzz/Cargo.toml --bins
+  step fuzz-check bash -c "python3 tools/fuzz_lock.py --check && CARGO_TARGET_DIR='$target/fuzz' cargo check --manifest-path fuzz/Cargo.toml --bins --locked"
 fi
 if [ "$mode" != "--quick" ]; then
   # the Python job's bench steps (stdlib only), against this commit's release binary
