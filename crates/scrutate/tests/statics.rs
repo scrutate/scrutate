@@ -49,6 +49,8 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("policy.rs", "DEBUG", "SCRUTATE_GREP_DEBUG, read once per process"),
     ("policy.rs", "CORES", "the machine's cores, asked once per process"),
     ("parse.rs", "PARSERS", "per thread, a reused tree-sitter parser per language"),
+    ("resolve/mod.rs", "PARSED", "keyed by root, path and content hash"),
+    ("resolve/mod.rs", "PARSES", "per thread, a test's count of parsed files"),
     ("running.rs", "LOCK", "the process's signal state"),
     ("running.rs", "HELD", "the process's signal state"),
     ("running.rs", "WRITING", "the process's signal state"),

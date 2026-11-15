@@ -333,6 +333,20 @@ pub const TOO_DEEP: &str = "nested too deeply to read";
 const MAX_DEPTH: usize = 2000;
 
 pub(crate) struct FileInfo {
+    parsed: std::sync::Arc<Parsed>,
+    defs: Vec<Def>,
+}
+
+impl std::ops::Deref for FileInfo {
+    type Target = Parsed;
+    fn deref(&self) -> &Parsed {
+        &self.parsed
+    }
+}
+
+/// A file's decoded text, tree and imports: the same for every request while its bytes stay, so
+/// they are kept across requests (`PARSED`).
+pub(crate) struct Parsed {
     lang: Option<Lang>,
     pub(crate) src: String,
     /// the bytes on disk and where each line starts, when decoding `src` replaced invalid UTF-8:
@@ -341,8 +355,76 @@ pub(crate) struct FileInfo {
     tree: Option<Tree>,
     /// the tree was dropped for passing `MAX_DEPTH`
     deep: bool,
-    defs: Vec<Def>,
     bindings: Vec<Binding>,
+}
+
+impl Parsed {
+    /// What the store counts for it: the text, the bytes kept beside it, and the tree, which takes
+    /// about this many times the text.
+    fn weight(&self) -> usize {
+        const TREE_PER_BYTE: usize = 8;
+        self.src.len() * (1 + if self.tree.is_some() { TREE_PER_BYTE } else { 0 }) + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8)
+    }
+}
+
+/// The most the parsed files kept across requests may weigh (`Parsed::weight`); the least recently
+/// used go first.
+pub(crate) const PARSED_CAP: usize = 256 << 20;
+
+/// Parsed files by root and path, with the content hash they were parsed from.
+struct ParsedStore {
+    cap: usize,
+    files: HashMap<(std::path::PathBuf, String), (String, std::sync::Arc<Parsed>, u64)>,
+    by_use: std::collections::BTreeMap<u64, (std::path::PathBuf, String)>,
+    weight: usize,
+    clock: u64,
+}
+
+static PARSED: std::sync::LazyLock<std::sync::Mutex<ParsedStore>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(ParsedStore::new(PARSED_CAP)));
+
+impl ParsedStore {
+    fn new(cap: usize) -> ParsedStore {
+        ParsedStore { cap, files: HashMap::new(), by_use: Default::default(), weight: 0, clock: 0 }
+    }
+
+    fn get(&mut self, key: &(std::path::PathBuf, String), hash: &str) -> Option<std::sync::Arc<Parsed>> {
+        let (h, parsed, used) = self.files.get_mut(key)?;
+        if h != hash {
+            return None;
+        }
+        self.clock += 1;
+        let p = std::sync::Arc::clone(parsed);
+        self.by_use.remove(used);
+        *used = self.clock;
+        self.by_use.insert(self.clock, key.clone());
+        Some(p)
+    }
+
+    fn put(&mut self, key: (std::path::PathBuf, String), hash: String, parsed: std::sync::Arc<Parsed>) {
+        let w = parsed.weight();
+        if w > self.cap {
+            return;
+        }
+        if let Some((_, old, used)) = self.files.remove(&key) {
+            self.by_use.remove(&used);
+            self.weight -= old.weight();
+        }
+        while self.weight + w > self.cap {
+            let Some((_, oldest)) = self.by_use.pop_first() else { break };
+            if let Some((_, old, _)) = self.files.remove(&oldest) {
+                self.weight -= old.weight();
+            }
+        }
+        self.clock += 1;
+        self.by_use.insert(self.clock, key.clone());
+        self.weight += w;
+        self.files.insert(key, (hash, parsed, self.clock));
+    }
+}
+
+thread_local! {
+    /// files this thread parsed for the resolver, for tests
+    static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub struct Resolver<'a> {
@@ -935,7 +1017,21 @@ impl<'a> Resolver<'a> {
     }
 
     fn load(&mut self, path: &str) -> FileInfo {
-        let mut bytes = repo_bytes(&self.ix.root, path).unwrap_or_default();
+        let bytes = repo_bytes(&self.ix.root, path).unwrap_or_default();
+        let key = (self.ix.root.clone(), path.to_string());
+        let hash = crate::index::content_hash(&bytes);
+        let kept = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&key, &hash);
+        let parsed = kept.unwrap_or_else(|| {
+            let parsed = std::sync::Arc::new(self.parse(path, bytes));
+            PARSED.lock().unwrap_or_else(|e| e.into_inner()).put(key, hash, std::sync::Arc::clone(&parsed));
+            parsed
+        });
+        let defs = self.defs_of(path).unwrap_or_default();
+        FileInfo { parsed, defs }
+    }
+
+    fn parse(&mut self, path: &str, mut bytes: Vec<u8>) -> Parsed {
+        PARSES.with(|n| n.set(n.get() + 1));
         let src = crate::index::decode_source(&bytes).map(|t| t.into_owned()).unwrap_or_default();
         // Engine A reads UTF-16 decoded, and UTF-8 without its BOM
         let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
@@ -968,8 +1064,7 @@ impl<'a> Resolver<'a> {
             (Some(l), Some(t)) => bindings_of(l, path, t.root_node(), &src),
             _ => Vec::new(),
         };
-        let defs = self.defs_of(path).unwrap_or_default();
-        FileInfo { lang, src, raw, tree, deep, defs, bindings }
+        Parsed { lang, src, raw, tree, deep, bindings }
     }
 
     fn defs_of(&self, path: &str) -> Result<Vec<Def>> {
@@ -2673,6 +2768,48 @@ mod tests {
         let (s, _) = crate::open_updated(&root, false).unwrap();
         let s = s.into_searcher();
         (root, s)
+    }
+
+    /// A second request reads the files the first parsed without parsing them again, until a file's
+    /// bytes change.
+    #[test]
+    fn a_repeat_request_parses_no_file_it_parsed_before() {
+        let (root, s) = indexed("parsed_kept", &[("a.py", "def f():\n    pass\n"), ("b.py", "from a import f\n\n\ndef g():\n    f()\n")]);
+        let parses = || PARSES.with(|n| n.get());
+        let request = || {
+            let mut rv = Resolver::new(&s.ix).unwrap();
+            for p in ["a.py", "b.py"] {
+                assert!(rv.file(p).tree.is_some());
+            }
+        };
+        let before = parses();
+        request();
+        assert_eq!(parses() - before, 2);
+        request();
+        assert_eq!(parses() - before, 2, "the second request parsed again");
+        std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
+        request();
+        assert_eq!(parses() - before, 3, "a changed file is parsed again, the other is not");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The store drops the least recently used files to stay under its cap.
+    #[test]
+    fn the_parsed_store_stays_under_its_cap() {
+        let file = |text: &str| std::sync::Arc::new(Parsed { lang: None, src: text.to_string(), raw: None, tree: None, deep: false, bindings: Vec::new() });
+        let key = |p: &str| (std::path::PathBuf::from("/r"), p.to_string());
+        let mut store = ParsedStore::new(10);
+        store.put(key("a"), "1".into(), file("aaaa"));
+        store.put(key("b"), "1".into(), file("bbbb"));
+        assert!(store.get(&key("a"), "1").is_some());
+        store.put(key("c"), "1".into(), file("cccc"));
+        assert!(store.weight <= 10);
+        assert!(store.get(&key("b"), "1").is_none(), "b was used least recently");
+        assert!(store.get(&key("a"), "1").is_some() && store.get(&key("c"), "1").is_some());
+        assert!(store.get(&key("a"), "2").is_none(), "another content hash is another file");
+        store.put(key("big"), "1".into(), file(&"x".repeat(11)));
+        assert!(store.get(&key("big"), "1").is_none() && store.weight <= 10);
     }
 
     fn resolver_case(tag: &str, files: &[(&str, &str)], checks: &[(&str, &str, &str, &str)]) {
