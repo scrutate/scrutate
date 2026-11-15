@@ -617,7 +617,9 @@ line per item:
   `(calls a deleted definition)`, the first thing the diff breaks, and the walk goes on from it.
   Windows and modules are not followed. `--depth N` (at most 10, `0` for none, default 3) stops
   the walk; past three steps a much used function's callers grow toward most of the repository
-  and say little about what to test. The walk stops at 2,000 callers and says so.
+  and say little about what to test. The walk stops at 2,000 callers and says so; the callers it
+  found keep the same order, and it names no `untested-change`, since a test past where it stopped
+  may reach the change.
 - `tests`: each test file (the index's test flag: a `test` or `tests` directory, `test_*.py`,
   `*_test.go` and the like) that defines a changed symbol or holds a caller, with its distance
   and the symbol reached, and each test file the diff changed, once, at its smallest distance. A

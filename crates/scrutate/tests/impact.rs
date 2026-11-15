@@ -545,3 +545,39 @@ fn a_test_file_the_change_deletes_is_no_test_to_run() {
         assert!(ids(&v, "changed").iter().any(|c| c.starts_with("tests/test_other.py")), "{args:?}: {v}");
     }
 }
+
+/// Four changed functions with 500 callers each fill the walk's 2,000; the fifth, which a test
+/// calls, is never reached.
+#[test]
+fn a_walk_cut_at_its_limit_sorts_its_callers_and_claims_no_untested_change() {
+    let t = Tree::new("cut_walk");
+    t.git(&["init", "-q"]);
+    for (i, dir) in ["z", "y", "x", "w", "v"].iter().enumerate() {
+        t.write(&format!("lib/f{i}.py"), &format!("def f{i}(x):\n    return x + {i}\n"));
+        let callers = if i < 4 { 500 } else { 0 };
+        for file in 0..callers / 100 {
+            let defs: String = (0..100).map(|j| format!("def c{i}_{file}_{j}(x):\n    return f{i}(x)\n\n\n")).collect();
+            t.write(&format!("{dir}{i}/m{file}.py"), &format!("from lib.f{i} import f{i}\n\n\n{defs}"));
+        }
+    }
+    t.write("tests/test_f4.py", "from lib.f4 import f4\n\n\ndef test_f4():\n    assert f4(1) == 5\n");
+    t.commit("first");
+    t.run(&["index"]);
+    for i in 0..5 {
+        t.write(&format!("lib/f{i}.py"), &format!("def f{i}(x):\n    return x + {i} + 1\n"));
+    }
+    let v = t.json(&["--depth", "1"]);
+    assert_eq!(v["stopped"], true, "{}", v["callers"].as_array().map_or(0, |c| c.len()));
+    let callers: Vec<(i64, String, i64)> = v["callers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["distance"].as_i64().unwrap(), c["path"].as_str().unwrap().to_string(), c["start"].as_i64().unwrap()))
+        .collect();
+    let mut sorted = callers.clone();
+    sorted.sort();
+    assert!(callers == sorted, "first callers {:?}", &callers[..3]);
+    // a test past the cut may reach a change: no change is said to be one no test reaches
+    let untested: Vec<&Value> = v["findings"].as_array().unwrap().iter().filter(|f| f["kind"] == "untested-change").collect();
+    assert!(untested.is_empty(), "{untested:?}");
+}

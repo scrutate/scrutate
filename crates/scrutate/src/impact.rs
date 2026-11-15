@@ -172,16 +172,16 @@ fn walkable(h: &Hit) -> bool {
 }
 
 /// Callers breadth first, each at the smallest distance it is reached by, in (distance, path, line)
-/// order, and every call met on the way.
+/// order, every call met on the way, and whether the walk stopped at `MAX_CALLERS`.
 fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>, Vec<Edge>, bool)> {
     let mut seen: HashSet<i64> = changed.iter().map(|c| c.hit.id).filter(|id| *id != 0).collect();
     let mut frontier: Vec<Hit> = changed.iter().map(|c| c.hit.clone()).filter(walkable).collect();
     // a deleted definition has no index entry to ask `callers` about: its callers are found by its name
     let gone: Vec<&Hit> =
         changed.iter().filter(|c| c.status == "deleted" && !matches!(c.hit.kind.as_str(), "window" | "module" | "file")).map(|c| &c.hit).collect();
-    let (mut callers, mut edges) = (Vec::new(), Vec::new());
+    let (mut callers, mut edges, mut stopped) = (Vec::new(), Vec::new(), false);
     let mut names = Names::new(s)?;
-    for distance in 1..=depth {
+    'walk: for distance in 1..=depth {
         let mut next = Vec::new();
         let deleted = if distance == 1 { gone.len() } else { 0 };
         for k in 0..deleted + frontier.len() {
@@ -204,7 +204,8 @@ fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>,
                     continue;
                 }
                 if callers.len() >= MAX_CALLERS {
-                    return Ok((callers, edges, true));
+                    stopped = true;
+                    break 'walk;
                 }
                 if walkable(&h) {
                     next.push(h.clone());
@@ -216,7 +217,7 @@ fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>,
         frontier = next;
     }
     callers.sort_by(|a, b| (a.distance, &a.hit.path, a.hit.start, a.hit.end).cmp(&(b.distance, &b.hit.path, b.hit.start, b.hit.end)));
-    Ok((callers, edges, false))
+    Ok((callers, edges, stopped))
 }
 
 /// The test files (`is_test_path`, the index's test flag) that hold a changed symbol or a caller,

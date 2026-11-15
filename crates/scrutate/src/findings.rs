@@ -209,8 +209,12 @@ fn bodies_of(path: &str, src: &[u8], min_tokens: usize) -> Vec<Body> {
 }
 
 /// The changed code definitions (`CODE_KINDS`, added or edited, outside test files) from which no
-/// test file is reached through the calls the walk found.
+/// test file is reached through the calls the walk found; none when the walk stopped at its
+/// limit, since a test past where it stopped may reach one.
 fn untested(i: &Impact) -> Vec<usize> {
+    if i.stopped {
+        return Vec::new();
+    }
     let mut up: HashMap<&str, Vec<&Hit>> = HashMap::new();
     let by_id: HashMap<i64, &Hit> = i.changed.iter().map(|c| &c.hit).chain(i.callers.iter().map(|c| &c.hit)).map(|h| (h.id, h)).collect();
     for (id, target) in &i.edges {
