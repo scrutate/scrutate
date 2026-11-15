@@ -901,9 +901,6 @@ fn on_path(name: &str) -> Option<std::path::PathBuf> {
 /// The most bytes of one line read at a time.
 const PIECE: usize = 1 << 20;
 
-/// Streams the child's standard output to ours, line by line, with secrets redacted. With a
-/// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
-/// the child wrote that were read, the bytes sent)
 /// The file a line of grep's or rg's output names, found by its prefix (`path:N:`, `path-N-`,
 /// `path:`, `path-`, `path\0`, or rg's JSON `path.text`), and whether it is an index file.
 #[derive(Default)]
@@ -941,6 +938,9 @@ impl IndexNames {
     }
 }
 
+/// Streams the child's standard output to ours, line by line, with secrets redacted. With a
+/// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
+/// the child wrote that were read, the bytes sent)
 fn stream(mut child: std::process::Child, room: Option<usize>, index: &crate::files::IndexFiles) -> (i32, usize, usize) {
     use std::io::BufRead;
     let out = child.stdout.take().expect("a piped stdout");
