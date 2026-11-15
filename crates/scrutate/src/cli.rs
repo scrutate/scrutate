@@ -589,6 +589,9 @@ pub enum Cmd {
         /// only definitions of that name: no prefix, camelCase or contains matches when none has it
         #[arg(long)]
         exact: bool,
+        /// NAME is PACKAGE.NAME: a definition of a dependency, at the version its lockfile pins
+        #[arg(long)]
+        deps: bool,
         #[arg(long)]
         json: bool,
         #[command(flatten)]
@@ -658,6 +661,9 @@ pub enum Cmd {
         /// with --symbol, the last N commits that changed each definition [default: 5]
         #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "5")]
         history: Option<usize>,
+        /// --symbol is PACKAGE.NAME: a definition of a dependency, at the version its lockfile pins
+        #[arg(long)]
+        deps: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1612,7 +1618,13 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, limit, exact, json, filter } => {
+        Cmd::Symbol { name, limit, exact, deps: true, json, filter } => {
+            if !crate::filter::Filter::from(filter).is_empty() {
+                anyhow::bail!("--deps takes no -g, --type, --lang or --kind");
+            }
+            run_op(&cli.root, Op::Package { name, read: false, limit, exact }, json, page, outside.as_deref())
+        }
+        Cmd::Symbol { name, limit, exact, json, filter, .. } => {
             run_op(&cli.root, Op::Symbol { name: here.location(&name), limit, exact }.scoped(filter.into()), json, page, outside.as_deref())
         }
         Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page, outside.as_deref()),
@@ -1629,9 +1641,12 @@ pub fn run() -> Result<i32> {
             run_op(&cli.root, Op::Refs { name, max_results, textual, def }.scoped(filter.into()), json, page, outside.as_deref())
         }
         Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page, outside.as_deref()),
-        Cmd::Read { path, symbol, start, end, history, json } => {
+        Cmd::Read { path, symbol, start, end, history, deps, json } => {
             // the read_code tool's arguments, so the operation checks them as it checks a call
-            let args = serde_json::json!({"path": path.map(|p| here.path(&p)), "symbol": symbol.map(|s| here.location(&s)), "start": start, "end": end, "history": history});
+            let symbol = symbol.map(|s| if deps { s } else { here.location(&s) });
+            let scope = deps.then_some("deps");
+            let args =
+                serde_json::json!({"path": path.map(|p| here.path(&p)), "symbol": symbol, "start": start, "end": end, "history": history, "scope": scope});
             run_op(&cli.root, Op::from_tool("read_code", &args)?, json, page, outside.as_deref())
         }
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),

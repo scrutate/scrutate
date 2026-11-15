@@ -9,6 +9,12 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `symbol --deps PACKAGE.NAME` and `read --deps --symbol PACKAGE.NAME`, and the MCP `find_symbol`
+  and `read_code` with `scope: "deps"`, answer from a dependency's source at the version the
+  lockfile pins (`Cargo.lock`, `package-lock.json`, `uv.lock`, `poetry.lock`, `go.mod`), read
+  where that version is installed. An installed package of another version is an error that names
+  both and the command that installs the locked one; a git or URL source is an error, and a path
+  dependency outside the repository too ([CLI](docs/CLI.md#--deps-a-dependency-at-its-locked-version)).
 - `impact` and `review` list a renamed file's definitions whose callers still import it by the
   old path, as deleted at the old path with the rename note right above them, and those callers
   as calling a deleted definition, where a pure rename listed nothing though it broke the

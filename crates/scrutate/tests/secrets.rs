@@ -156,6 +156,15 @@ fn tree(test: &str) -> (PathBuf, Vec<(&'static str, String)>) {
     let latin1 = format!("{}{}", "ghp_", chars(&mut 66, ALNUM, 36));
     fs::write(root.join("latin1.py"), [format!("LEGACY = \"{latin1}\"  # caf").into_bytes(), b"\xe9\n".to_vec()].concat()).unwrap();
     secrets.push(("github-token", latin1));
+    // a dependency at its locked version (`scope: "deps"`), outside the repository's index
+    let dep = format!("ghp_{}", chars(&mut 55, ALNUM, 36));
+    fs::write(root.join("package-lock.json"), r#"{"lockfileVersion": 3, "packages": {"": {}, "node_modules/leftpad": {"version": "1.0.0"}}}"#).unwrap();
+    fs::create_dir_all(root.join("node_modules/leftpad")).unwrap();
+    fs::write(root.join("node_modules/leftpad/package.json"), r#"{"name": "leftpad", "version": "1.0.0"}"#).unwrap();
+    fs::write(root.join("node_modules/leftpad/index.js"), format!("function pad(s) {{\n  const TOKEN = \"{dep}\";\n  return TOKEN + s;\n}}\n")).unwrap();
+    secrets.push(("github-token", dep));
+    // the copy goes beside the tree, never to the user's cache; no other test here reads it
+    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
     // a file that holds a marker's text and no secret: no redaction is counted for it
     fs::write(root.join("notes.py"), "NOTE = \"[redacted:github-token] is how answers show a token\"\n").unwrap();
     // as Claude Code has it: on Windows without the `\\?\` of canonicalize, which the hook declines
@@ -217,6 +226,8 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
         // a capture that holds the value alone, and one that holds the whole assignment
         v.push(("structural_search", json!({"lang": "python", "query": "(string) @s"})));
         v.push(("structural_search", json!({"lang": "python", "query": "(assignment) @a"})));
+        v.push(("find_symbol", json!({"name": "leftpad.pad", "scope": "deps"})));
+        v.push(("read_code", json!({"symbol": "leftpad.pad", "scope": "deps"})));
         v.push(("call_path", json!({"from": "settings", "to": "rotate"})));
         v.push(("similar_code", json!({"target": "config.py:4"})));
         v.push(("duplicates", json!({})));
@@ -258,6 +269,8 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
             }
         }
     }
+    let dep = scrutate::mcp::call_tool(&session, "read_code", &json!({"symbol": "leftpad.pad", "scope": "deps"}), &settings, &Default::default());
+    assert!(dep.text.contains("leftpad 1.0.0 (package-lock.json)") && dep.text.contains("[redacted:github-token]"), "{}", dep.text);
     let read = scrutate::mcp::call_tool(&session, "read_code", &json!({"path": "notes.py"}), &settings, &Default::default());
     assert!(read.text.contains("is how answers show a token") && !read.text.contains("secret redacted"), "{}", read.text);
     // the Grep hook, as Claude Code's Grep would ask for every line
@@ -485,6 +498,19 @@ fn redact_on_covers_every_cli_answer_that_prints_file_text() {
     fs::write(root.join("conf.py"), body(1)).unwrap();
     fs::write(root.join("copy.py"), body(1).replace("settings", "settings_copy").replace("use_token", "use_token2")).unwrap();
     fs::write(other.join("far.py"), format!("def far_settings():\n    token = \"{token}\"\n    return token\n")).unwrap();
+    // a dependency at its locked version, for symbol --deps and read --deps
+    let deps = root.with_extension("deps");
+    let _ = fs::remove_dir_all(&deps);
+    let krate = deps.join("cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokcrate-1.0.0");
+    fs::create_dir_all(krate.join("src")).unwrap();
+    fs::write(krate.join("Cargo.toml"), "[package]\nname = \"tokcrate\"\nversion = \"1.0.0\"\n").unwrap();
+    fs::write(krate.join("src/lib.rs"), format!("pub fn tok() -> &'static str {{\n    \"{token}\"\n}}\n")).unwrap();
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n").unwrap();
+    fs::write(
+        root.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"tokcrate\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"00\"\n",
+    )
+    .unwrap();
     git(&["init", "-q"]);
     git(&["add", "-A"]);
     git(&["commit", "-q", "-m", "base"]);
@@ -500,6 +526,8 @@ fn redact_on_covers_every_cli_answer_that_prints_file_text() {
             .env("SCRUTATE_REDACT", "on")
             .env("SCRUTATE_SEMANTIC", "none")
             .env("SCRUTATE_NO_SESSION", "1")
+            .env("CARGO_HOME", deps.join("cargo"))
+            .env("SCRUTATE_CACHE_DIR", deps.join("cache"))
             .stdin(Stdio::null())
             .output()
             .unwrap();
@@ -545,7 +573,14 @@ fn redact_on_covers_every_cli_answer_that_prints_file_text() {
         vec!["views", v],
         vec!["dead"],
         vec!["map"],
+        vec!["symbol", "--deps", "tokcrate::tok"],
+        vec!["symbol", "--deps", "tokcrate::tok", "--json"],
+        vec!["read", "--deps", "--symbol", "tokcrate::tok"],
+        vec!["read", "--deps", "--symbol", "tokcrate::tok", "--json"],
     ];
+    // the dependency's answer is there, so its rows cannot pass by printing nothing
+    let (out, err) = run(&["read", "--deps", "--symbol", "tokcrate::tok"]);
+    assert!(out.contains("tokcrate 1.0.0 (Cargo.lock)") && out.contains("[redacted:"), "{out}\n{err}");
     let leaked: Vec<String> = calls
         .iter()
         .filter_map(|args| {
@@ -556,6 +591,7 @@ fn redact_on_covers_every_cli_answer_that_prints_file_text() {
     assert!(leaked.is_empty(), "these printed the token:\n{}", leaked.join("\n"));
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&other);
+    let _ = fs::remove_dir_all(&deps);
 }
 
 /// Marks the repository may hold, each with why: none today. A secret-shaped literal in a tracked

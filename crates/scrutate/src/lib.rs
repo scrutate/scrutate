@@ -34,6 +34,7 @@ pub mod models;
 pub mod names;
 pub mod npy;
 pub mod ops;
+pub mod packages;
 pub mod parse;
 pub mod paths;
 pub mod rank;

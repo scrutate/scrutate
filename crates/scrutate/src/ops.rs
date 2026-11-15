@@ -110,6 +110,14 @@ pub enum Op {
         #[serde(default)]
         history: usize,
     },
+    /// `symbol` (`read`: `read --symbol`) of a definition of a dependency, `PACKAGE.NAME`, in
+    /// the source of the version the lockfile pins.
+    Package {
+        name: String,
+        read: bool,
+        limit: usize,
+        exact: bool,
+    },
     Outline {
         path: String,
     },
@@ -194,6 +202,25 @@ impl Op {
     /// clamped (the caller is a program: an absurd limit is cut, not refused).
     pub fn from_tool(name: &str, args: &Value) -> Result<Op> {
         let op = Op::from_tool_unscoped(name, args)?;
+        if matches!(name, "find_symbol" | "read_code") {
+            match args.get("scope").filter(|v| !v.is_null()).map(|v| v.as_str().ok_or_else(|| anyhow!("scope must be a string"))).transpose()? {
+                None | Some("repo") => {}
+                Some("deps") => {
+                    if ["globs", "types", "langs", "kinds"].iter().any(|k| args.get(k).is_some_and(|v| !v.is_null())) {
+                        bail!("scope deps takes no globs, types, langs or kinds");
+                    }
+                    let given = |k: &str| args.get(k).is_some_and(|v| !v.is_null());
+                    return Ok(match op {
+                        Op::Symbol { name, limit, exact } => Op::Package { name, read: false, limit, exact },
+                        Op::Read { symbol: Some(name), .. } if !["path", "start", "end", "history"].into_iter().any(given) => {
+                            Op::Package { name, read: true, limit: READ_DEFINITIONS, exact: true }
+                        }
+                        _ => bail!("scope deps reads a definition by symbol (PACKAGE.NAME), with no path, start, end or history"),
+                    });
+                }
+                Some(other) => bail!("scope must be repo or deps, not {}", echo(other)),
+            }
+        }
         if !matches!(name, "search_code" | "find_symbol" | "references") {
             return Ok(op);
         }
@@ -532,6 +559,16 @@ pub fn output_schema(tool: &str) -> Value {
             obj(json!({"files_changed": ty("integer"), "files_removed": ty("integer"), "chunks": ty("integer")}), &["files_changed", "files_removed", "chunks"])
         }
     };
+    // with scope deps, the same answer from a dependency, under the package it comes from
+    let result = if matches!(tool, "find_symbol" | "read_code") {
+        let package = obj(
+            json!({"name": ty("string"), "version": ty("string"), "lockfile": ty("string"), "path": ty("string")}),
+            &["name", "version", "lockfile", "path"],
+        );
+        json!({"anyOf": [result.clone(), obj(json!({"package": package, "answer": result}), &["package", "answer"])]})
+    } else {
+        result
+    };
     let stopped = json!({"type": "integer", "description": "present when the answer stopped at this limit and more exist: the text's last line says which argument raises it"});
     let complete = json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result then holds the items of this page (null when the call failed)"});
     let page = |d: &str| json!({"type": "integer", "minimum": 0, "description": d});
@@ -761,6 +798,8 @@ pub enum Answer {
     Reindexed(UpdateStats),
     Impact(crate::impact::Impact),
     Files(Vec<crate::finder::FileHit>, Option<Stop>),
+    /// An answer from a dependency's source, and the package it comes from.
+    Package(Box<crate::packages::Note>, Box<Answer>),
 }
 
 /// The `files` answer, which reads no index: a front end runs it without opening one.
@@ -800,8 +839,9 @@ impl Drop for Snapshot<'_> {
     }
 }
 
-fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
+pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
+        Op::Package { name, read, limit, exact } => crate::packages::run(s, name, *read, *limit, *exact)?,
         Op::Scoped { op, filter } => run_scoped(s, op, &filter.compile(&s.ix.root)?)?,
         Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
@@ -1917,6 +1957,8 @@ impl Answer {
             Answer::Path(p) => [&p.from, &p.to].into_iter().chain(p.steps.iter().map(|s| &s.to)).map(|h| h.path.as_str()).collect(),
             Answer::Dead(d) => d.dead.iter().chain(d.undecided.iter().map(|u| &u.0)).map(|s| s.path.as_str()).collect(),
             Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) | Answer::Files(..) => Vec::new(),
+            Answer::Package(note, a) if note.local => a.cited(),
+            Answer::Package(..) => Vec::new(),
         }
     }
 
@@ -1945,6 +1987,7 @@ impl Answer {
             Answer::Reindexed(_) => false,
             Answer::Impact(i) => i.is_empty(),
             Answer::Files(v, _) => v.is_empty(),
+            Answer::Package(_, a) => a.is_empty(),
         }
     }
 
@@ -1975,6 +2018,9 @@ impl Answer {
     /// answers whose items are lines of text, the whole count on the first).
     /// Only what a page of `room` bytes from item `offset` can show is read for.
     pub fn redact_in_context(&mut self, root: &std::path::Path, offset: usize, room: usize) -> Vec<usize> {
+        if let Answer::Package(_, a) = self {
+            return a.redact_in_context(root, offset, room);
+        }
         // every item a page shows takes 8 bytes at least, so none past this is on the page
         let reach = offset.saturating_add(room / 8 + 1);
         let mut keys = crate::secrets::KeyFiles::default();
@@ -2511,6 +2557,11 @@ impl Answer {
                 brief: Some(v.iter().map(|h| vec![Brief::path(&h.path)]).collect()),
                 ..Parts::default()
             },
+            Answer::Package(note, a) => {
+                let mut p = a.parts();
+                p.head = joined(note.line(), std::mem::take(&mut p.head));
+                p
+            }
         }
     }
 
@@ -2537,6 +2588,9 @@ impl Answer {
     /// The JSON form cut to the text items in `page`, in the shape of the whole one: each list
     /// keeps the elements whose lines are on the page, in the order the text has them.
     fn page_json(&self, page: std::ops::Range<usize>, total: usize) -> Value {
+        if let Answer::Package(note, a) = self {
+            return json!({"package": note.json(), "answer": a.page_json(page, total)});
+        }
         let mut v = self.json();
         if total == 0 {
             return v;
@@ -2651,6 +2705,7 @@ impl Answer {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
             Answer::Definitions(_, stopped, _) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
+            Answer::Package(_, a) => a.stopped(),
             Answer::Impact(i) if i.stopped => Some(Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" }),
             _ => None,
         }
@@ -2812,6 +2867,7 @@ impl Answer {
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),
             Answer::Impact(i) => i.json(),
             Answer::Files(v, _) => serde_json::to_value(v).unwrap_or_default(),
+            Answer::Package(note, a) => json!({"package": note.json(), "answer": a.json()}),
         }
     }
 }

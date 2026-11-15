@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [The review comment](#the-review-comment) &nbsp;·&nbsp; [Secrets in answers](#secrets-in-answers) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [The review comment](#the-review-comment) &nbsp;·&nbsp; [Secrets in answers](#secrets-in-answers) &nbsp;·&nbsp; [Dependency source](#dependency-source) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -531,6 +531,28 @@ line (a name on the line before it); the CLI and the Python bindings, which prin
 hold unless `SCRUTATE_REDACT=on` (the CLI's index answers only); and the index itself:
 `.scrutate/` keeps chunk text, secrets included, and the hash of every key body line (mode 0700
 on Unix).
+
+## Dependency source
+
+`symbol --deps` and `read --deps` (the MCP `find_symbol` and `read_code` with `scope: "deps"`)
+read outside the repository root, and nothing else does. The read boundary then holds the
+packages the root's lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, `poetry.lock`,
+`go.mod`) name, in four stores (`$CARGO_HOME/registry/src`, the root's `node_modules`, `.venv`'s
+`site-packages`, `$GOMODCACHE`), at the locked versions, and nothing more. A lockfile is
+untrusted: a name or version that is not one of its ecosystem's (a `/`, a `..`, a character
+outside letters, digits and `-._~+`) is refused by name, and the directory built from it is
+canonicalized and refused when it resolves outside its store, so a `node_modules/NAME` linked
+elsewhere is refused too. A path dependency is read from the repository's own index when it is
+inside the root and refused when it is outside. The package is copied to the user cache
+(`deps/` under `SCRUTATE_CACHE_DIR` or the platform's cache directory, mode 0700 on Unix): a
+linked file is copied only when it resolves inside the package, a linked directory is never
+followed, and a copy over 20,000 files or 256 MiB is refused with nothing kept. Its answers are
+redacted as the repository's are. A copy is keyed by name and version, so a package edited in
+place after it was copied is answered as it was ([ADR 0005](adr/0005-dependency-source.md)).
+Tests: `tests/packages.rs` (`../../x` and the like as a name and a version in each lockfile, a
+link to a file outside the package and a package directory that is a link out of
+`node_modules`, path dependencies inside and outside), and a planted secret in a dependency in
+`tests/secrets.rs`.
 
 ## Known gaps and residual risks
 

@@ -197,6 +197,11 @@ impl Repo {
         Ok(Repo::around(crate::open(root)?, Arc::default()))
     }
 
+    /// `open` with the model set `models` in place of the one the environment names.
+    pub fn open_with(root: &Path, models: Arc<crate::models::ModelSet>) -> Result<Repo> {
+        Ok(Repo::around(Searcher::new(index::Index::open(root, models)?), Arc::default()))
+    }
+
     fn around(searcher: Searcher, writer: Arc<Mutex<()>>) -> Repo {
         let (root, models) = (searcher.ix.root.clone(), Arc::clone(&searcher.ix.models));
         Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer, customs: None }
