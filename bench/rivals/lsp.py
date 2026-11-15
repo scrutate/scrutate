@@ -126,6 +126,7 @@ class Lsp(Adapter):
         self.name, self.cmd, self.version_cmd, self.deadline, self.calls, self.opens = name, cmd, version_cmd, deadline, calls, opens
         self.c: Client | None = None
         self.corpus = ""
+        self.opened: set[str] = set()
 
     def missing(self):
         return None if shutil.which(self.cmd[0]) else f"{self.cmd[0]} is not on PATH"
@@ -140,6 +141,7 @@ class Lsp(Adapter):
         t0 = time.perf_counter()
         self.corpus = corpus
         self.c = Client(self.cmd, corpus)
+        self.opened = set()
         caps = {"workspace": {"symbol": {}}, "textDocument": {"references": {}, "callHierarchy": {}}, "window": {"workDoneProgress": True}}
         self.c.request("initialize", {"processId": os.getpid(), "rootUri": uri(corpus), "capabilities": caps,
                                       "workspaceFolders": [{"uri": uri(corpus), "name": os.path.basename(corpus)}]})
@@ -152,12 +154,16 @@ class Lsp(Adapter):
         return Setup(seconds=time.perf_counter() - t0)
 
     def at(self, query):
-        """The query's position (path, 1-based line, 1-based column) as LSP params; opens the file."""
+        """The query's position (path, 1-based line, 1-based column) as LSP params. The file is
+        opened once, on the checked request before the timed ones: a second didOpen makes a server
+        such as clangd parse the file again inside the timing."""
         path, line, col = query["at"]
         full = os.path.join(self.corpus, path)
-        with open(full, encoding="utf-8", errors="replace") as f:
-            text = f.read()
-        self.c.notify("textDocument/didOpen", {"textDocument": {"uri": uri(full), "languageId": query.get("language", ""), "version": 1, "text": text}})
+        if full not in self.opened:
+            with open(full, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            self.c.notify("textDocument/didOpen", {"textDocument": {"uri": uri(full), "languageId": query.get("language", ""), "version": 1, "text": text}})
+            self.opened.add(full)
         return {"textDocument": {"uri": uri(full)}, "position": {"line": line - 1, "character": col - 1}}
 
     def ask(self, workload, query):

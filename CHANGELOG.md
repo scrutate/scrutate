@@ -295,6 +295,9 @@ incompatible index by itself, and that is never breaking.
   when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
   where it named them under the resolved path and the editor opened a second tab of an open file
   ([CLI](docs/CLI.md#lsp)).
+- The yardstick's language server adapter (`bench/rivals/lsp.py`) opens each file once, on the
+  checked request before the timed ones, where every timed request sent `didOpen` again and clangd
+  parsed the file again inside the timing (its callers rows about 4 times too slow).
 - `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
   fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
   row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
