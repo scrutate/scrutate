@@ -346,8 +346,8 @@ impl Git {
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let mut child = Reap(cmd.spawn().map_err(not_run)?);
-        let mut stdout = child.0.stdout.take().ok_or_else(|| anyhow!("git: no output"))?;
-        let mut stderr = child.0.stderr.take().ok_or_else(|| anyhow!("git: no error output"))?;
+        let stdout = child.0.stdout.take().ok_or_else(|| anyhow!("git: no output"))?;
+        let stderr = child.0.stderr.take().ok_or_else(|| anyhow!("git: no error output"))?;
         // read as it comes, so what git printed is kept when a child it left holds the pipe open
         let drain = |mut from: Box<dyn Read + Send>| {
             let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

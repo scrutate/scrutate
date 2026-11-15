@@ -1334,8 +1334,7 @@ mod literal_gate {
                         _ => format!("({kind}) @{a} ({other}) @{b}"),
                     };
                     // a third of the literals are in no file
-                    let pick =
-                        |next: &mut dyn FnMut(usize) -> usize| if next(3) == 0 { "zzqqxx_absent".to_string() } else { texts[next(texts.len())].clone() };
+                    let pick = |next: &mut dyn FnMut(usize) -> usize| if next(3) == 0 { "zzqqxx_absent".to_string() } else { texts[next(texts.len())].clone() };
                     let (lit, lit2) = (pick(&mut next), pick(&mut next));
                     let predicate = match next(9) {
                         0 => String::new(),

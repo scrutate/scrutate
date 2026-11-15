@@ -2222,9 +2222,11 @@ fn dupes_list_members_by_path_whatever_order_the_index_grew_in() {
 /// more alike but shorter does not push it out.
 #[test]
 fn dupes_cut_near_pairs_after_ordering_them() {
+    // each line has words of its own, so the bodies' word triples are as many as their lines
+    let word = |k: usize| format!("{}{}q", (b'a' + (k % 26) as u8) as char, (b'a' + (k / 26) as u8) as char);
     let body = |name: &str, lines: usize, changed: &[usize]| {
         let rows: String =
-            (0..lines).map(|k| format!("    total = total + {}_{name}_{k}(item)\n", if changed.contains(&k) { "other" } else { "step" })).collect();
+            (0..lines).map(|k| format!("    total = total + {}_{}(item)\n", if changed.contains(&k) { "other" } else { "step" }, word(k))).collect();
         format!("def {name}(item):\n    total = 0\n{rows}    return total\n")
     };
     let r = Repo::new(
