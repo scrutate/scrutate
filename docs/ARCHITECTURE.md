@@ -823,8 +823,8 @@ commits the history stops at (`Git::shallow_boundaries`) are marked as the cut, 
 Every call goes through `Git::command`, the one place git starts (`tests/git_spawns.rs` holds the
 code to it): it runs only commands that read (`READS`; a diff is plumbing, which never refreshes
 the index), empties every filter driver the configuration names (`Git::no_filters`), and passes `--no-optional-locks`,
-`core.fsmonitor=false`, `--no-ext-diff`, `--no-textconv` and `GIT_NO_LAZY_FETCH=1` (no fetch in
-a partial clone), so git writes nothing and starts no helper of its own; a revision is checked
+`core.fsmonitor=false`, `log.showSignature=false` (no gpg), `--no-ext-diff` and `--no-textconv`
+on every diff and log, and `GIT_NO_LAZY_FETCH=1` (no fetch in a partial clone), so git writes nothing and starts no helper of its own; a revision is checked
 before it is passed (none starts with `-`) and resolved to
 a commit id, which every later call uses. Git sees this process's environment, a relative
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` made absolute against

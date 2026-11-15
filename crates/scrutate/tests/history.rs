@@ -332,3 +332,39 @@ fn a_forked_child_of_git_does_not_hold_the_lookup() {
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(subjects(&v["result"]["definitions"][0]), ["the only"], "{v}");
 }
+
+/// A history reads a signed commit, an attribute's textconv driver and an external diff in the
+/// configuration without running any program they name: a stand-in logs each call.
+#[cfg(unix)]
+#[test]
+fn a_history_runs_no_signature_textconv_or_external_diff_program() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = shaped("no_programs");
+    let log = t.root.join(".git/programs.log");
+    let stand_in = t.root.join(".git/stand-in");
+    fs::write(
+        &stand_in,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\ncase \" $* \" in *\" -bsau \"*) cat >/dev/null; echo '[GNUPG:] SIG_CREATED ' >&2; printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nx\\n-----END PGP SIGNATURE-----\\n';; *) cat \"$1\" 2>/dev/null;; esac\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
+    let program = stand_in.to_str().unwrap();
+    t.write("new.py", "def f(x):\n    return x + 3\n\n\ndef g(y):\n    return y * 2\n");
+    t.git(&["add", "-A"]);
+    t.git(&["-c", &format!("gpg.program={program}"), "-c", "user.signingkey=k", "commit", "-q", "-S", "-m", "signed edit of f"]);
+    t.write(".gitattributes", "*.py diff=logged\n");
+    t.git(&["add", "-A"]);
+    t.git(&["commit", "-q", "-m", "attributes"]);
+    for (key, value) in [("log.showSignature", "true"), ("gpg.program", program), ("diff.logged.textconv", program), ("diff.external", program)] {
+        t.git(&["config", key, value]);
+    }
+    // an uncommitted line above f, so the lookup reads the file's diff too
+    t.write("new.py", "# moved\ndef f(x):\n    return x + 3\n\n\ndef g(y):\n    return y * 2\n");
+    let _ = fs::remove_file(&log);
+    let v = t.json(&["read", "--symbol", "f", "--history"]);
+    assert_eq!(subjects(&v["definitions"][0])[0], "signed edit of f", "{v}");
+    assert!(!log.exists(), "a configured program ran: {}", fs::read_to_string(&log).unwrap_or_default());
+}

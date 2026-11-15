@@ -277,6 +277,8 @@ incompatible index by itself, and that is never breaking.
 - `impact` and `review` fetch nothing in a partial clone: a blob the base needs and the clone lacks
   is an error that says to fetch it first, where git fetched it from the remote, writing
   `.git/objects` and running the remote's upload program (git 2.44 and later).
+- `read --history` runs no `gpg.program` when the configuration sets `log.showSignature`, and every
+  diff and log git runs for scrutate is told to run no external diff or text conversion driver.
 - The language server names the files of its answers under the folder as the editor sent it, also
   when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
   where it named them under the resolved path and the editor opened a second tab of an open file

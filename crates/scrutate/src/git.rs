@@ -148,7 +148,17 @@ impl Git {
                 self.filters.get_or_init(|| f)
             }
         };
-        let all: Vec<&str> = filters.iter().map(String::as_str).chain(args.iter().copied()).collect();
+        // a diff runs no external diff or textconv driver, whatever the call passed
+        let at = verb_at(args);
+        let shows_diffs = matches!(verb, "diff-index" | "diff-tree" | "log");
+        let no_drivers: &[&str] = if shows_diffs { &["--no-ext-diff", "--no-textconv"] } else { &[] };
+        let all: Vec<&str> = filters
+            .iter()
+            .map(String::as_str)
+            .chain(args[..=at].iter().copied())
+            .chain(no_drivers.iter().copied())
+            .chain(args[at + 1..].iter().copied())
+            .collect();
         Ok(self.raw(&all))
     }
 
@@ -156,7 +166,8 @@ impl Git {
     /// `env` gives. Only `command`, and `no_filters` under it, call this.
     fn raw(&self, args: &[&str]) -> Command {
         let mut c = Command::new("git");
-        c.current_dir(&self.dir).args(["--no-optional-locks", "-c", "core.fsmonitor=false"]).args(args).stdin(Stdio::null());
+        // no file system monitor, and no signature check, which runs gpg.program
+        c.current_dir(&self.dir).args(["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "log.showSignature=false"]).args(args).stdin(Stdio::null());
         match &self.env {
             Env::Own(set) => {
                 c.envs(set.iter().map(|(name, value)| (name, plain_value(name, value))));
@@ -663,12 +674,17 @@ fn not_run(e: std::io::Error) -> anyhow::Error {
 /// The git command `args` run, past the options in front of it (`-c` and its setting,
 /// `--literal-pathspecs`); `--version` is one.
 fn verb<'a>(args: &[&'a str]) -> &'a str {
+    args.get(verb_at(args)).copied().unwrap_or_default()
+}
+
+/// Where in `args` the git command is.
+fn verb_at(args: &[&str]) -> usize {
     let mut i = 0;
     loop {
         match args.get(i).copied() {
             Some("-c") => i += 2,
             Some(a) if a.starts_with("--") && a != "--version" => i += 1,
-            other => return other.unwrap_or_default(),
+            _ => return i,
         }
     }
 }
