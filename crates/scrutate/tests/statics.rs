@@ -29,6 +29,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("index.rs", "BEFORE_CHUNKS", "per thread, a test hook"),
     ("index.rs", "AFTER_LANGUAGES", "per thread, a test hook"),
     ("index.rs", "NO_COMPACT", "per thread, a test hook"),
+    ("index.rs", "WAIT_LIMIT", "per thread, a test hook"),
     ("index.rs", "QUICK_CHECKS", "per thread, a test's count of quick_check walks"),
     ("index.rs", "LOCK_WAITS", "per thread, the wait a test's lock attempts were given"),
     ("index.rs", "BEFORE_COMPACT", "per thread, a test hook"),

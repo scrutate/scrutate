@@ -1157,8 +1157,19 @@ thread_local! {
     /// The wait each of this thread's lock attempts was given: "cut" for a log cut, "begin" and
     /// "compact" for a write lock that must not wait.
     pub static LOCK_WAITS: std::cell::RefCell<Vec<(&'static str, Duration)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Set: this thread's waits for another process's lock give up after it, not 10 minutes.
+    pub static WAIT_LIMIT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
     /// Set: the next update leaves its segments for a test to compact.
     pub static NO_COMPACT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// How long a write waits for another process's lock: 10 minutes, or what a test set (`WAIT_LIMIT`).
+fn wait_limit() -> Duration {
+    #[cfg(test)]
+    if let Some(d) = WAIT_LIMIT.with(|w| w.get()) {
+        return d;
+    }
+    Duration::from_secs(600)
 }
 
 /// Whether a test asked the next update to leave its segments uncompacted (`NO_COMPACT`).
@@ -1216,7 +1227,7 @@ fn wait_busy<T>(db: &Connection, cancel: &std::sync::atomic::AtomicBool, mut f: 
                 if stopping(cancel) {
                     break Err(anyhow::anyhow!("cancelled"));
                 }
-                if t0.elapsed() > Duration::from_secs(600) {
+                if t0.elapsed() > wait_limit() {
                     break Err(anyhow::anyhow!("another process has held the index write lock for 10 minutes"));
                 }
             }
@@ -4365,6 +4376,44 @@ mod tests {
             drop(ix);
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    /// An open whose schema step waits for an older version's writer, and gives up before the
+    /// writer is done, reports the wait and leaves the database as it is: a wait that ran out is
+    /// no damage.
+    #[test]
+    fn an_open_whose_wait_for_a_writer_runs_out_keeps_the_database() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_wait_out_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let db = ix.dir.join("index.db");
+        drop(ix);
+        // an older version's index (no artifacts column), which that version is writing now
+        let old = rusqlite::Connection::open(&db).unwrap();
+        old.execute_batch("DROP INDEX files_art; ALTER TABLE files DROP COLUMN art;").unwrap();
+        let before = super::file_id(&db);
+        let (locked, done) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let writer = std::thread::spawn(move || {
+            old.execute_batch("BEGIN IMMEDIATE; UPDATE meta SET value=value WHERE key='schema_version';").unwrap();
+            locked.send(()).unwrap();
+            let _ = released.recv_timeout(std::time::Duration::from_secs(30));
+            old.execute_batch("COMMIT").unwrap();
+        });
+        done.recv().unwrap();
+        super::WAIT_LIMIT.with(|w| w.set(Some(std::time::Duration::from_secs(1))));
+        let opened = super::Index::open(&root, crate::models::ModelSet::none());
+        super::WAIT_LIMIT.with(|w| w.set(None));
+        assert!(opened.as_ref().is_err_and(|e| format!("{e:#}").contains("held the index write lock")), "{:?}", opened.as_ref().err());
+        drop(release);
+        writer.join().unwrap();
+        assert_eq!(super::file_id(&db), before, "the database was replaced");
+        let files: i64 = rusqlite::Connection::open(&db).unwrap().query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)).unwrap();
+        assert_eq!(files, 1, "the older version's rows are kept");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
