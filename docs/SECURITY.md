@@ -373,14 +373,16 @@ around a use is cut from it, so the window never shows a value without its name.
 writes its lines through `hook::redacted`; `hook run` redacts what the search program prints, line
 by line as it streams, and leaves `.scrutate/` out of a `grep` or `rg` it runs: the index and the
 `tsquery` cache hold the repository's text in binary records, where a secret runs straight into
-the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends. `hook run` decides by file identity (`files::IndexFiles`): it leaves out
-every output line of a file that is one of the index directories' files (by device and inode) or
-lies inside one by its resolved path, whatever path the program took to it, and refuses a search
-that names such a file, or whose output names no file when a walk of it reaches one;
-`read_code`, `grep_code` and the Grep hook refuse such a path the same way. Not covered: a link
-or a hard link made while the search runs (the known files are read before it starts); a hard
-link to another repository's index files, from outside that repository; and, not the hook's to
-stop, a command it does not answer (`cat`, `strings` of those files), and the file names `find`
+the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends. `hook run` decides before the search runs, by file identity (`files::IndexFiles`), so the
+shape of the output (colour, headings, separators, JSON, odd names) cannot matter: it walks what
+the search could read, hidden and ignored entries taken and links followed where the search
+follows them, and refuses the search, running nothing, when a path it names lies inside an index directory or the walk reaches
+one of the index directories' files or directories by device and inode (a link, a hard link
+under another name, a nested repository's index), or when the walk is too large to check
+(over 1,000,000 entries or 5 seconds); `read_code`, `grep_code` and the Grep hook
+refuse such a path the same way. Not covered: a link or a hard link made while the search runs
+(the walk is done before it starts); a hard link to an index file of a repository outside the
+searched tree; and, not the hook's to stop, a command it does not answer (`cat`, `strings` of those files), and the file names `find`
 prints. A path that holds a secret (a file named with a token) is redacted like any
 other text, so that path cannot be opened from the answer.
 

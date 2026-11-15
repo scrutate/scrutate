@@ -668,20 +668,27 @@ fn hook_run_refuses_a_named_path_inside_the_index_directory() {
         assert!(!out.contains(&secret), "hook run {ask:?}: the cache's secret came back:\n{out}");
         assert!(code == Some(2) && err.contains("index directory"), "hook run {ask:?}: {code:?} {err}");
     }
-    // a walk that follows the link at the root runs, and leaves the index's lines out
+    // a search that follows the link into the index directory met in the tree is refused; one
+    // that does not follow it runs, and never reads it
     let mut walks: Vec<Vec<&str>> = vec![vec!["grep", "-a", "-R", "aws", ".."], vec!["grep", "-a", "--dereference-recursive", "aws", ".."]];
     if rg::have_rg() {
         walks.push(vec!["rg", "-a", "-L", "aws", ".."]);
     }
     for ask in &walks {
-        let (_, out, _) = run(ask);
-        assert!(!out.contains(&secret), "hook run {ask:?}: the cache's secret came back:\n{out}");
+        let (code, out, err) = run(ask);
+        assert!(!out.contains(&secret) && code == Some(2) && err.contains("index directory"), "hook run {ask:?}: {code:?} {out}\n{err}");
     }
-    // the text `.scrutate` is a pattern, not a path, and a walk that does not follow links runs
+    let mut runs: Vec<Vec<&str>> = vec![vec!["grep", "-a", "-r", "aws", ".."]];
+    if rg::have_rg() {
+        runs.push(vec!["rg", "-a", "aws", ".."]);
+    }
+    for ask in &runs {
+        let (code, out, err) = run(ask);
+        assert!(!out.contains(&secret) && code == Some(1), "hook run {ask:?}: {code:?} {out}\n{err}");
+    }
+    // the text `.scrutate` is a pattern, not a path
     let (code, out, _) = run(&["grep", "-rn", ".scrutate", ".."]);
     assert!(code == Some(0) && out.contains("app.py"), "{code:?} {out}");
-    let (code, out, _) = run(&["grep", "-a", "-r", "aws", ".."]);
-    assert!(code == Some(1) && !out.contains(&secret), "{code:?} {out}");
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -740,12 +747,12 @@ fn hook_run_leaves_out_every_index_file_a_search_reaches() {
         let (_, out, _) = run(ask);
         assert!(!out.contains(&secret), "hook run {ask:?}: the cache's secret came back:\n{out}");
     }
-    // a hard link: a walk names it, so its lines are left out; with no names it is refused
+    // a hard link under another name is refused, with file names in the output or without
     fs::hard_link(root.join(".scrutate/tsquery/c.bin"), root.join("hard.bin")).unwrap();
-    let (_, out, err) = run(&["grep", "-a", "-r", "aws", "."]);
-    assert!(!out.contains(&secret) && err.contains("left out"), "{out}\n{err}");
-    let (code, out, err) = run(&["grep", "-a", "-h", "-r", "aws", "."]);
-    assert!(code == Some(2) && !out.contains(&secret) && err.contains("index directory"), "{code:?} {out}\n{err}");
+    for ask in [&["grep", "-a", "-r", "aws", "."][..], &["grep", "-a", "-h", "-r", "aws", "."]] {
+        let (code, out, err) = run(ask);
+        assert!(code == Some(2) && !out.contains(&secret) && err.contains("index directory"), "{ask:?}: {code:?} {out}\n{err}");
+    }
     let (code, out, _) = run(&["grep", "-a", "aws", "hard.bin"]);
     assert!(code == Some(2) && !out.contains(&secret), "{code:?} {out}");
     // the Grep hook refuses the path, a file or a link, and says why
@@ -767,6 +774,241 @@ fn hook_run_leaves_out_every_index_file_a_search_reaches() {
     }
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&far);
+}
+
+/// The shapes that defeated reading the output's file names: each is refused before the search
+/// runs, or comes back clean, whatever the output looks like.
+#[cfg(unix)]
+#[test]
+fn hook_run_refuses_a_search_that_can_reach_an_index_file_whatever_its_output_shape() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_index_shapes_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    for d in [".git", "src", ".scrutate/tsquery", "sub/.scrutate/tsquery"] {
+        fs::create_dir_all(root.join(d)).unwrap();
+    }
+    let secret = chars(&mut 65, &format!("{ALNUM}/+"), 40);
+    let mut record = b"\0\0\0assignment@\0\0\0aws_secret_access_key = ".to_vec();
+    record.extend_from_slice(secret.as_bytes());
+    record.extend_from_slice(b"4\0\0\0\0\0\0\0\x01\0\0\0a\n");
+    for d in [".scrutate/tsquery", "sub/.scrutate/tsquery"] {
+        fs::write(root.join(d).join("c.bin"), &record).unwrap();
+    }
+    fs::write(root.join("src/app.py"), "print('hello aws')\n").unwrap();
+    let home = root.with_extension("home");
+    let run = |ask: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(ask)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let check = |what: &str, ask: &[&str]| {
+        let (code, out, err) = run(ask);
+        assert!(!out.contains(&secret) && code == Some(2) && err.contains("index directory"), "{what}: {ask:?}: {code:?} {out}\n{err}");
+    };
+    let rg = rg::have_rg();
+    let cache = root.join(".scrutate/tsquery/c.bin");
+    // a hard link at the root, under every output shape
+    fs::hard_link(&cache, root.join("hard.bin")).unwrap();
+    check("hard link", &["grep", "-a", "-r", "aws", "."]);
+    check("hard link, colour", &["grep", "-a", "-r", "--color=always", "aws", "."]);
+    check("hard link, names only", &["grep", "-a", "-r", "-l", "aws", "."]);
+    if rg {
+        for shape in [&["--heading"][..], &["-n", "--heading"], &["--field-match-separator=@"], &["--color", "always"], &["--json"]] {
+            let mut ask = vec!["rg", "-a"];
+            ask.extend_from_slice(shape);
+            ask.extend_from_slice(&["aws", "."]);
+            check("hard link", &ask);
+        }
+    }
+    fs::remove_file(root.join("hard.bin")).unwrap();
+    // names a prefix reader splits wrong: a file `x` beside `x-c.bin`, seventeen dashes
+    fs::write(root.join("x"), "").unwrap();
+    fs::hard_link(&cache, root.join("x-c.bin")).unwrap();
+    check("x beside x-c.bin", &["grep", "-a", "-r", "aws", "."]);
+    if rg {
+        check("x beside x-c.bin", &["rg", "-a", "aws", "."]);
+    }
+    fs::remove_file(root.join("x")).unwrap();
+    fs::remove_file(root.join("x-c.bin")).unwrap();
+    fs::hard_link(&cache, root.join("a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p-q-r.bin")).unwrap();
+    check("seventeen dashes", &["grep", "-a", "-r", "aws", "."]);
+    fs::remove_file(root.join("a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p-q-r.bin")).unwrap();
+    // a file `my` beside a link `my-idx` to the index directory
+    fs::write(root.join("my"), "").unwrap();
+    symlink(".scrutate", root.join("my-idx")).unwrap();
+    check("my beside my-idx", &["grep", "-a", "-R", "aws", "."]);
+    if rg {
+        check("my beside my-idx", &["rg", "-a", "-L", "aws", "."]);
+        check("my-idx, another path separator", &["rg", "-a", "-L", "--path-separator", "#", "aws", "."]);
+    }
+    fs::remove_file(root.join("my")).unwrap();
+    fs::remove_file(root.join("my-idx")).unwrap();
+    // a name that is not UTF-8, where rg's JSON gives `path.bytes`
+    let odd = root.join(std::ffi::OsStr::from_bytes(b"n\xff.bin"));
+    if fs::hard_link(&cache, &odd).is_ok() {
+        check("a name that is not UTF-8", &["grep", "-a", "-r", "aws", "."]);
+        if rg {
+            check("a name that is not UTF-8", &["rg", "-a", "--json", "aws", "."]);
+        }
+        fs::remove_file(&odd).unwrap();
+    }
+    // a hard link at the root to a nested repository's index file
+    fs::hard_link(root.join("sub/.scrutate/tsquery/c.bin"), root.join("subhard.bin")).unwrap();
+    check("hard link to a nested index", &["grep", "-a", "-r", "aws", "."]);
+    if rg {
+        check("hard link to a nested index", &["rg", "-a", "aws", "."]);
+    }
+    fs::remove_file(root.join("subhard.bin")).unwrap();
+    // a `--` that is a flag's value ends no flags: the `-r` after it still makes grep walk `.`
+    fs::hard_link(&cache, root.join("hard.bin")).unwrap();
+    check("-e --, then -r", &["grep", "-a", "-e", "--", "-r"]);
+    fs::remove_file(root.join("hard.bin")).unwrap();
+    // with none of those, the same searches run and find the source file
+    let (code, out, _) = run(&["grep", "-a", "-r", "aws", "."]);
+    assert!(code == Some(0) && out.contains("app.py") && !out.contains(&secret), "{code:?} {out}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// Every flag the allow-list lets `rg` and `grep` take, against every way a search can reach an
+/// index file: each search that could reach one is refused before it runs, naming why, and the
+/// record's secret is in neither stream; in a tree without one, a planted key comes out redacted.
+#[cfg(unix)]
+#[test]
+fn hook_run_holds_for_every_allowed_flag() {
+    use scrutate::shellhook::{allowed_flags, Takes};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_every_flag_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+    let secret = chars(&mut 91, &format!("{ALNUM}/+"), 40);
+    let key = format!("AKIA{}", chars(&mut 92, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 16));
+    let key_secret = chars(&mut 93, &format!("{ALNUM}/+"), 40);
+    let mut record = b"\0\0\0assignment@\0\0\0aws_secret_access_key = ".to_vec();
+    record.extend_from_slice(secret.as_bytes());
+    record.extend_from_slice(b"4\0\0\0\0\0\0\0\x01\0\0\0a\n");
+    let tree = |name: &str| {
+        let r = base.join(name);
+        for d in [".git", "src", ".scrutate/tsquery"] {
+            fs::create_dir_all(r.join(d)).unwrap();
+        }
+        fs::write(r.join(".scrutate/tsquery/c.bin"), &record).unwrap();
+        fs::write(r.join("src/app.py"), "print('hello aws')\n").unwrap();
+        r
+    };
+    // (tree, the path searched, whether only a search that follows links met in the tree reaches
+    // the record)
+    let mut reach: Vec<(PathBuf, &str, bool)> = vec![(tree("dir"), ".scrutate", false)];
+    let r = tree("link");
+    symlink(".scrutate", r.join("idx")).unwrap();
+    reach.push((r.clone(), ".", true));
+    reach.push((r, "idx", false));
+    let r = tree("chain");
+    symlink(".scrutate", r.join("b")).unwrap();
+    symlink("b", r.join("a")).unwrap();
+    reach.push((r.clone(), ".", true));
+    reach.push((r, "a", false));
+    let r = tree("hard");
+    fs::hard_link(r.join(".scrutate/tsquery/c.bin"), r.join("hard.bin")).unwrap();
+    reach.push((r, ".", false));
+    let r = tree("nested");
+    fs::create_dir_all(r.join("sub/.scrutate/tsquery")).unwrap();
+    fs::write(r.join("sub/.scrutate/tsquery/c.bin"), &record).unwrap();
+    fs::hard_link(r.join("sub/.scrutate/tsquery/c.bin"), r.join("subhard.bin")).unwrap();
+    reach.push((r, ".", false));
+    for (i, name) in [&b"a-1-c.bin"[..], b"a:1:c.bin", b"a b.bin", b"n\xff.bin"].into_iter().enumerate() {
+        let r = tree(&format!("name{i}"));
+        if fs::hard_link(r.join(".scrutate/tsquery/c.bin"), r.join(std::ffi::OsStr::from_bytes(name))).is_ok() {
+            reach.push((r, ".", false));
+        }
+    }
+    let clean = tree("clean");
+    fs::write(clean.join("conf.py"), format!("aws_access_key_id = \"{key}\"\naws_secret_access_key = \"{key_secret}\"\n")).unwrap();
+    let patterns = base.join("patterns.txt");
+    fs::write(&patterns, "aws\n").unwrap();
+    let empty = base.join("empty.txt");
+    fs::write(&empty, "").unwrap();
+    let home = base.join("home");
+    let run = |dir: &Path, ask: &[String]| {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(ask)
+            .current_dir(dir)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let mut programs = vec!["grep"];
+    if rg::have_rg() {
+        programs.push("rg");
+    }
+    let (mut asked, mut ran) = (0, 0);
+    for program in programs {
+        for (flag, takes) in allowed_flags(program) {
+            let value = match (program, flag.as_str()) {
+                (_, "-e" | "--regexp") => "aws",
+                (_, "-f" | "--file") => patterns.to_str().unwrap(),
+                (_, "--exclude-from" | "--ignore-file") => empty.to_str().unwrap(),
+                ("grep", "-d" | "--directories") => "recurse",
+                ("grep", "-D" | "--devices") => "read",
+                (_, "--binary-files") => "text",
+                ("rg", "-E" | "--encoding") => "utf-8",
+                (_, "--engine") => "default",
+                (_, "--max-filesize") => "10M",
+                ("rg", "-M") => "1000",
+                ("rg", "-r") => "X",
+                ("rg", "-t" | "--type") => "py",
+                ("rg", "-T" | "--type-not") => "c",
+                (_, "-g" | "--glob" | "--iglob" | "--include") => "*",
+                (_, "--exclude" | "--exclude-dir") => "none",
+                (_, "--label") => "stdin",
+                (_, "--group-separator") => "~",
+                (_, "--color" | "--colour") => "always",
+                _ => "5",
+            };
+            let mut ask = vec![program.to_string()];
+            match takes {
+                Takes::No => ask.push(flag.clone()),
+                Takes::Value => ask.extend([flag.clone(), value.to_string()]),
+                Takes::Joined => ask.push(format!("{flag}={value}")),
+            }
+            let pattern_given = takes != Takes::No && matches!(flag.as_str(), "-e" | "--regexp" | "-f" | "--file");
+            if !pattern_given {
+                ask.push("aws".into());
+            }
+            let follows = matches!((program, flag.as_str()), ("grep", "-R" | "--dereference-recursive") | ("rg", "-L" | "--follow"));
+            for (dir, path, by_following) in &reach {
+                let mut ask = ask.clone();
+                ask.push((*path).into());
+                let (code, out, err) = run(dir, &ask);
+                asked += 1;
+                assert!(!out.contains(&secret) && !err.contains(&secret), "{ask:?} in {dir:?}: the record's secret came back:\n{out}\n{err}");
+                if follows || !by_following {
+                    assert!(code == Some(2) && err.contains("index directory"), "{ask:?} in {dir:?}: not refused: {code:?} {out}\n{err}");
+                }
+            }
+            let mut ask = ask.clone();
+            ask.push(".".into());
+            let (code, out, err) = run(&clean, &ask);
+            asked += 1;
+            ran += usize::from(code == Some(0));
+            assert!(!out.contains(&secret) && !err.contains(&secret), "{ask:?}: the record's secret came back:\n{out}\n{err}");
+        }
+    }
+    // the table is not empty and most of its searches did run in the clean tree
+    assert!(asked > 500 && ran * 2 > asked / (reach.len() + 1), "{asked} asked, {ran} ran");
+    let _ = fs::remove_dir_all(&base);
 }
 
 /// A line that is not UTF-8 (a stray byte, or a long line's piece cut inside a character) has its

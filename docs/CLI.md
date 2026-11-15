@@ -1487,16 +1487,20 @@ in the directories of its `PATH` given as absolute paths and outside the current
 git work tree, never the current directory, a relative entry, a repository's own `bin` or
 scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
 `LD_AUDIT` and every `DYLD_*` variable removed. Scrutate's own index directory is never shown (its files hold the repository's text, see
-[Security](SECURITY.md)), decided by file identity: the files of the `.scrutate` directories of
-the current directory and those above it are known by device and inode, and any file whose path
-has a `.scrutate` component once links are resolved counts too. Every line of grep's or rg's
-output is checked by the file it names (`path:N:`, `path-N-`, `path:`, `path\0` under `-Z`, rg's
-JSON `path`); a line of such a file is left out, with one line on standard error saying how many,
-so a glob that names the directory again, a chain of links, another case and a hard link all
-end the same. A `grep` or `rg` that names such a path exits 2 with a line that says why and runs
-nothing, and so does one whose output names no file (`-h`, rg's `-I`, one file named) when a walk
-of the searched paths reaches one. A `grep` also gets `--exclude-dir=.scrutate` first and an `rg`
-`--glob=!.scrutate` after its own flags, so the walk skips the directory sooner. A search for the
+[Security](SECURITY.md)), decided before the search runs, by file identity, never by reading its output: the files of
+the `.scrutate` directories of the current directory, of those above it and of every one inside
+the searched paths are known by device and inode. Before it runs a `grep` or `rg`, `hook run`
+walks what the search could read (each path it names, or the current directory for `rg` and a
+recursive `grep`): hidden and ignored entries taken, a link it names followed, a link met inside
+followed only where the search follows it (`grep -R`, `rg -L`), each directory entered once, and a
+directory named `.scrutate` not entered, as the search is told not to. If a named path lies inside
+an index directory, or the walk reaches an index file or directory by identity (a link into one,
+a hard link under another name, a nested repository's), the search exits 2 with a line naming
+the path and why, and nothing runs. A walk past 1,000,000 entries or 5 seconds stops, and the
+search exits 2 with a line asking for narrower paths (the Linux tree's 96,000 entries take about
+0.13 s). A `grep` also gets `--exclude-dir=.scrutate` first and an `rg` `--glob=!.scrutate` and
+`--iglob=!.scrutate` after its own flags (rg weighs every `--iglob` after every `--glob`), so the
+search skips the directory the walk skipped. A search for the
 text `.scrutate`, the pattern and not a path, runs. A line
 with `\r` or another control character but tab and line feed is left alone.
 

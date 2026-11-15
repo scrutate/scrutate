@@ -24,9 +24,25 @@ pub fn inside_index_dir_named(path: &Path) -> bool {
     path.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(INDEX_DIR)))
 }
 
+/// The most entries `hook run` walks before a search, and the longest it walks: past either the
+/// search is refused as too wide to check.
+pub const WALK_ENTRIES: usize = 1_000_000;
+pub const WALK_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What a walk before a search found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Reach {
+    Clear,
+    /// a path the search could read that is, or lies in, an index directory
+    Index(PathBuf),
+    /// more than `WALK_ENTRIES` entries or `WALK_TIME` to check
+    TooWide,
+}
+
 /// The files of the index directories a search could reach, known by identity (device and
 /// inode), so a file is found as one of them whatever path leads to it: another case, a chain of
-/// links, a hard link. They are few: the index directory of `start` and of each directory above it.
+/// links, a hard link. They start as the index directory of `start` and of each directory above
+/// it; `reached_by_search` adds every one its walk meets.
 pub struct IndexFiles {
     #[cfg(unix)]
     ids: std::collections::HashSet<(u64, u64)>,
@@ -34,37 +50,105 @@ pub struct IndexFiles {
 
 impl IndexFiles {
     pub fn near(start: &Path) -> IndexFiles {
+        let mut index = IndexFiles {
+            #[cfg(unix)]
+            ids: std::collections::HashSet::new(),
+        };
+        let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+        for dir in start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()) {
+            index.add(&dir);
+        }
+        index
+    }
+
+    /// Knows the files and directories of the index directory `dir`.
+    fn add(&mut self, dir: &Path) {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let mut ids = std::collections::HashSet::new();
-            let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
-            for dir in start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()) {
-                let walk = ignore::WalkBuilder::new(&dir).standard_filters(false).follow_links(false).build();
-                for e in walk.flatten() {
-                    if let Ok(md) = std::fs::symlink_metadata(e.path()) {
-                        ids.insert((md.dev(), md.ino()));
-                    }
+            let walk = ignore::WalkBuilder::new(dir).standard_filters(false).follow_links(false).build();
+            for e in walk.flatten() {
+                if let Ok(md) = std::fs::symlink_metadata(e.path()) {
+                    self.ids.insert((md.dev(), md.ino()));
                 }
             }
-            IndexFiles { ids }
         }
         #[cfg(not(unix))]
-        {
-            let _ = start;
-            IndexFiles {}
-        }
+        let _ = dir;
     }
 
-    /// A file a walk of `roots` reaches that `holds`, for a search whose output names no file.
-    pub fn reached_from(&self, roots: &[&Path], follow_links: bool) -> Option<PathBuf> {
+    /// Whether a search of `roots` could read an index file or directory, by identity or by a
+    /// name inside one. The walk takes hidden and ignored entries, follows links where the search
+    /// will (a root always, links met inside it with `follow_links`), enters a directory once by
+    /// identity, and does not enter one named exactly `INDEX_DIR`, which the search is told to skip, but
+    /// knows its files. Past `limit` entries or `WALK_TIME` it stops: `Reach::TooWide`.
+    pub fn reached_by_search(&mut self, roots: &[&Path], follow_links: bool, limit: usize) -> Reach {
+        use std::sync::{Arc, Mutex};
+        let started = std::time::Instant::now();
+        let met = Arc::new(Mutex::new(Vec::new()));
+        let visited = Arc::new(Mutex::new(std::collections::HashSet::<(u64, u64)>::new()));
+        // (path, inode from its directory entry, whether it is a link)
+        let mut entries: Vec<(PathBuf, Option<u64>, bool)> = Vec::new();
         for root in roots {
-            let walk = ignore::WalkBuilder::new(root).standard_filters(false).follow_links(follow_links).build();
-            if let Some(e) = walk.flatten().find(|e| e.file_type().is_some_and(|t| t.is_file()) && self.holds(e.path())) {
-                return Some(e.into_path());
+            if inside_index_dir(root) {
+                return Reach::Index(root.to_path_buf());
+            }
+            let (seen, visited) = (Arc::clone(&met), Arc::clone(&visited));
+            let walk = ignore::WalkBuilder::new(root)
+                .standard_filters(false)
+                .follow_links(follow_links)
+                .filter_entry(move |e| {
+                    if !e.file_type().is_some_and(|t| t.is_dir()) {
+                        return true;
+                    }
+                    // the name the searches skip (grep's --exclude-dir is case-sensitive)
+                    if e.depth() > 0 && e.file_name() == INDEX_DIR {
+                        seen.lock().unwrap_or_else(|p| p.into_inner()).push(e.path().to_path_buf());
+                        return false;
+                    }
+                    // elsewhere the walker's own check ends a cycle of links
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        std::fs::metadata(e.path()).map_or(true, |m| visited.lock().unwrap_or_else(|p| p.into_inner()).insert((m.dev(), m.ino())))
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = &visited;
+                        true
+                    }
+                })
+                .build();
+            for e in walk.flatten() {
+                // a link met inside the tree is read only by a search that follows links
+                if e.depth() > 0 && e.path_is_symlink() && !follow_links {
+                    continue;
+                }
+                #[cfg(unix)]
+                let ino = e.ino();
+                #[cfg(not(unix))]
+                let ino = None;
+                entries.push((e.path().to_path_buf(), ino, e.path_is_symlink()));
+                if entries.len() > limit || entries.len().is_multiple_of(4096) && started.elapsed() > WALK_TIME {
+                    return Reach::TooWide;
+                }
             }
         }
-        None
+        for dir in std::mem::take(&mut *met.lock().unwrap_or_else(|p| p.into_inner())) {
+            self.add(&dir);
+        }
+        #[cfg(unix)]
+        let hit = {
+            use std::os::unix::fs::MetadataExt;
+            let inos: std::collections::HashSet<u64> = self.ids.iter().map(|&(_, i)| i).collect();
+            // a link is read through: its target decides; another entry's inode is its own
+            entries.into_iter().find(|(p, ino, link)| {
+                (*link || ino.is_none_or(|i| inos.contains(&i))) && std::fs::metadata(p).is_ok_and(|m| self.ids.contains(&(m.dev(), m.ino())))
+            })
+        };
+        #[cfg(not(unix))]
+        let hit = entries.into_iter().find(|(p, _, _)| inside_index_dir(p));
+        hit.map_or(Reach::Clear, |e| Reach::Index(e.0))
     }
 
     /// Whether `path` is one of those files or directories, or lies inside any index directory by
@@ -535,6 +619,38 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+    /// A tree of `n` files under `root/name`.
+    #[cfg(unix)]
+    fn files(root: &Path, name: &str, n: usize) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..n {
+            std::fs::write(dir.join(format!("f{i}")), b"x").unwrap();
+        }
+        dir
+    }
+
+    /// The walk before a search follows a link met in the tree only for a search that does, stops
+    /// past its budget, and enters a directory once however many links lead to it.
+    #[cfg(unix)]
+    #[test]
+    fn the_walk_before_a_search_follows_links_as_it_does_and_stops_at_its_budget() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("scrutate_reach_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let big = files(&root, "big", 300);
+        let here = files(&root, "here", 3);
+        symlink(&big, here.join("to_big")).unwrap();
+        let mut index = IndexFiles::near(&here);
+        assert_eq!(index.reached_by_search(&[&here], false, 100), Reach::Clear, "a link not followed is not walked");
+        assert_eq!(index.reached_by_search(&[&here], true, 100), Reach::TooWide, "a followed link past the budget");
+        assert_eq!(index.reached_by_search(&[&big], false, 100), Reach::TooWide, "the budget holds without links");
+        // a cycle and a second link to the same tree: each directory entered once
+        symlink(&here, here.join("loop")).unwrap();
+        symlink(&big, here.join("again")).unwrap();
+        assert_eq!(index.reached_by_search(&[&here], true, 320), Reach::Clear);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn only_files_rs_and_instant_rs_build_a_walker() {

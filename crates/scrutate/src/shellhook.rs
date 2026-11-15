@@ -218,10 +218,12 @@ const NOT_RG: [&str; 14] = [
 
 /// Whether a long flag takes a value: none, one (after `=` or as the next word), or one only
 /// after `=` (GNU grep's `--color`).
-#[derive(Clone, Copy, PartialEq)]
-enum Takes {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Takes {
     No,
+    /// the next word
     Value,
+    /// after `=`
     Joined,
 }
 
@@ -381,6 +383,18 @@ const GREP_FLAGS: Flags = Flags {
     ],
 };
 
+/// Every flag the allow-list lets `program` (`rg` or `grep`) take, short and long, and how it
+/// takes a value.
+#[doc(hidden)]
+pub fn allowed_flags(program: &str) -> Vec<(String, Takes)> {
+    let flags = if program == "rg" { &RG_FLAGS } else { &GREP_FLAGS };
+    let short = |set: &str, takes| set.chars().map(move |c| (format!("-{c}"), takes)).collect::<Vec<_>>();
+    let mut all = short(flags.plain, Takes::No);
+    all.extend(short(flags.valued, Takes::Value));
+    all.extend(flags.long.iter().map(|&(f, t)| (f.to_string(), t)));
+    all
+}
+
 /// Whether `a` names a flag of `RG_RUNS` or `NOT_RG`, or is a cluster of short flags with `z` in
 /// it (`-iz`). `NOT_RG` too, since `scrutate grep`'s parser may take as a flag what rg takes as a value.
 fn rg_runs(a: &str) -> bool {
@@ -422,70 +436,75 @@ fn only_known(flags: &Flags, args: &[String]) -> bool {
     true
 }
 
-/// The words of `args` that are no flag and no flag's value, and whether a flag gave the pattern
-/// (`-e`, `-f`, `--regexp`, `--file`), as `only_known` reads them.
-fn operands<'a>(flags: &Flags, args: &'a [String]) -> (Vec<&'a str>, bool) {
-    let (mut out, mut pattern_given, mut words) = (Vec::new(), false, args.iter());
+/// What each word of `args` is to the program, read as `only_known` reads them: a flag's value is
+/// skipped whatever it looks like, so only a `--` in a flag's place ends the flags.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Role {
+    Flag,
+    Value,
+    Operand,
+    End,
+}
+
+fn roles(flags: &Flags, args: &[String]) -> Vec<Role> {
+    let (mut out, mut words) = (Vec::with_capacity(args.len()), args.iter());
     while let Some(a) = words.next() {
         if a == "--" {
-            out.extend(words.by_ref().map(String::as_str));
-        } else if a.starts_with("--") {
-            let name = a.split_once('=').map_or(a.as_str(), |(n, _)| n);
-            pattern_given |= matches!(name, "--regexp" | "--file");
-            if value_follows(flags, a) {
-                words.next();
-            }
+            out.push(Role::End);
+            out.extend(words.by_ref().map(|_| Role::Operand));
         } else if a.len() > 1 && a.starts_with('-') {
-            pattern_given |= a[1..].chars().find(|c| flags.valued.contains(*c)).is_some_and(|c| matches!(c, 'e' | 'f'));
-            if value_follows(flags, a) {
-                words.next();
+            out.push(Role::Flag);
+            if value_follows(flags, a) && words.next().is_some() {
+                out.push(Role::Value);
             }
         } else {
-            out.push(a.as_str());
+            out.push(Role::Operand);
+        }
+    }
+    out
+}
+
+/// The words of `args` that are no flag and no flag's value, and whether a flag gave the pattern
+/// (`-e`, `-f`, `--regexp`, `--file`).
+fn operands<'a>(flags: &Flags, args: &'a [String]) -> (Vec<&'a str>, bool) {
+    let mut pattern_given = false;
+    let mut out = Vec::new();
+    for (a, role) in args.iter().zip(roles(flags, args)) {
+        match role {
+            Role::Operand => out.push(a.as_str()),
+            Role::Flag if a.starts_with("--") => pattern_given |= matches!(a.split_once('=').map_or(a.as_str(), |(n, _)| n), "--regexp" | "--file"),
+            Role::Flag => pattern_given |= a[1..].chars().find(|c| flags.valued.contains(*c)).is_some_and(|c| matches!(c, 'e' | 'f')),
+            _ => {}
         }
     }
     (out, pattern_given)
 }
 
-/// A path `argv`'s grep or rg names that is one of the index directories' files or lies inside
-/// one (`files::IndexFiles::holds`), or, when the output will name no file (`-h`, rg's `-I`, a
-/// single file named), a file a walk of the searched paths reaches that is: no line can be told
-/// apart by its name then.
-fn names_the_index_dir(argv: &[String], index: &crate::files::IndexFiles) -> Option<String> {
-    let flags = match argv.first()?.as_str() {
-        "grep" => &GREP_FLAGS,
-        "rg" => &RG_FLAGS,
-        _ => return None,
+/// Whether `argv`'s grep or rg could read one of the index directories' files: a named path
+/// inside one, or anything a walk of what it searches reaches that is one by identity (a link
+/// into an index directory, a hard link under another name). Decided before the search runs,
+/// whatever its output will look like.
+fn names_the_index_dir(argv: &[String], index: &mut crate::files::IndexFiles) -> crate::files::Reach {
+    let flags = match argv.first().map(String::as_str) {
+        Some("grep") => &GREP_FLAGS,
+        Some("rg") => &RG_FLAGS,
+        _ => return crate::files::Reach::Clear,
     };
     let (words, pattern_given) = operands(flags, &argv[1..]);
     let paths = if pattern_given { &words[..] } else { words.get(1..).unwrap_or(&[]) };
-    if let Some(p) = paths.iter().find(|p| index.holds(std::path::Path::new(p))) {
-        return Some(p.to_string());
-    }
-    let flag_words: Vec<&str> = argv[1..].iter().take_while(|a| *a != "--").map(String::as_str).filter(|a| a.starts_with('-') && !words.contains(a)).collect();
+    let flag_words: Vec<&str> = argv[1..].iter().zip(roles(flags, &argv[1..])).filter(|(_, r)| *r == Role::Flag).map(|(a, _)| a.as_str()).collect();
     let short = |c: char| flag_words.iter().any(|a| !a.starts_with("--") && a.contains(c));
-    let one_file = paths.len() == 1 && std::path::Path::new(paths[0]).is_file();
-    // (the output names no file, the walk follows links, the search walks `.` when given no path)
-    let (no_names, follows, walks_here) = match argv[0].as_str() {
-        "grep" => {
-            let recursive = short('r') || short('R') || flag_words.iter().any(|a| matches!(*a, "--recursive" | "--dereference-recursive"));
-            (short('h') || flag_words.contains(&"--no-filename") || one_file, short('R') || flag_words.contains(&"--dereference-recursive"), recursive)
-        }
-        _ => (short('I') || flag_words.contains(&"--no-filename") || one_file, short('L') || flag_words.contains(&"--follow"), true),
+    // rg searches `.` when given no path; grep reads its standard input, empty here, unless recursive
+    let walks_here = argv[0] == "rg" || short('r') || short('R') || flag_words.iter().any(|a| matches!(*a, "--recursive" | "--dereference-recursive"));
+    // a link met in the tree is followed by grep's -R and rg's -L; a cluster that holds the letter
+    // as another flag's value (`-tL`) counts too
+    let follows = if argv[0] == "rg" { short('L') || flag_words.contains(&"--follow") } else { short('R') || flag_words.contains(&"--dereference-recursive") };
+    let roots: Vec<&std::path::Path> = match (paths.is_empty(), walks_here) {
+        (false, _) => paths.iter().map(std::path::Path::new).collect(),
+        (true, true) => vec![std::path::Path::new(".")],
+        (true, false) => Vec::new(),
     };
-    if no_names {
-        let roots: Vec<&str> = match (paths.is_empty(), walks_here) {
-            (false, _) => paths.to_vec(),
-            (true, true) => vec!["."],
-            // a grep given no path reads its standard input, which is empty here
-            (true, false) => Vec::new(),
-        };
-        let roots: Vec<&std::path::Path> = roots.into_iter().map(std::path::Path::new).collect();
-        if let Some(p) = index.reached_from(&roots, follows) {
-            return Some(p.display().to_string());
-        }
-    }
-    None
+    index.reached_by_search(&roots, follows, crate::files::WALK_ENTRIES)
 }
 
 /// Whether the word after `a` is `a`'s value in `flags`: a long flag that takes one without `=`, or
@@ -744,17 +763,17 @@ fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
         c
     } else {
         let mut c = Command::new(on_path(&argv[0])?);
-        // scrutate's own index holds the repository's text in binary records, where a secret runs
-        // into the next field's bytes and no detector sees where it ends: a search leaves it out
-        // as a speed-up: the output is checked file by file (`IndexNames`). grep's goes first, as
-        // BSD grep reads no option after an operand; rg's after the user's globs, which take
-        // precedence the later they come, and before any `--`
+        // scrutate's own index holds the repository's text: the search skips a directory named so,
+        // as the check before the run assumed (names_the_index_dir). grep's goes first, as BSD grep
+        // reads no option after an operand; rg's after the user's globs, which take precedence the
+        // later they come, and before any `--`
         let mut args: Vec<String> = argv[1..].to_vec();
         match argv[0].as_str() {
             "grep" => args.insert(0, format!("--exclude-dir={}", crate::files::INDEX_DIR)),
             "rg" => {
                 let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
-                args.insert(at, format!("--glob=!{}", crate::files::INDEX_DIR));
+                // rg weighs every --iglob after every --glob, so a user's --iglob would beat the glob alone
+                args.splice(at..at, [format!("--glob=!{}", crate::files::INDEX_DIR), format!("--iglob=!{}", crate::files::INDEX_DIR)]).for_each(drop);
             }
             _ => {}
         }
@@ -906,47 +925,10 @@ fn on_path(name: &str) -> Option<std::path::PathBuf> {
 /// The most bytes of one line read at a time.
 const PIECE: usize = 1 << 20;
 
-/// The file a line of grep's or rg's output names, found by its prefix (`path:N:`, `path-N-`,
-/// `path:`, `path-`, `path\0`, or rg's JSON `path.text`), and whether it is an index file.
-#[derive(Default)]
-struct IndexNames {
-    known: std::collections::HashMap<Vec<u8>, bool>,
-}
-
-impl IndexNames {
-    fn names_index_file(&mut self, line: &[u8], index: &crate::files::IndexFiles) -> bool {
-        if line.starts_with(b"{\"type\"") {
-            let v: Option<serde_json::Value> = serde_json::from_slice(line).ok();
-            let path = v.as_ref().and_then(|v| v["data"]["path"]["text"].as_str()).map(|p| p.as_bytes().to_vec());
-            return path.is_some_and(|p| self.is_index(&p, index).unwrap_or(false));
-        }
-        // the first separator after which the prefix is a file decides; later ones are text
-        let head = &line[..line.len().min(4096)];
-        for (i, _) in head.iter().enumerate().filter(|(_, b)| matches!(b, b':' | b'-' | b'\0')).take(16) {
-            if let Some(held) = self.is_index(&head[..i], index) {
-                return held;
-            }
-        }
-        false
-    }
-
-    /// Some(whether it is an index file) when `name` is a file, None when it is no file.
-    fn is_index(&mut self, name: &[u8], index: &crate::files::IndexFiles) -> Option<bool> {
-        if let Some(&held) = self.known.get(name) {
-            return Some(held);
-        }
-        let path = std::path::PathBuf::from(String::from_utf8_lossy(name).into_owned());
-        let file = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
-        let held = file.is_file() && index.holds(&path);
-        self.known.insert(name.to_vec(), held);
-        Some(held)
-    }
-}
-
 /// Streams the child's standard output to ours, line by line, with secrets redacted. With a
 /// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
 /// the child wrote that were read, the bytes sent)
-fn stream(mut child: std::process::Child, room: Option<usize>, index: &crate::files::IndexFiles) -> (i32, usize, usize) {
+fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize) {
     use std::io::BufRead;
     let out = child.stdout.take().expect("a piped stdout");
     let mut reader = std::io::BufReader::new(out);
@@ -962,9 +944,6 @@ fn stream(mut child: std::process::Child, room: Option<usize>, index: &crate::fi
     let mut keys = crate::secrets::KeyFiles::default();
     let (mut read, mut sent, mut cut) = (0usize, 0usize, false);
     let mut line = Vec::new();
-    // a line of a file in an index directory is left out, whatever path the program took to it;
-    // a long line's later pieces follow its first
-    let (mut names, mut dropping, mut at_start, mut dropped) = (IndexNames::default(), false, true, 0usize);
     loop {
         line.clear();
         // a line longer than this (a minified file, a device with no line ends) comes in pieces,
@@ -972,14 +951,6 @@ fn stream(mut child: std::process::Child, room: Option<usize>, index: &crate::fi
         match (&mut reader).take(PIECE as u64).read_until(b'\n', &mut line) {
             Ok(0) | Err(_) => break,
             Ok(n) => read += n,
-        }
-        if at_start {
-            dropping = names.names_index_file(&line, index);
-            dropped += usize::from(dropping);
-        }
-        at_start = line.ends_with(b"\n");
-        if dropping {
-            continue;
         }
         let shown: Vec<u8> = if !redact {
             line.clone()
@@ -1029,10 +1000,6 @@ fn stream(mut child: std::process::Child, room: Option<usize>, index: &crate::fi
         let _ = writeln!(so, "{note}");
         sent += note.len() + 1;
     }
-    if dropped > 0 {
-        let _ = so.flush();
-        eprintln!("[scrutate] {dropped} lines from scrutate's index directory ({}) left out: its files hold the repository's text", crate::files::INDEX_DIR);
-    }
     let _ = so.flush();
     let status = child.wait().ok().and_then(|s| s.code());
     // a cut search had matches, as the program would have said
@@ -1067,13 +1034,25 @@ pub fn run_main(args: &[String]) -> i32 {
         eprintln!("scrutate hook run: only a search by {} that runs no program and writes no file is answered", TOOLS.join(", "));
         return 2;
     }
-    let index = crate::files::IndexFiles::near(&std::env::current_dir().unwrap_or_default());
-    if let Some(p) = names_the_index_dir(argv, &index) {
-        eprintln!(
-            "scrutate hook run: {p} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
-            crate::files::INDEX_DIR
-        );
-        return 2;
+    let mut index = crate::files::IndexFiles::near(&std::env::current_dir().unwrap_or_default());
+    match names_the_index_dir(argv, &mut index) {
+        crate::files::Reach::Clear => {}
+        crate::files::Reach::Index(p) => {
+            eprintln!(
+                "scrutate hook run: {} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
+                p.display(),
+                crate::files::INDEX_DIR
+            );
+            return 2;
+        }
+        crate::files::Reach::TooWide => {
+            eprintln!(
+                "scrutate hook run: the search would read more than {} entries, or take over {} s to check for scrutate's index: not run; name fewer or narrower paths",
+                crate::files::WALK_ENTRIES,
+                crate::files::WALK_TIME.as_secs()
+            );
+            return 2;
+        }
     }
     let Ok(exe) = std::env::current_exe() else { return 2 };
     let Some(mut c) = command(&exe, argv) else {
@@ -1104,7 +1083,7 @@ pub fn run_main(args: &[String]) -> i32 {
         die_with_us_windows(Some(&child));
     }
     let budget = std::env::var("SCRUTATE_MAX_BYTES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(crate::ops::AGENT_BYTES, |n| n.clamp(1_000, 1_000_000));
-    let (code, read, sent) = stream(child, (!piped).then_some(budget), &index);
+    let (code, read, sent) = stream(child, (!piped).then_some(budget));
     let _ = crate::hook::count_bash(&session, read, sent);
     code
 }
