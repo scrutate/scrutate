@@ -627,7 +627,7 @@ fn hook_run_refuses_a_named_path_inside_the_index_directory() {
     }
     std::os::unix::fs::symlink(root.join(".scrutate/tsquery/c.bin"), root.join("cache-link")).unwrap();
     std::os::unix::fs::symlink(root.join(".scrutate"), root.join("index-link")).unwrap();
-    let root = fs::canonicalize(&root).unwrap();
+    let root = canon(&root);
     let abs = root.join(".scrutate/tsquery/c.bin").to_string_lossy().into_owned();
     let home = root.with_extension("home");
     let run = |ask: &[&str]| {
