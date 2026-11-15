@@ -2299,6 +2299,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         instant::search(&q, &f, Arc::clone(&cancel), Output::Records(&mut sink))?
     };
     warn_failures(&stats);
+    let nothing = searched_nothing(&stats, &f, out.indexed);
     if pipe_closed {
         return Ok(if found { 0 } else { 1 });
     }
@@ -2389,7 +2390,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         return Ok(130);
     }
     // as ripgrep: a path that could not be read, named or walked, gives 2 even after a match
-    Ok(if stats.errors > 0 {
+    Ok(if stats.errors > 0 || nothing {
         2
     } else if found {
         0
@@ -2465,6 +2466,16 @@ fn broken_pipe(e: &anyhow::Error) -> bool {
 }
 
 /// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
+/// As ripgrep: a search of the current directory, no path given, that searched no file says so
+/// and exits 2, since a filter left out every file. A path given and searched in vain is a plain 1.
+fn searched_nothing(stats: &instant::Stats, f: &Files, indexed: bool) -> bool {
+    let none = !f.paths_as_given && !indexed && stats.files_searched == 0 && !stats.cancelled;
+    if none {
+        diagnostic("error", "no files were searched: a filter (-g, -t, --max-depth, an ignore file) left out every file");
+    }
+    none
+}
+
 fn warn_failures(stats: &instant::Stats) {
     for f in &stats.failures {
         diagnostic("warning", f);
@@ -2479,6 +2490,7 @@ fn warn_failures(stats: &instant::Stats) {
 fn grep_plain(q: &Query, f: &Files, out: GrepOutput, cancel: Arc<AtomicBool>, sink: Arc<instant::PlainSink>) -> Result<i32> {
     let stats = instant::search(q, f, Arc::clone(&cancel), Output::Plain(Arc::clone(&sink)))?;
     warn_failures(&stats);
+    let nothing = searched_nothing(&stats, f, out.indexed);
     let found = stats.matches > 0;
     if sink.broken.load(Ordering::Relaxed) {
         if let Some(e) = sink.failure() {
@@ -2507,7 +2519,7 @@ fn grep_plain(q: &Query, f: &Files, out: GrepOutput, cancel: Arc<AtomicBool>, si
         return Ok(130);
     }
     // as ripgrep: a path that could not be read, named or walked, gives 2 even after a match
-    Ok(if stats.errors > 0 {
+    Ok(if stats.errors > 0 || nothing {
         2
     } else if found {
         0

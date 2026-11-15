@@ -502,9 +502,9 @@ fn a_glob_on_the_command_line_is_taken_whole() {
     }
     let (code, out, err) = d.run(&["grep", "-l", "-g", "*.{txt,log}", "foo"]);
     assert_eq!((code, sorted(&out)), (0, vec!["a.txt".to_string(), "b.log".to_string()]), "{err}");
-    // as ripgrep: one glob that holds a comma, so no file matches
-    let (code, out, _) = d.run(&["grep", "-l", "-g", "*.txt,*.log", "foo"]);
-    assert_eq!((code, out.as_str()), (1, ""));
+    // as ripgrep: one glob that holds a comma, so no file matches, and no file searched is exit 2
+    let (code, out, err) = d.run(&["grep", "-l", "-g", "*.txt,*.log", "foo"]);
+    assert_eq!((code, out.as_str()), (2, ""), "{err}");
     let (_, out, _) = d.run(&["grep", "-l", "-g", "*.txt", "-g", "*.rs", "foo"]);
     assert_eq!(sorted(&out), ["a.txt", "c.rs"]);
     let (_, out, _) = d.run_env(&["grep", "-l", "foo"], &[("SCRUTATE_GREP_GLOBS", "*.txt,*.log")]);
@@ -1777,4 +1777,28 @@ fn max_results_keeps_the_trailing_context_of_its_last_match() {
         .map(|v| (v["type"].as_str().unwrap().to_string(), v["line"].as_u64().unwrap_or(0), v["spans"].as_array().map_or(0, Vec::len)))
         .collect();
     assert_eq!(kinds, [("match".to_string(), 1, 1), ("context".to_string(), 2, 0), ("match".to_string(), 3, 1)], "{out}");
+}
+
+/// As ripgrep 15.2.0: a search of the current directory whose filters leave no file exits 2 and
+/// says why; with a path given it exits 1 quietly, and a file named past the filter is searched.
+#[test]
+fn a_search_whose_filters_leave_no_file_exits_2_and_says_why() {
+    let d = Dir::new("nothing_searched");
+    d.write("a.txt", b"foo\n");
+    d.write("sub/b.txt", b"foo\n");
+    for args in [
+        &["grep", "-l", "-g", "*.TXT", "foo"][..],
+        &["grep", "-l", "--max-depth", "0", "foo"],
+        &["grep", "-c", "-t", "rust", "foo"],
+        &["grep", "-g", "*.TXT", "foo"],
+    ] {
+        let (code, out, err) = d.run(args);
+        assert_eq!((code, out.as_str()), (2, ""), "{args:?}");
+        assert!(err.contains("no files were searched"), "{args:?}: {err}");
+    }
+    for (args, want) in [(&["grep", "-l", "-g", "*.TXT", "foo", "."][..], (1, "")), (&["grep", "-l", "-g", "*.TXT", "foo", "a.txt"], (0, "a.txt\n"))] {
+        let (code, out, err) = d.run(args);
+        assert_eq!((code, out.as_str()), want, "{args:?}");
+        assert!(!err.contains("no files were searched"), "{args:?}: {err}");
+    }
 }

@@ -26,7 +26,8 @@
 </p>
 
 - **Exit codes**: `0` results found, `1` no results, `2` error (bad arguments, unreadable index,
-  invalid pattern, a `--root` that is not an existing directory, a missing search path...),
+  invalid pattern, a `--root` that is not an existing directory, a missing search path, a `grep`
+  of the current directory that searched no file...),
   `130` interrupted (Ctrl-C, or stopped early for a reason other than `--max-results`).
   `grep --type-list` and `grep --version` need no pattern.
 - **Diagnostics**: an error is one stderr line (`scrutate: error: ...`); with `--json`, or
@@ -219,7 +220,9 @@ Files that cannot be read, or not to the end, are named in stderr warnings (the 
 the exit code is then 2, as ripgrep gives it, after any matches: a search path that does not
 exist, a file or directory without read permission, named or found by the walk, a dangling link
 or a loop that `-L` follows, an archive member not searched to its end, and PCRE2's match limit.
-Matches in the other paths still print; exit 1 means only that nothing matched. On Linux, files on `/proc`, `/sys` or
+Matches in the other paths still print; exit 1 means only that nothing matched. A `grep` given
+no path that searched no file, its `-g`, `-t`, `--max-depth` or ignore files having left out
+every one, says so on stderr and exits 2, as ripgrep does; with a path given it exits 1. On Linux, files on `/proc`, `/sys` or
 another kernel pseudo filesystem (debugfs, tracefs, securityfs, configfs, cgroup) give their size
 as 0 and can answer the first read short, so they are read until the kernel has no more. The walk
 finds them by one `statfs` per root and per directory named `proc` or `sys` below one (with

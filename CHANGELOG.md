@@ -173,6 +173,10 @@ incompatible index by itself, and that is never breaking.
   before it stops, as `-m N` does, where it stopped at the match; a match inside that context
   prints as a match, as ripgrep prints one after `-m`'s last, and does not count toward N
   ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `grep` with no path that searched no file, because `-g`, `-t`, `--max-depth` or an ignore file
+  left out every one, prints `no files were searched` on stderr and exits 2, as ripgrep 15.2.0
+  does, where it exited 1 in silence; a path given still exits 1
+  ([CLI](docs/CLI.md#conventions)).
 - `grep` prints a CRLF line with its `\r`, matched and context lines alike, in streamed, sorted
   (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
   dropped the `\r`; `--json` and MCP text still carry no line end
