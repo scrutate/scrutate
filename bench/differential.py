@@ -183,6 +183,53 @@ def run_json(cmd: list[str], cwd: str, env: dict | None = None) -> tuple[int, by
     return r.returncode, r.stdout
 
 
+def late_nul(root: str) -> list[str]:
+    """The files whose first NUL byte is past the reader's first fill: there ripgrep's output stops
+    at a read whose start depends on how far earlier long lines on its thread grew its buffer."""
+    out = []
+    for d, dirs, fs in os.walk(root):
+        dirs[:] = [x for x in dirs if x not in (".git", ".scrutate")]
+        for f in fs:
+            p = os.path.join(d, f)
+            if os.path.isfile(p) and not os.path.islink(p) and open(p, "rb").read().find(b"\0") >= (64 << 10) - 8:
+                out.append(os.path.relpath(p, root).replace(os.sep, "/"))
+    return out
+
+
+def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False) -> tuple[int, bytes]:
+    """`cmd` (rg, its flags, then PATTERN), with each file of `late` answered as rg answers
+    it searched alone, with a fresh buffer: scrutate's rule, which no walk order can change. The
+    rest is rg's run without those files. `by_path`: put the output back in path order (`--sort`)."""
+    if not late:
+        return run_json(cmd, root)
+    rc, out = run_json([*cmd[:-1], *(x for rel in late for x in ("-g", "!/" + rel)), cmd[-1]], root)
+    parts = [out]
+    for rel in late:
+        with tempfile.TemporaryDirectory() as t:
+            # the ignore files decide whether the file is searched at all
+            for d, dirs, fs in os.walk(root):
+                dirs[:] = [x for x in dirs if x not in (".git", ".scrutate")]
+                for f in fs:
+                    src = os.path.join(d, f)
+                    if f in (".gitignore", ".ignore", ".rgignore") or os.path.relpath(src, root) == rel:
+                        dst = os.path.join(t, os.path.relpath(src, root))
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        shutil.copy2(src, dst)
+            if os.path.isdir(os.path.join(root, ".git")):
+                os.makedirs(os.path.join(t, ".git"), exist_ok=True)
+            rc1, o1 = run_json(cmd, t)
+        rc = 0 if 0 in (rc, rc1) else max(rc, rc1)
+        parts.append(o1)
+    if not by_path:
+        return rc, b"".join(parts)
+    groups: dict[bytes, list[bytes]] = {}
+    for line in b"".join(parts).split(b"\n"):
+        if line:
+            groups.setdefault(line.split(b":", 1)[0], []).append(line)
+    order = sorted(groups, key=lambda p: p.split(b"/"))
+    return rc, b"".join(l + b"\n" for p in order for l in groups[p])
+
+
 def random_mode(rng: random.Random) -> dict:
     """One of the engine's internal search paths, forced through its environment variable."""
     return rng.choice([
@@ -265,9 +312,10 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
             name, negated = rng.choice(["py", "rust"]), rng.random() < 0.3
             sf, rf = sf + ["-t", "!" + name if negated else name], rf + ["-T" if negated else "-t", name]
         envs = [{}, random_mode(rng)]
+        late = late_nul(root)
         if mode == "multiline":
             # rg's -U with --json reports multi-line matches as one record spanning lines; compare counts of files instead
-            rc2, o2 = run_json([RG, "--no-messages", "-l", *rf, pat], root)
+            rc2, o2 = run_rg([RG, "--no-messages", "-l", *rf, pat], root, late)
             b = sorted(l.decode()[2:] if l.startswith(b"./") else l.decode() for l in o2.splitlines())
             stats["empty"] += not b
             for env in envs:
@@ -280,10 +328,10 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 if a != b:
                     return f"multiline -l mismatch for {pat!r} ({shown(env)}): scrutate={a} rg={b} (corpus {root})"
             return indexed_agrees(rng, root, pat, sf, mode)
-        rc2, o2 = run_json([RG, "--json", "--no-messages", *rf, pat], root)
+        rc2, o2 = run_rg([RG, "--json", "--no-messages", *rf, pat], root, late)
         b = rg_matches(o2)
         stats["empty"] += not b
-        rc2c, o2c = run_json([RG, "--no-messages", "-c", *rf, pat], root)
+        rc2c, o2c = run_rg([RG, "--no-messages", "-c", *rf, pat], root, late)
         cb = {}
         for l in o2c.splitlines():
             if b":" in l:
@@ -303,7 +351,7 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 return f"match sets differ for {pat!r} ({mode}, flags {sf}, {shown(env)}): only scrutate {only_a}; only rg {only_b} (corpus {root})"
             # plain output, byte for byte: the text as the file holds it
             _, p1 = run_json([SCRUTATE, "grep", "-n", "-H", *sf, pat], root, env)
-            _, p2 = run_json([RG, "--no-messages", "--no-heading", "-n", "-H", *rf, pat], root)
+            _, p2 = run_rg([RG, "--no-messages", "--no-heading", "-n", "-H", *rf, pat], root, late)
             pa = sorted(p1.split(b"\n"))
             pb = sorted(l[2:] if l.startswith(b"./") else l for l in p2.split(b"\n"))
             if pa != pb:
@@ -311,7 +359,7 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 return f"plain output differs for {pat!r} ({mode}, flags {sf}, {shown(env)}): {diff} (corpus {root})"
             # sorted output is printed from records, a path of its own: in its order, byte for byte
             _, s1 = run_json([SCRUTATE, "grep", "--sort", "-n", "-H", *sf, pat], root, env)
-            _, s2 = run_json([RG, "--no-messages", "--no-heading", "--sort", "path", "-n", "-H", *rf, pat], root)
+            _, s2 = run_rg([RG, "--no-messages", "--no-heading", "--sort", "path", "-n", "-H", *rf, pat], root, late, by_path=True)
             sb = [l[2:] if l.startswith(b"./") else l for l in s2.split(b"\n")]
             if s1.split(b"\n") != sb:
                 diff = [x for x in zip(s1.split(b"\n"), sb) if x[0] != x[1]][:2]

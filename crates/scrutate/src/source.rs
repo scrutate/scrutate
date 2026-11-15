@@ -4,6 +4,7 @@
 //! its size, positioned reads and one sequential read, and nothing else.
 
 use super::*;
+use std::cell::Cell;
 use std::fs::File;
 use std::io::Read;
 
@@ -48,8 +49,8 @@ pub(super) trait Source {
     fn expands(&self) -> bool {
         false
     }
-    /// Search it as one stream from its start.
-    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K) -> Result<(), K::Error>;
+    /// Search it as one stream from its start; `widest`, where given, keeps the largest read asked.
+    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, widest: Option<&Cell<usize>>) -> Result<(), K::Error>;
 }
 
 /// A file on disk.
@@ -83,11 +84,14 @@ impl Source for Disk {
     fn opened(&self) -> Option<Instant> {
         Some(self.opened)
     }
-    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K) -> Result<(), K::Error> {
+    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, widest: Option<&Cell<usize>>) -> Result<(), K::Error> {
         // a positioned read on Windows moves the file's cursor, and this search reads from it
         #[cfg(windows)]
         let _ = std::io::Seek::seek(&mut &self.file, std::io::SeekFrom::Start(0));
-        m.search_file(s, &self.file, sink)
+        match widest {
+            Some(widest) => m.search_reader(s, Watch { r: &self.file, widest }, sink),
+            None => m.search_file(s, &self.file, sink),
+        }
     }
 }
 
@@ -112,7 +116,7 @@ impl Source for Bytes<'_> {
     fn known_size(&self) -> Option<u64> {
         Some(self.0.len() as u64)
     }
-    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K) -> Result<(), K::Error> {
+    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, _: Option<&Cell<usize>>) -> Result<(), K::Error> {
         m.search_reader(s, self.0, sink)
     }
 }
@@ -134,7 +138,7 @@ impl Source for Stdin {
     fn at(&self) -> Option<&NoReads> {
         None
     }
-    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K) -> Result<(), K::Error> {
+    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, _: Option<&Cell<usize>>) -> Result<(), K::Error> {
         m.search_reader(s, std::io::stdin().lock(), sink)
     }
 }
@@ -150,8 +154,25 @@ impl Source for Member<'_> {
     fn expands(&self) -> bool {
         true
     }
-    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K) -> Result<(), K::Error> {
+    fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, _: Option<&Cell<usize>>) -> Result<(), K::Error> {
         m.search_reader(s, &mut *self.0, sink)
+    }
+}
+
+/// The size of a reader's buffer before a line longer than it grows it (grep-searcher's default).
+const FIRST_BUFFER: usize = 64 << 10;
+
+/// A reader that keeps the largest read asked of it: a searcher asks for more than its first
+/// `FIRST_BUFFER` bytes only once a long line has grown its buffer.
+struct Watch<'c, R> {
+    r: R,
+    widest: &'c Cell<usize>,
+}
+
+impl<R: Read> Read for Watch<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.widest.set(self.widest.get().max(buf.len()));
+        self.r.read(buf)
     }
 }
 
@@ -255,11 +276,11 @@ fn unchecked<S: Sink>(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], sink: S
 /// through the reader, where the search stops at the read that meets the NUL, the first read being
 /// the 3 bytes of the BOM check; a named one as a slice where ripgrep maps it, through the reader
 /// on macOS.
-fn with_a_nul(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], at: usize, named: bool, sink: &mut Collector) -> std::io::Result<()> {
+fn with_a_nul(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], at: usize, named: bool, sink: &mut Collector, widest: &Cell<usize>) -> std::io::Result<()> {
     if !named && nothing_before_the_nul(b, at, searcher.line_terminator().as_byte()) {
         m.search_slice(searcher, &b[..=at], sink)
     } else if !named {
-        m.search_reader(searcher, up_to_the_nul(b, at), sink)
+        m.search_reader(searcher, Watch { r: up_to_the_nul(b, at), widest }, sink)
     } else if !MAPS {
         m.search_reader(searcher, b, sink)
     } else {
@@ -281,6 +302,11 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     } else {
         &mut w.searcher
     };
+    // a walked file's output stops at the read that meets a NUL, and where that read starts
+    // depends on the buffer's size: one a long line grew is made again, so every file starts at
+    // ripgrep's first size whatever came before it on this thread
+    let widest = Cell::new(0);
+    let watched = !named && !src.expands();
     let mut fresh = None;
     let mut owned = None;
     // `owned` is known to hold no NUL byte
@@ -345,9 +371,12 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
             // A byte-order mark is transcoded, and the text it gives may hold a NUL
             None if !src.expands() && !starts_with_bom(b) => unchecked(r.matcher, searcher, b, &mut sink),
             None => r.matcher.search_slice(searcher, b, &mut sink),
-            Some(at) => with_a_nul(r.matcher, searcher, b, at, named, &mut sink),
+            Some(at) => with_a_nul(r.matcher, searcher, b, at, named, &mut sink, &widest),
         },
-        None => src.stream(r.matcher, searcher, &mut sink),
+        None => {
+            let watch = watched.then_some(&widest);
+            src.stream(r.matcher, searcher, &mut sink, watch)
+        }
     };
     match res {
         // grep-searcher's own words for the limit name no line
@@ -358,6 +387,9 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
         Ok(()) => {}
     }
     w.out = report(r, sink, rel, named);
+    if widest.get() > FIRST_BUFFER {
+        w.searcher = make_searcher(o, BinaryDetection::quit(0), None, true, false);
+    }
 }
 
 /// Bytes `pos..end` of a source, read without moving a shared position.

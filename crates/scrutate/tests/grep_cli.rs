@@ -1129,6 +1129,36 @@ fn a_context_group_a_nul_ends_keeps_its_separator_in_sorted_output() {
 }
 
 #[test]
+fn where_a_walked_file_stops_at_a_nul_does_not_depend_on_the_files_before_it() {
+    // a line longer than the reader's first buffer grows the buffer; the read that meets a NUL
+    // past 64 KiB must start where it starts for ripgrep's first size all the same
+    let d = Dir::new("grownbuf");
+    let mut long = vec![b'x'; 100_000];
+    long.push(b'\n');
+    d.write("a/long.txt", &long);
+    let mut nul = Vec::new();
+    for i in 0.. {
+        nul.extend_from_slice(format!("beta {i}\n").as_bytes());
+        if nul.len() > 70_000 {
+            break;
+        }
+    }
+    nul.extend_from_slice(b"\0 beta\n");
+    d.write("b/nul.txt", &nul);
+    let (_, alone, _) = d.run(&["grep", "-j1", "-n", "beta", "b"]);
+    assert!(alone.lines().count() > 1000, "{}", alone.lines().count());
+    // after the long line, before it, and on as many threads as the machine gives
+    for roots in [&["a", "b"][..], &["b", "a"]] {
+        for threads in ["-j1", "-j4"] {
+            let (_, out, _) = d.run(&[&["grep", threads, "-n", "--sort", "beta"][..], roots].concat());
+            let b: Vec<&str> = out.lines().filter(|l| l.starts_with("b/")).collect();
+            assert_eq!(b.len(), alone.lines().count(), "{roots:?} {threads}");
+            assert!(b == alone.lines().collect::<Vec<_>>(), "{roots:?} {threads}: the lines differ");
+        }
+    }
+}
+
+#[test]
 fn a_walked_file_with_an_early_nul_byte_is_searched_as_ripgrep_reads_it() {
     // ripgrep reads a file's first 3 bytes on their own (its BOM check, encoding_rs_io's BomPeeker)
     // and stops at the read that meets the NUL: a match on a line ending in those 3 bytes prints

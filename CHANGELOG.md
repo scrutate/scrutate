@@ -322,6 +322,10 @@ incompatible index by itself, and that is never breaking.
 - `grep --sort` with context prints the `--` of a group a NUL byte ended before its first line,
   ahead of the `binary file matches` note, as ripgrep and the unsorted output do
   ([CLI](docs/CLI.md#conventions)).
+- `grep` gives a walked file with a NUL byte past its first 64 KiB the lines ripgrep prints for it
+  searched alone, whatever was searched before it, where a file with a line longer than 64 KiB
+  earlier on the same thread (`-j1`) made it stop sooner and print nothing
+  ([CLI](docs/CLI.md#conventions)).
 - `tsquery --rewrite --write` leaves alone, and names, a file reached through a link to a
   directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
   file the link leads to; a link was already left alone only as the file itself
