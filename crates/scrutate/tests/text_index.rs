@@ -164,6 +164,11 @@ fn an_edit_that_keeps_size_and_mtime_is_seen() {
     assert_eq!((code, out.as_str()), (0, "a.txt:1:jello world\n"), "{err}");
 }
 
+fn format(root: &Path) -> u64 {
+    let m: serde_json::Value = serde_json::from_slice(&fs::read(root.join(".scrutate/text/manifest.json")).unwrap()).unwrap();
+    m["format"].as_u64().unwrap()
+}
+
 fn set_format(root: &Path, format: u64) {
     let p = root.join(".scrutate/text/manifest.json");
     let mut m: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
@@ -176,7 +181,8 @@ fn an_index_of_the_previous_format_is_rebuilt_by_the_next_update_and_a_newer_one
     let t = Tmp::new("format");
     fs::write(t.0.join("a.txt"), "hello world\n").unwrap();
     assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
-    set_format(&t.0, 2);
+    let now = format(&t.0);
+    set_format(&t.0, now - 1);
     // a search cannot write the index: it says what to run
     let (code, _, err) = run(&t.0, &["grep", "--index", "hello"]);
     assert_eq!(code, 2, "{err}");
@@ -185,10 +191,10 @@ fn an_index_of_the_previous_format_is_rebuilt_by_the_next_update_and_a_newer_one
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("1 changed"), "{out}{err}");
     assert_eq!(counts(&t.0, "hello"), ["a.txt:1"]);
-    set_format(&t.0, 2);
+    set_format(&t.0, now - 1);
     let (code, out, err) = run(&t.0, &["grep", "--index", "--update", "hello"]);
     assert_eq!((code, out.as_str()), (0, "a.txt:1:hello world\n"), "{err}");
-    set_format(&t.0, 4);
+    set_format(&t.0, now + 1);
     for args in [&["grep", "--index", "hello"][..], &["index", "--text"]] {
         let (code, _, err) = run(&t.0, args);
         assert_eq!(code, 2, "{args:?}: {err}");
