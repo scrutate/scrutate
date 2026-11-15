@@ -431,10 +431,9 @@ writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone;
 kept as secrets.
 
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
-it redacts 198 strings (`generic-secret` 128, `key-material` 32, `password` 1, `private-key` 37):
-the private keys are the test keys the kernel ships, and the other 161, 0.037 per 10,000 lines,
-were read one by one and none is a secret; in this
-repository's tracked files, none (a test holds it there). Building the detectors costs about 5 ms
+it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,
+`private-key` 37): the private keys are the test keys the kernel ships, and the other 162, 0.037
+per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files, none (a test holds it there). Building the detectors costs about 5 ms
 once a process on an Apple M3 Pro and 19 ms on an 8-vCPU x86 server (4.8 to 5.2 ms and 18.4 to
 18.9 ms in three runs each, load 1.4 on the server), and redacting a 24,000-byte page 0.26 ms and
 0.82 ms (medians of 101 runs).
