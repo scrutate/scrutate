@@ -789,6 +789,43 @@ mod tests {
         silent.report((5, 9), "m");
     }
 
+    /// Eight calls sent together each get a thread of their own: all eight are in flight at once,
+    /// held by the first build, before any of them answers.
+    #[test]
+    fn eight_calls_sent_together_are_in_flight_at_once() {
+        let (root, session, sent) = fixture("eight");
+        let calls = Calls::default();
+        let settings = Settings::new(None);
+        let server = Server { session: &session, calls: &calls, settings: &settings, version: "test", structured: true, short: false };
+        let send = |m: Value| sent.lock().unwrap().push(m);
+        session.building();
+        let (server, send) = (&server, &send);
+        let in_flight = std::thread::scope(|scope| {
+            // the reading thread's part: a call that ran in its place would hold up the next
+            scope.spawn(move || {
+                for id in 1..=8 {
+                    let msg =
+                        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": "find_symbol", "arguments": {"name": "make_point"}}});
+                    server.handle(scope, send, msg);
+                }
+            });
+            let t0 = std::time::Instant::now();
+            while calls.map().len() < 8 && t0.elapsed() < Duration::from_secs(30) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let in_flight = (calls.map().len(), sent.lock().unwrap().len());
+            session.build().unwrap();
+            in_flight
+        });
+        assert_eq!(in_flight, (8, 0), "(calls in flight, answers) while the first build held them");
+        let sent = sent.into_inner().unwrap();
+        let mut ids: Vec<i64> = sent.iter().map(|m| m["id"].as_i64().unwrap()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, (1..=8).collect::<Vec<_>>());
+        assert!(sent.iter().all(|m| m["result"]["content"][0]["text"].as_str().is_some_and(|t| t.starts_with("src/geo.py:1-2"))), "{sent:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn a_cancelled_call_sends_nothing() {
         let (root, session, sent) = fixture("cancel");
