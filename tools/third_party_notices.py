@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+from typing import NamedTuple
 
 from gen_han_fold import OPENCC, OPENCC_SHA256, OPENCC_URL
 
@@ -43,11 +44,17 @@ def ships(dep: dict) -> bool:
     return any(k["kind"] in (None, "build") for k in dep["dep_kinds"])
 
 
-def graph(package: str) -> tuple[dict, set[str], str]:
-    """The locked `cargo metadata`, the ids compiled into `package` (itself included) and its id.
+class Compiled(NamedTuple):
+    packages: dict[str, dict]  # every package of the locked `cargo metadata`, by id
+    nodes: dict[str, dict]     # its resolve nodes, by id
+    ids: set[str]              # the ids compiled into the package, itself included
+    root: str                  # the package's own id
 
-    The one walk behind this file, `sbom.py` and `gen_dependencies_md.py`: normal and build
-    dependencies, never dev dependencies.
+
+def compiled_into(package: str) -> Compiled:
+    """The crates compiled into `package`: normal and build dependencies, never dev dependencies.
+
+    The one walk behind this file, `sbom.py` and `gen_dependencies_md.py`.
     """
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=os.path.join(HERE, ".."),
                                      capture_output=True, text=True, check=True).stdout)
@@ -62,13 +69,12 @@ def graph(package: str) -> tuple[dict, set[str], str]:
         for dep in nodes[nid]["deps"]:
             if ships(dep):
                 stack.append(dep["pkg"])
-    return meta, seen, root
+    return Compiled({p["id"]: p for p in meta["packages"]}, nodes, seen, root)
 
 
 def shipped(package: str) -> list[dict]:
-    meta, seen, root = graph(package)
-    by_id = {p["id"]: p for p in meta["packages"]}
-    return sorted((by_id[i] for i in seen - {root}), key=lambda p: (p["name"], p["version"]))
+    c = compiled_into(package)
+    return sorted((c.packages[i] for i in c.ids - {c.root}), key=lambda p: (p["name"], p["version"]))
 
 
 # C libraries compiled into the binary whose licence lives only in their source headers

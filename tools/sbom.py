@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 
-from third_party_notices import data_files, graph, ships
+from third_party_notices import compiled_into, data_files, ships
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -30,9 +30,9 @@ def main() -> int:
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     if epoch and not epoch.isdigit():
         sys.exit(f"SOURCE_DATE_EPOCH must be whole seconds since 1970, got {epoch!r}")
-    meta, seen, root_id = graph(a.package)
-    by_id = {p["id"]: p for p in meta["packages"]}
-    nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
+    stamp = time.gmtime(int(epoch)) if epoch else time.gmtime()
+    c = compiled_into(a.package)
+    by_id, nodes, seen, root_id = c.packages, c.nodes, c.ids, c.root
     comps = []
     for nid in sorted(seen - {root_id}, key=lambda i: (by_id[i]["name"], by_id[i]["version"])):
         p = by_id[nid]
@@ -70,7 +70,7 @@ def main() -> int:
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch) if epoch else None)),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp),
             "tools": [{"name": "scrutate/tools/sbom.py", "version": root["version"]}],
             "component": {"type": "application", "bom-ref": f"pkg:cargo/{root['name']}@{root['version']}", "name": root["name"], "version": root["version"],
                           "licenses": [{"expression": root["license"]}] if root.get("license") else []},
