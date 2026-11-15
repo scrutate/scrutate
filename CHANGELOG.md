@@ -284,6 +284,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The language server's `workspace/symbol` lists the symbols of a repository opened as its own
+  folder inside another folder once, from the inner folder, where the outer folder's index listed
+  them a second time and each took two of the 200 places
+  ([CLI](docs/CLI.md#lsp)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.

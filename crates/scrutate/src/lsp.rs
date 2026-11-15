@@ -798,7 +798,7 @@ impl Server {
         // leaves the others' answers, and the request fails only when none answered. A first build
         // is waited for only when no folder could answer without waiting.
         let several = asked.len() > 1;
-        let (mut out, mut answered, mut failed, mut building) = (Vec::new(), false, None, Vec::new());
+        let (mut parts, mut answered, mut failed, mut building) = (Vec::new(), false, None, Vec::new());
         for pass in 0..2 {
             let these = match pass {
                 0 => asked.clone(),
@@ -817,7 +817,7 @@ impl Server {
                     Ok(a) if method != "workspace/symbol" => return Ok(a),
                     Ok(a) => {
                         answered = true;
-                        out.extend(a.as_array().into_iter().flatten().cloned());
+                        parts.push((i, a));
                     }
                     Err(e) if several && pass == 0 && e.0 == -32801 => building.push(i),
                     Err(e) if several => {
@@ -837,6 +837,16 @@ impl Server {
         }
         if let (false, Some(e)) = (answered, failed) {
             return Err(e);
+        }
+        // a file under a deeper folder that answered is that folder's, as for definition: the outer
+        // folder's index holds it too, and would list each of its symbols a second time
+        let mut out: Vec<Value> = Vec::new();
+        for (i, a) in &parts {
+            let theirs = |e: &&Value| {
+                let owner = e["location"]["uri"].as_str().and_then(|u| self.folder_of(u));
+                owner.is_none_or(|o| o == *i || !parts.iter().any(|(j, _)| *j == o))
+            };
+            out.extend(a.as_array().into_iter().flatten().filter(theirs).cloned());
         }
         out.truncate(WORKSPACE_SYMBOLS);
         Ok(Value::Array(out))
@@ -1035,6 +1045,56 @@ mod tests {
         let mut srv = server(vec![folder("y", Some(y)), folder("gone", None)]);
         let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
         assert_eq!(r.map_err(|e| e.0), Err(-32801), "the editor is asked to ask again");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A repository opened as its own folder inside another folder is in both folders' indexes;
+    /// workspace/symbol lists each of its symbols once, from the deepest folder, as definition
+    /// answers from it; while that folder's first build runs, from the outer folder.
+    #[test]
+    fn workspace_symbol_lists_a_nested_folder_once() {
+        let base = std::env::temp_dir().join(format!("scrutate_lsp_nested_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let run = |levels: &[&str], last_building: bool| {
+            let mut dir = base.clone();
+            let mut folders = Vec::new();
+            for name in levels {
+                dir = dir.join(name);
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join(format!("{name}.py")), format!("def shared_{name}():\n    return 1\n")).unwrap();
+            }
+            let mut dir = base.clone();
+            for (n, name) in levels.iter().enumerate() {
+                dir = dir.join(name);
+                let s = Arc::new(Session::open(&dir, crate::session::Every::given(None)).unwrap());
+                if last_building && n == levels.len() - 1 {
+                    s.building();
+                } else {
+                    s.build().unwrap();
+                }
+                folders.push(Folder { session: Some(s), opened: true, ..Folder::new(dir.clone(), dir.clone()) });
+            }
+            let mut srv = Server {
+                root: base.clone(),
+                root_given: true,
+                folders,
+                initialized: true,
+                shutdown: false,
+                build_wait: std::time::Duration::from_millis(300),
+                waited_out: Default::default(),
+                skipped: Default::default(),
+            };
+            let r = srv.request("workspace/symbol", &serde_json::json!({"query": "shared"})).unwrap();
+            let mut files: Vec<String> =
+                r.as_array().unwrap().iter().map(|e| e["location"]["uri"].as_str().unwrap().rsplit('/').next().unwrap().to_string()).collect();
+            files.sort();
+            files
+        };
+        assert_eq!(run(&["outer", "inner"], false), ["inner.py", "outer.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(run(&["a", "b", "c"], false), ["a.py", "b.py", "c.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(run(&["outer", "inner"], true), ["inner.py", "outer.py"]);
         let _ = std::fs::remove_dir_all(&base);
     }
 
