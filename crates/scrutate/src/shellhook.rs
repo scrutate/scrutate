@@ -447,26 +447,42 @@ fn operands<'a>(flags: &Flags, args: &'a [String]) -> (Vec<&'a str>, bool) {
     (out, pattern_given)
 }
 
-/// What makes `argv`'s grep or rg reach scrutate's index directory, which `--exclude-dir` and
-/// `--glob` do not cover: a path named on the command line that lies inside it (as written, in any
-/// case, or once `..` and links are resolved), or, for a walk that follows links (`grep -R`,
-/// `rg -L`), a link under a searched directory that leads into it.
-fn names_the_index_dir(argv: &[String]) -> Option<String> {
-    let (flags, follows): (&Flags, fn(&str) -> bool) = match argv.first()?.as_str() {
-        "grep" => (&GREP_FLAGS, |a| a == "--dereference-recursive" || (a.starts_with('-') && !a.starts_with("--") && a.contains('R'))),
-        "rg" => (&RG_FLAGS, |a| a == "--follow" || (a.starts_with('-') && !a.starts_with("--") && a.contains('L'))),
+/// A path `argv`'s grep or rg names that is one of the index directories' files or lies inside
+/// one (`files::IndexFiles::holds`), or, when the output will name no file (`-h`, rg's `-I`, a
+/// single file named), a file a walk of the searched paths reaches that is: no line can be told
+/// apart by its name then.
+fn names_the_index_dir(argv: &[String], index: &crate::files::IndexFiles) -> Option<String> {
+    let flags = match argv.first()?.as_str() {
+        "grep" => &GREP_FLAGS,
+        "rg" => &RG_FLAGS,
         _ => return None,
     };
     let (words, pattern_given) = operands(flags, &argv[1..]);
     let paths = if pattern_given { &words[..] } else { words.get(1..).unwrap_or(&[]) };
-    if let Some(p) = paths.iter().find(|p| crate::files::inside_index_dir(std::path::Path::new(p))) {
+    if let Some(p) = paths.iter().find(|p| index.holds(std::path::Path::new(p))) {
         return Some(p.to_string());
     }
-    let flag_words = argv[1..].iter().take_while(|a| *a != "--");
-    if flag_words.filter(|a| !words.contains(&a.as_str())).any(|a| follows(a)) {
-        let roots: Vec<&std::path::Path> = if paths.is_empty() { vec![std::path::Path::new(".")] } else { paths.iter().map(std::path::Path::new).collect() };
-        if let Some(link) = crate::files::link_into_index_dir(&roots) {
-            return Some(format!("{} (a link the walk follows)", link.display()));
+    let flag_words: Vec<&str> = argv[1..].iter().take_while(|a| *a != "--").map(String::as_str).filter(|a| a.starts_with('-') && !words.contains(a)).collect();
+    let short = |c: char| flag_words.iter().any(|a| !a.starts_with("--") && a.contains(c));
+    let one_file = paths.len() == 1 && std::path::Path::new(paths[0]).is_file();
+    // (the output names no file, the walk follows links, the search walks `.` when given no path)
+    let (no_names, follows, walks_here) = match argv[0].as_str() {
+        "grep" => {
+            let recursive = short('r') || short('R') || flag_words.iter().any(|a| matches!(*a, "--recursive" | "--dereference-recursive"));
+            (short('h') || flag_words.contains(&"--no-filename") || one_file, short('R') || flag_words.contains(&"--dereference-recursive"), recursive)
+        }
+        _ => (short('I') || flag_words.contains(&"--no-filename") || one_file, short('L') || flag_words.contains(&"--follow"), true),
+    };
+    if no_names {
+        let roots: Vec<&str> = match (paths.is_empty(), walks_here) {
+            (false, _) => paths.to_vec(),
+            (true, true) => vec!["."],
+            // a grep given no path reads its standard input, which is empty here
+            (true, false) => Vec::new(),
+        };
+        let roots: Vec<&std::path::Path> = roots.into_iter().map(std::path::Path::new).collect();
+        if let Some(p) = index.reached_from(&roots, follows) {
+            return Some(p.display().to_string());
         }
     }
     None
@@ -730,16 +746,19 @@ fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
         let mut c = Command::new(on_path(&argv[0])?);
         // scrutate's own index holds the repository's text in binary records, where a secret runs
         // into the next field's bytes and no detector sees where it ends: a search leaves it out
+        // as a speed-up: the output is checked file by file (`IndexNames`). grep's goes first, as
+        // BSD grep reads no option after an operand; rg's after the user's globs, which take
+        // precedence the later they come, and before any `--`
+        let mut args: Vec<String> = argv[1..].to_vec();
         match argv[0].as_str() {
-            "grep" => {
-                c.arg(format!("--exclude-dir={}", crate::files::INDEX_DIR));
-            }
+            "grep" => args.insert(0, format!("--exclude-dir={}", crate::files::INDEX_DIR)),
             "rg" => {
-                c.arg(format!("--glob=!{}", crate::files::INDEX_DIR));
+                let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+                args.insert(at, format!("--glob=!{}", crate::files::INDEX_DIR));
             }
             _ => {}
         }
-        c.args(&argv[1..]);
+        c.args(&args);
         c
     };
     // rg's configuration file may add any flag, `--pre` among them; a fixed read-only tool needs
@@ -885,7 +904,44 @@ const PIECE: usize = 1 << 20;
 /// Streams the child's standard output to ours, line by line, with secrets redacted. With a
 /// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
 /// the child wrote that were read, the bytes sent)
-fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize) {
+/// The file a line of grep's or rg's output names, found by its prefix (`path:N:`, `path-N-`,
+/// `path:`, `path-`, `path\0`, or rg's JSON `path.text`), and whether it is an index file.
+#[derive(Default)]
+struct IndexNames {
+    known: std::collections::HashMap<Vec<u8>, bool>,
+}
+
+impl IndexNames {
+    fn names_index_file(&mut self, line: &[u8], index: &crate::files::IndexFiles) -> bool {
+        if line.starts_with(b"{\"type\"") {
+            let v: Option<serde_json::Value> = serde_json::from_slice(line).ok();
+            let path = v.as_ref().and_then(|v| v["data"]["path"]["text"].as_str()).map(|p| p.as_bytes().to_vec());
+            return path.is_some_and(|p| self.is_index(&p, index).unwrap_or(false));
+        }
+        // the first separator after which the prefix is a file decides; later ones are text
+        let head = &line[..line.len().min(4096)];
+        for (i, _) in head.iter().enumerate().filter(|(_, b)| matches!(b, b':' | b'-' | b'\0')).take(16) {
+            if let Some(held) = self.is_index(&head[..i], index) {
+                return held;
+            }
+        }
+        false
+    }
+
+    /// Some(whether it is an index file) when `name` is a file, None when it is no file.
+    fn is_index(&mut self, name: &[u8], index: &crate::files::IndexFiles) -> Option<bool> {
+        if let Some(&held) = self.known.get(name) {
+            return Some(held);
+        }
+        let path = std::path::PathBuf::from(String::from_utf8_lossy(name).into_owned());
+        let file = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
+        let held = file.is_file() && index.holds(&path);
+        self.known.insert(name.to_vec(), held);
+        Some(held)
+    }
+}
+
+fn stream(mut child: std::process::Child, room: Option<usize>, index: &crate::files::IndexFiles) -> (i32, usize, usize) {
     use std::io::BufRead;
     let out = child.stdout.take().expect("a piped stdout");
     let mut reader = std::io::BufReader::new(out);
@@ -901,6 +957,9 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let mut keys = crate::secrets::KeyFiles::default();
     let (mut read, mut sent, mut cut) = (0usize, 0usize, false);
     let mut line = Vec::new();
+    // a line of a file in an index directory is left out, whatever path the program took to it;
+    // a long line's later pieces follow its first
+    let (mut names, mut dropping, mut at_start, mut dropped) = (IndexNames::default(), false, true, 0usize);
     loop {
         line.clear();
         // a line longer than this (a minified file, a device with no line ends) comes in pieces,
@@ -908,6 +967,14 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         match (&mut reader).take(PIECE as u64).read_until(b'\n', &mut line) {
             Ok(0) | Err(_) => break,
             Ok(n) => read += n,
+        }
+        if at_start {
+            dropping = names.names_index_file(&line, index);
+            dropped += usize::from(dropping);
+        }
+        at_start = line.ends_with(b"\n");
+        if dropping {
+            continue;
         }
         let shown: Vec<u8> = if !redact {
             line.clone()
@@ -957,6 +1024,10 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         let _ = writeln!(so, "{note}");
         sent += note.len() + 1;
     }
+    if dropped > 0 {
+        let _ = so.flush();
+        eprintln!("[scrutate] {dropped} lines from scrutate's index directory ({}) left out: its files hold the repository's text", crate::files::INDEX_DIR);
+    }
     let _ = so.flush();
     let status = child.wait().ok().and_then(|s| s.code());
     // a cut search had matches, as the program would have said
@@ -991,7 +1062,8 @@ pub fn run_main(args: &[String]) -> i32 {
         eprintln!("scrutate hook run: only a search by {} that runs no program and writes no file is answered", TOOLS.join(", "));
         return 2;
     }
-    if let Some(p) = names_the_index_dir(argv) {
+    let index = crate::files::IndexFiles::near(&std::env::current_dir().unwrap_or_default());
+    if let Some(p) = names_the_index_dir(argv, &index) {
         eprintln!(
             "scrutate hook run: {p} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
             crate::files::INDEX_DIR
@@ -1022,7 +1094,7 @@ pub fn run_main(args: &[String]) -> i32 {
     #[cfg(windows)]
     die_with_us_windows(&child);
     let budget = std::env::var("SCRUTATE_MAX_BYTES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(crate::ops::AGENT_BYTES, |n| n.clamp(1_000, 1_000_000));
-    let (code, read, sent) = stream(child, (!piped).then_some(budget));
+    let (code, read, sent) = stream(child, (!piped).then_some(budget), &index);
     let _ = crate::hook::count_bash(&session, read, sent);
     code
 }

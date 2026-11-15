@@ -24,25 +24,61 @@ pub fn inside_index_dir_named(path: &Path) -> bool {
     path.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(INDEX_DIR)))
 }
 
-/// A link under `roots`, at any depth, that leads into an index directory, for a walk that follows
-/// links (`grep -R`, `rg -L`), where the walk's own exclusion matches only a directory's name.
-pub fn link_into_index_dir(roots: &[&Path]) -> Option<PathBuf> {
-    for root in roots {
-        // the index directory itself and .git are not entered; a link is looked at, not followed
-        let walk = ignore::WalkBuilder::new(root)
-            .standard_filters(false)
-            .follow_links(false)
-            .filter_entry(|e| {
-                !(e.file_type().is_some_and(|t| t.is_dir()) && e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(INDEX_DIR) || n == ".git"))
-            })
-            .build();
-        for e in walk.flatten() {
-            if e.path_is_symlink() && inside_index_dir(e.path()) {
+/// The files of the index directories a search could reach, known by identity (device and
+/// inode), so a file is found as one of them whatever path leads to it: another case, a chain of
+/// links, a hard link. They are few: the index directory of `start` and of each directory above it.
+pub struct IndexFiles {
+    #[cfg(unix)]
+    ids: std::collections::HashSet<(u64, u64)>,
+}
+
+impl IndexFiles {
+    pub fn near(start: &Path) -> IndexFiles {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let mut ids = std::collections::HashSet::new();
+            let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+            for dir in start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()) {
+                let walk = ignore::WalkBuilder::new(&dir).standard_filters(false).follow_links(false).build();
+                for e in walk.flatten() {
+                    if let Ok(md) = std::fs::symlink_metadata(e.path()) {
+                        ids.insert((md.dev(), md.ino()));
+                    }
+                }
+            }
+            IndexFiles { ids }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = start;
+            IndexFiles {}
+        }
+    }
+
+    /// A file a walk of `roots` reaches that `holds`, for a search whose output names no file.
+    pub fn reached_from(&self, roots: &[&Path], follow_links: bool) -> Option<PathBuf> {
+        for root in roots {
+            let walk = ignore::WalkBuilder::new(root).standard_filters(false).follow_links(follow_links).build();
+            if let Some(e) = walk.flatten().find(|e| e.file_type().is_some_and(|t| t.is_file()) && self.holds(e.path())) {
                 return Some(e.into_path());
             }
         }
+        None
     }
-    None
+
+    /// Whether `path` is one of those files or directories, or lies inside any index directory by
+    /// its name (`inside_index_dir`), links followed.
+    pub fn holds(&self, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if std::fs::metadata(path).is_ok_and(|md| self.ids.contains(&(md.dev(), md.ino()))) {
+                return true;
+            }
+        }
+        inside_index_dir(path)
+    }
 }
 
 /// An error unless `root` is an existing directory.

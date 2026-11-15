@@ -94,6 +94,15 @@ struct Ask {
 
 /// The answer to `input` (Claude Code's hook input), or `None` when Grep must run.
 pub fn answer(input: &Value, budget: usize) -> Option<Answer> {
+    // a path in an index directory is refused, not declined: Grep would then search it itself
+    if let (Some(cwd), Some(path)) = (input.get("cwd").and_then(Value::as_str), input.pointer("/tool_input/path").and_then(Value::as_str)) {
+        let cwd = Path::new(cwd);
+        if crate::files::IndexFiles::near(cwd).holds(&cwd.join(path)) {
+            let reason =
+                format!("{path} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched", crate::files::INDEX_DIR);
+            return Some(Answer { grep_bytes: 0, reason });
+        }
+    }
     let ask = read_ask(input)?;
     let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from).unwrap_or_else(|| ask.cwd.clone());
     // Grep asks before it reads outside the project, and Claude Code's read rules filter it: the

@@ -1458,14 +1458,18 @@ after `--` too. Anything else exits 2 and runs nothing. A program is looked up
 in the directories of its `PATH` given as absolute paths and outside the current directory and its
 git work tree, never the current directory, a relative entry, a repository's own `bin` or
 scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
-`LD_AUDIT` and every `DYLD_*` variable removed. A `grep` gets `--exclude-dir=.scrutate` and an
-`rg` `--glob=!.scrutate` in front of its arguments, so a walk at any depth leaves scrutate's own
-index directory out (its caches hold the repository's text, see [Security](SECURITY.md)). It
-exits 2 with a line that says why, and runs nothing, when a `grep` or `rg` names a path inside it
-(as written, in any case, absolute, through `..` or through a link), or when a walk that follows
-links (`grep -R` or `--dereference-recursive`, `rg -L` or `--follow`) would meet a link under a
-searched directory that leads into it. A search for the text `.scrutate`, the pattern and not a
-path, runs. A line
+`LD_AUDIT` and every `DYLD_*` variable removed. Scrutate's own index directory is never shown (its files hold the repository's text, see
+[Security](SECURITY.md)), decided by file identity: the files of the `.scrutate` directories of
+the current directory and those above it are known by device and inode, and any file whose path
+has a `.scrutate` component once links are resolved counts too. Every line of grep's or rg's
+output is checked by the file it names (`path:N:`, `path-N-`, `path:`, `path\0` under `-Z`, rg's
+JSON `path`); a line of such a file is left out, with one line on standard error saying how many,
+so a glob that names the directory again, a chain of links, another case and a hard link all
+end the same. A `grep` or `rg` that names such a path exits 2 with a line that says why and runs
+nothing, and so does one whose output names no file (`-h`, rg's `-I`, one file named) when a walk
+of the searched paths reaches one. A `grep` also gets `--exclude-dir=.scrutate` first and an `rg`
+`--glob=!.scrutate` after its own flags, so the walk skips the directory sooner. A search for the
+text `.scrutate`, the pattern and not a path, runs. A line
 with `\r` or another control character but tab and line feed is left alone.
 
 It answers the search as the program would. `rg` goes to `scrutate grep -N` with the same

@@ -395,7 +395,8 @@ impl Scope {
             match std::fs::canonicalize(root.join(&*p)) {
                 Ok(c)
                     if c.strip_prefix(root).is_ok_and(crate::files::inside_index_dir_named)
-                        || crate::files::inside_index_dir_named(std::path::Path::new(&*p)) =>
+                        || crate::files::inside_index_dir_named(std::path::Path::new(&*p))
+                        || crate::files::IndexFiles::near(root).holds(&c) =>
                 {
                     bail!(
                         "{} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
@@ -1036,7 +1037,10 @@ pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec
         Ok(c) if c.starts_with(&s.ix.root) => c,
         _ => bail!("cannot read {shown}"),
     };
-    if canon.strip_prefix(&s.ix.root).is_ok_and(crate::files::inside_index_dir_named) || crate::files::inside_index_dir_named(std::path::Path::new(path)) {
+    if canon.strip_prefix(&s.ix.root).is_ok_and(crate::files::inside_index_dir_named)
+        || crate::files::inside_index_dir_named(std::path::Path::new(path))
+        || crate::files::IndexFiles::near(&s.ix.root).holds(&canon)
+    {
         bail!("{shown} is inside scrutate's index directory ({}), whose files hold the repository's text: not read", crate::files::INDEX_DIR);
     }
     if !canon.is_file() {
