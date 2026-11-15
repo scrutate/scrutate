@@ -399,7 +399,7 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
             let mh = minhash(&sh);
             let rows_per_band = HASHES / BANDS;
             for b in 0..BANDS {
-                let mut key = 0xcbf29ce484222325u64;
+                let mut key = 0xcbf29ce484222325u64; // gitleaks:allow (FNV-1a's offset basis)
                 for v in &mh[b * rows_per_band..(b + 1) * rows_per_band] {
                     key = mix64(key ^ *v);
                 }

@@ -989,7 +989,7 @@ mod tests {
             "token_type: \"Bearer\",",
             "struct crypto_skcipher *tfm = crypto_alloc_skcipher(\"cbc(aes)\", 0, 0);",
             "access_mode = O_RDONLY | O_CLOEXEC;",
-            "let mut key = 0xcbf29ce484222325u64;",
+            "let mut key = 0xcbf29ce484222325u64;", // gitleaks:allow (FNV-1a's offset basis)
             "params->auth_type = NL80211_AUTHTYPE_SAE;",
             "keypad_row0: keypad_row0_0 {",
             "x2apic_state = X2APIC_ON_LOCKED;",

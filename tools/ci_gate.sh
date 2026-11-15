@@ -76,6 +76,19 @@ bindings() {
   "$target/pyvenv/bin/python" -c "import scrutate; print(scrutate.__version__)" || return 1
   (cd python && SCRUTATE_BIN="$b" "$target/pyvenv/bin/python" -m pytest -q tests)
 }
+# gitleaks over the tree, then over a copy with a token planted in a file whose lines it once let
+# through, which it must find: no allow list can exempt a file again unseen
+secret_scan() {
+  "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml || return 1
+  local copy; copy=$(mktemp -d)
+  git archive HEAD | tar -x -C "$copy" || return 1
+  printf '\nconst PLANTED: &str = "ghp_%s";\n' "$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" >>"$copy/crates/scrutate/src/intel.rs"
+  # from inside the copy, as security.yml scans `.`: an allow list's paths are relative there
+  if (cd "$copy" && "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml >/dev/null 2>&1); then
+    echo "gitleaks let a token planted in intel.rs through"; rm -rf "$copy"; return 1
+  fi
+  rm -rf "$copy"
+}
 # tools/gate_parity.py, with PyYAML from python[test]
 parity() { pyvenv && "$target/pyvenv/bin/python" tools/gate_parity.py; }
 # ci.yml rust job "smoke test the binary"
@@ -121,7 +134,7 @@ if [ "$mode" != "--bench" ]; then
   # the repository holds no secret-shaped literal (GitHub push protection refuses such pushes);
   # gitleaks 8.30.1, the allow list is the repository's own .gitleaks.toml
   if [ -f .gitleaks.toml ]; then
-    step secret-scan "$tools/gitleaks" dir . --no-banner --redact --config .gitleaks.toml
+    step secret-scan secret_scan
   else
     say "SKIP secret-scan (no .gitleaks.toml in this commit yet)"
   fi
