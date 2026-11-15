@@ -989,7 +989,8 @@ and a removed one's index is closed unless another folder uses it. A request is 
 the repository that holds the folder, so a file outside every folder's repository gets no answer.
 `workspace/symbol` leaves out a folder that cannot answer (its index cannot be opened, or its
 first build is still running, which is not waited for when there are other folders), says so
-once in the log, and fails only when no folder answered. Locations name files under the folder as the editor sent it, also when it is reached
+once in the log, and fails only when no folder answered: then with -32801 when a folder is still
+building, which asks the editor to ask again. Locations name files under the folder as the editor sent it, also when it is reached
 through a link, so the editor finds them among its open files. With no folder and no `--root`, started in the home directory or at
 a filesystem root with no index, the server builds none and says so in the log. It answers from
 the Engine B index:

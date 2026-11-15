@@ -821,20 +821,32 @@ impl Server {
                     }
                     Err(e) if several && pass == 0 && e.0 == -32801 => building.push(i),
                     Err(e) if several => {
-                        if self.skipped.borrow_mut().insert((f.root.clone(), e.0)) {
-                            log(2, &format!("scrutate: {} is left out of this answer: {}", f.given.display(), e.1));
+                        self.left_out(f, &e);
+                        // "still being built" asks the editor to ask again: it wins over the others
+                        if failed.as_ref().is_none_or(|(code, _)| *code != -32801 && e.0 == -32801) {
+                            failed = Some(e);
                         }
-                        failed.get_or_insert(e);
                     }
                     Err(e) => return Err(e),
                 }
             }
+        }
+        // the folders set aside in their first build when another folder answered are left out too
+        for &i in &building {
+            self.left_out(&self.folders[i], &(-32801, "the index is still being built".to_string()));
         }
         if let (false, Some(e)) = (answered, failed) {
             return Err(e);
         }
         out.truncate(WORKSPACE_SYMBOLS);
         Ok(Value::Array(out))
+    }
+
+    /// Log, once per folder and error, that `folder` is left out of an answer over several folders.
+    fn left_out(&self, folder: &Folder, e: &(i64, String)) {
+        if self.skipped.borrow_mut().insert((folder.root.clone(), e.0)) {
+            log(2, &format!("scrutate: {} is left out of this answer: {}", folder.given.display(), e.1));
+        }
     }
 
     /// `f` on a reader of `folder`'s index for a `method` request, once its first build is done;
@@ -987,6 +999,43 @@ mod tests {
         // shutdown is answered at once whatever the build does
         assert!(srv.request("shutdown", &Value::Null).is_ok());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Over several folders, a folder in its first build that is left out because another folder
+    /// answered is logged once too, and when no folder answers, "still being built" (ask again)
+    /// wins over a folder that has no index.
+    #[test]
+    fn a_folder_left_out_in_its_first_build_is_logged_and_asks_again_when_none_answered() {
+        let base = std::env::temp_dir().join(format!("scrutate_lsp_left_out_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = |name: &str, session: Option<Arc<Session>>| Folder { session, opened: true, ..Folder::new(base.join(name), base.join(name)) };
+        for name in ["x", "y"] {
+            std::fs::create_dir_all(base.join(name)).unwrap();
+            std::fs::write(base.join(name).join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        }
+        let x = Arc::new(Session::open(&base.join("x"), crate::session::Every::given(None)).unwrap());
+        x.build().unwrap();
+        let y = Arc::new(Session::open(&base.join("y"), crate::session::Every::given(None)).unwrap());
+        // a first build is running and does not end
+        y.building();
+        let server = |folders: Vec<Folder>| Server {
+            root: base.clone(),
+            root_given: true,
+            folders,
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_millis(300),
+            waited_out: Default::default(),
+            skipped: Default::default(),
+        };
+        let mut srv = server(vec![folder("x", Some(Arc::clone(&x))), folder("y", Some(Arc::clone(&y)))]);
+        let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).unwrap();
+        assert_eq!(r.as_array().map(Vec::len), Some(1), "{r}");
+        assert!(srv.skipped.borrow().contains(&(srv.folders[1].root.clone(), -32801)), "the building folder's skip is logged");
+        let mut srv = server(vec![folder("y", Some(y)), folder("gone", None)]);
+        let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+        assert_eq!(r.map_err(|e| e.0), Err(-32801), "the editor is asked to ask again");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Requests queued behind one that waited out the first build are answered at once, so a
