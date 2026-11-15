@@ -28,3 +28,22 @@ def test_verify_reports_a_corpus_the_manifest_names_but_the_disk_lacks(tmp_path,
     monkeypatch.setattr(sys, "argv", ["corpora.py", "--root", str(tmp_path), "--verify"])
     assert corpora.main() == 1
     assert "gone" in capsys.readouterr().out
+
+
+def test_verify_fails_when_it_checks_nothing(tmp_path, monkeypatch, capsys):
+    # no manifest: no corpus was ever fetched, which is no pass
+    monkeypatch.setattr(sys, "argv", ["corpora.py", "--root", str(tmp_path), "--verify"])
+    assert corpora.main() == 1
+    assert "manifest.json" in capsys.readouterr().out
+
+
+def test_verify_fails_for_a_named_corpus_the_manifest_lacks(tmp_path, monkeypatch, capsys):
+    tree = tmp_path / "tiny"
+    tree.mkdir()
+    (tree / "a.txt").write_text("a\n")
+    digest, n, size = corpora.tree_hash(str(tree))
+    (tmp_path / "manifest.json").write_text(json.dumps({"tiny": {"kind": "generated", "tree_sha256": digest, "files": n, "bytes": size}}))
+    monkeypatch.setattr(sys, "argv", ["corpora.py", "--root", str(tmp_path), "--verify", "--only", "tiny", "hugo"])
+    assert corpora.main() == 1
+    out = capsys.readouterr().out
+    assert "hugo: not in" in out and "tiny: ok" in out

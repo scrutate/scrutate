@@ -9,7 +9,8 @@ systems. Generated corpora are built deterministically from the Linux tree and a
 `manifest.json` records, per corpus, its source, commit, file count, bytes and tree checksum
 (SHA-256 over the sorted list of `path NUL sha256(content)`; `.git` and `.scrutate` excluded).
 `--verify` fetches nothing: it checks each corpus on disk against that manifest (and a git corpus
-against its pinned head) and exits 1 on any mismatch.
+against its pinned head) and exits 1 on any mismatch, on a corpus `--only` names that the manifest
+lacks, and when there is no manifest to check.
 """
 from __future__ import annotations
 
@@ -218,10 +219,20 @@ def generate(root, name):
     return {"kind": "generated", "recipe": info}
 
 
-def verify(root, manifest) -> int:
-    """0 when every corpus in `manifest` is on disk with the files, bytes and tree checksum it pins
-    (and a git corpus at its pinned head); else 1, each mismatch printed."""
+def verify(root, manifest, only=None) -> int:
+    """0 when every corpus asked for (`only`, else every one in `manifest`) is in `manifest` and on
+    disk with the files, bytes and tree checksum it pins (and a git corpus at its pinned head); else
+    1, each mismatch printed. Checking nothing is no pass: a missing or empty manifest is 1."""
     bad = 0
+    if only:
+        for name in only:
+            if name not in manifest:
+                print(f"{name}: not in {root}/manifest.json: corpora.py --root {root} --only {name} fetches and pins it")
+                bad += 1
+        manifest = {k: v for k, v in manifest.items() if k in only}
+    elif not manifest:
+        print(f"no corpus to check: {root}/manifest.json is missing or empty")
+        return 1
     for name, want in sorted(manifest.items()):
         d = os.path.join(root, name)
         if not os.path.isdir(d):
@@ -248,7 +259,7 @@ def main() -> int:
     mpath = os.path.join(a.root, "manifest.json")
     manifest = json.load(open(mpath)) if os.path.exists(mpath) else {}
     if a.verify:
-        return verify(a.root, {k: v for k, v in manifest.items() if not a.only or k in a.only})
+        return verify(a.root, manifest, a.only)
     for name in list(REAL) + GENERATED:
         if a.only and name not in a.only:
             continue
