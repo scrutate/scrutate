@@ -422,7 +422,8 @@ NFC with final sigma folded.
   - one read snapshot per operation (`ops::run`, each language server request): its reads see
     one commit, and a commit meanwhile shows in the next operation; after an update the log is
     cut to nothing once the readers on older commits finish, waited for about a second, else
-    by the next update, and a cut log keeps at most 4 MB of its file;
+    by the next update (an update a read makes, which must not wait, tries without waiting), and
+    a cut log keeps at most 4 MB of its file;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a

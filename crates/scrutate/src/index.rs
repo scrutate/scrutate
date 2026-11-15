@@ -1890,11 +1890,11 @@ impl Index {
         wait_busy(&self.db, &self.cancel, |db| if needless(db) { Ok(false) } else { db.execute_batch("BEGIN IMMEDIATE").map(|()| true) })
     }
 
-    /// Copy the log into the database and cut it to nothing, waiting about a second for readers
-    /// on an older commit (an operation's snapshot lasts that long at most, mostly far less).
+    /// Copy the log into the database and cut it to nothing, waiting up to `wait` for readers on
+    /// an older commit (an operation's snapshot lasts about a second at most, mostly far less).
     /// -> whether it was done; when not, the next update tries again first.
-    fn truncate_log(&self) -> bool {
-        let _ = self.db.busy_timeout(Duration::from_secs(1));
+    fn truncate_log(&self, wait: Duration) -> bool {
+        let _ = self.db.busy_timeout(wait);
         let done = self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)).is_ok_and(|busy| busy == 0);
         let _ = self.db.busy_timeout(BUSY);
         done
@@ -1928,8 +1928,10 @@ impl Index {
         if !self.db.is_autocommit() {
             let _ = self.db.execute_batch("ROLLBACK");
         }
+        // a read that must not wait tries once without waiting: a writer elsewhere would hold it
+        // a second on every call
         if self.log_left {
-            self.log_left = !self.truncate_log();
+            self.log_left = !self.truncate_log(if wait { Duration::from_secs(1) } else { Duration::ZERO });
         }
         // one writer at a time; readers keep working (WAL)
         if wait {
@@ -2011,7 +2013,7 @@ impl Index {
                 }
                 Ok(()) => {}
             }
-            self.log_left = !self.truncate_log();
+            self.log_left = !self.truncate_log(Duration::from_secs(1));
             if held && !self.log_left {
                 record_pass(&self.dir, "quick_check", &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
             }
@@ -3463,6 +3465,29 @@ mod tests {
             }
             Err(e) => assert!(super::error_is_corruption(&e), "{e:#}"),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A read that must not wait answers at once while another process writes, also after an
+    /// update of this process could not cut the log.
+    #[test]
+    fn a_read_that_must_not_wait_does_not_wait_on_a_log_left_uncut() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_log_left_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        ix.log_left = true;
+        let other = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let t = std::time::Instant::now();
+        let e = ix.update_paths(&["a.py".into()], false).expect_err("another process holds the write lock");
+        assert!(e.downcast_ref::<super::Busy>().is_some(), "{e:#}");
+        assert!(t.elapsed() < std::time::Duration::from_millis(300), "waited {:?}", t.elapsed());
+        assert!(ix.log_left, "the log is cut by a later update");
+        other.execute_batch("ROLLBACK").unwrap();
+        drop((ix, other));
         let _ = std::fs::remove_dir_all(&root);
     }
     /// A write that keeps size and mtime moves the change time, and the walk's listing of a
