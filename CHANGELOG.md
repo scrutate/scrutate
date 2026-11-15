@@ -285,8 +285,9 @@ incompatible index by itself, and that is never breaking.
 
 ### Fixed
 - The language server's `workspace/symbol` lists the symbols of a repository opened as its own
-  folder inside another folder once, from the inner folder, where the outer folder's index listed
-  them a second time and each took two of the 200 places
+  folder inside another folder once, from the deepest folder that answered (the inner one, or
+  while its first build runs the nearest one above it), where each folder whose index held them
+  listed them again and each took several of the 200 places
   ([CLI](docs/CLI.md#lsp)).
 - The Bash hook reads `rg --sort path PATTERN DIR` as ripgrep does, where it took `path` for the
   pattern and answered another search with exit 0; `--sort none` and the last `--sort` given are

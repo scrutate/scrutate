@@ -838,13 +838,14 @@ impl Server {
         if let (false, Some(e)) = (answered, failed) {
             return Err(e);
         }
-        // a file under a deeper folder that answered is that folder's, as for definition: the outer
-        // folder's index holds it too, and would list each of its symbols a second time
+        // a file is listed by the deepest folder that answered and holds it, as definition goes to
+        // the deepest folder: an outer folder's index holds a nested folder's files too
         let mut out: Vec<Value> = Vec::new();
         for (i, a) in &parts {
             let theirs = |e: &&Value| {
-                let owner = e["location"]["uri"].as_str().and_then(|u| self.folder_of(u));
-                owner.is_none_or(|o| o == *i || !parts.iter().any(|(j, _)| *j == o))
+                let Some(uri) = e["location"]["uri"].as_str() else { return true };
+                let holders = parts.iter().map(|(j, _)| *j).filter(|&j| self.folders[j].rel(uri).is_some());
+                holders.max_by_key(|&j| self.folders[j].root.as_os_str().len()).is_none_or(|o| o == *i)
             };
             out.extend(a.as_array().into_iter().flatten().filter(theirs).cloned());
         }
@@ -1050,12 +1051,13 @@ mod tests {
 
     /// A repository opened as its own folder inside another folder is in both folders' indexes;
     /// workspace/symbol lists each of its symbols once, from the deepest folder, as definition
-    /// answers from it; while that folder's first build runs, from the outer folder.
+    /// answers from it; while that folder's first build runs, from the deepest folder that answered.
     #[test]
     fn workspace_symbol_lists_a_nested_folder_once() {
         let base = std::env::temp_dir().join(format!("scrutate_lsp_nested_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let run = |levels: &[&str], last_building: bool| {
+        // `building`: how many of the deepest folders are in their first build
+        let run = |levels: &[&str], building: usize| {
             let mut dir = base.clone();
             let mut folders = Vec::new();
             for name in levels {
@@ -1067,7 +1069,7 @@ mod tests {
             for (n, name) in levels.iter().enumerate() {
                 dir = dir.join(name);
                 let s = Arc::new(Session::open(&dir, crate::session::Every::given(None)).unwrap());
-                if last_building && n == levels.len() - 1 {
+                if n >= levels.len() - building {
                     s.building();
                 } else {
                     s.build().unwrap();
@@ -1090,11 +1092,15 @@ mod tests {
             files.sort();
             files
         };
-        assert_eq!(run(&["outer", "inner"], false), ["inner.py", "outer.py"]);
+        assert_eq!(run(&["outer", "inner"], 0), ["inner.py", "outer.py"]);
         let _ = std::fs::remove_dir_all(&base);
-        assert_eq!(run(&["a", "b", "c"], false), ["a.py", "b.py", "c.py"]);
+        assert_eq!(run(&["a", "b", "c"], 0), ["a.py", "b.py", "c.py"]);
         let _ = std::fs::remove_dir_all(&base);
-        assert_eq!(run(&["outer", "inner"], true), ["inner.py", "outer.py"]);
+        assert_eq!(run(&["outer", "inner"], 1), ["inner.py", "outer.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(run(&["a", "b", "c"], 1), ["a.py", "b.py", "c.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(run(&["a", "b", "c", "d"], 2), ["a.py", "b.py", "c.py", "d.py"]);
         let _ = std::fs::remove_dir_all(&base);
     }
 
