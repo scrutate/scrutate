@@ -1,4 +1,4 @@
-"""tools/gitleaks_config.py: an allow list that exempts files fails the check."""
+"""tools/gitleaks_config.py: the config may hold gitleaks' own rules and nothing more."""
 import os
 import sys
 
@@ -9,33 +9,39 @@ ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 HEAD = "title = 't'\n[extend]\nuseDefault = true\n"
 
 
-def test_the_repository_config_exempts_nothing():
+def test_the_repository_config_passes():
     assert G.check(os.path.join(ROOT, ".gitleaks.toml")) == []
 
 
-def test_paths_in_any_allow_list_fail(tmp_path):
+def test_anything_beyond_the_default_rules_fails_and_is_named(tmp_path):
     cases = {
-        "[[allowlists]]\ncondition = 'AND'\nregexes = ['''y''']\npaths = ['''^crates/scrutate/src/secrets\\.rs$''']\n": "allowlists[0]",
-        "[allowlist]\npaths = ['''x''']\n": "allowlist[0]",
-        "[[rules]]\nid = 'github-pat'\n[[rules.allowlists]]\npaths = ['''x''']\n": "rules[0].allowlists[0]",
-        "[[rules]]\nid = 'r'\n[rules.allowlist]\npaths = ['''x''']\n": "rules[0].allowlist[0]",
-        # gitleaks reads keys in any case
-        "[[AllowLists]]\nPaths = ['''x''']\n": "allowlists[0]",
-        "[[allowlists]]\nPaths = ['''x''']\n": "allowlists[0]",
-        "[[Allowlists]]\npaths = ['''x''']\n": "allowlists[0]",
-        "[[Rules]]\nid = 'r'\n[[Rules.AllowLists]]\nPATHS = ['''x''']\n": "rules[0].allowlists[0]",
+        # a rule narrowed to the files the gate plants in: every other file escapes it
+        HEAD + "[[rules]]\nid = 'github-pat'\npath = '''crates/scrutate/src/(intel|secrets)\\.rs'''\n": "rules",
+        # a default rule turned off: no plant can see it
+        HEAD + "disabledRules = ['aws-access-token']\n": "extend.disabledrules",
+        HEAD + "[[allowlists]]\npaths = ['''x''']\n": "allowlists",
+        HEAD + "[[AllowLists]]\nPaths = ['''x''']\n": "allowlists",
+        HEAD + "[allowlist]\nregexes = ['''x''']\n": "allowlist",
+        "unknown = 1\n" + HEAD: "unknown",
     }
     c = tmp_path / "c.toml"
-    for body, where in cases.items():
-        c.write_text(HEAD + body)
-        assert G.check(str(c)) == [f"{c}: {where}"], body
+    for text, key in cases.items():
+        c.write_text(text)
+        assert G.check(str(c)) == [f"{c}: {key}"], text
         assert G.main(["gitleaks_config.py", str(c)]) == 1
 
 
-def test_an_entry_hidden_by_a_second_spelling_of_its_key_is_found(tmp_path):
+def test_the_default_rules_must_be_extended(tmp_path):
     c = tmp_path / "c.toml"
-    c.write_text(HEAD + "[[allowlists]]\nregexes = ['''y''']\n[[AllowLists]]\npaths = ['''x''']\n")
-    assert G.check(str(c)) == [f"{c}: allowlists[1]"]
+    missing = "extend.usedefault (gitleaks' own rules) missing"
+    for text, keys in {
+        "title = 't'\n": [missing],
+        "title = 't'\n[extend]\nuseDefault = false\n": ["extend.usedefault", missing],
+        "title = 't'\n[Extend]\nPath = 'other.toml'\nuseDefault = true\n": ["extend.path"],
+        "title = 't'\n[extend]\nuseDefault = true\n[Extend]\nUseDefault = true\n": ["extend.usedefault", missing],
+    }.items():
+        c.write_text(text)
+        assert G.check(str(c)) == [f"{c}: {k}" for k in keys], text
 
 
 def test_a_gitleaksignore_beside_the_config_fails(tmp_path, capsys):
@@ -45,20 +51,3 @@ def test_a_gitleaksignore_beside_the_config_fails(tmp_path, capsys):
     (tmp_path / ".gitleaksignore").write_text("crates/scrutate/src/secrets.rs:github-pat:1360\n")
     assert G.main(["gitleaks_config.py", str(c)]) == 1
     assert ".gitleaksignore exempts findings by fingerprint" in capsys.readouterr().out
-
-
-def test_a_config_it_extends_is_checked_too(tmp_path):
-    base = tmp_path / "base.toml"
-    base.write_text("[[allowlists]]\npaths = ['''x''']\n")
-    c = tmp_path / "c.toml"
-    c.write_text(f"[extend]\npath = '{base}'\n")
-    assert G.check(str(c)) == [f"{base}: allowlists[0]"]
-    c.write_text(f"[Extend]\nPath = '{base}'\n")
-    assert G.check(str(c)) == [f"{base}: allowlists[0]"]
-
-
-def test_regexes_and_stopwords_alone_pass(tmp_path):
-    c = tmp_path / "c.toml"
-    c.write_text(HEAD + "[[allowlists]]\nregexes = ['''x''']\nstopwords = ['y']\n")
-    assert G.check(str(c)) == []
-    assert G.main(["gitleaks_config.py", str(c)]) == 0

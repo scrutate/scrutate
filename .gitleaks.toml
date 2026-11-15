@@ -1,9 +1,10 @@
 # gitleaks 8.30.1's own rules over the tree (security.yml). Tests build their secret samples at run
 # time. A line its rules take for a secret that is none carries `gitleaks:allow` and says why: the
 # two `let mut key = 0xcbf29ce484222325u64` lines (FNV-1a's offset basis) in intel.rs and
-# secrets.rs. No allow list with paths here: gitleaks 8.30.1 reads an [[allowlists]] entry's paths
-# alone, whatever its condition, so one scoped to a file would pass any secret in that file.
-# tools/gitleaks_config.py fails security.yml and the gate on one, and on a .gitleaksignore.
+# secrets.rs. Nothing else here: a rule, a disabled rule or an allow list can narrow what the scan
+# sees (gitleaks 8.30.1 reads an allow list's paths alone, whatever its condition), so
+# tools/gitleaks_config.py fails security.yml and the gate on any key but these, and on a
+# .gitleaksignore.
 title = "scrutate"
 
 [extend]

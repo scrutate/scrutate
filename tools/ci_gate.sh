@@ -76,8 +76,8 @@ bindings() {
   "$target/pyvenv/bin/python" tools/gil_probe.py || return 1
   (cd python && SCRUTATE_BIN="$b" "$target/pyvenv/bin/python" -m pytest -q tests)
 }
-# the config exempts no file (tools/gitleaks_config.py: no allow list with paths in any spelling, no
-# .gitleaksignore); gitleaks over the tree; then over a copy with a token planted in each file the
+# the config is gitleaks' own rules, unchanged, and no .gitleaksignore (tools/gitleaks_config.py);
+# gitleaks over the tree; then over a copy with a token planted in each file the
 # old allow list exempted, each of which it must find, so a trick the config check misses fails too
 secret_scan() {
   python3 tools/gitleaks_config.py || return 1

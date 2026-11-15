@@ -97,6 +97,6 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-      # an allow list with paths would pass every secret in those files: lines carry gitleaks:allow
+      # the config is gitleaks' own rules, unchanged: a line that holds no secret carries gitleaks:allow
       - run: python3 tools/gitleaks_config.py
       - run: '"$RUNNER_TEMP/gitleaks" dir . --no-banner --redact --config .gitleaks.toml'
