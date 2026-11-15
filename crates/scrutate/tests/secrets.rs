@@ -119,6 +119,10 @@ fn tree(test: &str) -> (PathBuf, Vec<(&'static str, String)>) {
     let value = format!("{}7", chars(&mut 77, ALNUM, 59));
     fs::write(root.join("long.py"), format!("client_secret = \"{value}\"; {}rotate(); {}\n", "_ = 0; ".repeat(18), "_ = 0; ".repeat(40))).unwrap();
     secrets.push(("password", value[value.len() - 16..].to_string()));
+    // a Latin-1 file: a token on a line that is not UTF-8
+    let latin1 = format!("{}{}", "ghp_", chars(&mut 66, ALNUM, 36));
+    fs::write(root.join("latin1.py"), [format!("LEGACY = \"{latin1}\"  # caf").into_bytes(), b"\xe9\n".to_vec()].concat()).unwrap();
+    secrets.push(("github-token", latin1));
     // a file that holds a marker's text and no secret: no redaction is counted for it
     fs::write(root.join("notes.py"), "NOTE = \"[redacted:github-token] is how answers show a token\"\n").unwrap();
     // as Claude Code has it: on Windows without the `\\?\` of canonicalize, which the hook declines
@@ -272,12 +276,17 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
     // `hook run`, the search a rewritten Bash command asks: grep's own lines, context and a key's
     // last line alone among them
     #[cfg(unix)]
-    for ask in [["-rn", "-e", "."], ["-rn", "-A8", "BEGIN"], ["-rn", "-e", "==$"]] {
+    for ask in [
+        &["grep", "-rn", "-e", ".", "."][..],
+        &["grep", "-rn", "-A8", "BEGIN", "."],
+        &["grep", "-rn", "-e", "==$", "."],
+        &["grep", "-a", "-rHn", "-e", ".", "."],
+        &["rg", "-a", "-n", "."],
+    ] {
         let home = root.with_extension("home");
         let out = Command::new(BIN)
-            .args(["hook", "run", "--", "grep"])
+            .args(["hook", "run", "--"])
             .args(ask)
-            .arg(".")
             .current_dir(&root)
             .env("HOME", &home)
             .env("XDG_STATE_HOME", home.join("state"))
@@ -290,6 +299,52 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
             assert!(!text.contains(secret.as_str()), "hook run grep {ask:?}: {kind} {secret} came back");
         }
         seen.push_str(&text);
+    }
+    // the language server: its answers name symbols and the files that hold them
+    {
+        use std::io::{BufRead, BufReader, Read};
+        let mut child = Command::new(BIN).arg("lsp").current_dir(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        let (mut stdin, mut stdout) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
+        let mut id = 0;
+        let mut ask = |method: &str, params: Value| -> Value {
+            id += 1;
+            let body = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
+            write!(stdin, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            stdin.flush().unwrap();
+            loop {
+                let mut len = 0usize;
+                loop {
+                    let mut line = String::new();
+                    assert!(stdout.read_line(&mut line).unwrap() > 0, "lsp closed its output");
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = line.trim_end().strip_prefix("Content-Length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                }
+                let mut buf = vec![0u8; len];
+                stdout.read_exact(&mut buf).unwrap();
+                let m: Value = serde_json::from_slice(&buf).unwrap();
+                if m["id"] == id {
+                    return m;
+                }
+            }
+        };
+        let uri = |p: &Path| format!("file://{}", p.to_string_lossy().replace('\\', "/"));
+        ask("initialize", json!({"processId": null, "rootUri": uri(&root), "capabilities": {}}));
+        let mut answers = String::new();
+        for (method, params) in [
+            ("workspace/symbol", json!({"query": "rotate"})),
+            ("workspace/symbol", json!({"query": "SETTINGS"})),
+            ("textDocument/documentSymbol", json!({"textDocument": {"uri": uri(&root.join("config.py"))}})),
+        ] {
+            strings(&ask(method, params), &mut answers);
+        }
+        let _ = child.kill();
+        for (kind, secret) in &secrets {
+            assert!(!answers.contains(secret.as_str()), "lsp: {kind} {secret} came back: {answers}");
+        }
     }
     assert!(seen.contains("secrets redacted: SCRUTATE_REDACT=off shows them"));
     // the documented opt-out returns raw text
@@ -313,6 +368,15 @@ fn the_cli_s_json_stays_whole_when_it_redacts() {
     assert!(v.to_string().contains("[redacted:"), "{text}");
     assert!(!secrets.iter().any(|(_, s)| text.contains(s.as_str())));
     assert!(String::from_utf8_lossy(&out.stderr).contains("secrets redacted"));
+    // and its text form, a file that is not UTF-8 among them
+    for file in ["config.py", "latin1.py", ".env"] {
+        let out = Command::new(BIN).args(["read", file]).current_dir(&root).env("SCRUTATE_REDACT", "on").stdin(Stdio::null()).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("[redacted:"), "read {file}: {text}");
+        for (kind, secret) in &secrets {
+            assert!(!text.contains(secret.as_str()), "read {file}: {kind} {secret} came back");
+        }
+    }
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -462,6 +526,61 @@ fn an_indexed_key_s_lines_are_found_by_their_text_through_hook_run() {
         for line in &lines {
             assert!(!text.contains(line.as_str()), "hook run {ask:?}: {line} came back:\n{text}");
         }
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A line that is not UTF-8 (a stray byte, or a long line's piece cut inside a character) has its
+/// secrets redacted by `hook run` too.
+#[cfg(unix)]
+#[test]
+fn hook_run_redacts_a_line_that_is_not_utf8() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_bytes_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let token = format!("{}{}", "ghp_", chars(&mut 60, ALNUM, 36));
+    let mut stray = format!("GITHUB = \"{token}\"  # caf").into_bytes();
+    stray.extend_from_slice(b"\xe9\n");
+    fs::write(root.join("stray.py"), stray).unwrap();
+    // 1 byte, then two-byte characters: the 1 MiB piece boundary falls inside one
+    let long = format!("x{} GITHUB = \"{token}\"\n", "\u{e9}".repeat(600_000));
+    fs::write(root.join("long.txt"), long).unwrap();
+    // a file name that is not UTF-8 and holds a key, as find prints it
+    use std::os::unix::ffi::OsStrExt;
+    let key = format!("{}{}", "AKIA", chars(&mut 61, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 16));
+    fs::create_dir_all(root.join("n")).unwrap();
+    // APFS refuses such a name: the case runs where the file system takes it
+    let named = fs::write(root.join("n").join(std::ffi::OsStr::from_bytes(&[key.as_bytes(), b"-\xe9"].concat())), "").is_ok();
+    let home = root.with_extension("home");
+    let run = |args: &[&str], env: &[(&str, &str)]| {
+        let mut c = Command::new(BIN);
+        c.args(["hook", "run", "--piped", "--"])
+            .args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
+    };
+    for (args, env, secret, kind) in [
+        (&["grep", "-n", "GITHUB", "stray.py"][..], &[][..], &token, "github-token"),
+        (&["grep", "-n", "GITHUB", "long.txt"], &[], &token, "github-token"),
+        (&["grep", "-a", "-rn", "GITHUB", "."], &[], &token, "github-token"),
+        (&["grep", "-rn", "GITHUB", "."], &[("LC_ALL", "C")], &token, "github-token"),
+        (&["find", "n", "-name", "AKIA*"], &[], &key, "aws-access-key-id"),
+    ] {
+        if args[0] == "find" && !named {
+            continue;
+        }
+        let text = run(args, env);
+        assert!(
+            !text.contains(secret.as_str()) && text.contains(&format!("[redacted:{kind}]")),
+            "{args:?} {env:?}: {}",
+            text.chars().take(300).collect::<String>()
+        );
     }
     let _ = fs::remove_dir_all(&root);
 }

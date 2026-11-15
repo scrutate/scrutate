@@ -599,25 +599,34 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
             Ok(0) | Err(_) => break,
             Ok(n) => read += n,
         }
-        let shown: Vec<u8> = match std::str::from_utf8(&line) {
-            Ok(t) if redact => {
-                let mut t = t.to_string();
-                let (prefix, text) = crate::secrets::split_line(&t);
-                if crate::secrets::could_be_key_line(text) {
-                    if let Some((path, n)) = crate::secrets::grep_place(prefix) {
-                        if let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok()) {
-                            let end = if text.ends_with('\n') { "\n" } else { "" };
-                            t = format!("{prefix}{key}{end}");
-                            *r.counts.entry("private-key").or_default() += k;
-                        }
+        let shown: Vec<u8> = if !redact {
+            line.clone()
+        } else {
+            // a line that is not UTF-8 (one stray byte, a piece cut inside a character) is read
+            // lossily; it goes out as written unless that finds a secret, then lossily, redacted
+            let (text, exact) = match std::str::from_utf8(&line) {
+                Ok(t) => (std::borrow::Cow::Borrowed(t), true),
+                Err(_) => (String::from_utf8_lossy(&line), false),
+            };
+            let mut t = text.to_string();
+            let (prefix, rest) = crate::secrets::split_line(&t);
+            if crate::secrets::could_be_key_line(rest) {
+                if let Some((path, n)) = crate::secrets::grep_place(prefix) {
+                    if let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok()) {
+                        let end = if rest.ends_with('\n') { "\n" } else { "" };
+                        t = format!("{prefix}{key}{end}");
+                        *r.counts.entry("private-key").or_default() += k;
                     }
                 }
-                let mut one = [t];
-                r.redact_shown(&mut one, 0, usize::MAX);
-                let [t] = one;
-                t.into_bytes()
             }
-            _ => line.clone(),
+            let mut one = [t];
+            let marks: usize = r.redact_shown(&mut one, 0, usize::MAX).iter().sum();
+            let [t] = one;
+            if exact || marks > 0 || t != text {
+                t.into_bytes()
+            } else {
+                line.clone()
+            }
         };
         if room.is_some_and(|room| sent + shown.len() > room) {
             cut = true;
