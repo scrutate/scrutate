@@ -504,8 +504,15 @@ fn a_capped_comment_keeps_the_line_that_the_walk_stopped() {
 /// The base a pull request names goes into the cut note: in a code span, as every other name.
 #[test]
 fn the_cut_note_quotes_the_base_it_names() {
-    let odd = "b`<!--x";
-    let (t, _) = many_callers("capped_base", odd);
-    let md = t.review(&["--base", odd, "--depth", "1"]);
-    assert!(md.contains("`` scrutate review --base b`<!--x ``"), "{}", &md[md.len() - 300..]);
+    // a backtick ends a one-backtick span; `<` is no file name on Windows, where a ref is a file
+    let (t, _) = many_callers("capped_base", "b`x");
+    let mut odd = vec!["b`x"];
+    if cfg!(unix) {
+        t.git(&["branch", "b`<!--x", "b`x"]);
+        odd.push("b`<!--x");
+    }
+    for base in odd {
+        let md = t.review(&["--base", base, "--depth", "1"]);
+        assert!(md.contains(&format!("`` scrutate review --base {base} ``")), "{base}: {}", &md[md.len() - 300..]);
+    }
 }
