@@ -179,11 +179,9 @@ impl Review {
         }
         section("New duplicates".into(), dupes);
         section("Notes".into(), i.notes.iter().map(|(p, n)| format!("- {}: {}", at(p, None), n.text(code))).collect());
-        if i.stopped {
-            lines.push(String::new());
-            lines.push(format!("_The walk stopped at {} callers._", crate::impact::MAX_CALLERS));
-        }
-        cap(lines, &i.against)
+        // the stopped line explains a comment that names no untested change: the cut keeps it
+        let last = if i.stopped { vec![String::new(), format!("_The walk stopped at {} callers._", crate::impact::MAX_CALLERS)] } else { Vec::new() };
+        cap(lines, &last, &i.against)
     }
 
     pub fn json(&self) -> Value {
@@ -208,18 +206,22 @@ impl Review {
     }
 }
 
-/// The lines joined, cut before the line that would pass `MAX_COMMENT` with the note that says so.
-fn cap(lines: Vec<String>, base: &str) -> String {
+/// The lines joined, then `last`, which is always kept: cut before the line that would pass
+/// `MAX_COMMENT`, with the note that says so.
+fn cap(lines: Vec<String>, last: &[String], base: &str) -> String {
     let note = format!("\n_Cut at {MAX_COMMENT} characters: `scrutate review --base {}` prints the whole report._\n", shown(base));
+    let tail: String = last.iter().map(|l| format!("{l}\n")).collect();
     let mut out = String::new();
     for l in &lines {
-        if out.len() + l.len() + 1 + note.len() > MAX_COMMENT {
+        if out.len() + l.len() + 1 + tail.len() + note.len() > MAX_COMMENT {
+            out.push_str(&tail);
             out.push_str(&note);
             return out;
         }
         out.push_str(l);
         out.push('\n');
     }
+    out.push_str(&tail);
     out
 }
 
@@ -236,9 +238,9 @@ mod tests {
     #[test]
     fn a_long_report_is_cut_with_a_note_under_the_limit() {
         let lines: Vec<String> = (0..20_000).map(|n| format!("- line {n}")).collect();
-        let out = cap(lines, "main");
+        let out = cap(lines, &[], "main");
         assert!(out.len() <= MAX_COMMENT && out.ends_with("prints the whole report._\n"), "{}", out.len());
-        assert_eq!(cap(vec!["a".into()], "main"), "a\n");
+        assert_eq!(cap(vec!["a".into()], &[], "main"), "a\n");
     }
 
     #[test]

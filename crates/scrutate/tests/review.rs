@@ -464,3 +464,36 @@ fn a_rename_note_quotes_the_old_path() {
         assert!(md.contains(&format!("- `lib/renamed_{i}.py`: renamed from `{old}`\n")), "{md}");
     }
 }
+
+/// Four changed functions with 500 callers each, and a fifth with one: the walk stops at its
+/// 2,000, and the comment's list of them runs past its cap.
+fn many_callers(name: &str, base_ref: &str) -> (Tree, String) {
+    let t = Tree::new(name);
+    t.git(&["init", "-q"]);
+    for i in 0..5 {
+        t.write(&format!("lib/f{i}.py"), &format!("def f{i}(x):\n    return x + {i}\n"));
+        let callers = if i < 4 { 500 } else { 0 };
+        for file in 0..callers / 100 {
+            let defs: String = (0..100).map(|j| format!("def caller_number_{i}_{file}_{j}(x):\n    return f{i}(x)\n\n\n")).collect();
+            t.write(&format!("calls{i}/m{file}.py"), &format!("from lib.f{i} import f{i}\n\n\n{defs}"));
+        }
+    }
+    // the caller past the 2,000 stops the walk
+    t.write("calls4/m0.py", "from lib.f4 import f4\n\n\ndef past_the_cut(x):\n    return f4(x)\n");
+    t.commit("base");
+    t.git(&["branch", base_ref]);
+    for i in 0..5 {
+        t.write(&format!("lib/f{i}.py"), &format!("def f{i}(x):\n    return x + {i} + 1\n"));
+    }
+    let head = t.commit("head");
+    (t, head)
+}
+
+#[test]
+fn a_capped_comment_keeps_the_line_that_the_walk_stopped() {
+    let (t, _) = many_callers("capped_stop", "base");
+    let md = t.review(&["--base", "base", "--depth", "1"]);
+    assert!(md.len() <= 65_536, "{}", md.len());
+    assert!(md.contains("_Cut at 65536 characters"), "not capped: {}", md.len());
+    assert!(md.contains("_The walk stopped at 2000 callers._"), "{}", &md[md.len() - 300..]);
+}
