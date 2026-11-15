@@ -303,6 +303,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `watch` started with a pipe for its input ends when the pipe does, with exit code 0, so it no
+  longer outlives an agent or script that started it and was killed; from a terminal or with no
+  input it runs as before.
 - A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
   does the work itself, where a `serve` stopped or stuck at that point and a request over the
   socket's buffer (a long search with several `--alt`) left the call waiting for good.

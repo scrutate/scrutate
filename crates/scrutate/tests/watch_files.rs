@@ -118,6 +118,42 @@ fn wait_for(secs: u64, what: &str, mut ok: impl FnMut() -> bool) {
     }
 }
 
+/// Started with a pipe for its input, `watch` ends when the pipe does, as when the process that
+/// started it is killed; with no input (a terminal, a service manager's /dev/null) it runs on.
+#[test]
+fn watch_ends_when_the_pipe_it_was_started_with_closes() {
+    let r = Repo::new("pipe_ends");
+    r.write("a.py", b"def alpha():\n    return 1\n");
+    let mut child = Command::new(BIN)
+        .args(["watch", "."])
+        .current_dir(&r.root)
+        .env("GIT_CONFIG_GLOBAL", "/nonexistent")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    let mut child = KillOnDrop(child);
+    wait_watching(&rx);
+    drop(child.0.stdin.take());
+    let t0 = Instant::now();
+    let code = loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            break status.code();
+        }
+        assert!(t0.elapsed() < Duration::from_secs(10), "watch runs on after its input ended");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(code, Some(0));
+}
+
 #[test]
 fn files_written_while_the_first_update_runs_are_indexed() {
     let r = Repo::new("startup");

@@ -1070,7 +1070,10 @@ during that first update is seen, prints `watching PATH` on stderr, and waits fo
 events. While another process writes the index, an update waits for it (up to 10 minutes), the
 first one too; Ctrl-C stops `watch` at once, also during that wait for the code index's or the
 text index's lock, with exit code 130, and
-an update that is running stops at its next batch of files.
+an update that is running stops at its next batch of files. Started with a pipe for its standard
+input (an agent, an editor or a script that starts it), `watch` stops the same way, with exit
+code 0, when that pipe ends, so it ends with whoever started it, killed or not; from a terminal,
+or with no input (`/dev/null`, a service manager's default), it runs until it is stopped.
 
 Per platform:
 

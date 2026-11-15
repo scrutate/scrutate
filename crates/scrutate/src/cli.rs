@@ -2036,10 +2036,23 @@ fn watch_command(root: &Path) -> Result<i32> {
     interrupt::install(Arc::clone(&stop));
     // Ctrl-C also ends a wait for another process's write lock
     crate::index::stop_waits_on(Arc::clone(&stop));
+    // started with a pipe for input (an agent, an editor, a script), `watch` ends with whoever
+    // started it, at the pipe's end, as `serve` does; a terminal or /dev/null is no pipe, and
+    // mintty's and Cygwin's terminals, pipes on Windows, are kept out by is_terminal
+    let ended = Arc::new(AtomicBool::new(false));
+    if stdin_is_pipe() && !std::io::stdin().is_terminal() {
+        let (stop, ended) = (Arc::clone(&stop), Arc::clone(&ended));
+        let _ = std::thread::Builder::new().name("scrutate-stdin".into()).spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            ended.store(true, Ordering::Relaxed);
+            stop.store(true, Ordering::Relaxed);
+        });
+    }
     let stopped = || stop.load(Ordering::Relaxed);
+    let code = || if ended.load(Ordering::Relaxed) { 0 } else { 130 };
     loop {
         let session = match Session::open(&root, crate::session::Every::given(None)) {
-            Err(_) if stopped() => return Ok(130),
+            Err(_) if stopped() => return Ok(code()),
             s => s?,
         };
         let mut update = |changes: &crate::stores::Changes| -> Result<()> {
@@ -2065,7 +2078,7 @@ fn watch_command(root: &Path) -> Result<i32> {
         };
         let r = crate::watch::run(&given, &stop, || eprintln!("[scrutate] watching {}", crate::paths::plain_path(&root).display()), &mut update);
         if stopped() {
-            return Ok(130);
+            return Ok(code());
         }
         // the given path names another tree: that tree's index is opened (made when it has none)
         // and watched in its place
@@ -2075,6 +2088,28 @@ fn watch_command(root: &Path) -> Result<i32> {
             continue;
         }
         return r.map(|()| 0);
+    }
+}
+
+/// Whether standard input is a pipe (a FIFO on Unix), whose end says the writer is gone.
+fn stdin_is_pipe() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        use std::os::unix::fs::FileTypeExt;
+        let fd = std::io::stdin().as_fd().try_clone_to_owned();
+        fd.ok().and_then(|fd| std::fs::File::from(fd).metadata().ok()).is_some_and(|m| m.file_type().is_fifo())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_PIPE};
+        // SAFETY: the process's own standard input handle, which GetFileType only reads
+        unsafe { GetFileType(std::io::stdin().as_raw_handle() as _) == FILE_TYPE_PIPE }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
     }
 }
 
