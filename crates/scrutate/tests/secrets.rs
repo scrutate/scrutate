@@ -4,6 +4,11 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+// only the Unix tests run rg here
+#[cfg(unix)]
+#[path = "support/rg.rs"]
+mod rg;
+
 use canon::canon;
 use std::fs;
 use std::io::Write as _;
@@ -307,6 +312,9 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
         &["grep", "-a", "-rHn", "-e", ".", "."],
         &["rg", "-a", "-n", "."],
     ] {
+        if ask[0] == "rg" && !rg::have_rg() {
+            continue;
+        }
         let home = root.with_extension("home");
         let out = Command::new(BIN)
             .args(["hook", "run", "--"])
@@ -543,6 +551,9 @@ fn an_indexed_key_s_lines_are_found_by_their_text_through_hook_run() {
         &["rg", "-n", "==$"],
         &["rg", "-n", "-A8", "BEGIN"],
     ] {
+        if ask[0] == "rg" && !rg::have_rg() {
+            continue;
+        }
         let mut args = vec!["hook", "run", "--"];
         args.extend_from_slice(ask);
         let text = run(&args);

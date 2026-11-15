@@ -3,6 +3,9 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/rg.rs"]
+mod rg;
+
 use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1523,7 +1526,7 @@ fn a_type_matches_after_the_ignore_rules_as_ripgrep_does() {
         (&["--no-ignore", "-t", "py", "needle"], &[".hidden.py:1:needle", "gone.py:1:needle", "kept.py:1:needle", "sub/also.py:1:needle"]),
     ];
     let want = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let have_rg = Command::new("rg").arg("--version").stdout(Stdio::null()).status().is_ok_and(|s| s.success());
+    let have_rg = rg::have_rg();
     for &(args, w) in cases {
         for env in [&[][..], &[("SCRUTATE_SMALL_TREE", "0")]] {
             let v = [&["grep", "-n"][..], args].concat();

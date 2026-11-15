@@ -49,7 +49,7 @@ docs/                   architecture, security, benchmarks, traceability, ...
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
-cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features
+cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features; the tests that run or compare with rg skip without it, and fail without it when SCRUTATE_TEST_NEEDS_RG is set (CI, tools/ci_ripgrep.sh)
 cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
 cargo audit
 cargo deny check                                  # advisories, licences, bans and sources (deny.toml)

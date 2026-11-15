@@ -4,6 +4,10 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/rg.rs"]
+mod rg;
+use rg::have_rg;
+
 use canon::canon;
 use std::fs;
 use std::io::Write;
@@ -145,16 +149,6 @@ fn a_type_keeps_ignored_files_out_where_a_glob_brings_them_in() {
     assert_eq!(files(Files { types: vec!["py".into()], ..walk() }), ["b.py", "c.pyi"]);
     assert_eq!(files(Files { globs: vec!["*.py".into()], ..walk() }), ["gone.py", "b.py"]);
     assert!(search(&Query::default(), &Files { types: vec!["nope".into()], ..walk() }, Default::default(), Output::Records(&mut |_| {})).is_err());
-}
-
-fn have_rg() -> bool {
-    let ok = Command::new("rg").arg("--version").stdout(Stdio::null()).status().is_ok_and(|s| s.success());
-    // CI sets it where it installs ripgrep, so a missing rg fails there instead of skipping
-    assert!(ok || std::env::var_os("SCRUTATE_TEST_NEEDS_RG").is_none(), "rg is not installed");
-    if !ok {
-        eprintln!("skipped: rg is not installed");
-    }
-    ok
 }
 
 /// What Grep makes of ripgrep's output for `input`: ripgrep run with the arguments Grep gives it,

@@ -2,6 +2,10 @@
 //! the same lines (in each file, the same order) and the same exit code. The commands run in `sh`.
 #![cfg(unix)]
 
+#[path = "support/rg.rs"]
+mod rg;
+use rg::have_rg;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -30,10 +34,6 @@ impl Drop for Repo {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
-}
-
-fn has_rg() -> bool {
-    Command::new("rg").arg("--version").stdout(Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 /// (stdout, stderr, code) of `cmd` run by sh in `dir`, with no scrutate setting from outside.
@@ -79,7 +79,7 @@ fn by_file(out: &str) -> BTreeMap<String, Vec<String>> {
 
 #[test]
 fn a_rewritten_search_prints_what_ripgrep_prints() {
-    if !has_rg() {
+    if !have_rg() {
         eprintln!("skipped: no rg on PATH");
         return;
     }
@@ -253,7 +253,7 @@ fn a_program_ends_its_answer_when_hook_run_holds_descriptors_past_1024() {
 
 #[test]
 fn a_long_answer_stops_at_the_budget_and_a_piped_one_streams_whole() {
-    if !has_rg() {
+    if !have_rg() {
         return;
     }
     let r = Repo::new("long");
@@ -410,7 +410,7 @@ fn hook_run_by_hand_runs_only_a_read_only_rg_grep_or_find() {
 
 #[test]
 fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
-    if !has_rg() {
+    if !have_rg() {
         eprintln!("skipped: no rg on PATH");
         return;
     }

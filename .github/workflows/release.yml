@@ -102,6 +102,10 @@ jobs:
           newest=$(objdump -T "target/$TARGET/release/scrutate" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
           echo "newest glibc version asked for: $newest"
           [ "$(printf '%s\n' GLIBC_2.34 "$newest" | sort -V | tail -1)" = GLIBC_2.34 ]
+      # the tests that run or compare with ripgrep need it, as in ci.yml
+      - name: ripgrep 15.2.0 for the tests that compare with it
+        shell: bash
+        run: bash tools/ci_ripgrep.sh
       - shell: bash
         run: cargo test --release -p scrutate --target "$TARGET" --locked
       - name: package
