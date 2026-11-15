@@ -1444,9 +1444,13 @@ mod tests {
         }
     }
 
+    /// Where the order proves (Linux, Windows) both sessions read with cookies and each takes only
+    /// its own; on macOS neither writes one and every read looks at the tree, so this covers there
+    /// only that two sessions of one root answer every write.
     #[test]
     fn two_watched_sessions_of_one_root_in_one_process_keep_their_barriers() {
         let (root, s1) = watched("twin", 1, Every::given(Some(3600.0)));
+        s1.notes.as_ref().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
         let s2 = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
         s2.watch(false).unwrap();
         std::thread::sleep(Duration::from_millis(500));
@@ -1466,9 +1470,11 @@ mod tests {
         assert!(missed.is_empty(), "{} of 100 writes missed: {missed:?}", missed.len());
     }
 
+    /// On macOS, where no read writes a cookie, this covers only that s1 answers every write.
     #[test]
     fn an_idle_second_watched_session_costs_the_first_no_answer() {
         let (root, s1) = watched("idle_twin", 1, Every::given(Some(3600.0)));
+        s1.notes.as_ref().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
         let s2 = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
         s2.watch(false).unwrap();
         std::thread::sleep(Duration::from_millis(500));
