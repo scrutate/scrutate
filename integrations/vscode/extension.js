@@ -71,7 +71,9 @@ function wordsUnderCursor() {
 
 /** The answer of `scrutate CMD --json -- NAME` for the first name that has one, else for the last. */
 async function firstAnswer(cmd, names) {
-  let r, name;
+  /** @type {{out: string, root: string}} */
+  let r = { out: "", root: "" };
+  let name = "";
   for (name of names) {
     r = await run([cmd, "--json", "--", name]);
     const res = r.out ? JSON.parse(r.out).result : [];
@@ -138,7 +140,7 @@ function activate(context) {
     vscode.commands.registerCommand("scrutate.symbol", () =>
       withErrors(async () => {
         const words = wordsUnderCursor();
-        if (!words.length) words.push(await vscode.window.showInputBox({ prompt: "Symbol (Class.method works)" }));
+        if (!words.length) words.push((await vscode.window.showInputBox({ prompt: "Symbol (Class.method works)" })) || "");
         if (!words[0]) return;
         const { r, name } = await firstAnswer("symbol", words);
         await pickHits(r, `definitions of ${name}`);
@@ -147,7 +149,7 @@ function activate(context) {
     vscode.commands.registerCommand("scrutate.callers", () =>
       withErrors(async () => {
         const words = wordsUnderCursor();
-        if (!words.length) words.push(await vscode.window.showInputBox({ prompt: "Function name" }));
+        if (!words.length) words.push((await vscode.window.showInputBox({ prompt: "Function name" })) || "");
         if (!words[0]) return;
         const { r, name } = await firstAnswer("callers", words);
         await pickHits(r, `callers of ${name}`);
