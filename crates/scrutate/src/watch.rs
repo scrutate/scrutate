@@ -293,6 +293,11 @@ impl Burst {
 pub const COOKIES: &str = "cookies";
 /// How long a read waits for its cookie's event before it walks the tree instead.
 const BARRIER: Duration = Duration::from_secs(1);
+/// Whether a cookie's event proves every change made before the cookie is noted: the platform
+/// queues a write's event before the event of a file made after the write returned. Not on macOS:
+/// FSEvents can give a write a later event id than a cookie made after it, so there every read
+/// looks at the tree.
+pub(crate) const ORDER_PROVES: bool = !cfg!(target_os = "macos");
 /// Events kept for reads at most; past this the next read walks the tree.
 const MOST_NOTED: usize = 10_000;
 
@@ -314,6 +319,8 @@ struct Shared {
     next_cookie: AtomicU64,
     /// the least time between two safety walks, in milliseconds
     safety_every: AtomicU64,
+    /// `ORDER_PROVES`, which tests set either way
+    order_proves: AtomicBool,
     noted: Mutex<Noted>,
     arrived: Condvar,
     #[cfg(target_os = "macos")]
@@ -383,6 +390,7 @@ impl Notes {
             prefix: cookie_prefix(std::process::id(), NOTES.fetch_add(1, Ordering::Relaxed)),
             next_cookie: AtomicU64::new(0),
             safety_every: AtomicU64::new(SAFETY_EVERY.as_millis() as u64),
+            order_proves: AtomicBool::new(ORDER_PROVES),
             noted: Mutex::default(),
             arrived: Condvar::new(),
             #[cfg(target_os = "macos")]
@@ -474,6 +482,22 @@ impl Notes {
         self.0.safety_every.store(every.as_millis() as u64, Ordering::Relaxed);
     }
 
+    /// Whether a cookie proves the change set (`ORDER_PROVES` until a test says otherwise).
+    #[cfg(test)]
+    pub(crate) fn set_order_proves(&self, proves: bool) {
+        self.0.order_proves.store(proves, Ordering::Relaxed);
+    }
+
+    /// The watch as if in place on the tree as it is now, with no watcher: a test then delivers
+    /// the events itself through `note`.
+    #[cfg(test)]
+    pub(crate) fn in_place_without_a_watcher(&self) {
+        let walked = Arc::new(Walked::new(&self.0.root, &self.0.code));
+        let mut n = lock(&self.0.noted);
+        n.dirs_walked = n.dirs;
+        n.walked = Some(walked);
+    }
+
     /// The cookies this keeps a name of.
     #[cfg(test)]
     pub(crate) fn cookies_kept(&self) -> usize {
@@ -551,6 +575,15 @@ impl Freshness for Notes {
         };
         if lock(&self.0.noted).walked.is_none() {
             return all("the watch is not in place", t.get());
+        }
+        if !self.0.order_proves.load(Ordering::Relaxed) {
+            // a token of its own: a walk that applied it began after this call did, so it saw
+            // every change made before the call
+            let mut n = lock(&self.0.noted);
+            n.gen += 1;
+            let now = n.gen;
+            drop(n);
+            return all("FSEvents may number a write after a cookie made later", now);
         }
         if let Err(why) = self.barrier() {
             return all(why, t.get());

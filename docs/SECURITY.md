@@ -566,11 +566,12 @@ on Unix).
     FSEvents.h gives, every returned pointer checked for null; the callback reads exactly the `n`
     paths and flags FSEvents passes, as nul-terminated strings that live for the call, and its
     `info` is a boxed channel sender that the stream's release callback frees once, or the
-    caller frees when no stream was made. A session's read calls `FSEventStreamFlushSync` from
+    caller frees when no stream was made. A session's cookie barrier (on macOS only where a
+    test turns it on: reads there look at the tree) calls `FSEventStreamFlushSync` from
     its own thread through `Flush` (declared `Send`: the stream pointer is only passed to that
     function), which `watch::Notes` holds under a lock and drops before the stream is torn down.
     `watch::tests` starts a stream and receives a file's event, every `tests/watch_files.rs` test
-    runs on it, and the session tests flush it 1,000 times;
+    runs on it, and the session tests of the change set flush it;
   - `watch.rs` `local` (macOS and Windows): `statfs` (`statfs$INODE64` on Intel macOS) of a
     nul-terminated path into a buffer larger than `struct statfs` and 8-byte aligned as its
     64-bit fields, `f_flags` read as the four bytes at offset 64; `GetDriveTypeW` of a nul-terminated drive root. `watch::tests` asks both about

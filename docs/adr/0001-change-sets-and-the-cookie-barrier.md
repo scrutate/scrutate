@@ -1,6 +1,6 @@
 # 1. Change sets and the cookie barrier
 
-Status: accepted, 2026-11-14.
+Status: accepted, 2026-11-14; amended 2026-11-15 for macOS (see the end).
 
 ## Context
 
@@ -25,10 +25,9 @@ named, or every file.
 - The watch's adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own, so
   no debounce and no running update holds a read up.
 - The barrier: a read writes a cookie file under `.scrutate/cookies/` and waits for that file's
-  event (Watchman's sync queries work the same way). Events arrive in order on each platform's
-  queue, so once the cookie's event is in, so is every event of a change made before the read
-  started. On macOS the read also calls `FSEventStreamFlushSync` and the stream's latency is
-  5 ms, to cut the wait. One code path on every platform; the cookie is the proof.
+  event (Watchman's sync queries work the same way). Events arrive in order on inotify's and
+  ReadDirectoryChangesW's queue, so once the cookie's event is in, so is every event of a change
+  made before the read started. Not on macOS: see the amendment below.
 - The events since T go through the rules a watch burst already uses (`Burst::note`,
   `Burst::files`), so there is no second copy of the membership rules.
 - Whatever those rules cannot vouch for is every file: lost events, a watcher error, an ignore or
@@ -64,3 +63,36 @@ platforms, for the same guarantee the cookie gives.
 - The test `session::tests::a_file_written_just_before_a_call_is_in_its_answer_every_time` writes
   a file and reads it back 1,000 times through the watch, with no miss and one file looked at
   each time.
+
+## Amendment, 2026-11-15: macOS reads look at the tree
+
+FSEvents does not keep that order. A read missed a write made just before it under load
+(`a_file_written_just_before_a_call_is_in_its_answer_every_time`, once in a full parallel test run;
+reproduced with three copies, four busy CPUs and two file-event floods): the cookie's event came
+back 338 us after it was written, no event for the written file came before it, and the change
+set was empty. A C probe (`bench/event_order.c`) writes a file, then makes a cookie, flushes and
+waits for the cookie's event, then 30 ms more. On macOS the cookie came first 2 times in 300 for
+an in-place write (`open(O_TRUNC)`, write, close) at load 5, and 2 in 300, 0 in 400 and 1 in 2,000
+under file-event floods at load 6 to 10; for a write by rename 0 in 300 at rest, and 1 in 300,
+1 in 400 and 1 in 2,000 under the floods. Each time the file's event came later, with a later
+event id than the cookie's (cookie 1531117780, file 1531117940; cookie 1537168847, file
+1537168898). No wait for the cookie, flush or stream latency can close that: the write's event
+is numbered after the cookie's. Watchman met the same reordering ("Cookie files are not
+sufficient", commit d1795de4ec, 2021) and added a flush after the cookie is seen, which does not
+help when the write's event is numbered later.
+
+So on macOS (`watch::ORDER_PROVES` false, held per `Notes`) a read writes no cookie and its change
+set is every file: the read looks at the tree, at once, and indexes what changed. Each read takes
+a token of its own, so a walk counts for a read only when it began after the read did. The cookie
+code stays for the platforms whose queue keeps the order: on Linux (inotify, one queue for every
+watch of an instance, kernel 7.0, 4 vCPU) the same probe under its flood saw the cookie first 0
+times in 5,000 in-place writes and 0 in 5,000 renames. Windows is not tested for it.
+
+The cost, on an Apple M3 Pro (11 cores, macOS 27.2.1) at load 6 to 9, both builds alternating call
+by call (`rivals.scrutate.Mcp`, the yardstick's resident row, `find_symbol`): on a 726-file copy of
+this repository 3.9 ms median before, 8.2 ms after (a call right after an edit 26.0 ms before, 29.3
+ms after); on 14,520 files (20 copies) 15.0 ms before, 130.8 ms after (after an edit 206 ms, 314
+ms). The look grows with the tree. A command line call through `serve` already looked at every file
+and is unchanged (`symbol` through it: 10.2 and 15.0 ms before, 9.8 and 12.4 ms after, two rounds
+of 15 calls each). A barrier cheaper than the look that is still a proof is the open item
+(ARCH-01m).

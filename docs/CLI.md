@@ -800,6 +800,10 @@ call. A watch on the tree (FSEvents on macOS, one inotify watch per directory on
 ReadDirectoryChangesW on Windows) names them, `--watch` or not: the call writes a cookie file under
 `.scrutate/cookies/` and waits for its event, so every file written before the call started is
 named, then it looks at the named files alone (one `stat` each) and indexes those that changed.
+On macOS every call looks at every file instead: FSEvents can give a write a later event than a
+cookie made after the write returned, so the cookie proves nothing there
+([ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)). That call costs a look at the tree,
+not a `stat` per changed file.
 When the watch cannot vouch for fewer files (it is not in place yet, it lost events or reported an
 error, an ignore rule or a directory changed, the cookie's event took more than a second, or on
 Linux a directory got its first watch, new or made again at its path) the call looks at every

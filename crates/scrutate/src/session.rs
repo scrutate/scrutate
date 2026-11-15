@@ -1307,6 +1307,10 @@ mod tests {
         if let (Some(every), Some(notes)) = (safety, &s.notes) {
             notes.set_safety_every(every);
         }
+        // these tests are of the change set, which macOS reads do without
+        if let Some(notes) = &s.notes {
+            notes.set_order_proves(true);
+        }
         s.build().unwrap();
         s.watch(false).unwrap();
         let t0 = Instant::now();
@@ -1326,12 +1330,53 @@ mod tests {
     fn a_file_written_just_before_a_call_is_in_its_answer_every_time() {
         // no safety walk lands in the run: a second file looked at is a second look
         let (root, s) = watched_with("barrier", 1, Every::given(Some(3600.0)), Some(Duration::from_secs(3600)));
+        s.notes.as_ref().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
+        // the change set where a cookie proves it, else a look at the tree's 3 files
+        let looked = if crate::watch::ORDER_PROVES { 1 } else { 3 };
         for i in 0..1000 {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
-            assert_eq!(st.files_looked, 1, "write {i}: {st:?}");
+            assert_eq!(st.files_looked, looked, "write {i}: {st:?}");
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// FSEvents as recorded on macOS under load: the cookie's event arrives and the event of a
+    /// file written before it does not (it comes later, with a later event id).
+    #[test]
+    fn a_write_whose_event_comes_after_the_cookie_is_in_the_answer_where_the_order_proves_nothing() {
+        assert_eq!(crate::watch::ORDER_PROVES, !cfg!(target_os = "macos"));
+        let root = std::env::temp_dir().join(format!("scrutate_session_late_event_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/w.py"), "def written_0():\n    return 0\n").unwrap();
+        let s = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        let notes = s.notes.clone().unwrap();
+        notes.in_place_without_a_watcher();
+        notes.set_order_proves(false);
+        let stop = Arc::new(AtomicBool::new(false));
+        let courier = {
+            let (notes, stop) = (notes.clone(), Arc::clone(&stop));
+            let cookies = s.root().join(crate::files::INDEX_DIR).join(crate::watch::COOKIES);
+            std::thread::spawn(move || {
+                let mut sent = std::collections::HashSet::new();
+                while !stop.load(Ordering::Relaxed) {
+                    for p in std::fs::read_dir(&cookies).into_iter().flatten().flatten().map(|e| e.path()) {
+                        if sent.insert(p.clone()) {
+                            notes.note(&Ok(notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File)).add_path(p)));
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+        std::fs::write(root.join("src/w.py"), "def written_1():\n    return 1\n").unwrap();
+        let (_, a) = s.run_scanned(&Op::Symbol { name: "written_1".into(), limit: 1, exact: true }).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        courier.join().unwrap();
+        assert!(a.is_ok_and(|a| !a.is_empty()), "the write was missed");
         let _ = std::fs::remove_dir_all(root);
     }
 

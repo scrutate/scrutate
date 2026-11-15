@@ -704,8 +704,10 @@ session with no watch: a tree on a network disk (`watch::local`), every session 
 always answers every file. The watch's
 adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own that neither the
 burst's debounce nor a running update holds up. A read first writes a cookie file under
-`.scrutate/cookies/` and waits for its event (on macOS after `FSEventStreamFlushSync`): events
-arrive in order, so every change made before the read started is then noted. A cookie's name
+`.scrutate/cookies/` and waits for its event: inotify and ReadDirectoryChangesW queue events in
+order, so every change made before the read started is then noted. FSEvents does not (a write can
+get a later event id than a cookie made after it), so on macOS (`watch::ORDER_PROVES` false) a
+read writes no cookie and its change set is every file, a look at the tree. A cookie's name
 belongs to its session alone (process id, a number per session and 64 random bits, since two
 containers sharing a bind-mounted root can both be pid 1), so two sessions of one root
 never take each other's cookie; a session keeps only the names it still waits for, and removes
