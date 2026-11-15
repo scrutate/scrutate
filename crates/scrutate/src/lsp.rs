@@ -348,6 +348,8 @@ struct Server {
     /// when a request last waited out `build_wait`: the ones read right after it were queued behind
     /// it, and are answered at once
     waited_out: std::cell::Cell<Option<std::time::Instant>>,
+    /// the folders and errors already logged by a request over several folders, logged once each
+    skipped: std::cell::RefCell<HashSet<(PathBuf, i64)>>,
 }
 
 /// Symbols one `workspace/symbol` answer lists at most, over every folder.
@@ -792,35 +794,64 @@ impl Server {
         for &i in &asked {
             self.folders[i].open();
         }
-        let mut out = Vec::new();
-        for i in asked {
-            let f = &self.folders[i];
-            let answer = self.run(method, f, &mut |s| match method {
-                "textDocument/definition" => f.definition(s, p),
-                "textDocument/references" => f.references(s, p),
-                "textDocument/documentSymbol" => f.document_symbols(s, p),
-                _ => f.workspace_symbols(s, p),
-            })?;
-            if method != "workspace/symbol" {
-                return Ok(answer);
+        // over several folders, one that cannot answer (no index, its first build still running)
+        // leaves the others' answers, and the request fails only when none answered. A first build
+        // is waited for only when no folder could answer without waiting.
+        let several = asked.len() > 1;
+        let (mut out, mut answered, mut failed, mut building) = (Vec::new(), false, None, Vec::new());
+        for pass in 0..2 {
+            let these = match pass {
+                0 => asked.clone(),
+                _ if several && !answered => std::mem::take(&mut building),
+                _ => break,
+            };
+            for i in these {
+                let f = &self.folders[i];
+                let answer = self.run(method, f, several && pass == 0, &mut |s| match method {
+                    "textDocument/definition" => f.definition(s, p),
+                    "textDocument/references" => f.references(s, p),
+                    "textDocument/documentSymbol" => f.document_symbols(s, p),
+                    _ => f.workspace_symbols(s, p),
+                });
+                match answer {
+                    Ok(a) if method != "workspace/symbol" => return Ok(a),
+                    Ok(a) => {
+                        answered = true;
+                        out.extend(a.as_array().into_iter().flatten().cloned());
+                    }
+                    Err(e) if several && pass == 0 && e.0 == -32801 => building.push(i),
+                    Err(e) if several => {
+                        if self.skipped.borrow_mut().insert((f.root.clone(), e.0)) {
+                            log(2, &format!("scrutate: {} is left out of this answer: {}", f.given.display(), e.1));
+                        }
+                        failed.get_or_insert(e);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
-            out.extend(answer.as_array().into_iter().flatten().cloned());
+        }
+        if let (false, Some(e)) = (answered, failed) {
+            return Err(e);
         }
         out.truncate(WORKSPACE_SYMBOLS);
         Ok(Value::Array(out))
     }
 
-    /// `f` on a reader of `folder`'s index, once its first build is done.
-    fn run(&self, method: &str, folder: &Folder, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
+    /// `f` on a reader of `folder`'s index for a `method` request, once its first build is done;
+    /// `no_wait` does not wait for that build.
+    fn run(&self, method: &str, folder: &Folder, no_wait: bool, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
         // read within a second of a request that waited out the build: queued behind it
         let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
-        let build_wait = if queued { std::time::Duration::ZERO } else { self.build_wait };
+        let build_wait = if queued || no_wait { std::time::Duration::ZERO } else { self.build_wait };
         let session = folder.session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
         let never = Arc::new(AtomicBool::new(false));
         // the one thread that reads requests must not wait out a long first build: a cancel,
         // a change and shutdown come in behind it; ContentModified asks the editor to ask again
         if !session.wait_built(&never, Some(build_wait), |_| {}) {
-            self.waited_out.set(Some(std::time::Instant::now()));
+            // a request that did not wait has waited out nothing: the next one may still wait
+            if !no_wait {
+                self.waited_out.set(Some(std::time::Instant::now()));
+            }
             return Err((-32801, "the index is still being built".to_string()));
         }
         // a damaged index is built again and the request answered from the new one
@@ -885,6 +916,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         shutdown: false,
         build_wait: crate::session::BUILD_WAIT,
         waited_out: Default::default(),
+        skipped: Default::default(),
     };
     let mut input = std::io::stdin().lock();
     while let Some(body) = read_message(&mut input)? {
@@ -946,6 +978,7 @@ mod tests {
             shutdown: false,
             build_wait: std::time::Duration::from_millis(300),
             waited_out: Default::default(),
+            skipped: Default::default(),
         };
         let t0 = std::time::Instant::now();
         let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
@@ -975,6 +1008,7 @@ mod tests {
             shutdown: false,
             build_wait: std::time::Duration::from_secs(2),
             waited_out: Default::default(),
+            skipped: Default::default(),
         };
         let t0 = std::time::Instant::now();
         for _ in 0..4 {

@@ -12,7 +12,8 @@ incompatible index by itself, and that is never breaking.
 - The language server answers every workspace folder from the index of its own repository, where
   it answered only the first folder's and looked up a name from another folder in that index. It
   takes `workspace/didChangeWorkspaceFolders`, so a folder added later is answered and a removed
-  one closed, and a file in no folder gets no answer ([CLI](docs/CLI.md#lsp)).
+  one closed, and a file in no folder gets no answer; `workspace/symbol`
+  leaves out a folder that cannot answer and answers from the others ([CLI](docs/CLI.md#lsp)).
 - `scrutate hook bash`, the `PreToolUse` hook of Claude Code's Bash and Codex's shell: when the
   first command of a line is a read-only search by `rg`, `grep` or `find`, it puts
   `scrutate hook run --` in front of it and keeps the rest of the line as written; `hook run`

@@ -986,7 +986,9 @@ no folder. A request about a document goes to the folder that holds it; `workspa
 every folder. The first folder's index is opened at `initialize`, the others when a request first
 needs them. The server takes `workspace/didChangeWorkspaceFolders`: an added folder is answered,
 and a removed one's index is closed unless another folder uses it. A file in no folder gets no
-answer. Locations name files under the folder as the editor sent it, also when it is reached
+answer. `workspace/symbol` leaves out a folder that cannot answer (its index cannot be opened, or its
+first build is still running, which is not waited for when there are other folders), says so
+once in the log, and fails only when no folder answered. Locations name files under the folder as the editor sent it, also when it is reached
 through a link, so the editor finds them among its open files. With no folder and no `--root`, started in the home directory or at
 a filesystem root with no index, the server builds none and says so in the log. It answers from
 the Engine B index:

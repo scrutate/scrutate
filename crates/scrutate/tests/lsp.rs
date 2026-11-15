@@ -278,6 +278,46 @@ fn answers_name_files_under_the_folder_as_the_editor_sent_it() {
     let _ = child.wait();
 }
 
+/// A folder that cannot answer (deleted, or its first build still running) leaves the other
+/// folders' answers: `workspace/symbol` answers from the ones that can.
+#[test]
+fn a_folder_that_cannot_answer_leaves_the_others_answers() {
+    let r = Repo::new("multi_root_gone");
+    fs::create_dir_all(r.root.join("x/.git")).unwrap();
+    r.write("x/lib.py", "def handler():\n    return 'x'\n");
+    let gone = r.root.join("gone");
+    let folder = |p: &Path| json!({"uri": uri(p), "name": p.file_name().unwrap().to_string_lossy()});
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request(
+        "initialize",
+        json!({"processId": null, "rootUri": uri(&r.root.join("x")), "workspaceFolders": [folder(&r.root.join("x")), folder(&gone)], "capabilities": {}}),
+    );
+    c.notify("initialized", json!({}));
+    let symbols = |c: &mut Client, when: &str| {
+        let ws = c.request("workspace/symbol", json!({"query": "handler"}));
+        let got: Vec<String> = ws["result"].as_array().unwrap_or_else(|| panic!("{when}: {ws}")).iter().map(|s| real_file(&r.root, &s["location"])).collect();
+        assert_eq!(got, ["x/lib.py"], "{when}: {ws}");
+    };
+    symbols(&mut c, "with a deleted folder");
+    c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder(&r.root.join("also_gone"))], "removed": []}}));
+    symbols(&mut c, "with a deleted folder added later");
+    // a folder whose first build is still running when the request comes
+    let big = r.root.join("big");
+    fs::create_dir_all(big.join(".git")).unwrap();
+    for i in 0..3000 {
+        r.write(&format!("big/m{i}.py"), &format!("def f{i}(a):\n    return a + {i}\n"));
+    }
+    c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder(&big)], "removed": []}}));
+    let t = std::time::Instant::now();
+    symbols(&mut c, "with a folder in its first build");
+    assert!(t.elapsed() < Duration::from_secs(15), "the build was waited for: {:?}", t.elapsed());
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    let _ = child.wait();
+}
+
 /// A workspace of several repositories: each folder is answered from its own index, a folder
 /// added later is answered, a removed one is not, and a file in no folder gets no answer.
 #[test]
@@ -364,8 +404,16 @@ fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
         assert_eq!(syms.len(), 1, "{ws}");
         assert_eq!(real_file(&r.root, &syms[0]["location"]), want, "{ws}");
     }
-    // the second folder, another repository, is answered from its own index
-    let ws = c.request("workspace/symbol", json!({"query": "other_fn"}));
+    // the second folder, another repository, is answered from its own index once its first
+    // build is done (until then the other folders answer without it)
+    let t0 = std::time::Instant::now();
+    let ws = loop {
+        let ws = c.request("workspace/symbol", json!({"query": "other_fn"}));
+        if ws["result"].as_array().is_some_and(|a| !a.is_empty()) || t0.elapsed() > Duration::from_secs(60) {
+            break ws;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
     let syms = ws["result"].as_array().unwrap_or_else(|| panic!("{ws}"));
     assert_eq!(syms.iter().map(|s| real_file(&other.root, &s["location"])).collect::<Vec<_>>(), ["x.py"], "{ws}");
 
