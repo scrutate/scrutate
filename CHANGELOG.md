@@ -295,6 +295,10 @@ incompatible index by itself, and that is never breaking.
   when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
   where it named them under the resolved path and the editor opened a second tab of an open file
   ([CLI](docs/CLI.md#lsp)).
+- The yardstick times every rival of a form against one named scrutate adapter (resident:
+  `scrutate-mcp`), and each row names its `base`, where the last scrutate adapter of the form won,
+  so W5's refs rows were against `scrutate-lsp`, its callers rows against `scrutate-mcp`, and the
+  workload's geometric mean mixed the two.
 - The yardstick's language server adapter (`bench/rivals/lsp.py`) opens each file once, on the
   checked request before the timed ones, where every timed request sent `didOpen` again and clangd
   parsed the file again inside the timing (its callers rows about 4 times too slow).

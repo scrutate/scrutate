@@ -8,8 +8,9 @@ A tool is an Adapter (bench/rivals): one request per `ask`. A query names its wo
 the answer must hold (`expect`, or exactly that with `exact: true`). An answer that does not hold
 it is reported as wrong and never timed; a tool that cannot run here says why. Passing tools are
 timed in turn (A B C, B C A, ...), so load drift does not turn into a difference between them, and
-each is compared with scrutate's adapter of the same form: resident with resident (a server that
-holds its index), process with process (a program per request).
+each is compared with one named scrutate adapter of the same form, the first of that form in
+adapters(): resident with scrutate-mcp (a server that holds its index), process with scrutate or,
+for W10, scrutate-mcp-cold (a program per request). Each row with a ratio names its `base`.
 """
 from __future__ import annotations
 
@@ -99,10 +100,11 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 # a grep query is checked against leaderboard.py's Python reference, line for line
                 found, _ = lb.reference(corpus, lb.file_list(corpus, q.get("mode", "ignore")), q["grep"])
                 q = {**q, "expect": sorted(found), "exact": True}
-            live = []
+            live, mine = [], []
             for a in (a for a in adapters if serves(a, q)):
                 row = {"workload": w, "query": q["id"], "tool": a.name, "form": a.form}
                 rows.append(row)
+                mine.append(row)
                 if tools[a.name]["missing"]:
                     row["status"] = f"missing: {tools[a.name]['missing']}"
                 elif a not in started:
@@ -140,10 +142,16 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 if row.get("times"):
                     row["p50_ms"] = 1000 * statistics.median(row["times"])
                     row["p95_ms"] = 1000 * sorted(row["times"])[max(0, math.ceil(0.95 * len(row["times"])) - 1)]
-            ours = {row["form"]: row for _, row in live if row["tool"].startswith("scrutate") and row.get("times")}
+            # one named base per form: the first scrutate adapter of that form serving the query, in
+            # adapters() order; with no times of its own, the rows get no ratio (no other base)
+            ours: dict = {}
+            for row in mine:
+                if row["tool"].startswith("scrutate"):
+                    ours.setdefault(row["form"], row)
             for _, row in live:
                 base = ours.get(row["form"])
-                if base and base is not row and row.get("times"):
+                if base and base is not row and row.get("times") and base.get("times"):
+                    row["base"] = base["tool"]
                     row["ratio"], row["ci_low"], row["ci_high"] = lb.boot_ratio(row["times"], base["times"], B=2000)
     finally:
         for a in started:

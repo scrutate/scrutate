@@ -169,3 +169,10 @@ def test_a_start_past_its_limit_is_that_tools_error_and_the_run_goes_on():
     assert "over 1 s" in out["tools"]["slow"]["error"]
     assert slow.stopped and other.started
     assert [r["status"] for r in out["rows"] if r["tool"] == "slow"] == ["error: StartTimeout: start took over 1 s"]
+
+
+def test_every_rival_of_a_form_is_timed_against_one_named_scrutate_base():
+    # scrutate-lsp comes after scrutate-mcp in adapters(), and is slower here
+    out = run(Fake("scrutate-mcp", RIGHT, 0.002), Fake("rival", RIGHT, 0.006), Fake("scrutate-lsp", RIGHT, 0.012), runs=3)
+    rival = next(r for r in out["rows"] if r["tool"] == "rival")
+    assert rival["base"] == "scrutate-mcp" and rival["ratio"] > 1
