@@ -255,6 +255,29 @@ fn in_git(root: &Path) -> bool {
     root.ancestors().any(|a| a.join(".git").exists())
 }
 
+/// Whether `name`, one part of a path, is git's own directory or scrutate's under a spelling a
+/// file system takes for it, by git's `is_hfs_dotgit` and `is_ntfs_dotgit` rules: case ignored,
+/// the code points HFS+ ignores dropped, an NTFS stream (`:...`) and trailing dots and spaces
+/// dropped, and the 8.3 short names. Judged by its text alone, on every platform.
+pub fn own_dir_name(name: &str) -> Option<&'static str> {
+    let ignorable = |c: char| matches!(c as u32, 0x200C..=0x200F | 0x202A..=0x202E | 0x206A..=0x206F | 0xFEFF);
+    let kept: String = name.chars().filter(|c| !ignorable(*c)).collect::<String>().to_ascii_lowercase();
+    let base = kept.split(':').next().unwrap_or("").trim_end_matches([' ', '.']);
+    let short = |stem: &str| base.strip_prefix(stem).and_then(|r| r.strip_prefix('~')).is_some_and(|d| d.len() == 1 && matches!(d.as_bytes()[0], b'1'..=b'9'));
+    if base == ".git" || short("git") || short("gi7eba") {
+        Some(".git")
+    } else if base == ".scrutate" || short("scruta") {
+        Some(".scrutate")
+    } else {
+        None
+    }
+}
+
+/// Whether the walks skip a directory of this name: one of `skip`, or git's or scrutate's own.
+pub(crate) fn skipped(skip: &[String], name: &str) -> bool {
+    own_dir_name(name).is_some() || skip.iter().any(|s| s == name)
+}
+
 /// Most names `exclude_dirs` of a repository's `.scrutate.toml` adds; the rest are not read.
 const MAX_CONFIG_EXCLUDES: usize = 1000;
 
@@ -334,7 +357,7 @@ pub fn repository_files(root: &Path) -> crate::instant::Files {
             g
         })
     });
-    crate::instant::Files { hidden: true, globs: globs.collect(), ..crate::instant::Files::walk(vec![root.to_path_buf()]) }
+    crate::instant::Files { hidden: true, globs: globs.collect(), skip_own_dirs: true, ..crate::instant::Files::walk(vec![root.to_path_buf()]) }
 }
 
 /// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's
@@ -394,7 +417,7 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
     let mut wb = CodeWalk::rules(root);
     // a directory the code index skips is still entered when the text index's walk enters it
     wb.filter_entry(move |e| {
-        let skipped = e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy());
+        let skipped = e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy());
         !skipped || held.as_ref().is_some_and(|r| !e.path().strip_prefix(&base).is_ok_and(|rel| left_out(r, rel, true)))
     });
     let (mut out, mut listed) = (Vec::new(), crate::index::Listed::default());
@@ -404,7 +427,7 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
         }
         let Ok(rel) = e.path().strip_prefix(root) else { continue };
         let path = slashed(rel);
-        let repo = !path.split('/').any(|n| walk.skip.iter().any(|s| s == n));
+        let repo = !path.split('/').any(|n| skipped(&walk.skip, n));
         let code = repo && e.file_name() != ".git" && is_indexable(&path);
         let text = rules.as_ref().is_some_and(|r| !left_out(r, rel, false));
         if !(repo || text) {
@@ -438,7 +461,7 @@ impl CodeWalk {
     pub fn builder(&self, start: &Path) -> ignore::WalkBuilder {
         let skip = self.skip.clone();
         let mut wb = Self::rules(start);
-        wb.filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy())));
+        wb.filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy())));
         wb
     }
 
@@ -469,7 +492,7 @@ impl CodeWalk {
     }
 
     fn indexable(&self, rel: &str) -> bool {
-        is_indexable(rel) && !rel.split('/').any(|n| self.skip.iter().any(|s| s == n))
+        is_indexable(rel) && !rel.split('/').any(|n| skipped(&self.skip, n))
     }
 }
 
@@ -686,6 +709,53 @@ mod tests {
         assert!(has(".keep/a.py", |f| f.text && f.code), "an ignore file can bring a hidden directory in");
         assert!(has("src/logo.png", |f| f.repo && !f.code && f.stat.is_some()));
         assert!(!both.iter().any(|f| f.path.starts_with(".git/") || f.path.starts_with(".scrutate/") || f.path.starts_with("gen/")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn git_and_scrutate_are_known_under_every_spelling_a_file_system_takes_for_them() {
+        let git = [
+            ".git",
+            ".GIT",
+            ".Git",
+            ".git.",
+            ".git ",
+            ".git. . ",
+            ".git::$INDEX_ALLOCATION",
+            "git~1",
+            "GIT~1",
+            "gi7eba~1",
+            ".g\u{200c}it",
+            "\u{feff}.git",
+            ".gi\u{206a}t",
+        ];
+        for n in git {
+            assert_eq!(own_dir_name(n), Some(".git"), "{n:?}");
+        }
+        for n in [".scrutate", ".SCRUTATE", ".Scrutate.", ".scrutate ", "scruta~1", ".scru\u{200d}tate"] {
+            assert_eq!(own_dir_name(n), Some(".scrutate"), "{n:?}");
+        }
+        for n in [".github", ".gitignore", "git", ".gitx", "x.git", "git~", "git~10", ".scrutate.toml", "scrutate", "my.git", ""] {
+            assert_eq!(own_dir_name(n), None, "{n:?}");
+        }
+    }
+
+    #[test]
+    fn a_nested_git_or_scrutate_directory_under_another_spelling_is_never_indexed() {
+        let root = tree(
+            "spelled",
+            &[
+                ("sub/ok.py", "x\n"),
+                ("sub/.GIT/hooks/helper.py", "def inside_git():\n    return 1\n"),
+                ("sub/.Git./config.py", "x\n"),
+                ("vendor/lib/.Scrutate/kept.py", "x\n"),
+                ("deep/git~1/x.py", "x\n"),
+            ],
+        );
+        let walked = agrees(&root);
+        assert!(walked.contains(&"sub/ok.py".to_string()), "{walked:?}");
+        let inside = |p: &String| p.contains(".GIT") || p.contains(".Git") || p.contains(".Scrutate") || p.contains("git~1");
+        assert!(!walked.iter().any(inside), "{walked:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

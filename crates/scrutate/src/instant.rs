@@ -213,6 +213,9 @@ pub struct Files {
     /// the custom languages `-t` names, when not those `custom::current` gives (a caller that
     /// searches for one repository among several in the process)
     pub customs: Option<Arc<crate::custom::Customs>>,
+    /// leave out git's and scrutate's own directories under every spelling `files::own_dir_name`
+    /// knows, which no glob can say (a search of the repository's files, as the code index walks)
+    pub skip_own_dirs: bool,
 }
 
 impl Default for Files {
@@ -235,6 +238,7 @@ impl Default for Files {
             split_file_bytes: 64 << 20,
             map_named: false,
             customs: None,
+            skip_own_dirs: false,
         }
     }
 }
@@ -2102,12 +2106,22 @@ fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuil
     if !f.types.is_empty() {
         wb.types(file_types(f)?);
     }
-    if let Some(sg) = f.scoped_globs.clone() {
+    // the walk keeps one entry filter: both rules go in it
+    let own = f.skip_own_dirs;
+    let scoped = f.scoped_globs.clone().map(|sg| {
         let scopes: Vec<(PathBuf, Scope)> = roots.iter().map(|r| (r.clone(), sg.scope(r))).collect();
+        (sg, scopes)
+    });
+    if own || scoped.is_some() {
         wb.filter_entry(move |e| {
+            let dir = e.file_type().is_some_and(|t| t.is_dir());
+            if own && dir && e.depth() > 0 && crate::files::own_dir_name(&e.file_name().to_string_lossy()).is_some() {
+                return false;
+            }
+            let Some((sg, scopes)) = &scoped else { return true };
             let path = e.path();
             match scopes.iter().find_map(|(r, s)| path.strip_prefix(r).ok().map(|rest| (s, rest))) {
-                Some((s, rest)) => !sg.excludes(s, rest, e.file_type().is_some_and(|t| t.is_dir())),
+                Some((s, rest)) => !sg.excludes(s, rest, dir),
                 None => true,
             }
         });

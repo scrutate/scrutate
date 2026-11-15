@@ -323,7 +323,10 @@ the file filters keep.
 
 The code index holds every file the ignore rules let through, hidden files included, except:
 
-- binary files, files over 1 MB, `.git/` and `.scrutate/`;
+- binary files, files over 1 MB, `.git/` and `.scrutate/` at any depth and under any spelling a
+  file system takes for them, by git's own rules for `.git` (case ignored, the code points HFS+
+  ignores, trailing dots and spaces and an NTFS stream, the short names `GIT~1` and `GI7EBA~1`),
+  so a nested `vendor/lib/.GIT/` is skipped on every platform;
 - the directories named in `SCRUTATE_INDEX_EXCLUDE_DIRS`, or when it is not set in
   `exclude_dirs` of the root's `.scrutate.toml` (names only, at most 1000; a name with `/` or
   `\`, `.` and `..` exclude nothing; in the variable `\,` is a comma inside a name; the file may
