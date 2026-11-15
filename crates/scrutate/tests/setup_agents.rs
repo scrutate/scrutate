@@ -235,7 +235,8 @@ fn a_file_that_does_not_parse_is_left_alone_and_a_dry_run_writes_nothing() {
     for agent in AGENTS {
         let (code, out, err) = s.setup(&[agent, "--dry-run", "--instructions"]);
         assert_eq!(code, 0, "{agent}: {err}");
-        assert!(out.contains("would add") && out.contains(&s.user_file(agent).display().to_string()) && out.contains("  + "), "{agent}: {out}");
+        assert!(out.contains("would add ") && out.contains(&s.user_file(agent).display().to_string()) && out.contains("  + "), "{agent}: {out}");
+        assert!(!out.contains("would added"), "{agent}: {out}");
     }
     assert_eq!(fs::read_dir(&s.home).unwrap().count(), 0, "nothing written in the home");
     assert_eq!(fs::read_dir(s.base.join("codex")).unwrap().count(), 0);
@@ -358,6 +359,7 @@ fn a_plain_uninstall_takes_out_the_server_the_hook_and_the_block() {
     for part in ["mcpServers.scrutate", "Grep hook", "scrutate block"] {
         assert!(out.contains(part), "{part}: {out}");
     }
+    assert!(out.contains("would remove ") && !out.contains("would removed"), "{out}");
     assert!(fs::read_to_string(&settings).unwrap().contains("hook grep"), "a dry run writes nothing");
     let (code, _, err) = s.setup(&["claude", "--uninstall"]);
     assert_eq!(code, 0, "{err}");

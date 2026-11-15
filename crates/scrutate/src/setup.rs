@@ -113,18 +113,27 @@ enum Step {
     Note(String),
 }
 
+/// A step's `what`, said in the past once done, as a dry run says it: "add ..." for "added ...".
+fn planned(what: &str) -> String {
+    match what.split_once(' ') {
+        Some(("added", rest)) => format!("add {rest}"),
+        Some(("removed", rest)) => format!("remove {rest}"),
+        _ => what.to_string(),
+    }
+}
+
 impl Step {
     fn preview(&self, out: &mut String) {
         match self {
             Step::File { path, before, after, what } => {
-                let _ = writeln!(out, "would {what}: {}", path.display());
+                let _ = writeln!(out, "would {}: {}", planned(what), path.display());
                 diff(out, before.as_deref().unwrap_or(""), after.as_deref().unwrap_or(""));
                 if after.is_none() {
                     let _ = writeln!(out, "  (the file is deleted: nothing else is left in it)");
                 }
             }
             Step::Run { argv, what, .. } => {
-                let _ = writeln!(out, "would {what}: {}", shown_command(argv));
+                let _ = writeln!(out, "would {}: {}", planned(what), shown_command(argv));
             }
             Step::Note(n) => {
                 let _ = writeln!(out, "note: {n}");
