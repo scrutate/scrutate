@@ -21,16 +21,30 @@ import sys
 
 ITEM = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe|default|extern(?:\s+\"[^\"]*\")?)\s+)*"
-    r"(fn|struct|enum|type|const|static|impl|mod|trait|union|macro_rules!)(?:\s*<[^>]*>)?\s+([\w]+)"
+    r"(fn|struct|enum|type|const|static|impl|mod|trait|union|macro_rules!)(?=[\s<])\s*"
 )
 
 
 def item(line: str) -> tuple[str, str] | None:
-    """(kind, name) when `line` opens a Rust item."""
+    """(kind, name) when `line` opens a Rust item; an `impl`'s generics are passed over whole, nested
+    ones too (`impl<T: A<B>> Name`), and generics that go on past the line leave the name empty."""
     if line.lstrip().startswith("//"):
         return None
     m = ITEM.match(line)
-    return (m.group(1), m.group(2)) if m else None
+    if not m:
+        return None
+    rest = line[m.end():]
+    if rest.startswith("<"):
+        depth, i = 0, 0
+        while i < len(rest) and (depth or i == 0):
+            if rest.startswith("->", i):
+                i += 2
+                continue
+            depth += {"<": 1, ">": -1}.get(rest[i], 0)
+            i += 1
+        rest = rest[i:].lstrip() if depth == 0 else ""
+    name = re.match(r"\w+", rest)
+    return (m.group(1), name.group(0) if name else "") if name or not rest.strip() else None
 
 
 def code_lines(lines: list[str]) -> list[str]:

@@ -41,6 +41,14 @@ def test_an_insertion_after_a_doc_and_its_attribute_or_with_its_own_doc_is_caugh
     assert C.shifted(back_below) == ["x.rs:2: struct Added;"]
 
 
+def test_an_impl_with_nested_generics_is_an_item():
+    nested = doc_diff(" /// What `kept` does.", "+impl<T: Into<Vec<String>>> Added for T {}", " fn kept() {}")
+    assert C.shifted(nested) == ["x.rs:2: impl<T: Into<Vec<String>>> Added for T {}"]
+    assert C.item("impl<'s, F: FnMut() -> V<'s>> Builder<'s> for B<F> {") == ("impl", "Builder")
+    # a word that only starts like a keyword is not an item
+    assert C.item("implementation(x);") is None
+
+
 def test_a_file_that_is_not_rust_is_left_alone():
     assert C.shifted(doc_diff(" /// a", "+fn b() {}").replace("x.rs", "x.py")) == []
 
