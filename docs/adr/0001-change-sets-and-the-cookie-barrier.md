@@ -51,9 +51,10 @@ platforms, for the same guarantee the cookie gives.
 ## Consequences
 
 - A read whose change set is empty costs the barrier and no lock. A read that names files costs
-  one `stat` per named file (`UpdateStats::files_looked`).
-- The barrier is one file create and delete per read, plus one event's trip through the OS. The
-  macOS FSEvents path is the slowest of the three.
+  one `stat` per named file (`UpdateStats::files_looked`). Replaced on macOS by the amendment
+  below: a read there looks at the tree.
+- The barrier is one file create and delete per read, plus one event's trip through the OS.
+  Replaced on macOS by the amendment below, which writes no cookie there.
 - The cookie directory gets its own watch on Linux; elsewhere the root's watch covers it.
 - Every session of a root sees every cookie's event, so a cookie's name holds its process id,
   a number per session and 64 random bits (two containers sharing a bind-mounted root can both
@@ -62,7 +63,8 @@ platforms, for the same guarantee the cookie gives.
   what every read cost before.
 - The test `session::tests::a_file_written_just_before_a_call_is_in_its_answer_every_time` writes
   a file and reads it back 1,000 times through the watch, with no miss and one file looked at
-  each time.
+  each time. Replaced on macOS by the amendment below: there each read looks at the tree's three
+  files.
 
 ## Amendment, 2026-11-15: macOS reads look at the tree
 
