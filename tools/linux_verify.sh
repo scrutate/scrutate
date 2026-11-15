@@ -34,10 +34,10 @@ step "system packages"
 apt-get update -qq
 apt-get install -y -qq musl-tools file python3 ripgrep curl git > /dev/null
 case "$arch" in
-  x86_64) uvsum=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83 ;;
-  aarch64) uvsum=71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc ;;
+  x86_64) uvsum=5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91 ;;
+  aarch64) uvsum=74f2f5c6024d397481db228db8fc25eed420db192243f88438c118e7e013e585 ;;
 esac
-curl -fsSL -o /tmp/uv.tgz "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-$arch-unknown-linux-gnu.tar.gz"
+curl -fsSL -o /tmp/uv.tgz "https://github.com/astral-sh/uv/releases/download/0.13.8/uv-$arch-unknown-linux-gnu.tar.gz"
 echo "$uvsum  /tmp/uv.tgz" | sha256sum -c -
 tar -C /usr/local/bin --strip-components=1 -xzf /tmp/uv.tgz
 export PATH="$HOME/.local/bin:$PATH"

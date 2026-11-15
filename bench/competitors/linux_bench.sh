@@ -90,12 +90,12 @@ if [ ! -x $B/go/bin/zoekt ]; then
 fi
 ln -sf $B/bin/zoekt $B/bin/zoekt-index $B/go/bin/ 2>/dev/null || true
 if ! command -v uv > /dev/null; then
-  step "uv 0.13.7 (release binary; the structural benchmark's reference runs tree-sitter's Python bindings under it)"
+  step "uv 0.13.8 (release binary; the structural benchmark's reference runs tree-sitter's Python bindings under it)"
   case "$arch" in
-    x86_64) sum=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83 ;;
-    aarch64) sum=71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc ;;
+    x86_64) sum=5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91 ;;
+    aarch64) sum=74f2f5c6024d397481db228db8fc25eed420db192243f88438c118e7e013e585 ;;
   esac
-  fetch_sum https://github.com/astral-sh/uv/releases/download/0.13.7/uv-$arch-unknown-linux-gnu.tar.gz uv.tgz "$sum"
+  fetch_sum https://github.com/astral-sh/uv/releases/download/0.13.8/uv-$arch-unknown-linux-gnu.tar.gz uv.tgz "$sum"
   tar -C $B/src -xzf $B/src/uv.tgz && cp $B/src/uv-$arch-unknown-linux-gnu/uv $B/src/uv-$arch-unknown-linux-gnu/uvx $B/bin/
 fi
 

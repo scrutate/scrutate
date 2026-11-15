@@ -125,7 +125,8 @@ jobs:
       # the structural rows compute their reference with Python tree-sitter through uv
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
+          version: "0.13.8"
+          checksum: 5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91 # uv-x86_64-unknown-linux-gnu.tar.gz, from the release's .sha256
           enable-cache: false
       - name: hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)
         run: |
