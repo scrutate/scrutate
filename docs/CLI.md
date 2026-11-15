@@ -1137,8 +1137,8 @@ it (`.NAME.scrutate-PID.tmp`) with the file's permissions, and that file is rena
 original only if the original's bytes on disk are still exactly those read; a file changed
 meanwhile is left alone and named in a warning. A file is also left alone, and named, when its
 text where a match would change does not parse (a tree-sitter error or missing node there), when
-the rewritten text does not parse there, when it is not UTF-8, when it is a link, when it lies
-outside `--root`, and when a directory on its path has become a link (on Windows a link or a
+the rewritten text does not parse there, when it is not UTF-8, when it is a link or a directory on its path
+from `--root` is one, when it lies outside `--root`, and when a directory on its path has become a link (on Windows a link or a
 junction) since it was read; the root itself is held as it was when the plan started, so a root swapped for a
 link afterwards is never written through. Only files under the given paths are read, as `tsquery` reads them (ignore
 files obeyed, hidden files and links below a given path left out).

@@ -73,6 +73,21 @@ fn template(t: &str, names: &[&str]) -> Result<Vec<Piece>> {
     Ok(out)
 }
 
+/// Whether a directory between the canonical root `top` and the file `path` is a link (on
+/// Windows a link or a junction).
+fn through_link(path: &Path, top: &Path) -> bool {
+    for d in path.ancestors().skip(1) {
+        let d = if d.as_os_str().is_empty() { Path::new(".") } else { d };
+        if std::fs::canonicalize(d).is_ok_and(|c| c == top) {
+            return false;
+        }
+        if std::fs::symlink_metadata(d).is_ok_and(|m| m.file_type().is_symlink()) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether an error or missing node of the tree touches `start..end`.
 fn broken(root: tree_sitter::Node, start: usize, end: usize) -> bool {
     let mut stack = vec![root];
@@ -90,7 +105,8 @@ fn broken(root: tree_sitter::Node, start: usize, end: usize) -> bool {
 }
 
 /// The rewrite of each file of `lang` under `paths` with `template`, read and parsed now (the
-/// capture cache is not used). Files outside `root`, and links, are left alone.
+/// capture cache is not used). Files outside `root`, links, and files reached through a link to
+/// a directory are left alone.
 pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], root: &Path) -> Result<Plan> {
     use rayon::prelude::*;
     let (spec, language, q) = crate::intel::compile_query(lang, query)?;
@@ -119,6 +135,9 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 let Some(inside) = std::fs::canonicalize(&f.path).ok().and_then(|p| p.strip_prefix(&top).ok().map(Path::to_path_buf)) else {
                     return alone("outside the root", skipped);
                 };
+                if through_link(&f.path, &top) {
+                    return alone("a directory on its path is a link", skipped);
+                }
                 // the name itself, before canonicalize followed a link to the file it names
                 if !std::fs::symlink_metadata(&f.path).is_ok_and(|m| m.file_type().is_file()) {
                     return alone("not a regular file", skipped);

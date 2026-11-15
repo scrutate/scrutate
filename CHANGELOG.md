@@ -288,6 +288,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `tsquery --rewrite --write` leaves alone, and names, a file reached through a link to a
+  directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
+  file the link leads to; a link was already left alone only as the file itself
+  ([CLI](docs/CLI.md#tsquery---rewrite)).
 - The language server's `workspace/symbol` lists the symbols of a repository opened as its own
   folder inside another folder once, from the deepest folder that answered (the inner one, or
   while its first build runs the nearest one above it), where each folder whose index held them
