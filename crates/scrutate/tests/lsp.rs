@@ -394,6 +394,50 @@ fn answers_name_files_under_the_folder_as_the_editor_sent_it() {
     let _ = child.wait();
 }
 
+/// `$/cancelRequest` ends the request it names: the request is answered RequestCancelled at once,
+/// and the requests behind it are not kept waiting.
+#[test]
+fn a_cancelled_request_is_answered_at_once_and_the_next_is_not_kept_waiting() {
+    let r = Repo::new("cancel");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    // a first build that takes a while: a request waits for it
+    for i in 0..3000 {
+        r.write(&format!("m{i}.py"), &format!("def f{i}(a):\n    return a + {i}\n"));
+    }
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let at = json!({"textDocument": {"uri": uri(&r.root.join("m1.py"))}, "position": {"line": 0, "character": 5}});
+    let t = std::time::Instant::now();
+    c.send(json!({"jsonrpc": "2.0", "id": 900, "method": "textDocument/definition", "params": at}));
+    c.notify("$/cancelRequest", json!({"id": 900}));
+    let reply = loop {
+        let m = c.read();
+        if m["id"] == 900 {
+            break m;
+        }
+    };
+    assert_eq!(reply["error"]["code"], -32800, "{reply}");
+    assert!(t.elapsed() < Duration::from_secs(5), "the cancel was not seen at once: {:?}", t.elapsed());
+    // one cancelled before it runs is answered the same way
+    c.notify("$/cancelRequest", json!({"id": 901}));
+    c.send(json!({"jsonrpc": "2.0", "id": 901, "method": "workspace/symbol", "params": {"query": "f1"}}));
+    let reply = loop {
+        let m = c.read();
+        if m["id"] == 901 {
+            break m;
+        }
+    };
+    assert_eq!(reply["error"]["code"], -32800, "{reply}");
+    let t = std::time::Instant::now();
+    let bye = c.request("shutdown", Value::Null);
+    assert!(bye.get("error").is_none() && t.elapsed() < Duration::from_secs(5), "{bye} after {:?}", t.elapsed());
+    c.notify("exit", Value::Null);
+    drop(c);
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+}
+
 /// A folder that cannot answer (deleted, or its first build still running) leaves the other
 /// folders' answers: `workspace/symbol` answers from the ones that can.
 #[test]

@@ -350,6 +350,9 @@ struct Server {
     waited_out: std::cell::Cell<Option<std::time::Instant>>,
     /// the folders and errors already logged by a request over several folders, logged once each
     skipped: std::cell::RefCell<HashSet<(PathBuf, i64)>>,
+    /// set when the editor cancels the request being answered (`$/cancelRequest`): its waits and
+    /// searches stop
+    cancel: Arc<AtomicBool>,
 }
 
 /// Symbols one `workspace/symbol` answer lists at most, over every folder.
@@ -896,10 +899,10 @@ impl Server {
         let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
         let build_wait = if queued || no_wait { std::time::Duration::ZERO } else { self.build_wait };
         let session = folder.session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
-        let never = Arc::new(AtomicBool::new(false));
-        // the one thread that reads requests must not wait out a long first build: a cancel,
-        // a change and shutdown come in behind it; ContentModified asks the editor to ask again
-        if !session.wait_built(&never, Some(build_wait), |_| {}) {
+        let cancel = Arc::clone(&self.cancel);
+        // the one thread that answers requests must not wait out a long first build: a change and
+        // shutdown come in behind it; ContentModified asks the editor to ask again
+        if !session.wait_built(&cancel, Some(build_wait), |_| {}) {
             // a request that did not wait has waited out nothing: the next one may still wait
             if !no_wait {
                 self.waited_out.set(Some(std::time::Instant::now()));
@@ -908,7 +911,7 @@ impl Server {
         }
         // a damaged index is built again and the request answered from the new one
         let (v, pending) = session
-            .read_pending(&never, |s| {
+            .read_pending(&cancel, |s| {
                 // a newer scrutate took the index over since it was opened: nothing here can read it
                 if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
                     return Err(newer.into());
@@ -969,9 +972,44 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         build_wait: crate::session::BUILD_WAIT,
         waited_out: Default::default(),
         skipped: Default::default(),
+        cancel: Default::default(),
     };
-    let mut input = std::io::stdin().lock();
-    while let Some(body) = read_message(&mut input)? {
+    // the editor's messages are read on a thread of their own, so a `$/cancelRequest` reaches the
+    // request it cancels while that request runs; one cancelled before it ran is answered at once
+    type Running = Arc<std::sync::Mutex<(Option<Value>, Arc<AtomicBool>, HashSet<String>)>>;
+    let running: Running = Default::default();
+    let (tx, rx) = mpsc::channel::<std::result::Result<Vec<u8>, String>>();
+    {
+        let running = Arc::clone(&running);
+        std::thread::Builder::new().name("scrutate-lsp-read".into()).spawn(move || {
+            let mut input = std::io::stdin().lock();
+            loop {
+                let body = match read_message(&mut input) {
+                    Ok(Some(body)) => body,
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("{e:#}")));
+                        break;
+                    }
+                };
+                if let Some(m) = serde_json::from_slice::<Value>(&body).ok().filter(|m| m["method"] == "$/cancelRequest") {
+                    let id = &m["params"]["id"];
+                    let mut r = running.lock().unwrap_or_else(|p| p.into_inner());
+                    if r.0.as_ref() == Some(id) {
+                        r.1.store(true, std::sync::atomic::Ordering::Relaxed);
+                    } else {
+                        r.2.insert(id.to_string());
+                    }
+                    continue;
+                }
+                if tx.send(Ok(body)).is_err() {
+                    break;
+                }
+            }
+        })?;
+    }
+    while let Ok(body) = rx.recv() {
+        let body = body.map_err(|e| anyhow::anyhow!(e))?;
         let msg: Value = match serde_json::from_slice(&body) {
             Ok(v) => v,
             Err(_) => {
@@ -991,9 +1029,23 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         if method.is_empty() {
             continue; // a response: this server sends no requests
         }
+        let cancelled = || (-32800, "request cancelled".to_string());
+        let flag = Arc::new(AtomicBool::new(false));
+        {
+            let mut r = running.lock().unwrap_or_else(|p| p.into_inner());
+            if r.2.remove(&id.to_string()) {
+                drop(r);
+                send(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": cancelled().0, "message": cancelled().1}}));
+                continue;
+            }
+            *r = (Some(id.clone()), Arc::clone(&flag), std::mem::take(&mut r.2));
+        }
+        srv.cancel = Arc::clone(&flag);
         // a bug in one request must not take the editor's server down
         let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.request(method, params)))
             .unwrap_or_else(|_| Err((-32603, format!("internal failure while answering {method} (a bug: please report it)"))));
+        running.lock().unwrap_or_else(|p| p.into_inner()).0 = None;
+        let reply = if flag.load(std::sync::atomic::Ordering::Relaxed) { Err(cancelled()) } else { reply };
         send(&match reply {
             Ok(mut result) => {
                 // what an editor's agent reads has its secrets redacted unless SCRUTATE_REDACT=off
@@ -1031,6 +1083,7 @@ mod tests {
             build_wait: std::time::Duration::from_millis(300),
             waited_out: Default::default(),
             skipped: Default::default(),
+            cancel: Default::default(),
         };
         // a request that waits the build out never returns; 100 times the wait leaves a loaded
         // machine room to answer one that stops at the wait
@@ -1072,6 +1125,7 @@ mod tests {
             build_wait: std::time::Duration::from_millis(300),
             waited_out: Default::default(),
             skipped: Default::default(),
+            cancel: Default::default(),
         };
         let mut srv = server(vec![folder("x", Some(Arc::clone(&x))), folder("y", Some(Arc::clone(&y)))]);
         let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).unwrap();
@@ -1122,6 +1176,7 @@ mod tests {
                 build_wait: std::time::Duration::from_millis(300),
                 waited_out: Default::default(),
                 skipped: Default::default(),
+                cancel: Default::default(),
             };
             let r = srv.request("workspace/symbol", &serde_json::json!({"query": "shared"})).unwrap();
             // in answer order: each folder's after the one before
@@ -1169,6 +1224,7 @@ mod tests {
                 build_wait: std::time::Duration::from_millis(300),
                 waited_out: Default::default(),
                 skipped: Default::default(),
+                cancel: Default::default(),
             };
             for f in spellings {
                 srv.add_folder(f.to_path_buf(), false, false);
@@ -1218,6 +1274,7 @@ mod tests {
             build_wait: std::time::Duration::from_secs(2),
             waited_out: Default::default(),
             skipped: Default::default(),
+            cancel: Default::default(),
         };
         assert_eq!(srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).map_err(|e| e.0), Err(-32801));
         // the three queued behind it wait nothing; one that waited again would take a whole

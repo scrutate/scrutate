@@ -1079,8 +1079,10 @@ index, `initialize` builds one (as `scrutate index` does, without the text index
 with `window/logMessage`; a request that arrives meanwhile waits for it up to 20 seconds, then
 is answered with error -32801 (ContentModified), "the index is still being built", which asks the
 editor to ask again. Requests read within a second of that answer were queued behind it and are
-answered so at once, so a `shutdown` or a cancellation behind any number of them is read within
-one wait. Columns are UTF-16 code
+answered so at once, so a `shutdown` behind any number of them is read within one wait. Messages
+are read on a thread of their own, so `$/cancelRequest` reaches the request it names while it
+runs: its wait for the build and its search stop, and it is answered with error -32800
+(RequestCancelled); one cancelled before it runs is answered so without running. Columns are UTF-16 code
 units, as the protocol requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise.
 Logs go to stderr.
 

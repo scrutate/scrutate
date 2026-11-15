@@ -397,6 +397,9 @@ incompatible index by itself, and that is never breaking.
   pattern and answered another search with exit 0; `--sort none` and the last `--sort` given are
   honoured, and `--sortr` or an order other than path runs `rg` itself
   ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- The language server takes `$/cancelRequest`: the request it names stops its wait for the first
+  build and its search and is answered RequestCancelled (-32800), so a long `references` no
+  longer holds back every request after it, `shutdown` included ([CLI](docs/CLI.md#lsp)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
