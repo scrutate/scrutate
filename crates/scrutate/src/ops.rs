@@ -58,7 +58,7 @@ pub const HISTORY_GIT: (u32, u32) = (2, 25);
 pub const HISTORY_SECONDS: u64 = 5;
 const HISTORY_STOPPED: &str = "history lookup stopped after 5 s on a long history; `git commit-graph write --reachable` makes it fast";
 /// What a shallow clone's boundary commit stands for in a history: not a change.
-const SHALLOW_CUT: &str = "(history cut here: shallow clone)";
+const SHALLOW_CUT: &str = "history cut here: shallow clone: this commit or an older one changed these lines";
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
 /// the 10,000 at which Codex cuts a tool result and Claude Code warns.
 pub const AGENT_BYTES: usize = 24_000;
@@ -1190,8 +1190,8 @@ impl History {
         if !self.commits.is_empty() {
             out.push("history:".to_string());
             out.extend(self.commits.iter().map(|c| {
-                let what = if c.boundary { SHALLOW_CUT.into() } else { shown(&c.subject) };
-                format!("  {} {} {what}", c.id.get(..12).unwrap_or(&c.id), c.date)
+                let cut = if c.boundary { format!("  ({SHALLOW_CUT})") } else { String::new() };
+                format!("  {} {} {}{cut}", c.id.get(..12).unwrap_or(&c.id), c.date, shown(&c.subject))
             }));
         }
         match &self.note {
@@ -1245,7 +1245,10 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
                 let mut notes: Vec<String> = Vec::new();
                 for c in commits.iter_mut().filter(|c| cut.contains(&c.id)) {
                     c.boundary = true;
-                    notes.push(format!("shallow clone: history before {} is not in this repository", c.id.get(..12).unwrap_or(&c.id)));
+                    notes.push(format!(
+                        "shallow clone: {} is the oldest commit here, so it or an older one changed these lines",
+                        c.id.get(..12).unwrap_or(&c.id)
+                    ));
                 }
                 if stopped {
                     notes.push(HISTORY_STOPPED.to_string());
@@ -2631,7 +2634,13 @@ impl Answer {
                             v["history"] = json!(h
                                 .commits
                                 .iter()
-                                .map(|c| if c.boundary { json!({"commit": c.id, "date": c.date, "cut": SHALLOW_CUT}) } else { json!({"commit": c.id, "date": c.date, "subject": c.subject}) })
+                                .map(|c| {
+                                    let mut v = json!({"commit": c.id, "date": c.date, "subject": c.subject});
+                                    if c.boundary {
+                                        v["cut"] = json!(SHALLOW_CUT);
+                                    }
+                                    v
+                                })
                                 .collect::<Vec<_>>());
                             if let Some(note) = &h.note {
                                 v["history_note"] = json!(note);

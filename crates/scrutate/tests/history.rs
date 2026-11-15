@@ -260,10 +260,12 @@ fn a_shallow_clone_marks_where_its_history_is_cut() {
     let def = &v["definitions"][0];
     let history = def["history"].as_array().unwrap_or_else(|| panic!("{v}"));
     assert_eq!(history.len(), 1, "{def}");
-    assert!(history[0]["cut"].as_str().is_some_and(|c| c.contains("shallow clone")) && history[0].get("subject").is_none(), "{def}");
-    assert!(def["history_note"].as_str().unwrap_or_default().starts_with("shallow clone: history before "), "{def}");
+    // git cannot tell from the clone whether the cut commit changed g: it keeps its subject
+    assert_eq!(history[0]["subject"], "edit f again", "{def}");
+    assert!(history[0]["cut"].as_str().is_some_and(|c| c.contains("this commit or an older one changed these lines")), "{def}");
+    assert!(def["history_note"].as_str().is_some_and(|n| n.starts_with("shallow clone: ") && n.contains("is the oldest commit here")), "{def}");
     let text = t.ok(&["read", "--symbol", "g", "--history"]);
-    assert!(text.contains("(history cut here: shallow clone)") && !text.contains(" edit f again"), "{text}");
+    assert!(text.contains(" edit f again  (history cut here: shallow clone: this commit or an older one changed these lines)"), "{text}");
 }
 
 /// A definition with uncommitted edits is looked up in HEAD's copy without git rewriting
