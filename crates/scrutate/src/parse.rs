@@ -2437,17 +2437,33 @@ fn line_chunks(
         return Vec::new();
     }
     let indents: Vec<usize> = defs.iter().map(|(i, ..)| indent_of(lines[*i])).collect();
+    // one pass from the end: for each code line, the first later code line that is shallower, and
+    // the first later item line at its own indent
+    let n = lines.len();
+    let (mut shallower, mut same_item) = (vec![n; n], vec![n; n]);
+    let (mut after, mut items): (Vec<(usize, usize)>, HashMap<usize, usize>) = (Vec::new(), HashMap::new());
+    for i in (0..n).rev() {
+        let l = lines[i];
+        if l.trim().is_empty() || is_marked(l, marks) {
+            continue;
+        }
+        let d = indent_of(l);
+        while after.last().is_some_and(|&(_, e)| e >= d) {
+            after.pop();
+        }
+        shallower[i] = after.last().map_or(n, |&(j, _)| j);
+        same_item[i] = items.get(&d).copied().unwrap_or(n);
+        after.push((i, d));
+        if starts_item(l) {
+            items.insert(d, i);
+        }
+    }
     let mut out = Vec::new();
     for (di, (start, kind, name)) in defs.iter().enumerate() {
         // the block ends before the next definition at the same or a shallower indentation, or
         // before the top-level code or item that comes first
         let next = (di + 1..defs.len()).find(|&j| indents[j] <= indents[di]).map_or(lines.len(), |j| defs[j].0);
-        let end = (start + 1..next)
-            .find(|&i| {
-                let (l, d) = (lines[i], indent_of(lines[i]));
-                !l.trim().is_empty() && !is_marked(l, marks) && (d < indents[di] || d == indents[di] && starts_item(l))
-            })
-            .unwrap_or(next);
+        let end = next.min(shallower[*start]).min(same_item[*start]);
         let cap = if CONTAINERS.contains(kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
         // trailing blank/comment lines belong to the next definition
         let mut e = end;
