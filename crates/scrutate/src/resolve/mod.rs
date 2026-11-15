@@ -3719,6 +3719,18 @@ mod tests {
         );
     }
 
+    /// `super` counts the inline modules a call sits in first, then the file's own module path.
+    #[test]
+    fn rust_super_past_the_inline_modules_counts_on_from_the_file() {
+        let main = "mod foo;\n\npub fn top() {}\n";
+        let foo = "pub fn top() {}\n\npub mod a {\n    pub fn go() {\n        super::super::top();\n        super::top();\n    }\n}\n";
+        resolver_case(
+            "rs_super",
+            &[("Cargo.toml", "[package]\nname = \"demo\"\n"), ("src/main.rs", main), ("src/foo.rs", foo)],
+            &[("src/foo.rs", "super::super::top()", "top", "src/main.rs top"), ("src/foo.rs", "        super::top();", "top", "src/foo.rs top")],
+        );
+    }
+
     #[test]
     fn go_rules() {
         resolver_case(

@@ -55,7 +55,13 @@ impl Rules for Rust {
         let ups = segs.iter().take_while(|s| **s == "super").count();
         let mods: Vec<Node> =
             std::iter::successors(node.parent(), |n| n.parent()).filter(|n| n.kind() == "mod_item" && n.child_by_field_name("body").is_some()).collect();
-        if mods.is_empty() || !(segs[0] == "self" || ups > 0) || ups > mods.len() {
+        if !mods.is_empty() && ups > mods.len() {
+            // past the inline modules, the rest of the `super`s count from the file's own module
+            let rest = segs[mods.len()..].join("::");
+            let head = if q.named_child_count() == 0 { q } else { first_leaf(q) };
+            return r.walk_path(path, fi, lang, q, &rest, head, node, name, line);
+        }
+        if mods.is_empty() || !(segs[0] == "self" || ups > 0) {
             return r.walk_qualified(path, fi, lang, q, node, name, line);
         }
         let module = |m: Node| {
