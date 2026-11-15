@@ -752,17 +752,19 @@ event since its last walk.
 A command line call may use the session `serve` runs on its root ([CLI](CLI.md#serve-mcp): which
 commands, the settings `SCRUTATE_SESSION_WAIT_MS`, `SCRUTATE_SESSION_DEBUG=1`,
 `SCRUTATE_NO_SESSION=1`, the fallbacks). The session listens on a Unix socket at
-`.scrutate/session.sock` (mode 0600, the peer's user checked before a byte is read) from the
-server's start to its exit. An index command sends its operation (`ops::Op`, as JSON) with its
+`.scrutate/session.sock` (mode 0600, the peer's user checked before a byte is read), or on
+Windows on a named pipe whose name hashes the user's SID and the root (a DACL for that user alone,
+the peer's user checked both ways; ADR 0006), from the server's start to its exit. The greeting,
+the request and the reply are the same lines on both (`session::wire`). An index command sends its operation (`ops::Op`, as JSON) with its
 printing options (`--json`, the byte limit and offset, a search's `--why`); the session applies
 the change set (every file when it says so), runs it and prints the answer with the command line's own function, and the command
 line writes those bytes and exits with that code. The command line first checks that the socket
 file is a socket this user owns, the peer is this user, and the greeting names the same executable
-(device, inode, size and time), index schema and content revisions, models, `SCRUTATE_*` settings
+(device, inode, size and time; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings
 and root; any difference, error, slow greeting or wait (a write running, every reader busy,
 another process holding the write lock) makes it do the work itself. A socket path too long for a
 socket address is reached from its directory; the command line goes back by a descriptor of the
-directory it left, and stops with an error if even that fails. Windows has no session use. The
+directory it left, and stops with an error if even that fails. The
 language server offers no socket, so `serve` is the one meeting point per root.
 
 ### Intelligence (`intel.rs`)
@@ -1098,7 +1100,7 @@ work unchanged. rayon's global pool, which the index build's `par_iter` uses, fa
 calling thread by itself. What must run beside the caller is left out: `serve`, `lsp` and
 `tsquery` fail with a message that says so, `watch` too (wasi has no file events, so `notify` is
 not a dependency there), and the Grep hook lets Grep answer, having no thread to keep its
-deadline. The session socket is Unix only. `memmap2` maps nothing on wasi, so `npy::map` reads a
+deadline. wasi offers no session to command line calls. `memmap2` maps nothing on wasi, so `npy::map` reads a
 segment file whole when a map fails with `Unsupported`; every other error is reported as before,
 and native builds keep mapping. wasi has no file locks or process id: the text index updates
 without its lock when locking is unsupported (one process sees the files), and the temporary

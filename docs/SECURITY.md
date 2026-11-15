@@ -65,7 +65,7 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. They found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. Every week each target fuzzes for 45 minutes from the corpus the last run kept, and a crash, timeout or out-of-memory input fails the run and is kept as an artifact. | `bench/results/fuzz/` (run logs), `.github/workflows/fuzz-weekly.yml`, `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
 | Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults only (booleans, numbers, globs); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
-| MCP server | Only reads the repository and writes `.scrutate/` and the frecency file above; path arguments are confined. It takes requests on stdio, and on Unix offers its open index to command line calls of the same user through `.scrutate/session.sock` (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
+| MCP server | Only reads the repository and writes `.scrutate/` and the frecency file above; path arguments are confined. It takes requests on stdio, and offers its open index to command line calls of the same user through `.scrutate/session.sock` on Unix or a named pipe on Windows (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
 | Python bindings | Engine behind a session (calls side by side, writes one at a time, a panic kept inside its call); `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
 
 ## Running git
@@ -111,24 +111,36 @@ emptied that way, and `impact` stops with an error rather than run it.
 
 ## The session socket
 
-While `scrutate serve` runs on Unix, index commands use its open index through a socket file,
-`<root>/.scrutate/session.sock` ([CLI](CLI.md#serve-mcp) lists the commands and settings). This
-local boundary is reviewed here.
+While `scrutate serve` runs, index commands use its open index through a socket file on Unix,
+`<root>/.scrutate/session.sock`, or a named pipe on Windows ([CLI](CLI.md#serve-mcp) lists the
+commands and settings). This local boundary is reviewed here; the Windows choices are in
+[ADR 0006](adr/0006-the-session-on-windows.md).
 
 What it is. A Unix-domain stream socket, mode 0600, in the index directory, which only its owner
 can enter (mode 0700, see [Controls and evidence](#controls-and-evidence)), made when `serve`
 starts and removed when it exits; no TCP or UDP port. The command line never starts a server,
-and the listening thread ends with `serve`. Windows has no socket and no session use: a named
-pipe with the same protection would be a boundary nobody here can run or test.
+and the listening thread ends with `serve`.
+
+On Windows: a named pipe, `\\.\pipe\scrutate-session-<hash>`, the hash a BLAKE2b-128 of the
+user's SID and the canonical root. It is created with a protected DACL of one entry, full access
+for that SID (`D:P(A;;GA;;;<sid>)`), and `PIPE_REJECT_REMOTE_CLIENTS`; the first instance with
+`FILE_FLAG_FIRST_PIPE_INSTANCE`, so a name already held (a second `serve`, or another account
+that made it first) makes the server offer nothing. The name goes away with the server's last
+handle: nothing is left behind to clean up.
 
 Checks, at both ends:
 
 - The server asks the system who the peer is (`getpeereid` on macOS and the BSDs, `SO_PEERCRED`
-  on Linux) and closes a connection from another user before it reads or writes a byte.
+  on Linux; on Windows the client's process id from the pipe, then that process's token user
+  SID) and closes a connection from another user before it reads or writes a byte.
 - The command line connects only to a socket, in a `.scrutate` directory, both owned by its own
   user and neither a symbolic link (`lstat`, no link followed), then drops a peer of another user.
+  On Windows it opens the pipe for identification only (`SECURITY_SQOS_PRESENT |
+  SECURITY_IDENTIFICATION`: the server can learn who calls, never act as the caller) and drops a
+  server whose process token is another user's, so a pipe of that name made by another account
+  is passed over.
 - The server greets with its identity: the executable file (device, inode, size, modification
-  time), the version, the index schema and content revisions, the model signatures, every
+  time; on Windows its path, size and times), the version, the index schema and content revisions, the model signatures, every
   `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
   when all match its own.
 - A request is one line of at most 1 MB, read within 2 seconds (and the command line gives a
@@ -147,7 +159,8 @@ connection.
 What another user can do: nothing. The file mode stops them where the system checks a socket's
 mode (Linux), and everywhere the server checks the peer before it reads a byte. A socket another
 user plants at the path (only if they can write the repository's `.scrutate/`) fails the command
-line's owner and peer checks.
+line's owner and peer checks. On Windows the pipe's DACL refuses their open, and a pipe they make
+first under the name fails the command line's server check.
 
 A hostile repository cannot point the socket elsewhere. The path is fixed, and a `.scrutate` that
 is or holds a symbolic link is refused for the socket too (`files::index_dir` refuses the index,
@@ -161,7 +174,8 @@ Edge cases:
   directory it left (`fchdir`), even if that was renamed. If that fails, the command line stops
   with an error and a server offers no socket.
 - Two servers on one root: the first keeps the socket. A server removes it on exit only if it is
-  still the one it made (device and inode).
+  still the one it made (device and inode). On Windows the second cannot make the pipe's first
+  instance and offers nothing.
 - A killed server's stale socket: a connect is refused at once, and the next `serve` replaces it.
 - A moved root no longer matches the greeting; a deleted root takes the socket with it.
 - A session that would have to wait (its first build or another write running, every reader busy,
@@ -174,9 +188,11 @@ In the last four cases the command line does its own work.
 Evidence: `tests/session.rs` (the same bytes and exit codes as a fresh process for every command,
 and for ranked search and find with each option; an edit seen at once; another build, another
 setting, the switch, a stale socket, a file that is no socket, two servers, a moved root, a deep
-root, also reached from another directory with relative arguments; the socket's mode) and a unit
-test in `session.rs` of the return to a renamed working directory. A peer of another user needs a
-second account to fake, so it is checked by code review only.
+root, also reached from another directory with relative arguments; the socket's mode; on Windows
+the same answers, the switch, another build and setting, two servers, the pipe's DACL read
+back, and an open by a local account the test adds, refused) and unit tests in `session.rs` of the return to a renamed working
+directory, the SID's text and the pipe name. A peer of another user on Unix needs a second account
+to fake, so it is checked by code review only.
 
 ## The main checkout's index in a linked work tree
 
@@ -579,7 +595,18 @@ on Unix).
     after the `FileName` offset and the length passed;
   - `session.rs`: `geteuid`, and `getpeereid` (macOS, the BSDs) or `getsockopt(SO_PEERCRED)`
     (Linux) into a `struct ucred` whose size it passes and checks, on a connected socket it owns,
-    and `fchdir` back to a directory descriptor it holds open;
+    and `fchdir` back to a directory descriptor it holds open; on Windows, the named pipe:
+    `CreateNamedPipeW` with a security descriptor from
+    `ConvertStringSecurityDescriptorToSecurityDescriptorW`, freed by `LocalFree` after the call,
+    and `CreateFileW` of a nul-terminated name, each returned handle taken into an `OwnedHandle`
+    once; `ConnectNamedPipe`, `ReadFile` and `WriteFile` overlapped, with an `OVERLAPPED` on the
+    stack and an event the `Pipe` owns, always waited out with `GetOverlappedResult` (after
+    `CancelIoEx` when the wait ran out) before the `OVERLAPPED` or the buffer goes away, the length
+    passed being the buffer's; `CreateEventW`, `WaitForSingleObject`, `WaitNamedPipeW`,
+    `GetLastError`, and `GetNamedPipeClientProcessId` / `GetNamedPipeServerProcessId` into a
+    `u32`; `GetCurrentProcess`, `OpenProcess`, `OpenProcessToken` and `GetTokenInformation(TokenUser)` into an 8-byte
+    aligned 512-byte buffer whose size it passes, the SID read as `GetLengthSid` bytes from the
+    pointer the `TOKEN_USER` holds inside that buffer;
   - `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 159 libSystem
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
@@ -628,7 +655,7 @@ on Unix).
   | `crates/scrutate/src/policy.rs` | 1 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
-  | `crates/scrutate/src/session.rs` | 5 |
+  | `crates/scrutate/src/session.rs` | 34 |
   | `crates/scrutate/src/shellhook.rs` | 5 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |

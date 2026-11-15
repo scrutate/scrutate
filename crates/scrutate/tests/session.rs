@@ -1,9 +1,12 @@
 //! A command line call that uses the session `scrutate serve` runs: the same bytes as a fresh
-//! process, the files as they are now, and every way the session can be passed over.
-#![cfg(unix)]
+//! process, the files as they are now, and every way the session can be passed over. A Unix
+//! session meets its callers at a socket file, a Windows one at a named pipe that leaves no file.
+#![cfg(any(unix, windows))]
 
 #[path = "support/canon.rs"]
 mod canon;
+#[cfg(windows)]
+use canon::as_the_session_keys_it;
 use canon::canon;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -47,6 +50,7 @@ impl Repo {
         Repo { root: canon(&root) }
     }
 
+    #[cfg(unix)]
     fn socket(&self) -> PathBuf {
         self.root.join(".scrutate/session.sock")
     }
@@ -244,10 +248,12 @@ fn a_ranked_search_does_the_work_itself_when_the_session_is_not_its_own_or_is_go
     }
     drop(server);
     let (got, said) = r.through(&["search", "helper"], &[]);
-    assert!(said.contains("no session at"), "{said}");
+    // a pipe goes away with its server; a socket file stays and is refused
+    assert!(if cfg!(windows) { said.is_empty() } else { said.contains("no session at") }, "{said}");
     assert_eq!(got, r.fresh(&["search", "helper"]));
 }
 
+#[cfg(unix)]
 #[test]
 fn a_long_socket_path_leaves_relative_arguments_to_the_callers_directory() {
     let base = std::env::temp_dir().join(format!("scrutate_sess_far_{}", std::process::id()));
@@ -288,6 +294,7 @@ fn a_long_socket_path_leaves_relative_arguments_to_the_callers_directory() {
 fn a_command_line_call_through_a_session_prints_what_a_fresh_process_prints() {
     let r = Repo::new("same");
     let _server = Server::start(&r.root);
+    #[cfg(unix)]
     assert!(r.socket().exists());
     for args in COMMANDS {
         let (through, said) = r.through(args, &[]);
@@ -324,7 +331,7 @@ fn a_call_does_the_work_itself_when_the_session_is_not_its_own() {
     assert!(said.contains("the session differs"), "{said}");
     assert_eq!(got, want);
     // another executable: a build of another version would answer by other rules
-    let copy = r.root.join("scrutate-copy");
+    let copy = r.root.join(format!("scrutate-copy{}", std::env::consts::EXE_SUFFIX));
     fs::copy(BIN, &copy).unwrap();
     let (code, out, err) = cli_with(copy.to_str().unwrap(), &r.root, &["callers", "helper"], &[("SCRUTATE_SESSION_DEBUG", "1")]);
     assert!(err.contains("the session differs"), "{err}");
@@ -335,6 +342,7 @@ fn a_call_does_the_work_itself_when_the_session_is_not_its_own() {
     assert_eq!(got, want);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_socket_nobody_listens_on_or_that_is_no_socket_is_passed_over() {
     let r = Repo::new("stale");
@@ -529,10 +537,12 @@ fn a_second_server_on_the_root_leaves_the_first_ones_socket_alone_and_an_exit_re
     second.stop();
     assert_eq!(r.through(&["symbol", "helper"], &[]).1, "[scrutate] session: answered by the session");
     first.stop();
+    #[cfg(unix)]
     assert!(!r.socket().exists(), "the server that made the socket removes it at its exit");
     assert_eq!(r.through(&["symbol", "helper"], &[]).1, "");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_session_whose_root_was_moved_answers_no_call() {
     let r = Repo::new("moved");
@@ -546,6 +556,7 @@ fn a_session_whose_root_was_moved_answers_no_call() {
     assert_eq!(got.0, 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_root_deeper_than_a_socket_address_holds_is_served_too() {
     let deep = std::env::temp_dir().join(format!("scrutate_sess_deep_{}", std::process::id())).join("d".repeat(60)).join("e".repeat(60));
@@ -559,6 +570,7 @@ fn a_root_deeper_than_a_socket_address_holds_is_served_too() {
     let _ = fs::remove_dir_all(r.root.parent().unwrap().parent().unwrap());
 }
 
+#[cfg(unix)]
 #[test]
 fn a_socket_is_for_its_owner_alone() {
     use std::os::unix::fs::PermissionsExt;
@@ -602,4 +614,63 @@ fn eight_calls_sent_together_are_all_answered() {
     // that they run side by side is mcp::tests::eight_calls_sent_together_are_in_flight_at_once;
     // a wall-clock ratio here would fail on a loaded machine with nothing waiting in line
     eprintln!("one call {one:?}, the last of eight sent together {last:?}");
+}
+
+/// Another account on the machine cannot open a session's pipe. CI only: it adds a local user
+/// for the test and removes it, which a developer's machine should not have done to it.
+#[cfg(windows)]
+#[test]
+fn a_pipe_is_for_its_owner_alone() {
+    if std::env::var_os("GITHUB_ACTIONS").is_none() {
+        eprintln!("skipped: adds a local user, so it runs on CI runners alone");
+        return;
+    }
+    let r = Repo::new("pipe_owner");
+    let _server = Server::start(&r.root);
+    let who = Command::new("whoami").args(["/user", "/fo", "csv", "/nh"]).output().unwrap();
+    let who = String::from_utf8_lossy(&who.stdout);
+    let sid = who.trim().rsplit(',').next().unwrap().trim_matches('"');
+    assert!(sid.starts_with("S-1-"), "{who}");
+    let pipe = {
+        use blake2::Digest;
+        let out = blake2::Blake2b::<blake2::digest::consts::U16>::new()
+            .chain_update(sid.as_bytes())
+            .chain_update([0])
+            .chain_update(as_the_session_keys_it(&r.root).to_string_lossy().as_bytes())
+            .finalize();
+        format!("scrutate-session-{}", out.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    };
+    let ps = |script: &str| {
+        let out = Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]).output().unwrap();
+        (out.status.code(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    // the owner opens it (so the name is the session's) and reads its DACL as SIDs: protected,
+    // one entry, allowing this user alone (SDDL may name the user by an alias such as LA)
+    let (code, said) = ps(&format!(
+        "$c = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{pipe}', 'InOut'); $c.Connect(3000); $a = $c.GetAccessControl(); \
+         $r = @($a.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])); \"$($a.AreAccessRulesProtected) $($r.Count)\"; \
+         foreach ($x in $r) {{ '{{0}} {{1:x}} {{2}}' -f $x.AccessControlType, [int]$x.PipeAccessRights, $x.IdentityReference.Value }}; \
+         $a.GetSecurityDescriptorSddlForm('Access'); $c.Dispose()"
+    ));
+    assert_eq!(code, Some(0), "{said}");
+    let lines: Vec<&str> = said.lines().map(str::trim).collect();
+    assert_eq!(lines.first(), Some(&"True 1"), "protected, one entry: {said}");
+    let ace: Vec<&str> = lines.get(1).map(|l| l.split(' ').collect()).unwrap_or_default();
+    // FILE_ALL_ACCESS, or GENERIC_ALL as written
+    assert!(ace.len() == 3 && ace[0] == "Allow" && ["1f01ff", "10000000"].contains(&ace[1]) && ace[2] == sid, "{said}");
+    // another local account cannot open it (New-LocalUser: `net user` asks Y/N for a password
+    // over 14 characters, with no one to answer)
+    let user = format!("scrt{}", std::process::id());
+    let (code, said) = ps(&format!(
+        r#"$ErrorActionPreference = 'Stop'
+$pw = ConvertTo-SecureString ('Aa1!' + [guid]::NewGuid()) -AsPlainText -Force
+New-LocalUser -Name '{user}' -Password $pw -AccountNeverExpires -PasswordNeverExpires | Out-Null
+try {{
+  $cred = New-Object System.Management.Automation.PSCredential('{user}', $pw)
+  $probe = "try {{ `$c = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{pipe}', 'InOut'); `$c.Connect(3000); exit 0 }} catch [UnauthorizedAccessException] {{ exit 5 }} catch {{ exit 9 }}"
+  $p = Start-Process powershell -Credential $cred -ArgumentList '-NoProfile', '-Command', $probe -WorkingDirectory $env:SystemRoot -Wait -PassThru
+  exit $p.ExitCode
+}} finally {{ Remove-LocalUser -Name '{user}' }}"#
+    ));
+    assert_eq!(code, Some(5), "another account's open: {said}");
 }

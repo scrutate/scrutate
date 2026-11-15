@@ -716,7 +716,7 @@ pub struct Printed {
     pub code: i32,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct Reply {
     printed: Option<Printed>,
@@ -726,13 +726,13 @@ struct Reply {
     seconds: f64,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// Everything an answer depends on besides the files and the request: a session answers only a
 /// command line whose identity is the same.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 struct Identity {
     version: String,
-    /// the executable file: device, inode, size, modification time
+    /// the executable file: where it is (device and inode; the path on Windows), size, times
     build: String,
     schema: u32,
     content: u32,
@@ -741,21 +741,31 @@ struct Identity {
     root: String,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// Variables that do not change an answer through a session: the root is compared on its own, the
 /// size of an answer travels with each request, and these switches are the command line's own.
 const NOT_ANSWERS: &[&str] =
     &["SCRUTATE_ROOT", "SCRUTATE_NO_SESSION", "SCRUTATE_SESSION_DEBUG", "SCRUTATE_SESSION_WAIT_MS", "SCRUTATE_MAX_BYTES", "SCRUTATE_REFRESH_INTERVAL"];
 
 #[cfg(unix)]
+fn file_place(_: &Path, m: &std::fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!("{} {}", m.dev(), m.ino())
+}
+
+#[cfg(windows)]
+/// std has no stable file id on Windows, so the path stands for it.
+fn file_place(p: &Path, _: &std::fs::Metadata) -> String {
+    p.display().to_string()
+}
+
+#[cfg(any(unix, windows))]
 impl Identity {
     fn here(root: &Path) -> Option<Identity> {
         let file_id = |p: &Path| -> Option<String> {
             let m = std::fs::metadata(p).ok()?;
             let s = index::Stat::of(p, &m);
-            use std::os::unix::fs::MetadataExt;
-            let (dev, ino) = (m.dev(), m.ino());
-            Some(format!("{dev} {ino} {} {} {}", s.size, s.mtime, s.ctime))
+            Some(format!("{} {} {} {}", file_place(p, &m), s.size, s.mtime, s.ctime))
         };
         let models = crate::models::ModelSet::from_env().signature(&root.join(crate::files::INDEX_DIR)).ok()?;
         let ranker = match std::env::var_os("SCRUTATE_RANKER") {
@@ -779,52 +789,131 @@ impl Identity {
     }
 }
 
-/// The socket of a session of `root` (canonical).
+/// The socket of a session of `root` (canonical), on Unix.
 pub fn socket_path(root: &Path) -> PathBuf {
     root.join(crate::files::INDEX_DIR).join("session.sock")
 }
 
 #[cfg(unix)]
 pub use unix::{ask, listen, Listening};
+#[cfg(windows)]
+pub use windows::{ask, listen, Listening};
 
-/// No session use on Windows: a command line call does the work itself.
-#[cfg(not(unix))]
+/// No session use on wasi: a command line call does the work itself.
+#[cfg(not(any(unix, windows)))]
 pub fn ask(_root: &Path, _request: &Request) -> Result<Option<(Printed, UpdateStats)>> {
     Ok(None)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub struct Listening;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn listen(_session: &Arc<Session>, _answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
     None
 }
 
-#[cfg(unix)]
-mod unix {
+/// What a session and a command line say to each other once connected, the same on every system:
+/// the session's greeting (its identity), one request line, one reply line.
+#[cfg(any(unix, windows))]
+mod wire {
     use super::*;
-    use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
-    use std::os::unix::io::AsRawFd;
-    use std::os::unix::net::{UnixListener, UnixStream};
-    use std::sync::atomic::AtomicUsize;
+    use std::io::{BufRead, BufReader, Read, Write};
 
     /// How long the command line waits for a session's greeting.
     const HELLO: Duration = Duration::from_millis(20);
 
     /// `HELLO`, or `SCRUTATE_SESSION_WAIT_MS` for a machine too busy to greet that fast.
-    fn hello() -> Duration {
+    pub(super) fn hello() -> Duration {
         std::env::var("SCRUTATE_SESSION_WAIT_MS").ok().and_then(|v| v.parse().ok()).map_or(HELLO, Duration::from_millis)
     }
     /// How long the command line waits for an answer before it does the work itself.
     const ANSWER: Duration = Duration::from_secs(60);
     /// How long a session waits for a request after its greeting, and a command line for the
     /// session to take it.
-    const REQUEST: Duration = Duration::from_secs(2);
+    pub(super) const REQUEST: Duration = Duration::from_secs(2);
     const MAX_REQUEST: u64 = 1 << 20;
     /// Connections served at once; one more is closed, and its command line does the work.
-    const MAX_CONNECTIONS: usize = 16;
+    pub(super) const MAX_CONNECTIONS: usize = 16;
+
+    /// A connected end: bytes both ways, and how long the next read may wait.
+    pub(super) trait Conn: Read + Write {
+        fn read_wait(&mut self, d: Duration) -> std::io::Result<()>;
+    }
+
+    /// One caller of the session listening for `root`: greeted, its request read and answered.
+    pub(super) fn serve_one(
+        session: &Session,
+        mut conn: impl Conn,
+        hello: &str,
+        root: &Path,
+        answer: fn(Answer, &Request, &Path) -> Result<Printed>,
+    ) -> Result<()> {
+        writeln!(conn, "{hello}")?;
+        conn.read_wait(REQUEST)?;
+        let mut line = Vec::new();
+        BufReader::new((&mut conn).take(MAX_REQUEST)).read_until(b'\n', &mut line)?;
+        let request: Request = serde_json::from_slice(&line)?;
+        // greeted for `root`, which the session may have left since for another tree; checked
+        // again on the reader the call runs on, which a move may swap in after this
+        if session.root() != root {
+            return Ok(());
+        }
+        let printed = session.run_scanned_for(&request.op, Some(root)).and_then(|(st, a, pending)| {
+            let mut p = answer(a.ok()?, &request, &session.root()).ok()?;
+            if let Some(note) = pending.note() {
+                p.err.push_str(&format!("[scrutate] {note}\n"));
+            }
+            Some((st, p))
+        });
+        let reply = match printed {
+            Some((st, p)) => Reply { printed: Some(p), changed: st.files_changed, removed: st.files_removed, chunks: st.chunks, seconds: st.seconds },
+            None => Reply { printed: None, changed: 0, removed: 0, chunks: 0, seconds: 0.0 },
+        };
+        writeln!(conn, "{}", serde_json::to_string(&reply)?)?;
+        conn.flush()?;
+        Ok(())
+    }
+
+    /// The command line's side, once the other end is known to be this user's: the greeting
+    /// checked against this process, then the request and its answer.
+    pub(super) fn exchange(conn: impl Conn, root: &Path, request: &Request) -> std::result::Result<(Printed, UpdateStats), String> {
+        let mut r = BufReader::new(conn);
+        r.get_mut().read_wait(hello()).map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        r.read_line(&mut line).map_err(|e| format!("no greeting: {e}"))?;
+        let theirs: Identity = serde_json::from_str(&line).map_err(|e| format!("greeting: {e}"))?;
+        let me = Identity::here(root).ok_or("no identity here")?;
+        if theirs != me {
+            return Err(format!("the session differs: {theirs:?} where this is {me:?}"));
+        }
+        let w = r.get_mut();
+        writeln!(w, "{}", serde_json::to_string(request).map_err(|e| e.to_string())?).map_err(|e| format!("request not taken: {e}"))?;
+        w.read_wait(ANSWER).map_err(|e| e.to_string())?;
+        line.clear();
+        r.read_line(&mut line).map_err(|e| format!("no answer: {e}"))?;
+        let reply: Reply = serde_json::from_str(&line).map_err(|e| format!("answer: {e}"))?;
+        let printed = reply.printed.ok_or("the session did not answer this call")?;
+        debug("answered by the session");
+        let st = UpdateStats { files_changed: reply.changed, files_removed: reply.removed, chunks: reply.chunks, seconds: reply.seconds, ..Default::default() };
+        Ok((printed, st))
+    }
+}
+
+#[cfg(unix)]
+mod unix {
+    use super::wire::{self, MAX_CONNECTIONS};
+    use super::*;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use std::os::unix::io::AsRawFd;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::atomic::AtomicUsize;
+
+    impl wire::Conn for UnixStream {
+        fn read_wait(&mut self, d: Duration) -> std::io::Result<()> {
+            self.set_read_timeout(Some(d))
+        }
+    }
 
     extern "C" {
         fn geteuid() -> u32;
@@ -974,7 +1063,7 @@ mod unix {
                     open.fetch_add(1, Ordering::AcqRel);
                     let (session, hello, done, root) = (Arc::clone(&session), hello.clone(), Arc::clone(&open), root.clone());
                     let served = std::thread::Builder::new().name("scrutate-session-call".into()).spawn(move || {
-                        let _ = serve_one(&session, conn, &hello, &root, answer);
+                        let _ = wire::serve_one(&session, conn, &hello, &root, answer);
                         done.fetch_sub(1, Ordering::AcqRel);
                     });
                     if served.is_err() {
@@ -984,40 +1073,6 @@ mod unix {
             })
             .ok()?;
         Some(Listening { path, id: (md.dev(), md.ino()) })
-    }
-
-    /// One caller of the session listening for `root`: greeted, its request read and answered.
-    pub(super) fn serve_one(
-        session: &Session,
-        conn: UnixStream,
-        hello: &str,
-        root: &Path,
-        answer: fn(Answer, &Request, &Path) -> Result<Printed>,
-    ) -> Result<()> {
-        let mut w = conn.try_clone()?;
-        writeln!(w, "{hello}")?;
-        conn.set_read_timeout(Some(REQUEST))?;
-        let mut line = Vec::new();
-        BufReader::new(std::io::Read::take(&conn, MAX_REQUEST)).read_until(b'\n', &mut line)?;
-        let request: Request = serde_json::from_slice(&line)?;
-        // greeted for `root`, which the session may have left since for another tree; checked
-        // again on the reader the call runs on, which a move may swap in after this
-        if session.root() != root {
-            return Ok(());
-        }
-        let printed = session.run_scanned_for(&request.op, Some(root)).and_then(|(st, a, pending)| {
-            let mut p = answer(a.ok()?, &request, &session.root()).ok()?;
-            if let Some(note) = pending.note() {
-                p.err.push_str(&format!("[scrutate] {note}\n"));
-            }
-            Some((st, p))
-        });
-        let reply = match printed {
-            Some((st, p)) => Reply { printed: Some(p), changed: st.files_changed, removed: st.files_removed, chunks: st.chunks, seconds: st.seconds },
-            None => Reply { printed: None, changed: 0, removed: 0, chunks: 0, seconds: 0.0 },
-        };
-        writeln!(w, "{}", serde_json::to_string(&reply)?)?;
-        Ok(())
     }
 
     /// The answer of the session running on `root` (canonical) to `request`, printed as the
@@ -1054,27 +1109,295 @@ mod unix {
         if !same_user(&conn) {
             return Err("the session runs as another user".into());
         }
-        conn.set_read_timeout(Some(hello())).map_err(|e| e.to_string())?;
-        let mut r = BufReader::new(&conn);
-        let mut line = String::new();
-        r.read_line(&mut line).map_err(|e| format!("no greeting: {e}"))?;
-        let theirs: Identity = serde_json::from_str(&line).map_err(|e| format!("greeting: {e}"))?;
-        let me = Identity::here(root).ok_or("no identity here")?;
-        if theirs != me {
-            return Err(format!("the session differs: {theirs:?} where this is {me:?}"));
-        }
-        let mut w = &conn;
         // a session that stops reading leaves a request over the socket's buffer unwritten
-        conn.set_write_timeout(Some(REQUEST)).map_err(|e| e.to_string())?;
-        writeln!(w, "{}", serde_json::to_string(request).map_err(|e| e.to_string())?).map_err(|e| format!("request not taken: {e}"))?;
-        conn.set_read_timeout(Some(ANSWER)).map_err(|e| e.to_string())?;
-        line.clear();
-        r.read_line(&mut line).map_err(|e| format!("no answer: {e}"))?;
-        let reply: Reply = serde_json::from_str(&line).map_err(|e| format!("answer: {e}"))?;
-        let printed = reply.printed.ok_or("the session did not answer this call")?;
-        debug("answered by the session");
-        let st = UpdateStats { files_changed: reply.changed, files_removed: reply.removed, chunks: reply.chunks, seconds: reply.seconds, ..Default::default() };
-        Ok((printed, st))
+        conn.set_write_timeout(Some(wire::REQUEST)).map_err(|e| e.to_string())?;
+        wire::exchange(conn, root, request)
+    }
+}
+
+/// A SID in its text form (`S-1-5-21-...`), from its bytes: revision, count of sub-authorities,
+/// a 48-bit big-endian authority, then each sub-authority as a little-endian u32.
+#[cfg(any(windows, test))]
+fn sid_text(sid: &[u8]) -> Option<String> {
+    let (&revision, &n) = (sid.first()?, sid.get(1)?);
+    let authority = sid.get(2..8)?.iter().fold(0u64, |a, &b| (a << 8) | u64::from(b));
+    let subs = sid.get(8..8 + 4 * usize::from(n))?;
+    let mut text = format!("S-{revision}-{authority}");
+    for c in subs.as_chunks::<4>().0 {
+        text.push_str(&format!("-{}", u32::from_le_bytes(*c)));
+    }
+    Some(text)
+}
+
+/// The pipe a session of `root` (canonical) offers to the user `sid`: a hash of both, so two
+/// users on one root never meet. The name is no secret; the pipe's DACL and the checks of both
+/// ends are what keep other users out.
+#[cfg(any(windows, test))]
+fn pipe_name(sid: &str, root: &Path) -> String {
+    use blake2::Digest;
+    let out = blake2::Blake2b::<blake2::digest::consts::U16>::new()
+        .chain_update(sid.as_bytes())
+        .chain_update([0])
+        .chain_update(root.to_string_lossy().as_bytes())
+        .finalize();
+    let hex: String = out.iter().map(|b| format!("{b:02x}")).collect();
+    format!(r"\\.\pipe\scrutate-session-{hex}")
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::wire::{self, MAX_CONNECTIONS};
+    use super::*;
+    use std::io::{Error, ErrorKind, Read, Write};
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use std::ptr::{null, null_mut};
+    use std::sync::atomic::AtomicUsize;
+    use windows_sys::Win32::Foundation::{
+        GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+        GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+    };
+    use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows_sys::Win32::Security::{GetLengthSid, GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
+        SECURITY_SQOS_PRESENT,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE,
+        PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, GetCurrentProcess, OpenProcess, OpenProcessToken, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+
+    const BUFFER: u32 = 64 * 1024;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain([0]).collect()
+    }
+
+    /// The user SID of a process's token, as bytes.
+    fn user_of(process: HANDLE) -> Option<Vec<u8>> {
+        let mut token: HANDLE = null_mut();
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+            return None;
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        // a TOKEN_USER and the SID it points into (at most 68 bytes), 8-byte aligned
+        let mut buf = [0u64; 64];
+        let mut len = 0u32;
+        let size = std::mem::size_of_val(&buf) as u32;
+        if unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, buf.as_mut_ptr().cast(), size, &mut len) } == 0 {
+            return None;
+        }
+        let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        let n = unsafe { GetLengthSid(sid) } as usize;
+        Some(unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), n) }.to_vec())
+    }
+
+    fn this_user() -> Option<Vec<u8>> {
+        user_of(unsafe { GetCurrentProcess() })
+    }
+
+    fn user_of_process(pid: u32) -> Option<Vec<u8>> {
+        let p = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if p.is_null() {
+            return None;
+        }
+        let p = unsafe { OwnedHandle::from_raw_handle(p) };
+        user_of(p.as_raw_handle())
+    }
+
+    /// One end of a pipe opened for overlapped I/O, so that a read can be given up after a wait.
+    struct Pipe {
+        pipe: OwnedHandle,
+        done: OwnedHandle,
+        wait: u32,
+    }
+
+    impl Pipe {
+        fn new(pipe: OwnedHandle) -> std::io::Result<Pipe> {
+            let e = unsafe { CreateEventW(null(), 1, 0, null()) };
+            if e.is_null() {
+                return Err(Error::last_os_error());
+            }
+            Ok(Pipe { pipe, done: unsafe { OwnedHandle::from_raw_handle(e) }, wait: INFINITE })
+        }
+
+        fn handle(&self) -> HANDLE {
+            self.pipe.as_raw_handle()
+        }
+
+        /// `op` started overlapped on the pipe and waited for, at most `wait` ms: the bytes it
+        /// moved. Given up, it is cancelled and waited out before its OVERLAPPED goes away.
+        fn io(&self, wait: u32, op: impl FnOnce(HANDLE, *mut OVERLAPPED) -> i32) -> std::io::Result<u32> {
+            let h = self.handle();
+            let mut ov = OVERLAPPED { hEvent: self.done.as_raw_handle(), ..Default::default() };
+            if op(h, &mut ov) == 0 {
+                let e = unsafe { GetLastError() };
+                if e != ERROR_IO_PENDING {
+                    return Err(Error::from_raw_os_error(e as i32));
+                }
+                if unsafe { WaitForSingleObject(ov.hEvent, wait) } != WAIT_OBJECT_0 {
+                    unsafe { CancelIoEx(h, &ov) };
+                }
+            }
+            let mut n = 0;
+            if unsafe { GetOverlappedResult(h, &ov, &mut n, 1) } == 0 {
+                let e = unsafe { GetLastError() };
+                return Err(if e == ERROR_OPERATION_ABORTED { ErrorKind::TimedOut.into() } else { Error::from_raw_os_error(e as i32) });
+            }
+            Ok(n)
+        }
+    }
+
+    impl Read for Pipe {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let len = buf.len().min(u32::MAX as usize) as u32;
+            match self.io(self.wait, |h, ov| unsafe { ReadFile(h, buf.as_mut_ptr(), len, null_mut(), ov) }) {
+                Err(e) if e.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => Ok(0),
+                r => r.map(|n| n as usize),
+            }
+        }
+    }
+
+    impl Write for Pipe {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let len = buf.len().min(u32::MAX as usize) as u32;
+            self.io(INFINITE, |h, ov| unsafe { WriteFile(h, buf.as_ptr(), len, null_mut(), ov) }).map(|n| n as usize)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl wire::Conn for Pipe {
+        fn read_wait(&mut self, d: Duration) -> std::io::Result<()> {
+            self.wait = d.as_millis().min(u128::from(INFINITE - 1)) as u32;
+            Ok(())
+        }
+    }
+
+    /// One more instance of the pipe `name`, open to `sddl` alone, or the first one: that fails
+    /// when the name is taken (another session of the root, or anyone else holding it).
+    fn instance(name: &[u16], sddl: &[u16], first: bool) -> std::io::Result<OwnedHandle> {
+        let mut sd: PSECURITY_DESCRIPTOR = null_mut();
+        if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, null_mut()) } == 0 {
+            return Err(Error::last_os_error());
+        }
+        let sa = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd, bInheritHandle: 0 };
+        let open = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
+        let mode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
+        let h = unsafe { CreateNamedPipeW(name.as_ptr(), open, mode, PIPE_UNLIMITED_INSTANCES, BUFFER, BUFFER, 0, &sa) };
+        let made = if h == INVALID_HANDLE_VALUE { Err(Error::last_os_error()) } else { Ok(unsafe { OwnedHandle::from_raw_handle(h) }) };
+        unsafe { LocalFree(sd) };
+        made
+    }
+
+    /// The session's end. Its pipe goes away with the process, so there is nothing to remove.
+    pub struct Listening;
+
+    /// Offer `session` to command line calls of the same user, until the process exits. None when
+    /// it cannot (another session of this root holds the pipe, or anyone else holds its name):
+    /// command line calls then do their own work. `answer` prints an answer as the command line
+    /// does.
+    pub fn listen(session: &Arc<Session>, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
+        let Some((me, user)) = Identity::here(&session.root()).zip(this_user()) else {
+            debug("no identity to offer");
+            return None;
+        };
+        let sid = sid_text(&user)?;
+        let root = session.root();
+        let shown = pipe_name(&sid, &root);
+        let (name, sddl) = (wide(&shown), wide(&format!("D:P(A;;GA;;;{sid})")));
+        let first = match instance(&name, &sddl, true) {
+            Ok(h) => h,
+            Err(e) => {
+                debug(&format!("cannot listen at {shown}: {e}"));
+                return None;
+            }
+        };
+        let hello = serde_json::to_string(&me).ok()?;
+        let session = Arc::clone(session);
+        let open = Arc::new(AtomicUsize::new(0));
+        std::thread::Builder::new()
+            .name("scrutate-session".into())
+            .spawn(move || {
+                let mut next = Some(first);
+                while let Some(h) = next.take() {
+                    let Ok(pipe) = Pipe::new(h) else { break };
+                    let connected = match pipe.io(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) }) {
+                        Ok(_) => true,
+                        Err(e) => e.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32),
+                    };
+                    // the next caller finds an instance waiting while this one is served
+                    next = instance(&name, &sddl, false).map_err(|e| debug(&format!("stops listening at {shown}: {e}"))).ok();
+                    if !connected {
+                        continue;
+                    }
+                    let mut pid = 0;
+                    let client = unsafe { GetNamedPipeClientProcessId(pipe.handle(), &mut pid) } != 0;
+                    // another user's process gets nothing, not even the greeting
+                    if !client || user_of_process(pid).as_ref() != Some(&user) || open.load(Ordering::Acquire) >= MAX_CONNECTIONS {
+                        continue;
+                    }
+                    open.fetch_add(1, Ordering::AcqRel);
+                    let (session, hello, done, root) = (Arc::clone(&session), hello.clone(), Arc::clone(&open), root.clone());
+                    let served = std::thread::Builder::new().name("scrutate-session-call".into()).spawn(move || {
+                        let _ = wire::serve_one(&session, pipe, &hello, &root, answer);
+                        done.fetch_sub(1, Ordering::AcqRel);
+                    });
+                    if served.is_err() {
+                        open.fetch_sub(1, Ordering::AcqRel);
+                    }
+                }
+            })
+            .ok()?;
+        Some(Listening)
+    }
+
+    /// The answer of the session running on `root` (canonical) to `request`, printed as the
+    /// command line prints it, with what the scan before it updated. None, quietly, when there is
+    /// no session or anything about it is not as this process would do the work.
+    pub fn ask(root: &Path, request: &Request) -> Result<Option<(Printed, UpdateStats)>> {
+        let r = asked(root, request);
+        if let Err(why) = &r {
+            debug(why);
+        }
+        Ok(r.ok().flatten())
+    }
+
+    fn asked(root: &Path, request: &Request) -> std::result::Result<Option<(Printed, UpdateStats)>, String> {
+        let user = this_user().ok_or("no user for this process")?;
+        let shown = pipe_name(&sid_text(&user).ok_or("no text for this user's SID")?, root);
+        let name = wide(&shown);
+        let mut busy = false;
+        let h = loop {
+            // identification only: the session may learn who calls, never act as the caller
+            let flags = FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION;
+            let h = unsafe { CreateFileW(name.as_ptr(), GENERIC_READ | GENERIC_WRITE, 0, null(), OPEN_EXISTING, flags, null_mut()) };
+            if h != INVALID_HANDLE_VALUE {
+                break unsafe { OwnedHandle::from_raw_handle(h) };
+            }
+            match unsafe { GetLastError() } {
+                ERROR_FILE_NOT_FOUND => return Ok(None),
+                // every instance taken for a moment: wait for one as long as for a greeting
+                ERROR_PIPE_BUSY if !busy => {
+                    busy = true;
+                    let ms = wire::hello().as_millis().min(u128::from(INFINITE - 1)) as u32;
+                    unsafe { WaitNamedPipeW(name.as_ptr(), ms) };
+                }
+                e => return Err(format!("no session at {shown}: {}", Error::from_raw_os_error(e as i32))),
+            }
+        };
+        let pipe = Pipe::new(h).map_err(|e| e.to_string())?;
+        let mut pid = 0;
+        if unsafe { GetNamedPipeServerProcessId(pipe.handle(), &mut pid) } == 0 || user_of_process(pid).as_ref() != Some(&user) {
+            return Err("the session runs as another user".into());
+        }
+        wire::exchange(pipe, root, request).map(Some)
     }
 }
 
@@ -1412,7 +1735,7 @@ mod tests {
         let replies = |s: &Session| {
             let (mut caller, server) = std::os::unix::net::UnixStream::pair().unwrap();
             writeln!(caller, "{}", serde_json::to_string(&request).unwrap()).unwrap();
-            unix::serve_one(s, server, "{}", &old, answered).unwrap();
+            wire::serve_one(s, server, "{}", &old, answered).unwrap();
             let mut said = String::new();
             caller.read_to_string(&mut said).unwrap();
             said.lines().count()
@@ -1950,6 +2273,27 @@ mod tests {
         let a = s.run(&op, &Arc::default()).unwrap();
         assert!(!a.is_empty(), "the file a held-back read named is in the next read's answer");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_sid_reads_as_windows_writes_it() {
+        // S-1-5-21-1004336348-1177238915-682003330-512, as GetTokenInformation returns it
+        let mut sid = vec![1, 5, 0, 0, 0, 0, 0, 5];
+        for sub in [21u32, 1004336348, 1177238915, 682003330, 512] {
+            sid.extend(sub.to_le_bytes());
+        }
+        assert_eq!(sid_text(&sid).as_deref(), Some("S-1-5-21-1004336348-1177238915-682003330-512"));
+        assert_eq!(sid_text(&sid[..sid.len() - 1]), None);
+        assert_eq!(sid_text(&[1]), None);
+    }
+
+    #[test]
+    fn each_user_and_root_has_a_pipe_of_its_own() {
+        let a = pipe_name("S-1-5-21-1-2-3-1001", Path::new(r"\\?\C:\work\repo"));
+        assert!(a.starts_with(r"\\.\pipe\scrutate-session-") && a.len() == r"\\.\pipe\scrutate-session-".len() + 32, "{a}");
+        assert_eq!(a, pipe_name("S-1-5-21-1-2-3-1001", Path::new(r"\\?\C:\work\repo")));
+        assert_ne!(a, pipe_name("S-1-5-21-1-2-3-1002", Path::new(r"\\?\C:\work\repo")));
+        assert_ne!(a, pipe_name("S-1-5-21-1-2-3-1001", Path::new(r"\\?\C:\work\other")));
     }
 
     #[test]

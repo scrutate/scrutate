@@ -892,8 +892,10 @@ same root: `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `outline`, `de
 root it does its own work) and the ranked part of `find`. Not `impact`, since git runs in the
 command's own environment, nor `files`, which needs no index. The files that changed are looked
 at first, as for a tool call (every file when the watch cannot vouch for fewer), and the output is the same bytes and exit code a fresh process gives (about 12 ms in
-place of 28 ms on a copy of this repository). The meeting point is a socket file,
-`.scrutate/session.sock` (owner only; Unix; no network port), removed when the server exits. A
+place of 28 ms on a copy of this repository). The meeting point is a socket file on Unix,
+`.scrutate/session.sock` (owner only; no network port), removed when the server exits, and a
+named pipe on Windows, `\\.\pipe\scrutate-session-<hash of the user and root>` (owner only,
+local callers only), which goes away with the server and leaves no file. A
 command never starts a server. When anything about the server differs from how the command would
 do the work (another build of scrutate, another `SCRUTATE_*` setting, another root, a stale
 socket), the command does the work itself and says nothing;
@@ -1307,7 +1309,7 @@ On/off variables follow the rule under Conventions.
 `.scrutate/text/` (the text index: a manifest and immutable trigram segments, which also hold the
 hash of every line of a private key's body),
 `.scrutate/tsquery/` (the `tsquery` cache), `.scrutate/answers/` (what `callers` and `callees`
-resolved, one file per request), `.scrutate/session.sock` while `serve` runs, and a
+resolved, one file per request), `.scrutate/session.sock` while `serve` runs (Unix), and a
 `.gitignore` so it is never committed. On Unix only its owner can enter it (mode 0700, set by
 every command that writes it, also on an index an earlier version made), since it holds the text
 of files that may be private (docs/SECURITY.md). It is a cache: deleting it is always safe;
