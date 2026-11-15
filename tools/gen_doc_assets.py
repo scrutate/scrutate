@@ -19,8 +19,10 @@ import argparse
 import ast
 import os
 import re
+import shlex
 import subprocess
 import sys
+import tempfile
 from xml.sax.saxutils import escape
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1148,6 +1150,84 @@ def check_links(path, text, problems):
                 problems.append(f"{path}:{n + 1}: #{anchor}: no such heading")
 
 
+PAGES = {"docs/LEADERBOARD.md": "bench/make_leaderboard_md.py", "docs/BENCHMARKS.md": "bench/make_benchmarks_md.py"}
+
+
+def regenerated_problems(path, text):
+    """Why `path`, a page of published numbers, differs from what its script writes from the result
+    files the page names (`<!-- inputs: ... -->`): a hand edit, or results changed since."""
+    script = PAGES[path]
+    m = re.search(r"^<!-- inputs: (.*) -->$", text, re.M)
+    if not m:
+        return [f"{path}: names no inputs (<!-- inputs: ... -->): write it with {script}"]
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "page.md")
+        r = subprocess.run([sys.executable, os.path.join(ROOT, script), *shlex.split(m.group(1)), "--out", out], cwd=ROOT, capture_output=True, text=True)
+        if r.returncode:
+            return [f"{path}: {script} failed on the inputs the page names: {(r.stderr.strip().splitlines() or [''])[-1]}"]
+        with open(out, encoding="utf-8") as f:
+            new = f.read()
+    if new == text:
+        return []
+    a, b = text.splitlines(), new.splitlines()
+    n = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+    return [f"{path}:{n + 1}: differs from what {script} writes from the inputs the page names; run it again"]
+
+
+# README's typed claims of "all N": the sentence (whitespace folded), the LEADERBOARD.md section it counts
+README_COUNTS = [
+    (r"On the development Mac \(.*?\), Engine A is significantly fastest in all (\w+) warm-cache benchmarks",
+     "## Engine A and structural search: macos-arm64, warm cache"),
+    (r"warm-cache benchmarks and all (\w+) cold-cache ones", "## Engine A and structural search: macos-arm64, cold cache"),
+    (r"Engine A is significantly fastest on all (\w+) Linux-tree benchmarks", "## Engine A and structural search: linux-aarch64, warm cache"),
+    (r"Linux-tree benchmarks and all (\w+) cold-cache ones", "## Engine A and structural search: linux-aarch64, cold cache"),
+    (r"leading all (\w+) indexed metrics", "## Engine B: indexed search against zoekt: macos-arm64"),
+    (r"leads Zoekt and livegrep on all (\w+) indexed metrics", "## Engine B: indexed search against zoekt and livegrep: linux-aarch64"),
+]
+WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+def section(md, heading):
+    """The lines of `md` from `heading` to the next `## ` heading, or None."""
+    lines = md.splitlines()
+    if heading not in lines:
+        return None
+    start = lines.index(heading) + 1
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return lines[start:end]
+
+
+def pass_counts(lines):
+    """(PASS, all) of a LEADERBOARD.md section: its wall-time status counts, or its comparison rows."""
+    for line in lines:
+        m = re.match(r"Status counts, wall time: .*?\*\*PASS\*\* (\d+) \(of (\d+)\)", line)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    rows = [line for line in lines if re.match(r"^\| .* \(vs .*\) \|", line)]
+    return sum(line.rstrip().endswith("| PASS |") for line in rows), len(rows)
+
+
+def readme_count_problems(readme, leaderboard):
+    """README's "all N" claims against the PASS counts of the LEADERBOARD.md sections they count; a
+    claim that cannot be found fails too, so rewording a sentence cannot turn its check off."""
+    text, problems = " ".join(readme.split()), []
+    for pattern, heading in README_COUNTS:
+        m = re.search(pattern, text)
+        lines = section(leaderboard, heading)
+        if not m:
+            problems.append(f"README.md: no sentence matches /{pattern}/; it states the count of {heading!r}: put it back or change README_COUNTS")
+            continue
+        if lines is None:
+            problems.append(f"docs/LEADERBOARD.md: no section {heading!r}, which README.md's {m.group(0)!r} counts")
+            continue
+        word = m.group(1).lower()
+        said = int(word) if word.isdigit() else WORDS.get(word, -1)
+        passed, total = pass_counts(lines)
+        if not said == passed == total:
+            problems.append(f"README.md: {m.group(0)!r} says {said}; {heading!r} has {passed} PASS of {total}")
+    return problems
+
+
 def linked_files():
     """The Markdown files whose links and anchors must resolve: the hub, every document with a head,
     and every other tracked .md (README.md, CHANGELOG.md, CONTRIBUTING.md, the integrations'
@@ -1278,6 +1358,14 @@ def main():
         check_links(path, text, problems)
     check_content_revision(problems)
     check_changelog(problems)
+    for path in PAGES:
+        text = files.get(path)
+        if text is None:
+            with open(os.path.join(ROOT, path), encoding="utf-8") as f:
+                text = f.read()
+        problems.extend(regenerated_problems(path, text))
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f, open(os.path.join(ROOT, "docs", "LEADERBOARD.md"), encoding="utf-8") as g:
+        problems.extend(readme_count_problems(f.read(), files.get("docs/LEADERBOARD.md") or g.read()))
     for p in problems:
         print(p, file=sys.stderr)
     if problems:

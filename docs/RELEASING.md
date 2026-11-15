@@ -200,9 +200,18 @@ python3 tools/gen_assets.py capture --bin target/release/scrutate --repo $C     
 python3 tools/gen_assets.py capture-hero --bin target/release/scrutate --repo crates/scrutate   # the hero's searches and match spans
 python3 tools/gen_assets.py              # the README's images, from the two captures, the palette and rust-version;
                                          # then render social-preview.png again (the command is in the script's head)
-python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then --check: links, anchors, heads
+python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then --check: links, anchors, heads, the two pages
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
+
+The two make_*_md.py commands name the files step 2 writes. LEADERBOARD.md and BENCHMARKS.md
+record the result files they were written from (`<!-- inputs: ... -->`), and
+`gen_doc_assets.py --check` writes both pages again from those files and fails on any
+difference, so a number edited by hand, or a page not written again after a new run, fails. Until
+the release's own runs exist, the pages come from the runs under `bench/results/*/superseded/`
+that they name. The README's "all N" counts (warm-cache, cold-cache, Linux-tree, indexed
+metrics) are checked against the PASS counts of the pages' sections, and a count sentence the
+check cannot find fails too; its ratios and percentages are typed: read them against the pages.
 
 ## 4. Documents that carry the numbers by hand
 
