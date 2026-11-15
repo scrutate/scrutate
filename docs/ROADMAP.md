@@ -165,8 +165,8 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   include is found beside the including file or by its path suffix. A call on a value
   (`s.area()`, `p->next()`) stays undecided: the value's type is not followed
   ([CLI](CLI.md#refs)).
-- `watch` takes the `notify` crate at 9.0.0-rc.8, pinned, the first release that reports an
-  overflowed Windows buffer; 9.0.0 itself is not out (crates.io on 2026-11-13). Moving to it is a
+- `watch` takes the `notify` crate at 9.0.0-rc.9, pinned (9.0.0-rc.8 was the first release that
+  reports an overflowed Windows buffer); 9.0.0 itself is not out (crates.io on 2026-11-16). Moving to it is a
   version bump once it is.
 - Call forms the grammars do not tell apart: a Verilog task call on a member (`obj.m(1);`), which
   tree-sitter-verilog 1.0.3 parses as an error, records no call edge, and a VHDL indexed signal

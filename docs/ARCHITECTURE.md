@@ -574,7 +574,7 @@ candidate files from the source tree.
 
 ### Watching (`watch.rs`)
 `scrutate watch` and `serve --watch` turn filesystem events into index updates: inotify and
-ReadDirectoryChangesW through the `notify` crate (9.0.0-rc.8, pinned: the first release that
+ReadDirectoryChangesW through the `notify` crate (9.0.0-rc.9, pinned: the first release that
 reports an overflowed Windows buffer as lost events), and on macOS FSEvents through `watch.rs`'s
 own `fsevents` module. That module loads CoreServices with `dlopen` and takes every function it
 calls from `dlsym` on that handle, so the executable imports nothing for it and only `watch`

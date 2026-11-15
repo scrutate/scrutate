@@ -291,7 +291,7 @@ incompatible index by itself, and that is never breaking.
   update on a tree of 20,000 directories (release build, the 200 ms burst wait included), where
   the timer took 11 to 14 s (debug build). The timer stays as the fallback when FSEvents cannot
   load ([CLI](docs/CLI.md#watch)).
-- The `notify` crate is 9.0.0-rc.8, pinned (it needs Rust 1.91, the existing minimum).
+- The `notify` crate is 9.0.0-rc.9, pinned (it needs Rust 1.91, the existing minimum).
 - Three tool errors say how to fix the call: `missing required argument name` (was `missing
   name`, and `missing to` for `call_path`), `missing path or symbol` names what each takes, and
   `path outside repo` says to give a path relative to the root. `batch` reports the same text
