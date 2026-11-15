@@ -1131,6 +1131,9 @@ thread_local! {
     pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
     /// Run once right after an update loads its root's custom languages.
     pub static AFTER_LANGUAGES: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    /// The wait each of this thread's lock attempts was given: "cut" for a log cut, "begin" for
+    /// a write lock that must not wait.
+    pub static LOCK_WAITS: std::cell::RefCell<Vec<(&'static str, Duration)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Whether this process has opened an index, the code index or the text index, so a panic may
@@ -1943,6 +1946,8 @@ impl Index {
     /// an older commit (an operation's snapshot lasts about a second at most, mostly far less).
     /// -> whether it was done; when not, the next update tries again first.
     fn truncate_log(&self, wait: Duration) -> bool {
+        #[cfg(test)]
+        LOCK_WAITS.with(|w| w.borrow_mut().push(("cut", wait)));
         let _ = self.db.busy_timeout(wait);
         let done = self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)).is_ok_and(|busy| busy == 0);
         let _ = self.db.busy_timeout(BUSY);
@@ -1986,7 +1991,10 @@ impl Index {
         if wait {
             self.begin_waiting(|_| false)?;
         } else {
-            self.db.busy_timeout(Duration::ZERO)?;
+            let no_wait = Duration::ZERO;
+            #[cfg(test)]
+            LOCK_WAITS.with(|w| w.borrow_mut().push(("begin", no_wait)));
+            self.db.busy_timeout(no_wait)?;
             let r = self.db.execute_batch("BEGIN IMMEDIATE");
             self.db.busy_timeout(BUSY)?;
             match r {
@@ -3663,7 +3671,8 @@ mod tests {
     }
 
     /// A read that must not wait answers at once while another process writes, also after an
-    /// update of this process could not cut the log.
+    /// update of this process could not cut the log: the cut it tries first and the write lock it
+    /// asks for are both given no wait. Shown by those waits, not by time.
     #[test]
     fn a_read_that_must_not_wait_does_not_wait_on_a_log_left_uncut() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_log_left_{}", std::process::id()));
@@ -3675,18 +3684,20 @@ mod tests {
         ix.log_left = true;
         let other = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
         other.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let t = std::time::Instant::now();
+        super::LOCK_WAITS.with(|w| w.borrow_mut().clear());
         let e = ix.update_paths(&["a.py".into()], false).expect_err("another process holds the write lock");
         assert!(e.downcast_ref::<super::Busy>().is_some(), "{e:#}");
-        assert!(t.elapsed() < std::time::Duration::from_millis(300), "waited {:?}", t.elapsed());
+        let waits = super::LOCK_WAITS.with(|w| w.borrow().clone());
+        assert_eq!(waits, [("cut", std::time::Duration::ZERO), ("begin", std::time::Duration::ZERO)], "the waits the read was given");
         assert!(ix.log_left, "the log is cut by a later update");
         other.execute_batch("ROLLBACK").unwrap();
         drop((ix, other));
         let _ = std::fs::remove_dir_all(&root);
     }
     /// A read that saves an edit while another process reads an older snapshot does not wait for
-    /// that snapshot to cut the log; a later update cuts it. The wait is measured against the same
-    /// update with no reader, so a loaded machine slows both alike.
+    /// that snapshot to cut the log: each cut it tries is given no wait, and the cut the reader
+    /// keeps from it is left to a later update. Shown by the wait each cut was given, not by time:
+    /// a loaded machine moves one save's time by more than half the wait this catches.
     #[test]
     fn a_read_that_saves_an_edit_does_not_wait_on_another_reader_to_cut_the_log() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_cut_reader_{}", std::process::id()));
@@ -3695,20 +3706,19 @@ mod tests {
         std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
         let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
-        let save = |ix: &mut super::Index, body: &str| {
-            std::fs::write(root.join("a.py"), format!("def alpha(x):\n    return {body}\n")).unwrap();
-            let t = std::time::Instant::now();
-            assert_eq!(ix.update_paths(&["a.py".into()], false).unwrap().files_changed, 1, "the edit is saved");
-            t.elapsed()
-        };
-        let alone = save(&mut ix, "x - 1");
         let other = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
         other.execute_batch("BEGIN").unwrap();
         let _: i64 = other.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
-        let took = save(&mut ix, "x + 1");
-        // the wait it catches is a second; half of it fails too
-        assert!(took < alone + std::time::Duration::from_millis(350), "waited {took:?}, {alone:?} with no reader");
-        assert!(ix.log_left, "the reader kept the log from being cut");
+        // twice: the second save also meets the cut the first one left
+        for body in ["x + 1", "x + 2"] {
+            std::fs::write(root.join("a.py"), format!("def alpha(x):\n    return {body}\n")).unwrap();
+            super::LOCK_WAITS.with(|w| w.borrow_mut().clear());
+            assert_eq!(ix.update_paths(&["a.py".into()], false).unwrap().files_changed, 1, "the edit is saved");
+            let waits = super::LOCK_WAITS.with(|w| w.borrow().clone());
+            let cuts: Vec<_> = waits.iter().filter(|(what, _)| *what == "cut").collect();
+            assert!(!cuts.is_empty() && cuts.iter().all(|(_, w)| w.is_zero()), "the cuts were given {waits:?}");
+            assert!(ix.log_left, "the reader kept the log from being cut");
+        }
         other.execute_batch("COMMIT").unwrap();
         ix.update(false).unwrap();
         assert!(!ix.log_left, "a later update cuts the log");
@@ -4115,8 +4125,8 @@ mod tests {
     }
 
     /// An update does not wait for every thread of the pool to free its word caches: a thread
-    /// busy with another call's search would hold it as long as that search runs. The wait is
-    /// measured against the same update with every thread free.
+    /// busy with another call's search would hold it as long as that search runs. Shown by order,
+    /// not by time: the update returns while the busy thread is still busy.
     #[test]
     fn an_update_does_not_wait_for_a_busy_thread_to_free_its_caches() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_busy_pool_{}", std::process::id()));
@@ -4129,30 +4139,25 @@ mod tests {
             ix.update(false).unwrap();
             ix
         });
-        let mut save = |body: &str| {
-            std::fs::write(root.join("a.py"), format!("def alpha(x):\n    return {body}\n")).unwrap();
-            pool.install(|| {
-                let t = std::time::Instant::now();
-                ix.update_paths(&["a.py".into()], false).unwrap();
-                t.elapsed()
-            })
-        };
-        let alone = save("x - 1");
-        // another call's search keeps one thread of the pool busy
-        let (busy, release) = std::sync::mpsc::channel::<()>();
+        // another call's search keeps one thread of the pool busy until it is let go, or for 10 s
+        // when an update that waits for it never returns to let it go
+        let (release, held) = std::sync::mpsc::channel::<()>();
         let (started, running) = std::sync::mpsc::channel::<()>();
+        let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = std::sync::Arc::clone(&ended);
         pool.spawn(move || {
             started.send(()).unwrap();
-            let _ = release.recv_timeout(std::time::Duration::from_secs(3));
+            let _ = held.recv_timeout(std::time::Duration::from_secs(10));
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
         });
         running.recv().unwrap();
-        let took = save("x + 1");
-        let _ = busy.send(());
-        drop(save);
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        pool.install(|| ix.update_paths(&["a.py".into()], false).unwrap());
+        let busy = !ended.load(std::sync::atomic::Ordering::SeqCst);
+        let _ = release.send(());
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
-        // the wait it catches is the busy thread's 3 s; half of it fails too
-        assert!(took < alone + std::time::Duration::from_millis(1000), "waited {took:?}, {alone:?} with every thread free");
+        assert!(busy, "the update returned only once the busy thread was done");
     }
 
     /// The word caches a thread has not freed yet map a word to its stem and an identifier to
