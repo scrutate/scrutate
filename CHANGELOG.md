@@ -144,7 +144,7 @@ incompatible index by itself, and that is never breaking.
   the Scoop bucket repositories, with their test, bottle, autobump and Excavator workflows;
   INSTALL.md shows `brew trust --tap scrutate/tap`, which Homebrew 7 needs
   ([packaging](packaging/README.md)).
-- The `jetbrains` workflow runs the language server in a headless IntelliJ IDEA 2026.2.3 with
+- The `jetbrains` workflow runs the language server in a headless IntelliJ IDEA 2026.3 with
   LSP4IJ 0.21.0 from the Marketplace: it registers `scrutate lsp` with the values the Language
   Servers settings page saves and checks that Go to Declaration on the fixture repository opens
   `src/geo.py` at line 6. It runs when the JetBrains files change and by hand

@@ -775,16 +775,16 @@
   "step": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  },
- "jetbrains.yml:lsp4ij:90227c93ed": {
-  "step": "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
-  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
- },
  "jetbrains.yml:lsp4ij:99e059e37e": {
   "step": "Go to Declaration through LSP4IJ",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  },
  "jetbrains.yml:lsp4ij:304b923335": {
   "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:0bae9bf837": {
+  "step": "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  }
 }

@@ -13,7 +13,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        intellijIdea("2026.2.3")
+        intellijIdea("2026.3")
         // the LSP4IJ release from the Marketplace, as a user installs it
         plugin("com.redhat.devtools.lsp4ij:0.21.0")
         testFramework(TestFrameworkType.Platform)

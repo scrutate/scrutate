@@ -61,7 +61,7 @@ background.
 
 The `jetbrains` workflow (`.github/workflows/jetbrains.yml`) runs the test in `test/` on every
 change under `integrations/jetbrains/` or to the language server (`crates/scrutate/src/lsp.rs`), and by
-hand. It starts IntelliJ IDEA 2026.2.3 headless,
+hand. It starts IntelliJ IDEA 2026.3 headless,
 as the IntelliJ Platform's tests do, with LSP4IJ 0.21.0 from the Marketplace, and:
 
 1. opens the fixture repository below as a project whose only content root it is, so LSP4IJ
