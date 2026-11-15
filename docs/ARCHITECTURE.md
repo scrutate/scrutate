@@ -915,8 +915,9 @@ kind through the `chunks_kind` index; a part keeping more than an eighth of the 
 chunks first filters a search's candidates and narrows the pools only when fewer than `k` pass),
 drops the candidates it does not admit as their rows load, before features and the ranker, and
 widens the exact pool while fewer than `k` pass; symbol reads more definitions until enough pass; refs hands Engine A a walk
-narrowed to the files the globs and types can admit (`Compiled::walk`), then drops the
-definitions and occurrences outside the filter.
+narrowed to the files the globs and types can admit (`Compiled::walk`), then keeps the
+occurrences in the files the filter admits, each under its definition, and a definition outside
+the filter that heads some is marked so (`Resolved::outside`).
 
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
 the repository is small enough to index on the spot; otherwise identifier grep. `grep --index`

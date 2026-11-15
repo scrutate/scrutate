@@ -2521,6 +2521,8 @@ pub struct Resolved {
     /// by overloaded definition: the first of its overloads, which stands for them all where the
     /// arguments of a call do not pick one
     pub(crate) first_overload: HashMap<i64, i64>,
+    /// definitions a filter leaves out that head the occurrences it keeps
+    pub outside: std::collections::HashSet<i64>,
 }
 
 impl Resolved {
@@ -2553,7 +2555,8 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
     let mut out = String::new();
     for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
         let occ: Vec<&Occurrence> = r.of(d.id).collect();
-        out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references)\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname), occ.len()));
+        let outside = if r.outside.contains(&d.id) { "  (outside the filter)" } else { "" };
+        out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references){outside}\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname), occ.len()));
         for o in occ {
             let mark = match o.resolution {
                 Ok((_, how)) if how.starts_with("by name") => format!("  ({how})"),

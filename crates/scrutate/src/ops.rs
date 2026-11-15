@@ -1185,15 +1185,18 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
         Op::Refs { name, max_results, def, .. } => {
             let name = &name.trim().to_string();
             let mut refs = Names::new(s)?.references_in(name, *max_results, Some(f))?;
-            refs.definitions.retain(|d| f.admits(&d.path, &d.kind));
-            let kept: std::collections::HashSet<i64> = refs.definitions.iter().map(|d| d.id).collect();
-            // with kinds, an occurrence counts only where it resolves to a definition kept
-            refs.occurrences.retain(|o| f.admits_path(&o.path) && (!f.has_kinds() || matches!(o.resolution, Ok((id, _)) if kept.contains(&id))));
-            refs.notes.retain(|(p, _)| f.admits_path(p));
+            // the definition --def names is found whatever the file filters keep
             let only = match def {
                 Some(spec) => Some(definition_at(s, &refs, name, spec)?),
                 None => None,
             };
+            // the file filters pick occurrences by their own file; a kind picks the definitions
+            let by_kind: std::collections::HashSet<i64> = refs.definitions.iter().filter(|d| f.admits_kind(&d.kind)).map(|d| d.id).collect();
+            refs.occurrences.retain(|o| f.admits_path(&o.path) && (!f.has_kinds() || matches!(o.resolution, Ok((id, _)) if by_kind.contains(&id))));
+            let used: std::collections::HashSet<i64> = refs.occurrences.iter().filter_map(|o| o.resolution.as_ref().ok().map(|r| r.0)).collect();
+            refs.definitions.retain(|d| by_kind.contains(&d.id) && (f.admits_path(&d.path) || used.contains(&d.id) || only == Some(d.id)));
+            refs.outside = refs.definitions.iter().filter(|d| !f.admits_path(&d.path)).map(|d| d.id).collect();
+            refs.notes.retain(|(p, _)| f.admits_path(p));
             Answer::Resolved { name: name.clone(), refs, only, max_results: *max_results }
         }
         _ => bail!("only search, symbol and refs take a filter"),
@@ -1348,7 +1351,8 @@ fn resolved_brief(r: &Resolved, only: Option<i64>) -> Vec<Vec<Brief>> {
     let mut out = Vec::new();
     for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
         let occ: Vec<_> = r.of(d.id).collect();
-        out.push(vec![Brief::at(&d.path, d.start, d.end, &format!("{} ({} references)", named(&d.qualname), occ.len()))]);
+        let outside = if r.outside.contains(&d.id) { ", outside the filter" } else { "" };
+        out.push(vec![Brief::at(&d.path, d.start, d.end, &format!("{} ({} references{outside})", named(&d.qualname), occ.len()))]);
         out.extend(occ.into_iter().map(occurrence));
     }
     let unresolved: Vec<_> = r.unresolved().collect();
@@ -2523,10 +2527,16 @@ impl Answer {
                     |o: &crate::resolve::Occurrence| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "via": o.resolution.ok().map(|x| x.1)}));
                 let mut v = json!({
                     "name": name,
-                    "definitions": refs.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)).map(|c| json!({
-                        "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname,
-                        "references": refs.of(c.id).map(occurrence).collect::<Vec<_>>(),
-                    })).collect::<Vec<_>>(),
+                    "definitions": refs.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)).map(|c| {
+                        let mut d = json!({
+                            "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname,
+                            "references": refs.of(c.id).map(occurrence).collect::<Vec<_>>(),
+                        });
+                        if refs.outside.contains(&c.id) {
+                            d["outside_filter"] = json!(true);
+                        }
+                        d
+                    }).collect::<Vec<_>>(),
                     "truncated": refs.truncated,
                 });
                 if only.is_none() {

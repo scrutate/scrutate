@@ -285,3 +285,55 @@ fn a_custom_language_is_a_language_filter_too() {
     let u = Repo::unindexed("custom_mcp", &files);
     assert_eq!(paths(&mcp(&u.root, "find_symbol", json!({"name": "alpha", "langs": ["mylang"]}))), ["a.myl"]);
 }
+
+fn configs(indexed: bool, name: &str) -> Repo {
+    let files = [
+        ("py/pkg/geo.py", "def parse_config(text):\n    return text.split()\n".to_string()),
+        ("py/pkg/klass.py", "class parse_config:\n    pass\n\n\ndef make():\n    return parse_config()\n".to_string()),
+        ("tests/test_geo.py", "from py.pkg.geo import parse_config\n\n\ndef test_parse():\n    assert parse_config('a b') == ['a', 'b']\n".to_string()),
+        ("src/app.py", "from py.pkg.geo import parse_config\n\n\ndef main(t):\n    return parse_config(t)\n".to_string()),
+        ("js/geo.js", "function parse_config(t) {\n  return t;\n}\nmodule.exports = { parse_config };\n".to_string()),
+        ("js/use.js", "const { parse_config } = require('./geo');\nfunction run(t) {\n  return parse_config(t);\n}\n".to_string()),
+    ];
+    if indexed {
+        Repo::new(name, &files)
+    } else {
+        Repo::unindexed(name, &files)
+    }
+}
+
+/// (path, outside_filter) of each definition, and the paths of the occurrences under them.
+fn heads(v: &Value) -> (Vec<(String, bool)>, Vec<String>) {
+    let defs = v["definitions"].as_array().unwrap_or_else(|| panic!("{v}"));
+    let mut d: Vec<(String, bool)> = defs.iter().map(|d| (d["path"].as_str().unwrap().to_string(), d["outside_filter"].as_bool().unwrap_or(false))).collect();
+    d.sort();
+    let mut o: Vec<String> =
+        defs.iter().flat_map(|d| d["references"].as_array().into_iter().flatten()).map(|r| r["path"].as_str().unwrap().to_string()).collect();
+    o.sort();
+    o.dedup();
+    (d, o)
+}
+
+#[test]
+fn refs_keep_the_occurrences_in_the_files_a_filter_names_under_their_definitions() {
+    let r = configs(true, "refs_files");
+    // a definition outside the glob heads its uses inside it
+    let (defs, occ) = heads(&r.json(&["refs", "parse_config", "-g", "tests/**"]));
+    assert_eq!(occ, ["tests/test_geo.py"], "{defs:?}");
+    assert_eq!(defs, [("py/pkg/geo.py".to_string(), true)]);
+    // --def names a definition whatever the file filters keep
+    let (defs, occ) = heads(&r.json(&["refs", "parse_config", "-g", "tests/**", "--def", "py/pkg/geo.py"]));
+    assert_eq!((defs.len(), occ), (1, vec!["tests/test_geo.py".to_string()]));
+    let (_, occ) = heads(&r.json(&["refs", "parse_config", "-t", "js"]));
+    assert_eq!(occ, ["js/geo.js", "js/use.js"]);
+    let (defs, occ) = heads(&r.json(&["refs", "parse_config", "--lang", "python", "-g", "src/**"]));
+    assert_eq!(occ, ["src/app.py"], "{defs:?}");
+    // a kind keeps the definitions of that kind and their uses
+    let (defs, occ) = heads(&r.json(&["refs", "parse_config", "--kind", "class"]));
+    assert_eq!(defs, [("py/pkg/klass.py".to_string(), false)]);
+    assert_eq!(occ, ["py/pkg/klass.py"]);
+    assert!(r.ok(&["refs", "parse_config", "-g", "tests/**"]).contains("(outside the filter)"));
+    let u = configs(false, "refs_mcp");
+    let (defs, occ) = heads(&mcp(&u.root, "references", json!({"name": "parse_config", "globs": ["tests/**"]})));
+    assert_eq!((defs, occ), (vec![("py/pkg/geo.py".to_string(), true)], vec!["tests/test_geo.py".to_string()]));
+}

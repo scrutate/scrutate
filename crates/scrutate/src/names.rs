@@ -222,7 +222,7 @@ impl<'a> Names<'a> {
                 }
             }
         }
-        Ok(Resolved { definitions, occurrences, truncated, notes, first_overload })
+        Ok(Resolved { definitions, occurrences, truncated, notes, first_overload, outside: Default::default() })
     }
 
     /// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.

@@ -305,7 +305,10 @@ definitions or fewer draws the lexical and semantic candidates from those alone,
 one filters a first search's candidates, then draws them from what it keeps when too few pass. A
 kind no definition has, or a filter that keeps no file, answers at once. `symbol` reads more definitions until `--limit` pass. `refs`
 walks only the files the globs and types (or, with no type, the languages' file names) admit, so
-`--max-results` counts only those.
+`--max-results` counts only those; its file filters pick each occurrence by its own file, and a
+definition outside them heads the occurrences they keep, marked `(outside the filter)`
+(`outside_filter` in the JSON). `--kind` picks the definitions, and `--def` names one whatever
+the file filters keep.
 
 The code index holds every file the ignore rules let through, hidden files included, except:
 
