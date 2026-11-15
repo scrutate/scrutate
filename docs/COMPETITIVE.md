@@ -144,7 +144,11 @@ Kept running as servers, both rivals answer faster than Scrutate's process per q
 Linux box (AMD EPYC-Milan, 16 GB) with the Linux tree and the 20 queries of `bench/yardstick.py`
 W3, livegrep's server answered 16 (HTTP 500 on two common literals, a phrase and a multiple-literal
 query) in 12.6 ms median. On those 16, zoekt-webserver took 13.2 ms and `scrutate --index` 17.9 ms;
-on all 20, zoekt-webserver took 36 ms and `scrutate --index` 24.3 ms.
+on all 20, zoekt-webserver took 36 ms and `scrutate --index` 24.3 ms. Scrutate's own server, the MCP
+`grep_code` tool, answered 4 of the 20 (two literals and two queries that match nothing) in 1,260 ms
+median, where on the same 4 `scrutate --index` took 7.6 ms, zoekt-webserver 1.4 ms and livegrep
+2.0 ms. The other 16 have more than the 5,000 lines `grep_code` returns, so they were not timed. In
+that run each `grep_code` call walked the whole tree before it searched.
 
 ## 4. Against "nothing": the code-intelligence engine
 

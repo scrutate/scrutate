@@ -173,7 +173,9 @@ index leads Zoekt and livegrep on all 8 indexed metrics.
 
 Kept running as servers, livegrep and Zoekt answer faster than that process per query: 12.6 and
 13.2 ms median against 17.9 ms for `scrutate --index`, on a 4-CPU Linux box and the 16 Linux-tree
-queries all three answered ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
+queries all three answered. In the same run Scrutate's own MCP server answered 4 of the 20, in
+1,260 ms median against 7.6 ms for `scrutate --index` on those 4; the other 16 pass the 5,000 lines
+its `grep_code` returns ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
 
 More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md), [docs/dashboard.html](docs/dashboard.html),
 [docs/COMPETITIVE.md](docs/COMPETITIVE.md) and [docs/QUALITY.md](docs/QUALITY.md) (see
