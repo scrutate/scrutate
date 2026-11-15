@@ -41,10 +41,14 @@ incompatible index by itself, and that is never breaking.
   return with `[redacted:KIND]`, its name or armour kept, in both response forms and in a
   structural search capture of a value alone, and say how many they redacted; a key's body lines
   are recorded in the text index by their hash, so any answer that shows one has it redacted. The
-  detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,
-  Google, OpenAI, Anthropic, npm, PyPI, JWT, Twilio, SendGrid, Mailgun, database URLs, private
-  keys, `.env` lines, quoted passwords, URL passwords, bearer tokens, HTTP Basic credentials and a
-  generic assignment rule). `SCRUTATE_REDACT=off`
+  detectors are ports of gitleaks and secretlint rules and scrutate's own, one kind each: AWS
+  access key ids and secret keys, GitHub tokens (classic and fine-grained), GitLab tokens, Slack
+  tokens and webhooks, Stripe keys, Google API keys, OpenAI and Anthropic keys, npm and PyPI
+  tokens, JWTs, Twilio, SendGrid and Mailgun keys, database URL passwords, a token as a URL's
+  user, other URL passwords, `Bearer` and `Authorization: Token` tokens, `curl -u` passwords,
+  HTTP Basic credentials, `.env` lines, quoted passwords, a key's base64 body read without its
+  armour, a generic assignment rule, and private keys ([the table](docs/SECURITY.md#secrets-in-answers)).
+  `SCRUTATE_REDACT=off`
   turns it off and `on` turns it on for the CLI's index answers
   ([Security](docs/SECURITY.md#secrets-in-answers)).
 - Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a
