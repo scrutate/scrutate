@@ -9,7 +9,9 @@ exit status 0 when every case agrees; the first disagreement is printed with a r
 Both tools are run with equivalent flags (line numbers, no colour, same case rules, same word
 semantics, multiline when the pattern contains a newline escape) and no path, so both search the
 current directory: a case whose filters leave no file is exit 2 with a note for both, where a `.`
-given to one of them alone would make it exit 1. Known, documented semantic
+given to one of them alone would make it exit 1. Two exit codes of 2 agree only when both tools
+give the same reason (no file searched, or a bad pattern); a panic beside the other's note is a
+disagreement. Known, documented semantic
 differences are excluded from the generator rather than tolerated in the comparison.
 
 Each corpus is a git repository, so both tools apply its .gitignore; a quarter of the cases add a
@@ -178,9 +180,34 @@ def random_pattern(rng: random.Random, lines: list[str]) -> tuple[str, list[str]
     return pat, [], [], "regex"
 
 
-def run_json(cmd: list[str], cwd: str, env: dict | None = None) -> tuple[int, bytes]:
+def run_err(cmd: list[str], cwd: str, env: dict | None = None) -> tuple[int, bytes, bytes]:
     r = subprocess.run(cmd, cwd=cwd, env={**os.environ, **(env or {})}, capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
-    return r.returncode, r.stdout
+    return r.returncode, r.stdout, r.stderr
+
+
+def run_json(cmd: list[str], cwd: str, env: dict | None = None) -> tuple[int, bytes]:
+    rc, out, _ = run_err(cmd, cwd, env)
+    return rc, out
+
+
+def reason(err: bytes) -> str | None:
+    """Why a tool exited 2, when it is a reason both tools give: no file searched, or a bad pattern."""
+    e = err.lower()
+    if b"no files were searched" in e:
+        return "no file searched"
+    if any(k in e for k in (b"regex parse error", b"error compiling pattern", b"invalid pattern")):
+        return "bad pattern"
+    return None
+
+
+def exits_differ(pat: str, mode: str, env: dict, root: str, rc1: int, e1: bytes, rc2: int, e2: bytes) -> str | None:
+    """None when both exit codes say the same: 0 or 1 each, or 2 for the same reason; else why not."""
+    if rc1 in (0, 1) and rc2 in (0, 1):
+        return None
+    if rc1 == 2 and rc2 == 2 and reason(e1) is not None and reason(e1) == reason(e2):
+        return None
+    first = lambda e: e.decode("utf-8", "replace").strip().splitlines()[:1] or [""]  # noqa: E731
+    return f"exit codes differ for {pat!r} ({mode}, {shown(env)}): scrutate={rc1} ({first(e1)[0]!r}) rg={rc2} ({first(e2)[0]!r}) (corpus {root})"
 
 
 def late_nul(root: str) -> list[str]:
@@ -196,24 +223,35 @@ def late_nul(root: str) -> list[str]:
     return out
 
 
-def searched_none(cmd: list[str], cwd: str) -> bool:
-    """Whether rg's run of `cmd` in `cwd`, which exited 2, searched no file: rg says so only without
-    --no-messages, and a read error exits 2 as well (--json prints a summary either way)."""
+def searched_none(cmd: list[str], cwd: str, err: bytes) -> bool:
+    """Whether rg's run of `cmd` in `cwd`, which exited 2 writing `err`, searched no file. rg says so
+    only without --no-messages, so a run with it is asked again; a read error exits 2 as well, and
+    --json prints a summary either way."""
+    if b"No files were searched" in err:
+        return True
+    if "--no-messages" not in cmd:
+        return False
     r = subprocess.run([x for x in cmd if x != "--no-messages"], cwd=cwd, capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
     return r.returncode == 2 and b"No files were searched" in r.stderr
 
 
-def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False) -> tuple[int, bytes]:
+def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False, errors: list | None = None) -> tuple[int, bytes]:
     """`cmd` (rg, its flags, then PATTERN), with each file of `late` answered as rg answers
     it searched alone, with a fresh buffer: scrutate's rule, which no walk order can change. The
-    rest is rg's run without those files. `by_path`: put the output back in path order (`--sort`)."""
+    rest is rg's run without those files. `by_path`: put the output back in path order (`--sort`).
+    `errors`, when given, collects what each run whose exit code counts wrote to stderr (all of
+    them when none searched a file), so a reason read from it is the combined exit code's."""
     if not late:
-        return run_json(cmd, root)
-    rest = [*cmd[:-1], *(x for rel in late for x in ("-g", "!/" + rel)), cmd[-1]]
-    rc, out = run_json(rest, root)
+        rc, out, err = run_err(cmd, root)
+        if errors is not None:
+            errors.append(err)
+        return rc, out
     # one rg over the tree exits as its searched parts do: 2 on an error even beside a match (rg
     # without -q), else 0 on a match, else 1; a part that searched no file (all late) adds nothing
-    codes = [] if rc == 2 and searched_none(rest, root) else [rc]
+    runs: list[tuple[int, bytes, bool]] = []
+    rest = [*cmd[:-1], *(x for rel in late for x in ("-g", "!/" + rel)), cmd[-1]]
+    rc, out, err = run_err(rest, root)
+    runs.append((rc, err, rc == 2 and searched_none(rest, root, err)))
     parts = [out]
     for rel in late:
         with tempfile.TemporaryDirectory() as t:
@@ -228,11 +266,14 @@ def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False) ->
                         shutil.copy2(src, dst)
             if os.path.isdir(os.path.join(root, ".git")):
                 os.makedirs(os.path.join(t, ".git"), exist_ok=True)
-            rc1, o1 = run_json(cmd, t)
-            if not (rc1 == 2 and searched_none(cmd, t)):
-                codes.append(rc1)
+            rc1, o1, e1 = run_err(cmd, t)
+            runs.append((rc1, e1, rc1 == 2 and searched_none(cmd, t, e1)))
         parts.append(o1)
+    counted = [(c, e) for c, e, none in runs if not none]
+    codes = [c for c, _ in counted]
     rc = 2 if 2 in codes or not codes else 0 if 0 in codes else 1
+    if errors is not None:
+        errors.extend([e for _, e in counted] if counted else [e for _, e, _ in runs])
     if not by_path:
         return rc, b"".join(parts)
     groups: dict[bytes, list[bytes]] = {}
@@ -328,20 +369,22 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
         late = late_nul(root)
         if mode == "multiline":
             # rg's -U with --json reports multi-line matches as one record spanning lines; compare counts of files instead
-            rc2, o2 = run_rg([RG, "--no-messages", "-l", *rf, pat], root, late)
+            e2: list[bytes] = []
+            rc2, o2 = run_rg([RG, "-l", *rf, pat], root, late, errors=e2)
             b = sorted(l.decode()[2:] if l.startswith(b"./") else l.decode() for l in o2.splitlines())
             stats["empty"] += not b
             for env in envs:
-                rc1, o1 = run_json([SCRUTATE, "grep", "-l", *sf, pat], root, env)
-                if rc1 not in (0, 1) or rc2 not in (0, 1):
-                    if rc1 == 2 and rc2 == 2:
-                        return None  # both reject the pattern, or both searched no file
-                    return f"exit codes differ for {pat!r} ({mode}, {shown(env)}): scrutate={rc1} rg={rc2} (corpus {root})"
+                rc1, o1, e1 = run_err([SCRUTATE, "grep", "-l", *sf, pat], root, env)
+                if why := exits_differ(pat, mode, env, root, rc1, e1, rc2, b"".join(e2)):
+                    return why
+                if rc1 == 2:
+                    return None  # both reject the pattern, or both searched no file
                 a = sorted(l.decode() for l in o1.splitlines())
                 if a != b:
                     return f"multiline -l mismatch for {pat!r} ({shown(env)}): scrutate={a} rg={b} (corpus {root})"
             return indexed_agrees(rng, root, pat, sf, mode)
-        rc2, o2 = run_rg([RG, "--json", "--no-messages", *rf, pat], root, late)
+        e2: list[bytes] = []
+        rc2, o2 = run_rg([RG, "--json", *rf, pat], root, late, errors=e2)
         b = rg_matches(o2)
         stats["empty"] += not b
         rc2c, o2c = run_rg([RG, "--no-messages", "-c", *rf, pat], root, late)
@@ -352,11 +395,11 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 p = p.decode()
                 cb[p[2:] if p.startswith("./") else p] = int(n)
         for env in envs:
-            rc1, o1 = run_json([SCRUTATE, "grep", "--json", *sf, pat], root, env)
-            if rc1 not in (0, 1) or rc2 not in (0, 1):
-                if rc1 == 2 and rc2 == 2:
-                    return None  # both reject the pattern, or both searched no file
-                return f"exit codes differ for {pat!r} ({mode}, {shown(env)}): scrutate={rc1} rg={rc2} (corpus {root})"
+            rc1, o1, e1 = run_err([SCRUTATE, "grep", "--json", *sf, pat], root, env)
+            if why := exits_differ(pat, mode, env, root, rc1, e1, rc2, b"".join(e2)):
+                return why
+            if rc1 == 2:
+                return None  # both reject the pattern, or both searched no file
             a = scrutate_matches(o1)
             if a != b:
                 only_a = sorted(a - b)[:3]
