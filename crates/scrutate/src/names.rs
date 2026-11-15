@@ -114,8 +114,13 @@ impl<'a> Names<'a> {
                 let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
                 let folds = !any_case || self.langs.folds(&h.path, "function");
                 let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
+                let lang = self.langs.id(&h.path);
                 for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
                     let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
+                    // `foo` in `foo'`, `init` in `$init`: part of another name of the file's language
+                    if lang.is_some_and(|l| crate::ident::inside_name(l, &h.text, da, db)) {
+                        continue;
+                    }
                     // the occurrence as this file spells it
                     let resolution = self.tie(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare)).resolution();
                     occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
@@ -264,7 +269,14 @@ impl<'a> Names<'a> {
         let src = &self.rv.file(path).src;
         let Some(text) = src.lines().nth((line.max(1) - 1) as usize) else { return false };
         let end = col + spelled.len();
-        end <= text.len() && crate::lsp::widen(text, col, end, path) == (col, end)
+        if end > text.len() {
+            return false;
+        }
+        let (a, b) = crate::lsp::widen(text, col, end, path);
+        // `x-y` is a subtraction in most languages: a wider name counts only when the index has
+        // it, as the language server takes it
+        let wider = ((a, b) != (col, end)).then(|| text[a..b].to_string());
+        wider.is_none_or(|w| self.s.ix.named(&w).is_ok_and(|d| d.is_empty()))
     }
 
     /// The by-name tie of a use of `spelled` on `line` of `path`, a file the resolver does not

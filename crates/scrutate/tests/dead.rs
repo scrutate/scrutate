@@ -423,3 +423,26 @@ fn a_method_named_with_its_owner_or_as_a_writer_is_used_where_it_is_called_or_as
     // the declaration in the class and the body name each other, and nothing else names them
     assert!(dead.contains(&"a.rb Box.size=".to_string()) && dead.contains(&"u.pas TFoo.Unused".to_string()), "{v:#}");
 }
+
+#[test]
+fn a_longer_name_of_the_language_is_no_use_of_the_shorter_one() {
+    // `foo'`, `push_item!` and `$init` are names of their own; `a != 2` is a use of `a`, and
+    // `\App\Models\User` of `User`
+    let r = Repo::new(
+        "name_chars",
+        &[
+            ("M.hs", "module M where\n\nfoo :: Int -> Int\nfoo x = x\n\nfoo' :: Int -> Int\nfoo' x = x + 1\n\nmain :: IO ()\nmain = print (foo' 1)\n"),
+            ("p.jl", "function push_item(xs)\n    xs\nend\n\nfunction push_item!(xs)\n    xs\nend\n\npush_item!([1])\n"),
+            ("a.js", "function init() {\n  return 1;\n}\n\nfunction $init() {\n  return 2;\n}\n\n$init();\n"),
+            ("User.php", "<?php\nnamespace App\\Models;\n\nclass User {\n}\n"),
+            ("use.php", "<?php\nfunction make() {\n  return new \\App\\Models\\User();\n}\nmake();\n"),
+            ("r.rb", "def a\n  1\nend\n\nputs(a != 2)\n"),
+        ],
+    );
+    let v = r.json(&["dead"]);
+    let dead = names(&v, "dead");
+    for gone in ["M.hs foo", "p.jl push_item", "a.js init"] {
+        assert!(dead.contains(&gone.to_string()), "{gone} is dead: {v}");
+    }
+    assert!(!dead.iter().any(|d| d == "r.rb a" || d.starts_with("User.php")), "{v}");
+}

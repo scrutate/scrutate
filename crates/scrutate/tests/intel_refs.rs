@@ -2269,3 +2269,27 @@ fn dupes_cut_near_pairs_after_ordering_them() {
     assert_eq!(dupe_paths(&fresh, &args), [["p1_a.py", "p1_b.py"]]);
     assert_eq!(dupe_paths(&churned, &args), [["p1_a.py", "p1_b.py"]], "an index brought up to date cuts as a fresh one");
 }
+
+#[test]
+fn a_longer_name_of_the_language_is_no_occurrence_of_the_shorter_one() {
+    // `foo'`, `push_item!` and `$init` are other names; Lua's `width-margin` is a subtraction, as
+    // the index holds no such name
+    let r = Repo::new(
+        "name_chars",
+        &[
+            ("M.hs", "module M where\n\nfoo :: Int -> Int\nfoo x = x\n\nfoo' :: Int -> Int\nfoo' x = x + 1\n\nmain :: IO ()\nmain = print (foo' 1)\n"),
+            ("p.jl", "function push_item(xs)\n    xs\nend\n\nfunction push_item!(xs)\n    xs\nend\n\npush_item!([1])\n"),
+            ("a.js", "function init() {\n  return 1;\n}\n\nfunction $init() {\n  return 2;\n}\n\n$init();\n"),
+            ("w.lua", "function width()\n  return 3\nend\n\nlocal margin = 1\nlocal f = width-margin\nreturn width()\n"),
+        ],
+    );
+    r.index();
+    let at = |name: &str, want: &[(&str, &str)]| {
+        let want: Vec<(String, String)> = want.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        assert_eq!(r.resolved(name), want, "{name}");
+    };
+    at("foo", &[("M.hs:3", "M.hs"), ("M.hs:4", "M.hs")]);
+    at("push_item", &[("p.jl:1", "p.jl")]);
+    at("init", &[("a.js:1", "a.js")]);
+    at("width", &[("w.lua:1", "w.lua"), ("w.lua:6", "w.lua"), ("w.lua:7", "w.lua")]);
+}

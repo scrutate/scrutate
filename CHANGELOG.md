@@ -316,6 +316,10 @@ incompatible index by itself, and that is never breaking.
 - `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
   fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
   row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
+- `dead` and `refs` read a name as its file's language writes it: `foo'` in Haskell, `$init` in
+  JavaScript and `push!` in Julia are other names, so an unused `foo`, `init` or `push` is dead
+  and `refs` no longer lists the longer name's lines as its unresolved uses. Lua's `width-margin`
+  is a use of `width` where no definition has that name ([CLI](docs/CLI.md#engine-b)).
 - `impact` lists a caller of a deleted definition that calls it through an import alias
   (`from util import helper as h`, JavaScript `import { helper as h }`) or, where names ignore
   case, in another case (PHP `dothing()` for a deleted `DoThing`), as `callers` does for a live

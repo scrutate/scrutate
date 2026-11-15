@@ -99,7 +99,8 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
                 return (Vec::new(), Vec::new(), big);
             };
             let Some(src) = crate::index::decode_source(&raw) else { return (Vec::new(), Vec::new(), false) };
-            let found = occurrences(&src, &name_ids, &writer_ids, &folded, &odd, &odd_finder);
+            let lang = crate::langs::detect_at(root, rel).map(|l| l.id);
+            let found = occurrences(&src, lang, &name_ids, &writer_ids, &folded, &odd, &odd_finder);
             let mine: Vec<&Symbol> = by_file
                 .get(rel.as_str())
                 .map(|v| v.iter().copied().filter(|s| KINDS.contains(&s.kind.as_str()) && inside(&s.path)).collect())
@@ -215,6 +216,7 @@ const RUBY_HOOKS: [&str; 30] = [
 /// The (name, 1-based line) of every whole-word occurrence in `src` of a name of `names`.
 fn occurrences(
     src: &str,
+    lang: Option<&str>,
     names: &HashMap<&str, u32>,
     writers: &HashMap<&str, u32>,
     folded: &HashMap<String, Vec<u32>>,
@@ -237,13 +239,18 @@ fn occurrences(
             out.extend(folded.get(&w.to_ascii_lowercase()).into_iter().flatten().filter(|&&n| hit != Some(n)).map(|&n| (n, line)));
         }
     };
+    // a word is the name the file's language writes: `foo'`, `$init` and `push!` are names of
+    // their own (`ident::inside_name`)
+    let joins = |c: char| lang.map_or(word_char(c), |l| crate::ident::joins(l, c));
+    let marks = lang.map_or("", crate::ident::trailing);
     for (i, c) in src.char_indices() {
-        if word_char(c) {
+        if joins(c) {
             start.get_or_insert(i);
             continue;
         }
         if let Some(s) = start.take() {
-            flush(s, i, line, &mut out);
+            let mark = marks.contains(c) && !src[i + 1..].starts_with(['=', '~']);
+            flush(s, if mark { i + 1 } else { i }, line, &mut out);
         }
         if c == '\n' {
             line += 1;
@@ -253,9 +260,13 @@ fn occurrences(
         flush(s, src.len(), line, &mut out);
     }
     if !odd.is_empty() {
-        let ident = |c: Option<char>| c.is_some_and(word_char);
         for m in odd_finder.find_overlapping_iter(src) {
-            if ident(src[..m.start()].chars().next_back()) || ident(src[m.end()..].chars().next()) {
+            let (a, b) = (m.start(), m.end());
+            let inside = match lang {
+                Some(l) => crate::ident::inside_name(l, src, a, b),
+                None => src[..a].chars().next_back().is_some_and(word_char) || src[b..].chars().next().is_some_and(word_char),
+            };
+            if inside {
                 continue;
             }
             let line = 1 + src.as_bytes()[..m.start()].iter().filter(|&&b| b == b'\n').count() as i64;
@@ -548,7 +559,7 @@ mod tests {
         all.insert("valid?", 2);
         let finder = aho_corasick::AhoCorasick::new(odd).unwrap();
         let src = "run()\nrerun run_it $run\ncafe\u{301} x.valid? valid?x\n";
-        assert_eq!(occurrences(src, &all, &HashMap::new(), &HashMap::new(), &odd, &finder), [(0, 1), (0, 2), (1, 3), (2, 3)]);
+        assert_eq!(occurrences(src, None, &all, &HashMap::new(), &HashMap::new(), &odd, &finder), [(0, 1), (0, 2), (1, 3), (2, 3)]);
     }
 
     #[test]

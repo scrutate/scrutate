@@ -28,6 +28,37 @@ pub fn is_continue_in(lang: &str, c: char) -> bool {
     is_continue(c) || extra(lang).contains(c)
 }
 
+/// The marks a name of the language may end with: Ruby's `valid?`, Julia's `push!`.
+pub fn trailing(lang: &str) -> &'static str {
+    match lang {
+        "ruby" | "elixir" => "?!",
+        "julia" => "!",
+        _ => "",
+    }
+}
+
+/// Whether `c` beside a name makes a longer name of it in the language: `'` in Haskell, `$` in
+/// JavaScript. PHP's `$` is a variable's sigil (`$current` is `current`) and its `\` joins the
+/// parts of a qualified name, each a name of its own.
+pub fn joins(lang: &str, c: char) -> bool {
+    !(lang == "php" && (c == '$' || c == '\\')) && is_continue_in(lang, c)
+}
+
+/// Whether `text[a..b]` is part of a longer name of the language at either end (`joins`): `foo`
+/// in `foo'`, `init` in `$init`, `valid` in `valid?`. A mark before `=` or `~` is an operator
+/// (`a != b`).
+pub fn inside_name(lang: &str, text: &str, a: usize, b: usize) -> bool {
+    let joins = |c: char| joins(lang, c);
+    let (Some(before), Some(rest)) = (text.get(..a), text.get(b..)) else { return false };
+    let mut after = rest.chars();
+    before.chars().next_back().is_some_and(joins)
+        || match after.next() {
+            Some(c) if joins(c) => true,
+            Some(c) if trailing(lang).contains(c) => !after.next().is_some_and(|n| n == '=' || n == '~'),
+            _ => false,
+        }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +143,25 @@ mod tests {
             }
         }
         assert!(found.is_empty(), "use crate::ident in place of a hand-written name rule: {found:?}");
+    }
+
+    #[test]
+    fn a_name_inside_a_longer_one_is_told_apart_per_language() {
+        assert!(inside_name("haskell", "foo' 1", 0, 3) && !inside_name("python", "foo' 1", 0, 3));
+        assert!(inside_name("javascript", "$init()", 1, 5) && inside_name("julia", "push!(x)", 0, 4));
+        assert!(!inside_name("ruby", "a != b", 0, 1) && !inside_name("ruby", "a!=b", 0, 1) && inside_name("ruby", "a? b", 0, 1));
+        assert!(!inside_name("php", r"\App\User", 5, 9), "a part of a qualified name is a name");
+        assert!(!inside_name("php", "User::$current", 7, 14), "a sigil is not part of the name");
+    }
+
+    #[test]
+    fn the_trailing_marks_are_the_ones_the_name_rule_keeps() {
+        for lang in ["ruby", "elixir", "julia", "python", "haskell"] {
+            for mark in ['?', '!'] {
+                let kept = crate::parse::name_rule(lang).find(&format!("f{mark}")).is_some_and(|m| m.as_str().len() == 2);
+                assert_eq!(trailing(lang).contains(mark), kept, "{lang} {mark}");
+            }
+        }
     }
 
     #[test]
