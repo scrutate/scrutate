@@ -818,7 +818,8 @@ rev-parse` and `git merge-base` for the base commit, and one `git cat-file --bat
 copies (and, with `--staged`, the staged copies). `read --history` reads a definition's commits
 through it too: `git log -L start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first
 found there through `git diff -U0 HEAD -- path` when the file has uncommitted edits
-(`Git::at_head`). Every call passes `--no-optional-locks`,
+(`Git::at_head`); in a shallow clone the commits the history stops at (`Git::shallow_boundaries`)
+are marked as the cut, never as a change. Every call passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
 helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
 a commit id, which every later call uses. Git sees this process's environment, a relative

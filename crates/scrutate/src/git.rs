@@ -221,6 +221,16 @@ impl Git {
         Ok(entries)
     }
 
+    /// The commits a shallow clone's history stops at; none in a full clone.
+    pub(crate) fn shallow_boundaries(&self) -> Result<BTreeSet<String>> {
+        if self.run(&["rev-parse", "--is-shallow-repository"])?.trim_ascii() != b"true" {
+            return Ok(BTreeSet::new());
+        }
+        let at = String::from_utf8_lossy(&self.run(&["rev-parse", "--git-path", "shallow"])?).trim().to_string();
+        let file = std::fs::read_to_string(self.dir.join(at)).unwrap_or_default();
+        Ok(file.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+    }
+
     /// The version of git, as (major, minor).
     pub(crate) fn version(&self) -> Result<(u32, u32)> {
         let out = String::from_utf8_lossy(&self.run(&["--version"])?).into_owned();
@@ -266,7 +276,7 @@ impl Git {
             .filter_map(|line| line.strip_prefix(b"\x01"))
             .filter_map(|line| {
                 let mut parts = line.splitn(3, |&b| b == 0).map(|p| String::from_utf8_lossy(p).into_owned());
-                Some(Commit { id: parts.next()?, date: parts.next()?, subject: parts.next().unwrap_or_default() })
+                Some(Commit { id: parts.next()?, date: parts.next()?, subject: parts.next().unwrap_or_default(), boundary: false })
             })
             .collect();
         Ok((commits, stopped))
@@ -405,6 +415,8 @@ pub struct Commit {
     /// the author date, `YYYY-MM-DD`
     pub date: String,
     pub subject: String,
+    /// a shallow clone's boundary: git gives it every line older history changed
+    pub boundary: bool,
 }
 
 /// Where some lines of the working tree are in HEAD's copy of their file.

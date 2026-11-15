@@ -207,3 +207,26 @@ fn a_history_lookup_stops_at_its_bound_and_says_how_to_make_it_fast() {
     let note = def["history_note"].as_str().unwrap_or_default();
     assert!(note.contains("stopped after 5 s") && note.contains("git commit-graph write --reachable"), "{def}");
 }
+
+/// A clone of depth 1: git gives its one commit every line, which is no change of the definition.
+#[cfg(unix)]
+#[test]
+fn a_shallow_clone_marks_where_its_history_is_cut() {
+    let full = shaped("shallow_source");
+    let t = Tree::new("shallow");
+    let out = Command::new("git")
+        .args(["clone", "-q", "--depth", "1", &format!("file://{}", full.root.display()), t.root.to_str().unwrap()])
+        .envs(GIT_ENV)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let v = t.json(&["read", "--symbol", "g", "--history"]);
+    let def = &v["definitions"][0];
+    let history = def["history"].as_array().unwrap_or_else(|| panic!("{v}"));
+    assert_eq!(history.len(), 1, "{def}");
+    assert!(history[0]["cut"].as_str().is_some_and(|c| c.contains("shallow clone")) && history[0].get("subject").is_none(), "{def}");
+    assert!(def["history_note"].as_str().unwrap_or_default().starts_with("shallow clone: history before "), "{def}");
+    let text = t.ok(&["read", "--symbol", "g", "--history"]);
+    assert!(text.contains("(history cut here: shallow clone)") && !text.contains(" edit f again"), "{text}");
+}

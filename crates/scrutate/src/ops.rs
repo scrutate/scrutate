@@ -57,6 +57,8 @@ pub const HISTORY_GIT: (u32, u32) = (2, 25);
 /// How long one definition's history may take: `git log -L` walks its file's whole past.
 pub const HISTORY_SECONDS: u64 = 5;
 const HISTORY_STOPPED: &str = "history lookup stopped after 5 s on a long history; `git commit-graph write --reachable` makes it fast";
+/// What a shallow clone's boundary commit stands for in a history: not a change.
+const SHALLOW_CUT: &str = "(history cut here: shallow clone)";
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
 /// the 10,000 at which Codex cuts a tool result and Claude Code warns.
 pub const AGENT_BYTES: usize = 24_000;
@@ -1178,7 +1180,7 @@ pub struct Histories {
 pub struct History {
     pub commits: Vec<crate::git::Commit>,
     /// why there are none: the definition changed since HEAD, HEAD has no such file, or git failed
-    pub note: Option<&'static str>,
+    pub note: Option<String>,
 }
 
 impl History {
@@ -1187,9 +1189,12 @@ impl History {
         let mut out = Vec::new();
         if !self.commits.is_empty() {
             out.push("history:".to_string());
-            out.extend(self.commits.iter().map(|c| format!("  {} {} {}", c.id.get(..12).unwrap_or(&c.id), c.date, shown(&c.subject))));
+            out.extend(self.commits.iter().map(|c| {
+                let what = if c.boundary { SHALLOW_CUT.into() } else { shown(&c.subject) };
+                format!("  {} {} {what}", c.id.get(..12).unwrap_or(&c.id), c.date)
+            }));
         }
-        match self.note {
+        match &self.note {
             Some(note) => out.push(format!("(history: {note})")),
             None if self.commits.is_empty() => out.push("(history: no commit changed these lines)".to_string()),
             None => {}
@@ -1232,20 +1237,31 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
         Ok((a, b)) => return none(format!("git {a}.{b} is older than {}.{}, the oldest whose log -L this reads", HISTORY_GIT.0, HISTORY_GIT.1)),
         Err(e) => return none(e.to_string()),
     }
+    let cut = git.shallow_boundaries().unwrap_or_default();
+    let note = |n: &str| Some(n.to_string());
     let one = |r: &ChunkRow| match git.at_head(&r.path, r.start, r.end) {
         Ok(crate::git::AtHead::Lines(a, b)) => match git.line_log(&r.path, a, b, n, std::time::Duration::from_secs(HISTORY_SECONDS)) {
-            Ok((commits, false)) => History { commits, note: None },
-            Ok((commits, true)) => History { commits, note: Some(HISTORY_STOPPED) },
-            Err(_) => History { commits: Vec::new(), note: Some("git could not follow these lines") },
+            Ok((mut commits, stopped)) => {
+                let mut notes: Vec<String> = Vec::new();
+                for c in commits.iter_mut().filter(|c| cut.contains(&c.id)) {
+                    c.boundary = true;
+                    notes.push(format!("shallow clone: history before {} is not in this repository", c.id.get(..12).unwrap_or(&c.id)));
+                }
+                if stopped {
+                    notes.push(HISTORY_STOPPED.to_string());
+                }
+                History { commits, note: (!notes.is_empty()).then(|| notes.join("; ")) }
+            }
+            Err(_) => History { commits: Vec::new(), note: note("git could not follow these lines") },
         },
-        Ok(crate::git::AtHead::Changed) => History { commits: Vec::new(), note: Some("changed since HEAD") },
-        Ok(crate::git::AtHead::Absent) => History { commits: Vec::new(), note: Some("not in HEAD") },
-        Err(_) => History { commits: Vec::new(), note: Some("git could not read the file") },
+        Ok(crate::git::AtHead::Changed) => History { commits: Vec::new(), note: note("changed since HEAD") },
+        Ok(crate::git::AtHead::Absent) => History { commits: Vec::new(), note: note("not in HEAD") },
+        Err(_) => History { commits: Vec::new(), note: note("git could not read the file") },
     };
     // each history is a git of its own walking the file's past: they run at once
     let each = std::thread::scope(|sc| {
         let runs: Vec<_> = defs.iter().take(HISTORY_DEFINITIONS).map(|(r, ..)| sc.spawn(|| one(r))).collect();
-        runs.into_iter().map(|h| h.join().unwrap_or_else(|_| History { commits: Vec::new(), note: Some("git could not follow these lines") })).collect()
+        runs.into_iter().map(|h| h.join().unwrap_or_else(|_| History { commits: Vec::new(), note: note("git could not follow these lines") })).collect()
     });
     Histories { each, more, note: None }
 }
@@ -2612,8 +2628,12 @@ impl Answer {
                         let mut v = chunk_json(c);
                         v["text"] = json!(text);
                         if let Some(h) = histories.as_ref().and_then(|h| h.each.get(i)) {
-                            v["history"] = json!(h.commits.iter().map(|c| json!({"commit": c.id, "date": c.date, "subject": c.subject})).collect::<Vec<_>>());
-                            if let Some(note) = h.note {
+                            v["history"] = json!(h
+                                .commits
+                                .iter()
+                                .map(|c| if c.boundary { json!({"commit": c.id, "date": c.date, "cut": SHALLOW_CUT}) } else { json!({"commit": c.id, "date": c.date, "subject": c.subject}) })
+                                .collect::<Vec<_>>());
+                            if let Some(note) = &h.note {
                                 v["history_note"] = json!(note);
                             }
                         }

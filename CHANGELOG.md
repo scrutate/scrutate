@@ -26,7 +26,8 @@ incompatible index by itself, and that is never breaking.
   `SCRUTATE_HOOK_BASH=off` turns it off ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - `read --symbol NAME --history [N]` and the MCP `read_code` tool's `history` list the last
   commits that changed each definition's lines, newest first, through renames and uncommitted
-  edits, for the first 10 definitions shown; it needs git 2.25 or later.
+  edits, for the first 10 definitions shown; in a shallow clone it marks where the history is
+  cut. It needs git 2.25 or later.
 - `search`, `symbol` and `refs` keep the files a glob (`-g`) or a type (`-t`) names, the files
   parsed as a language (`--lang`) and the definitions of a kind (`--kind`), and the MCP tools
   `search_code`, `find_symbol` and `references` take the same as `globs`, `types`, `langs` and

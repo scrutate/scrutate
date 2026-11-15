@@ -72,7 +72,9 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 
 `impact` and `review` run the `git` program found on `PATH` (on Windows the current directory is
 not searched first) in the root: `rev-parse`, `merge-base`, `diff` (raw and `-U0`),
-`ls-files --others` and one `cat-file --batch`. `read --history` runs `--version`, `cat-file -e`,
+`ls-files --others` and one `cat-file --batch`. `read --history` runs `--version`, `rev-parse
+--is-shallow-repository` (and in a shallow clone `rev-parse --git-path shallow`, whose file of
+commit ids it reads), `cat-file -e`,
 `diff -U0 HEAD` with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of
 an indexed file, never a path the caller writes: inside `-L start,end:path`, `HEAD:./path` and
 after `--`, a path that starts with `-` or holds a colon reads as a path. Nothing in the repository names this program or
