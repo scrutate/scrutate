@@ -563,3 +563,34 @@ fn a_copy_from_a_repository_s_own_store_is_never_read_for_another_repository() {
     assert!(out.contains("real") && !out.contains("planted"), "{out}");
     assert_eq!(fs::read_dir(t.home.join("cache/deps/npm")).unwrap().count(), 2);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_cache_others_can_write_is_refused_and_one_left_open_is_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = Tree::new("cache_modes");
+    t.cargo_lock(&[("serde", "1.0.200")]);
+    t.cargo("serde", "1.0.200", "pub trait Deserialize {}\n");
+    // a cache root anyone may write to: another user could swap the copies in it
+    fs::create_dir_all(t.home.join("cache")).unwrap();
+    fs::set_permissions(t.home.join("cache"), fs::Permissions::from_mode(0o777)).unwrap();
+    let (code, _, err) = t.run(&["symbol", "--deps", "serde::Deserialize"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("refused") && err.contains("SCRUTATE_CACHE_DIR"), "{err}");
+    // directories that were there before, open to others, are made the user's alone
+    fs::set_permissions(t.home.join("cache"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::create_dir_all(t.home.join("cache/deps/cargo")).unwrap();
+    fs::set_permissions(t.home.join("cache/deps"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(t.home.join("cache/deps/cargo"), fs::Permissions::from_mode(0o755)).unwrap();
+    // a temporary directory a crash left behind, long ago
+    let stale = t.home.join("cache/deps/cargo/.tmp-1-1");
+    fs::create_dir_all(stale.join("src")).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(48 * 3600);
+    fs::File::open(&stale).unwrap().set_modified(old).unwrap();
+    let (code, out, err) = t.run(&["symbol", "--deps", "serde::Deserialize"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for d in ["cache/deps", "cache/deps/cargo"] {
+        assert_eq!(fs::metadata(t.home.join(d)).unwrap().permissions().mode() & 0o777, 0o700, "{d}");
+    }
+    assert!(!stale.exists(), "a stale temporary directory is removed");
+}

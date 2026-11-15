@@ -552,7 +552,10 @@ files its `RECORD` lists are copied, none that is a link or lies under one. A pa
 inside the root and refused when it is outside; one that names a drive, a share or a root (a `\`,
 a `:`, a leading `/`) is refused by its text before any file is looked at, so Windows never
 connects to a share a lockfile names. The package is copied to the user cache
-(`deps/` under `SCRUTATE_CACHE_DIR` or the platform's cache directory, mode 0700 on Unix): a
+(`deps/` under `SCRUTATE_CACHE_DIR` or the platform's cache directory; on Unix mode 0700, set
+also on directories that were there before, and a cache root that belongs to another user or that
+others may write to is refused, so no one else can swap a copy; on Windows under the user's own
+`%LOCALAPPDATA%`, which only that user can read by default): a
 linked file is copied only when it resolves inside the package, a linked directory is never
 followed, and a copy over 20,000 files or 256 MiB is refused with nothing kept. Its answers are
 redacted as the repository's are. A copy from a store the repository holds (`node_modules`,

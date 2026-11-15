@@ -585,6 +585,48 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
     }
 }
 
+/// The cache's `deps` directory, made the user's alone: the cache root must belong to the user and
+/// be writable by no one else, or another user could swap a copy for one of their own; a
+/// directory of the cache that is open to others is closed (Unix: mode 0700). On Windows the
+/// cache is under the user's own profile, whose access the system gives that user alone.
+fn deps_dir() -> Result<PathBuf> {
+    let root = cache_dir()?;
+    let deps = root.join("deps");
+    private_dirs(&deps)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let me = rustix::process::geteuid().as_raw();
+        let m = std::fs::metadata(&root)?;
+        if m.uid() != me || m.mode() & 0o022 != 0 {
+            bail!(
+                "refused: the cache {} belongs to another user or others may write to it: set SCRUTATE_CACHE_DIR to a directory of your own",
+                crate::fmt::echo(&root.to_string_lossy())
+            );
+        }
+        let m = std::fs::metadata(&deps)?;
+        if m.uid() != me {
+            bail!("refused: {} belongs to another user", crate::fmt::echo(&deps.to_string_lossy()));
+        }
+        if m.mode() & 0o077 != 0 {
+            std::fs::set_permissions(&deps, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(deps)
+}
+
+/// Temporary directories of copies that a crash left behind: none is younger than a day, and a
+/// copy is made in seconds.
+fn clear_stale(eco: &Path) {
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for e in std::fs::read_dir(eco).into_iter().flatten().flatten() {
+        let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
+        if old && e.file_name().to_string_lossy().starts_with(".tmp-") {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 fn private_dirs(dir: &Path) -> Result<()> {
     let mut b = std::fs::DirBuilder::new();
     b.recursive(true);
@@ -661,7 +703,7 @@ fn copy(l: &Locked, inst: &Installed, to: &Path, (max_files, max_bytes): (usize,
 /// too, so what one repository installed is never read for another; a copy from a user's store
 /// (the cargo registry, the Go module cache) is shared by every repository at that version.
 fn cached(l: &Locked, inst: &Installed, caps: (usize, u64), root: &Path) -> Result<PathBuf> {
-    let eco = cache_dir()?.join("deps").join(l.eco.key());
+    let eco = deps_dir()?.join(l.eco.key());
     let own = || {
         let k = crate::tscache::hash(&[root.to_string_lossy().as_bytes()]);
         k[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()
@@ -677,6 +719,14 @@ fn cached(l: &Locked, inst: &Installed, caps: (usize, u64), root: &Path) -> Resu
         return Ok(entry.join("src"));
     }
     private_dirs(&eco)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(&eco)?.permissions().mode() & 0o077 != 0 {
+            std::fs::set_permissions(&eco, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    clear_stale(&eco);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let tmp = eco.join(format!(".tmp-{}-{nanos}", std::process::id()));
     let made = (|| -> Result<()> {

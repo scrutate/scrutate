@@ -816,7 +816,9 @@ error when it is outside; one that names a drive, a share or a root (a `\`, a `:
 is refused by its text, with nothing looked at. A git or URL source is an error. A package is read once: its files are
 copied to `deps/ECO/NAME@VERSION/src` in the user cache (`SCRUTATE_CACHE_DIR`, else
 `$XDG_CACHE_HOME/scrutate`, `~/Library/Caches/scrutate` on macOS, `%LOCALAPPDATA%\scrutate` on
-Windows, `~/.cache/scrutate` elsewhere; directories of mode 0700), into a temporary directory
+Windows, `~/.cache/scrutate` elsewhere; on Unix its `deps` directories are mode 0700, and a cache
+root that belongs to another user or that others may write to is refused; a temporary directory
+a crash left is removed at the next new copy once it is a day old), into a temporary directory
 renamed into place, and indexed there once, without vectors: later calls read that index as it
 is. A copy from the cargo registry or the Go module cache is shared: another repository that pins
 the same version reads it, neither copying nor indexing it again, and its call costs about what a
