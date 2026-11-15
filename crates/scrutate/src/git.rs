@@ -678,6 +678,19 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
     }
 
     #[test]
+    fn head_lines_read_their_path_literally() {
+        let root = scratch("glob_path");
+        repo(&root);
+        commit_file(&root, "glob1.py", "def a():\n    return 1\n", "add glob1");
+        commit_file(&root, "glob[1].py", "def b():\n    return 2\n", "add glob[1]");
+        let git = Git::new(&root).unwrap();
+        // as a pattern, glob[1].py would name glob1.py, and its edit would mark the other file
+        std::fs::write(root.join("glob1.py"), "def a():\n    return 3\n").unwrap();
+        assert_eq!(git.at_head("glob[1].py", 1, 2).unwrap(), AtHead::Lines(1, 2));
+        assert_eq!(git.at_head("glob1.py", 1, 2).unwrap(), AtHead::Changed);
+    }
+
+    #[test]
     fn head_lines_follow_the_working_tree_through_uncommitted_edits() {
         let root = scratch("at_head");
         repo(&root);

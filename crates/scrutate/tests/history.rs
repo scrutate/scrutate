@@ -208,6 +208,41 @@ fn a_history_lookup_stops_at_its_bound_and_says_how_to_make_it_fast() {
     assert!(note.contains("stopped after 5 s") && note.contains("git commit-graph write --reachable"), "{def}");
 }
 
+/// A git on PATH that runs the real one, except as `case` says.
+#[cfg(unix)]
+fn fake_git(t: &Tree, case: &str) -> (std::path::PathBuf, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let real = String::from_utf8(Command::new("sh").args(["-c", "command -v git"]).output().unwrap().stdout).unwrap().trim().to_string();
+    let bin = t.root.with_extension("bin");
+    let _ = fs::remove_dir_all(&bin);
+    fs::create_dir_all(&bin).unwrap();
+    fs::write(bin.join("git"), format!("#!/bin/sh\ncase \" $* \" in {case} esac\nexec '{real}' \"$@\"\n")).unwrap();
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    (bin, path)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_git_older_than_the_floor_gives_no_history_and_says_why() {
+    let t = shaped("old_git");
+    let (bin, path) = fake_git(&t, "*\" --version \"*) echo 'git version 2.20.0'; exit 0;;");
+    let out = Command::new(BIN)
+        .args(["--root", t.root.to_str().unwrap(), "read", "--symbol", "f", "--history", "--json"])
+        .current_dir(&t.root)
+        .envs(GIT_ENV)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&bin);
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stderr)));
+    let note = v["result"]["history_note"].as_str().unwrap_or_default();
+    assert!(note.contains("git 2.20 is older than 2.25"), "{v}");
+    assert!(v["result"]["definitions"][0].get("history").is_none(), "{v}");
+}
+
 /// A clone of depth 1: git gives its one commit every line, which is no change of the definition.
 #[cfg(unix)]
 #[test]
