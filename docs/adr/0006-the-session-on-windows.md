@@ -34,13 +34,21 @@ path is also one path to test.
   canonical root, in hex. The SID in the hash keeps two users on one root apart; the name is not
   a secret and is not relied on for safety. Nothing is written to `.scrutate` on Windows.
 - **Owner only.** The pipe is created with a protected DACL of one entry, full access for the
-  current user's SID (SDDL `D:P(A;;GA;;;<sid>)`), so no other account can open it, and with
-  `PIPE_REJECT_REMOTE_CLIENTS`.
+  current user's SID and a mandatory label at the server's integrity level (SDDL
+  `D:P(A;;GA;;;<sid>)S:(ML;;NW;;;S-1-16-<level>)`), so no other account can open it and no lower
+  process write to it, and with `PIPE_REJECT_REMOTE_CLIENTS`.
 - **Both ends checked, as on Unix.** The server takes the client's process id from the pipe,
   opens that process's token and compares its user SID with its own; another user's process gets
   nothing, not even the greeting. The client does the same with the server's process id before it
   reads the greeting, so a pipe of the same name made first by another account (pipe squatting)
-  is passed over. The client opens the pipe with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`,
+  is passed over. The client also reads the pipe's label and drops a pipe below its own level
+  (the label stays with the pipe, where a process id can name another process by then), and it reads the server's integrity level and drops a server below its
+  own, or one whose token is restricted or an AppContainer one: a sandboxed process of the same
+  user that took the name first would otherwise see every request and forge every answer (a test
+  shows it on Windows: without the check the client takes the forged answer of a Low copy of
+  itself that made the name first). What
+  stays trusted: any process of the same user at the client's level or above, an elevated one
+  included, as any such process could read the repository and run scrutate itself. The client opens the pipe with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`,
   so a server can learn who the caller is but never act as the caller.
 - **First server wins.** The first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`. A
   second `serve` on the root, or anything that holds the name already, makes that create fail, and

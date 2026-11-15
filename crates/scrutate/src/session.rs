@@ -1156,8 +1156,14 @@ mod windows {
         GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
         GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
     };
-    use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
-    use windows_sys::Win32::Security::{GetLengthSid, GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1, SE_KERNEL_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetAce, GetLengthSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsTokenRestricted, TokenIntegrityLevel, TokenIsAppContainer,
+        TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SYSTEM_MANDATORY_LABEL_ACE, TOKEN_MANDATORY_LABEL,
+        TOKEN_QUERY, TOKEN_USER,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
         SECURITY_SQOS_PRESENT,
@@ -1177,36 +1183,96 @@ mod windows {
         s.encode_utf16().chain([0]).collect()
     }
 
-    /// The user SID of a process's token, as bytes.
-    fn user_of(process: HANDLE) -> Option<Vec<u8>> {
+    /// What a process's token says of it: its user's SID (as bytes), its integrity level (the
+    /// RID of its mandatory label: 0x1000 Low, 0x2000 Medium, 0x3000 High) and whether it is
+    /// restricted or an AppContainer one.
+    struct Peer {
+        user: Vec<u8>,
+        integrity: u32,
+        sandboxed: bool,
+    }
+
+    fn peer_of(process: HANDLE) -> Option<Peer> {
         let mut token: HANDLE = null_mut();
         if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
             return None;
         }
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
-        // a TOKEN_USER and the SID it points into (at most 68 bytes), 8-byte aligned
+        let t = token.as_raw_handle();
+        // a TOKEN_USER or TOKEN_MANDATORY_LABEL and the SID it points into (at most 68 bytes), 8-byte aligned
         let mut buf = [0u64; 64];
         let mut len = 0u32;
         let size = std::mem::size_of_val(&buf) as u32;
-        if unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, buf.as_mut_ptr().cast(), size, &mut len) } == 0 {
+        if unsafe { GetTokenInformation(t, TokenUser, buf.as_mut_ptr().cast(), size, &mut len) } == 0 {
             return None;
         }
         let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
         let n = unsafe { GetLengthSid(sid) } as usize;
-        Some(unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), n) }.to_vec())
+        let user = unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), n) }.to_vec();
+        if unsafe { GetTokenInformation(t, TokenIntegrityLevel, buf.as_mut_ptr().cast(), size, &mut len) } == 0 {
+            return None;
+        }
+        let label = unsafe { (*buf.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()).Label.Sid };
+        let count = u32::from(unsafe { *GetSidSubAuthorityCount(label) });
+        let integrity = if count == 0 { 0 } else { unsafe { *GetSidSubAuthority(label, count - 1) } };
+        let mut app = 0u32;
+        if unsafe { GetTokenInformation(t, TokenIsAppContainer, (&raw mut app).cast(), 4, &mut len) } == 0 {
+            return None;
+        }
+        let sandboxed = app != 0 || unsafe { IsTokenRestricted(t) } != 0;
+        Some(Peer { user, integrity, sandboxed })
     }
 
-    fn this_user() -> Option<Vec<u8>> {
-        user_of(unsafe { GetCurrentProcess() })
+    /// The pipe's DACL (this user alone) and its mandatory label, at `level`, the integrity of the
+    /// server that makes it: lower writers are kept out, and a client reads the level back.
+    fn sddl(sid: &str, level: u32) -> String {
+        format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;S-1-16-{level})")
     }
 
-    fn user_of_process(pid: u32) -> Option<Vec<u8>> {
+    /// The integrity level a kernel object's mandatory label gives it: Medium for an object with
+    /// none, as Windows reads it; None when the label cannot be read.
+    fn label_of(object: HANDLE) -> Option<u32> {
+        const MEDIUM: u32 = 0x2000;
+        const SYSTEM_MANDATORY_LABEL_ACE_TYPE: u8 = 0x11;
+        let (mut sacl, mut sd): (*mut ACL, PSECURITY_DESCRIPTOR) = (null_mut(), null_mut());
+        let read = unsafe { GetSecurityInfo(object, SE_KERNEL_OBJECT, LABEL_SECURITY_INFORMATION, null_mut(), null_mut(), null_mut(), &mut sacl, &mut sd) };
+        if read != 0 {
+            return None;
+        }
+        let mut level = Some(MEDIUM);
+        let count = if sacl.is_null() { 0 } else { unsafe { (*sacl).AceCount } };
+        for i in 0..count {
+            let mut ace = null_mut();
+            if unsafe { GetAce(sacl, u32::from(i), &mut ace) } == 0 {
+                level = None;
+                break;
+            }
+            if unsafe { (*ace.cast::<ACE_HEADER>()).AceType } == SYSTEM_MANDATORY_LABEL_ACE_TYPE {
+                let sid = unsafe { (&raw mut (*ace.cast::<SYSTEM_MANDATORY_LABEL_ACE>()).SidStart) }.cast();
+                let n = u32::from(unsafe { *GetSidSubAuthorityCount(sid) });
+                level = (n > 0).then(|| unsafe { *GetSidSubAuthority(sid, n - 1) });
+                break;
+            }
+        }
+        unsafe { LocalFree(sd) };
+        level
+    }
+
+    fn this_process() -> Option<Peer> {
+        peer_of(unsafe { GetCurrentProcess() })
+    }
+
+    fn peer_of_process(pid: u32) -> Option<Peer> {
         let p = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if p.is_null() {
             return None;
         }
         let p = unsafe { OwnedHandle::from_raw_handle(p) };
-        user_of(p.as_raw_handle())
+        peer_of(p.as_raw_handle())
+    }
+
+    fn user_of_process(pid: u32) -> Option<Vec<u8>> {
+        peer_of_process(pid).map(|p| p.user)
     }
 
     /// One end of a pipe opened for overlapped I/O, so that a read can be given up after a wait.
@@ -1307,14 +1373,15 @@ mod windows {
     /// command line calls then do their own work. `answer` prints an answer as the command line
     /// does.
     pub fn listen(session: &Arc<Session>, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
-        let Some((me, user)) = Identity::here(&session.root()).zip(this_user()) else {
+        let Some((me, mine)) = Identity::here(&session.root()).zip(this_process()) else {
             debug("no identity to offer");
             return None;
         };
+        let user = mine.user;
         let sid = sid_text(&user)?;
         let root = session.root();
         let shown = pipe_name(&sid, &root);
-        let (name, sddl) = (wide(&shown), wide(&format!("D:P(A;;GA;;;{sid})")));
+        let (name, sddl) = (wide(&shown), wide(&sddl(&sid, mine.integrity)));
         let first = match instance(&name, &sddl, true) {
             Ok(h) => h,
             Err(e) => {
@@ -1373,7 +1440,8 @@ mod windows {
     }
 
     fn asked(root: &Path, request: &Request) -> std::result::Result<Option<(Printed, UpdateStats)>, String> {
-        let user = this_user().ok_or("no user for this process")?;
+        let me = this_process().ok_or("no token for this process")?;
+        let user = me.user.clone();
         let shown = pipe_name(&sid_text(&user).ok_or("no text for this user's SID")?, root);
         let name = wide(&shown);
         let mut busy = false;
@@ -1399,8 +1467,24 @@ mod windows {
         // a session that stops reading leaves a request over the pipe's buffer unwritten
         pipe.write_wait = wire::REQUEST.as_millis() as u32;
         let mut pid = 0;
-        if unsafe { GetNamedPipeServerProcessId(pipe.handle(), &mut pid) } == 0 || user_of_process(pid).as_ref() != Some(&user) {
-            return Err("the session runs as another user".into());
+        let server = (unsafe { GetNamedPipeServerProcessId(pipe.handle(), &mut pid) } != 0).then(|| peer_of_process(pid)).flatten();
+        match server {
+            Some(s) if s.user != user => return Err("the session runs as another user".into()),
+            // a process of this user with less trust (a sandbox) can take the name first and would
+            // see every request and forge every answer
+            Some(s) if s.integrity < me.integrity || s.sandboxed => {
+                return Err(format!(
+                    "the session runs with less trust: integrity {:#x} (this call {:#x}), sandboxed {}",
+                    s.integrity, me.integrity, s.sandboxed
+                ))
+            }
+            Some(_) => {}
+            None => return Err("the session's process cannot be read".into()),
+        }
+        // a process id names whatever process holds it by now; the pipe's label stays with the pipe
+        match label_of(pipe.handle()) {
+            Some(level) if level >= me.integrity => {}
+            level => return Err(format!("the session's pipe has less trust: label {level:x?} (this call {:#x})", me.integrity)),
         }
         wire::exchange(pipe, root, request).map(Some)
     }
@@ -1408,6 +1492,163 @@ mod windows {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        const LOW: u32 = 0x1000;
+
+        /// A copy of this test process at Low integrity, the same user's token otherwise, running
+        /// this test again: its process handle.
+        fn low_copy(name: &str) -> OwnedHandle {
+            use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+            use windows_sys::Win32::Security::{
+                DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TokenPrimary, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY,
+                TOKEN_DUPLICATE,
+            };
+            use windows_sys::Win32::System::Threading::{CreateProcessAsUserW, PROCESS_INFORMATION, STARTUPINFOW};
+            const SE_GROUP_INTEGRITY: u32 = 0x20;
+            // SAFETY: handles and buffers this function makes and keeps alive for each call
+            unsafe {
+                let mut own: HANDLE = null_mut();
+                assert_ne!(OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY, &mut own), 0);
+                let own = OwnedHandle::from_raw_handle(own);
+                let mut low: HANDLE = null_mut();
+                assert_ne!(DuplicateTokenEx(own.as_raw_handle(), 0, null(), SecurityImpersonation, TokenPrimary, &mut low), 0);
+                let low = OwnedHandle::from_raw_handle(low);
+                let mut sid = null_mut();
+                assert_ne!(ConvertStringSidToSidW(wide("S-1-16-4096").as_ptr(), &mut sid), 0);
+                let label = TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { Sid: sid, Attributes: SE_GROUP_INTEGRITY } };
+                let size = std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32 + GetLengthSid(sid);
+                let set = SetTokenInformation(low.as_raw_handle(), TokenIntegrityLevel, (&raw const label).cast(), size);
+                LocalFree(sid);
+                assert_ne!(set, 0, "{}", Error::last_os_error());
+                let exe = std::env::current_exe().unwrap();
+                let mut line = wide(&format!("\"{}\" --exact {name} --test-threads=1", exe.display()));
+                let si = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..std::mem::zeroed() };
+                let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+                let made = CreateProcessAsUserW(low.as_raw_handle(), null(), line.as_mut_ptr(), null(), null(), 0, 0, null(), null(), &si, &mut pi);
+                assert_ne!(made, 0, "{}", Error::last_os_error());
+                drop(OwnedHandle::from_raw_handle(pi.hThread));
+                OwnedHandle::from_raw_handle(pi.hProcess)
+            }
+        }
+
+        /// The exit code of `p`, None while it runs.
+        fn exited(p: &OwnedHandle) -> Option<u32> {
+            use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+            let mut code = 0;
+            // SAFETY: a process handle this test holds
+            let read = unsafe { GetExitCodeProcess(p.as_raw_handle(), &mut code) } != 0;
+            (read && code != 259).then_some(code)
+        }
+
+        #[test]
+        fn a_session_and_a_caller_at_the_same_level_answer_each_other() {
+            const NAME: &str = "session::windows::tests::a_session_and_a_caller_at_the_same_level_answer_each_other";
+            // a greeting must not be missed on a busy runner: a process of its own waits longer for it
+            if std::env::var_os("SCRUTATE_TEST_SAME_LEVEL").is_none() {
+                let out = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", NAME, "--test-threads=1"])
+                    .env("SCRUTATE_TEST_SAME_LEVEL", "1")
+                    .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+                    .output()
+                    .unwrap();
+                let said = String::from_utf8_lossy(&out.stdout);
+                assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+                return;
+            }
+            fn answered(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+                Ok(Printed { out: "answered\n".into(), ..Default::default() })
+            }
+            let root = std::env::temp_dir().join(format!("scrutate_pipe_same_level_{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
+            let root = std::fs::canonicalize(&root).unwrap();
+            let s = Arc::new(Session::open(&root, Every::given(Some(3600.0))).unwrap());
+            s.build().unwrap();
+            let _listening = listen(&s, answered).expect("the session listens");
+            let request =
+                Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
+            let got = asked(&root, &request).map(|a| a.map(|(p, _)| p.out));
+            // at whatever level the test runs: Medium on a desktop, High on CI's elevated runners
+            assert_eq!(got, Ok(Some("answered\n".to_string())), "integrity {:#x}", this_process().unwrap().integrity);
+        }
+
+        #[test]
+        fn a_session_s_pipe_carries_the_integrity_level_of_its_server() {
+            let me = this_process().unwrap();
+            let sid = sid_text(&me.user).unwrap();
+            let name = wide(&format!(r"\\.\pipe\scrutate-label-test-{}", std::process::id()));
+            let pipe = instance(&name, &wide(&sddl(&sid, me.integrity)), true).unwrap();
+            assert_eq!(label_of(pipe.as_raw_handle()), Some(me.integrity));
+            let plain =
+                instance(&wide(&format!(r"\\.\pipe\scrutate-label-test-{}-plain", std::process::id())), &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
+            // no label of its own: Medium, as Windows reads it
+            assert_eq!(label_of(plain.as_raw_handle()), Some(0x2000));
+        }
+
+        // fails under Wine, which has no integrity levels: the copy exits 4
+        #[test]
+        fn a_low_integrity_process_of_the_same_user_cannot_answer_as_the_session() {
+            const NAME: &str = "session::windows::tests::a_low_integrity_process_of_the_same_user_cannot_answer_as_the_session";
+            match std::env::var("SQUAT_ROLE").as_deref() {
+                // the Low copy: takes the pipe name first and forges one answer
+                Ok("server") => {
+                    let me = this_process().unwrap();
+                    if me.integrity != LOW {
+                        std::process::exit(4);
+                    }
+                    let root = PathBuf::from(std::env::var_os("SQUAT_ROOT").unwrap());
+                    let sid = sid_text(&me.user).unwrap();
+                    let name = wide(&pipe_name(&sid, &root));
+                    let Ok(first) = instance(&name, &wide(&format!("D:P(A;;GA;;;{sid})")), true) else { std::process::exit(3) };
+                    let mut pipe = Pipe::new(first).unwrap();
+                    // SAFETY: the pipe's own handle and an OVERLAPPED that io keeps alive until done
+                    let _ = pipe.io(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) });
+                    writeln!(pipe, "{}", serde_json::to_string(&Identity::here(&root).unwrap()).unwrap()).unwrap();
+                    let mut line = Vec::new();
+                    std::io::BufRead::read_until(&mut std::io::BufReader::new(&mut pipe), b'\n', &mut line).unwrap();
+                    let forged = Printed { out: "forged by a Low process\n".into(), ..Default::default() };
+                    let reply = Reply { printed: Some(forged), changed: 0, removed: 0, chunks: 0, seconds: 0.0 };
+                    writeln!(pipe, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                    std::thread::sleep(Duration::from_secs(5));
+                    std::process::exit(0);
+                }
+                // the user's command line: asks the session of the root while the Low copy runs
+                Ok("client") => {
+                    let root = PathBuf::from(std::env::var_os("SQUAT_ROOT").unwrap());
+                    std::env::set_var("SQUAT_ROLE", "server");
+                    let low = low_copy(NAME);
+                    let request =
+                        Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
+                    let t0 = Instant::now();
+                    let answer = loop {
+                        let r = asked(&root, &request);
+                        if !matches!(r, Ok(None)) || exited(&low).is_some() || t0.elapsed() > Duration::from_secs(30) {
+                            break r;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    };
+                    let code = exited(&low);
+                    assert_ne!(code, Some(4), "the copy did not run at Low integrity");
+                    println!("Low copy exit {code:?}; the call: {:?}", answer.as_ref().map(|a| a.as_ref().map(|(p, _)| p.out.clone())));
+                    assert!(!matches!(answer, Ok(Some(_))), "the call took the Low process's answer: {answer:?}");
+                }
+                _ => {
+                    let root = std::env::temp_dir().join(format!("scrutate_pipe_squat_{}", std::process::id()));
+                    std::fs::create_dir_all(&root).unwrap();
+                    let root = std::fs::canonicalize(&root).unwrap();
+                    let out = std::process::Command::new(std::env::current_exe().unwrap())
+                        .args(["--exact", NAME, "--test-threads=1", "--nocapture"])
+                        .env("SQUAT_ROLE", "client")
+                        .env("SQUAT_ROOT", &root)
+                        .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+                        .output()
+                        .unwrap();
+                    let said = String::from_utf8_lossy(&out.stdout);
+                    println!("{said}");
+                    assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+                }
+            }
+        }
 
         #[test]
         fn a_request_a_slow_session_keeps_taking_reaches_it_whole() {
@@ -1426,10 +1667,11 @@ mod windows {
             let root = std::env::temp_dir().join(format!("scrutate_pipe_slow_read_{}", std::process::id()));
             std::fs::create_dir_all(&root).unwrap();
             let root = std::fs::canonicalize(&root).unwrap();
-            let user = this_user().unwrap();
+            let user = this_process().unwrap().user;
             let sid = sid_text(&user).unwrap();
             let name = wide(&pipe_name(&sid, &root));
-            let first = instance(&name, &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
+            // labelled as a session of this process would be: a caller refuses a pipe below its own level
+            let first = instance(&name, &wide(&sddl(&sid, this_process().unwrap().integrity)), true).unwrap();
             let hello = serde_json::to_string(&Identity::here(&root).unwrap()).unwrap();
             let (tx, rx) = std::sync::mpsc::channel();
             // a session that greets, then takes 64 KB a second until the request's line ends
@@ -1480,10 +1722,11 @@ mod windows {
             let root = std::env::temp_dir().join(format!("scrutate_pipe_no_read_{}", std::process::id()));
             std::fs::create_dir_all(&root).unwrap();
             let root = std::fs::canonicalize(&root).unwrap();
-            let user = this_user().unwrap();
+            let user = this_process().unwrap().user;
             let sid = sid_text(&user).unwrap();
             let name = wide(&pipe_name(&sid, &root));
-            let first = instance(&name, &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
+            // labelled as a session of this process would be: a caller refuses a pipe below its own level
+            let first = instance(&name, &wide(&sddl(&sid, this_process().unwrap().integrity)), true).unwrap();
             let hello = serde_json::to_string(&Identity::here(&root).unwrap()).unwrap();
             // a session that greets as this root's and then reads nothing
             std::thread::spawn(move || {

@@ -123,7 +123,8 @@ and the listening thread ends with `serve`.
 
 On Windows: a named pipe, `\\.\pipe\scrutate-session-<hash>`, the hash a BLAKE2b-128 of the
 user's SID and the canonical root. It is created with a protected DACL of one entry, full access
-for that SID (`D:P(A;;GA;;;<sid>)`), and `PIPE_REJECT_REMOTE_CLIENTS`; the first instance with
+for that SID, a mandatory label at the server's own integrity level that no lower process may
+write through (`D:P(A;;GA;;;<sid>)S:(ML;;NW;;;S-1-16-<level>)`), and `PIPE_REJECT_REMOTE_CLIENTS`; the first instance with
 `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a name already held (a second `serve`, or another account
 that made it first) makes the server offer nothing. The name goes away with the server's last
 handle: nothing is left behind to clean up.
@@ -138,7 +139,10 @@ Checks, at both ends:
   On Windows it opens the pipe for identification only (`SECURITY_SQOS_PRESENT |
   SECURITY_IDENTIFICATION`: the server can learn who calls, never act as the caller) and drops a
   server whose process token is another user's, so a pipe of that name made by another account
-  is passed over.
+  is passed over, or is at a lower integrity level than its own, or restricted, or an AppContainer
+  one, so a sandboxed process of the same user that made the name first sees no request; and it
+  drops a pipe whose label is below its own level (read with `GetSecurityInfo`), since a process
+  id can name another process by the time it is read, and a pipe's label stays as its maker set it.
 - The server greets with its identity: the executable file (device, inode, size, modification
   time; on Windows its path, size and times), the version, the index schema and content revisions, the model signatures, every
   `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
@@ -604,9 +608,20 @@ on Unix).
     `CancelIoEx` when the wait ran out) before the `OVERLAPPED` or the buffer goes away, the length
     passed being the buffer's; `CreateEventW`, `WaitForSingleObject`, `WaitNamedPipeW`,
     `GetLastError`, and `GetNamedPipeClientProcessId` / `GetNamedPipeServerProcessId` into a
-    `u32`; `GetCurrentProcess`, `OpenProcess`, `OpenProcessToken` and `GetTokenInformation(TokenUser)` into an 8-byte
-    aligned 512-byte buffer whose size it passes, the SID read as `GetLengthSid` bytes from the
-    pointer the `TOKEN_USER` holds inside that buffer; two unit tests' `ConnectNamedPipe` for a
+    `u32`; `GetCurrentProcess`, `OpenProcess`, `OpenProcessToken` and `GetTokenInformation`
+    (`TokenUser`, then `TokenIntegrityLevel`) into an 8-byte aligned 512-byte buffer whose size it
+    passes, the SID read as `GetLengthSid` bytes from the pointer the `TOKEN_USER` holds inside
+    that buffer and the level as the last of `GetSidSubAuthorityCount` sub-authorities of the
+    label's SID (`GetSidSubAuthority`), each read before the buffer is reused;
+    `GetTokenInformation(TokenIsAppContainer)` into a `u32` and `IsTokenRestricted` on the same
+    token; `GetSecurityInfo(SE_KERNEL_OBJECT, LABEL_SECURITY_INFORMATION)` of the pipe into a SACL
+    pointer and a security descriptor freed by `LocalFree`, each of the SACL's `AceCount` entries
+    read through `GetAce`, the label's SID at the `SidStart` of a `SYSTEM_MANDATORY_LABEL_ACE`
+    (type 0x11) and its last sub-authority read as above; a unit test makes a Low copy of its own process (`OpenProcessToken`, `DuplicateTokenEx`,
+    `ConvertStringSidToSidW` of `S-1-16-4096` freed by `LocalFree` after `SetTokenInformation`
+    takes it with the size of the label and the SID, `CreateProcessAsUserW` with a zeroed
+    `STARTUPINFOW` whose size it sets, both returned handles taken into `OwnedHandle`s once, and
+    `GetExitCodeProcess` into a `u32`); two unit tests' `ConnectNamedPipe` for a
     server that greets and then reads nothing or reads slowly, through the same `Pipe::io`;
   - `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 159 libSystem
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
@@ -656,7 +671,7 @@ on Unix).
   | `crates/scrutate/src/policy.rs` | 1 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
-  | `crates/scrutate/src/session.rs` | 36 |
+  | `crates/scrutate/src/session.rs` | 53 |
   | `crates/scrutate/src/shellhook.rs` | 5 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
