@@ -7,7 +7,9 @@ usage: differential.py [--cases N] [--seed S] [--keep]
 exit status 0 when every case agrees; the first disagreement is printed with a reproduction.
 
 Both tools are run with equivalent flags (line numbers, no colour, same case rules, same word
-semantics, multiline when the pattern contains a newline escape). Known, documented semantic
+semantics, multiline when the pattern contains a newline escape) and no path, so both search the
+current directory: a case whose filters leave no file is exit 2 with a note for both, where a `.`
+given to one of them alone would make it exit 1. Known, documented semantic
 differences are excluded from the generator rather than tolerated in the comparison.
 
 Each corpus is a git repository, so both tools apply its .gitignore; a quarter of the cases add a
@@ -262,23 +264,23 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
         envs = [{}, random_mode(rng)]
         if mode == "multiline":
             # rg's -U with --json reports multi-line matches as one record spanning lines; compare counts of files instead
-            rc2, o2 = run_json([RG, "--no-messages", "-l", *rf, pat, "."], root)
+            rc2, o2 = run_json([RG, "--no-messages", "-l", *rf, pat], root)
             b = sorted(l.decode()[2:] if l.startswith(b"./") else l.decode() for l in o2.splitlines())
             stats["empty"] += not b
             for env in envs:
                 rc1, o1 = run_json([SCRUTATE, "grep", "-l", *sf, pat], root, env)
                 if rc1 not in (0, 1) or rc2 not in (0, 1):
                     if rc1 == 2 and rc2 == 2:
-                        return None  # both reject the pattern
+                        return None  # both reject the pattern, or both searched no file
                     return f"exit codes differ for {pat!r} ({mode}, {shown(env)}): scrutate={rc1} rg={rc2} (corpus {root})"
                 a = sorted(l.decode() for l in o1.splitlines())
                 if a != b:
                     return f"multiline -l mismatch for {pat!r} ({shown(env)}): scrutate={a} rg={b} (corpus {root})"
             return indexed_agrees(rng, root, pat, sf, mode)
-        rc2, o2 = run_json([RG, "--json", "--no-messages", *rf, pat, "."], root)
+        rc2, o2 = run_json([RG, "--json", "--no-messages", *rf, pat], root)
         b = rg_matches(o2)
         stats["empty"] += not b
-        rc2c, o2c = run_json([RG, "--no-messages", "-c", *rf, pat, "."], root)
+        rc2c, o2c = run_json([RG, "--no-messages", "-c", *rf, pat], root)
         cb = {}
         for l in o2c.splitlines():
             if b":" in l:
@@ -289,7 +291,7 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
             rc1, o1 = run_json([SCRUTATE, "grep", "--json", *sf, pat], root, env)
             if rc1 not in (0, 1) or rc2 not in (0, 1):
                 if rc1 == 2 and rc2 == 2:
-                    return None  # both reject the pattern
+                    return None  # both reject the pattern, or both searched no file
                 return f"exit codes differ for {pat!r} ({mode}, {shown(env)}): scrutate={rc1} rg={rc2} (corpus {root})"
             a = scrutate_matches(o1)
             if a != b:
@@ -298,7 +300,7 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 return f"match sets differ for {pat!r} ({mode}, flags {sf}, {shown(env)}): only scrutate {only_a}; only rg {only_b} (corpus {root})"
             # plain output, byte for byte: the text as the file holds it
             _, p1 = run_json([SCRUTATE, "grep", "-n", "-H", *sf, pat], root, env)
-            _, p2 = run_json([RG, "--no-messages", "--no-heading", "-n", "-H", *rf, pat, "."], root)
+            _, p2 = run_json([RG, "--no-messages", "--no-heading", "-n", "-H", *rf, pat], root)
             pa = sorted(p1.split(b"\n"))
             pb = sorted(l[2:] if l.startswith(b"./") else l for l in p2.split(b"\n"))
             if pa != pb:
@@ -306,7 +308,7 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
                 return f"plain output differs for {pat!r} ({mode}, flags {sf}, {shown(env)}): {diff} (corpus {root})"
             # sorted output is printed from records, a path of its own: in its order, byte for byte
             _, s1 = run_json([SCRUTATE, "grep", "--sort", "-n", "-H", *sf, pat], root, env)
-            _, s2 = run_json([RG, "--no-messages", "--no-heading", "--sort", "path", "-n", "-H", *rf, pat, "."], root)
+            _, s2 = run_json([RG, "--no-messages", "--no-heading", "--sort", "path", "-n", "-H", *rf, pat], root)
             sb = [l[2:] if l.startswith(b"./") else l for l in s2.split(b"\n")]
             if s1.split(b"\n") != sb:
                 diff = [x for x in zip(s1.split(b"\n"), sb) if x[0] != x[1]][:2]

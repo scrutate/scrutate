@@ -1806,6 +1806,15 @@ fn a_search_whose_filters_leave_no_file_exits_2_and_says_why() {
         assert_eq!((code, out.as_str()), (2, ""), "{args:?}");
         assert!(err.contains("no files were searched"), "{args:?}: {err}");
     }
+    // the differential corpus's shape: the type's files all ignored, so the type leaves none
+    let typed = Dir::new("nothing_searched_typed");
+    typed.write(".ignore", b"*.rs\n");
+    typed.write("src/f4.rs", b"foo\n");
+    typed.write("f5.txt", b"foo\n");
+    let (code, out, err) = typed.run(&["grep", "-t", "rust", "foo"]);
+    assert_eq!((code, out.as_str()), (2, ""), "{err}");
+    assert!(err.contains("no files were searched"), "{err}");
+    assert_eq!(typed.run(&["grep", "-t", "rust", "foo", "."]).0, 1);
     for (args, want) in [(&["grep", "-l", "-g", "*.TXT", "foo", "."][..], (1, "")), (&["grep", "-l", "-g", "*.TXT", "foo", "a.txt"], (0, "a.txt\n"))] {
         let (code, out, err) = d.run(args);
         assert_eq!((code, out.as_str()), want, "{args:?}");
