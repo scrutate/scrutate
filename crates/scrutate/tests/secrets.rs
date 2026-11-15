@@ -589,7 +589,8 @@ fn hook_run_redacts_a_line_that_is_not_utf8() {
         String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
     };
     for (args, env, secret, kind) in [
-        (&["grep", "-n", "GITHUB", "stray.py"][..], &[][..], &token, "github-token"),
+        // under a UTF-8 locale GNU grep calls the file binary and prints no line
+        (&["grep", "-n", "GITHUB", "stray.py"][..], &[("LC_ALL", "C")][..], &token, "github-token"),
         (&["grep", "-n", "GITHUB", "long.txt"], &[], &token, "github-token"),
         (&["grep", "-a", "-rn", "GITHUB", "."], &[], &token, "github-token"),
         (&["grep", "-rn", "GITHUB", "."], &[("LC_ALL", "C")], &token, "github-token"),
