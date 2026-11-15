@@ -238,14 +238,10 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     let mut fresh = None;
     let mut owned = None;
     let mut small = None;
-    if named && MAPS && !f.map_named {
-        // a process that stays up maps no file: one held whole is the slice a map would be, for
-        // every query (one with a limit or context is not split, and would otherwise stream)
-        if let (Some(at), Some(len)) = (src.at(), src.size().filter(|&n| n <= NAMED_WHOLE)) {
-            owned = read_all(at, len);
-        }
-    }
-    if let Some(at) = src.at().filter(|_| owned.is_none() && splittable(o)) {
+    // a process that stays up maps no file: a named one held whole is the slice a map would be
+    let resident = named && MAPS && !f.map_named;
+    let hold_whole = |len: u64| resident && len <= NAMED_WHOLE;
+    if let Some(at) = src.at().filter(|_| splittable(o)) {
         // most files are small: one read of up to SMALL_FILE + 1 bytes takes such a file whole and
         // tells a larger one apart, with no call for the size (a `statx` per file otherwise: 96,000
         // of them on the Linux tree)
@@ -268,7 +264,10 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
                         Outcome::Stream => {}
                         Outcome::Buffer(b) => owned = Some(b),
                     }
-                } else if len <= MID_FILE && r.p.range_threads() > 1 {
+                }
+                if owned.is_none() && hold_whole(len) {
+                    owned = read_all(at, len);
+                } else if len < min && len <= MID_FILE && r.p.range_threads() > 1 {
                     // a searcher of its own, so the thread's keeps the buffer size it had: where a
                     // NUL byte after the first fill stops the output depends on that size. One
                     // thread meets the files in a fixed order and keeps its one searcher
@@ -281,6 +280,12 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
                     ));
                 }
             }
+        }
+    }
+    if resident && !splittable(o) {
+        // a query with a limit or context is not split, and would otherwise stream
+        if let (Some(at), Some(len)) = (src.at(), src.size().filter(|&n| hold_whole(n))) {
+            owned = read_all(at, len);
         }
     }
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
