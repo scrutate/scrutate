@@ -1085,7 +1085,8 @@ editor to ask again. Requests read within a second of that answer were queued be
 answered so at once, so a `shutdown` behind any number of them is read within one wait. Messages
 are read on a thread of their own, so `$/cancelRequest` reaches the request it names while it
 runs: its wait for the build and its search stop, and it is answered with error -32800
-(RequestCancelled); one cancelled before it runs is answered so without running. Columns are UTF-16 code
+(RequestCancelled); one cancelled while it waits its turn is answered so without running, and a
+cancel for a request already answered is dropped. Columns are UTF-16 code
 units, as the protocol requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise.
 Logs go to stderr.
 

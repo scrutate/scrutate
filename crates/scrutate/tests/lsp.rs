@@ -420,9 +420,9 @@ fn a_cancelled_request_is_answered_at_once_and_the_next_is_not_kept_waiting() {
     };
     assert_eq!(reply["error"]["code"], -32800, "{reply}");
     assert!(t.elapsed() < Duration::from_secs(5), "the cancel was not seen at once: {:?}", t.elapsed());
-    // one cancelled before it runs is answered the same way
-    c.notify("$/cancelRequest", json!({"id": 901}));
+    // one cancelled while it waits its turn or runs is answered the same way
     c.send(json!({"jsonrpc": "2.0", "id": 901, "method": "workspace/symbol", "params": {"query": "f1"}}));
+    c.notify("$/cancelRequest", json!({"id": 901}));
     let reply = loop {
         let m = c.read();
         if m["id"] == 901 {

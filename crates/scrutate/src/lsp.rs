@@ -958,6 +958,55 @@ fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {
     })
 }
 
+/// The requests the reader has passed on and that are not answered yet, and the cancels for them:
+/// a cancel for an id already answered, or never sent, is dropped, as editors cancel finished
+/// requests often.
+#[derive(Default)]
+struct Pending {
+    running: Option<String>,
+    flag: Arc<AtomicBool>,
+    queued: HashSet<String>,
+    cancelled: HashSet<String>,
+}
+
+impl Pending {
+    /// On the reader thread, for each message `m`: -> whether it goes on to be answered.
+    fn read(&mut self, m: &Value) -> bool {
+        if m["method"] == "$/cancelRequest" {
+            let id = m["params"]["id"].to_string();
+            if self.running.as_ref() == Some(&id) {
+                self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            } else if self.queued.contains(&id) {
+                self.cancelled.insert(id);
+            }
+            return false;
+        }
+        if m["method"].is_string() && m.get("id").is_some() {
+            self.queued.insert(m["id"].to_string());
+        }
+        true
+    }
+
+    /// Request `id` is taken up: -> its cancel flag, None when it was cancelled before it ran.
+    fn start(&mut self, id: &Value) -> Option<Arc<AtomicBool>> {
+        let id = id.to_string();
+        if self.cancelled.remove(&id) {
+            self.queued.remove(&id);
+            return None;
+        }
+        self.flag = Arc::new(AtomicBool::new(false));
+        self.running = Some(id);
+        Some(Arc::clone(&self.flag))
+    }
+
+    /// The running request is answered.
+    fn done(&mut self) {
+        if let Some(id) = self.running.take() {
+            self.queued.remove(&id);
+        }
+    }
+}
+
 /// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
 pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     if cfg!(target_os = "wasi") {
@@ -976,8 +1025,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     };
     // the editor's messages are read on a thread of their own, so a `$/cancelRequest` reaches the
     // request it cancels while that request runs; one cancelled before it ran is answered at once
-    type Running = Arc<std::sync::Mutex<(Option<Value>, Arc<AtomicBool>, HashSet<String>)>>;
-    let running: Running = Default::default();
+    let running: Arc<std::sync::Mutex<Pending>> = Default::default();
     let (tx, rx) = mpsc::channel::<std::result::Result<Vec<u8>, String>>();
     {
         let running = Arc::clone(&running);
@@ -992,14 +1040,8 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
                         break;
                     }
                 };
-                if let Some(m) = serde_json::from_slice::<Value>(&body).ok().filter(|m| m["method"] == "$/cancelRequest") {
-                    let id = &m["params"]["id"];
-                    let mut r = running.lock().unwrap_or_else(|p| p.into_inner());
-                    if r.0.as_ref() == Some(id) {
-                        r.1.store(true, std::sync::atomic::Ordering::Relaxed);
-                    } else {
-                        r.2.insert(id.to_string());
-                    }
+                let passed = serde_json::from_slice::<Value>(&body).ok().is_none_or(|m| running.lock().unwrap_or_else(|p| p.into_inner()).read(&m));
+                if !passed {
                     continue;
                 }
                 if tx.send(Ok(body)).is_err() {
@@ -1030,21 +1072,16 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
             continue; // a response: this server sends no requests
         }
         let cancelled = || (-32800, "request cancelled".to_string());
-        let flag = Arc::new(AtomicBool::new(false));
-        {
-            let mut r = running.lock().unwrap_or_else(|p| p.into_inner());
-            if r.2.remove(&id.to_string()) {
-                drop(r);
-                send(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": cancelled().0, "message": cancelled().1}}));
-                continue;
-            }
-            *r = (Some(id.clone()), Arc::clone(&flag), std::mem::take(&mut r.2));
-        }
+        let started = running.lock().unwrap_or_else(|p| p.into_inner()).start(id);
+        let Some(flag) = started else {
+            send(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": cancelled().0, "message": cancelled().1}}));
+            continue;
+        };
         srv.cancel = Arc::clone(&flag);
         // a bug in one request must not take the editor's server down
         let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.request(method, params)))
             .unwrap_or_else(|_| Err((-32603, format!("internal failure while answering {method} (a bug: please report it)"))));
-        running.lock().unwrap_or_else(|p| p.into_inner()).0 = None;
+        running.lock().unwrap_or_else(|p| p.into_inner()).done();
         let reply = if flag.load(std::sync::atomic::Ordering::Relaxed) { Err(cancelled()) } else { reply };
         send(&match reply {
             Ok(mut result) => {
@@ -1134,6 +1171,33 @@ mod tests {
         assert!(took < std::time::Duration::from_secs(5), "the cancel did not stop the wait: {took:?}");
         assert!(session.is_building(), "the request gave up while the build still ran");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cancel is kept only for a request not yet answered: cancels of answered requests, which
+    /// editors send often, leave nothing behind, and one for a queued request still stops it.
+    #[test]
+    fn cancels_of_answered_requests_leave_nothing_behind() {
+        let mut p = Pending::default();
+        let request = |id: u64| serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "workspace/symbol", "params": {}});
+        let cancel = |id: u64| serde_json::json!({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": id}});
+        for id in 0..1000 {
+            assert!(p.read(&request(id)));
+            assert!(p.start(&serde_json::json!(id)).is_some());
+            p.done();
+            assert!(!p.read(&cancel(id)), "a cancel is not answered");
+        }
+        assert!(p.cancelled.is_empty() && p.queued.is_empty(), "{} cancels and {} requests kept", p.cancelled.len(), p.queued.len());
+        // a cancel that comes while its request waits in the queue still stops it
+        assert!(p.read(&request(5000)));
+        p.read(&cancel(5000));
+        assert!(p.start(&serde_json::json!(5000)).is_none());
+        // and one for the running request sets its flag
+        p.read(&request(5001));
+        let flag = p.start(&serde_json::json!(5001)).unwrap();
+        p.read(&cancel(5001));
+        assert!(flag.load(std::sync::atomic::Ordering::Relaxed));
+        p.done();
+        assert!(p.cancelled.is_empty() && p.queued.is_empty());
     }
 
     /// Over several folders, a folder in its first build that is left out because another folder
