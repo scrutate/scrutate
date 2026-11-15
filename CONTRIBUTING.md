@@ -51,6 +51,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
 cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features; the tests that run or compare with rg skip without it, and fail without it when SCRUTATE_TEST_NEEDS_RG is set (CI, tools/ci_ripgrep.sh)
 cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
+bash tools/ci_gate.sh [--quick]                   # CI's Linux checks on a box set up by its ci_setup.sh; tools/gate_map.json names what covers each CI step
+python3 tools/gate_parity.py                      # every run step of ci.yml, security.yml and benchmarks.yml is in that map (PyYAML from python[test])
 cargo audit
 cargo deny check                                  # advisories, licences, bans and sources (deny.toml)
 python3 tools/unsafe_count.py                     # each file's `unsafe` count matches docs/SECURITY.md

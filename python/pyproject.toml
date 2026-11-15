@@ -12,7 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = ["scipy", "scikit-learn", "lightgbm"]  # retrain the semantic model / ranker, run bench/
-test = ["pytest"]
+test = ["pytest", "pyyaml"]  # pyyaml: tools/gate_parity.py reads the workflows
 
 [build-system]
 requires = ["setuptools>=77"]  # 77 reads a licence expression and license-files
