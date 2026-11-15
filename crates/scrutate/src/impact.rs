@@ -58,8 +58,8 @@ pub struct Impact {
     pub changed: Vec<Changed>,
     pub callers: Vec<Caller>,
     pub tests: Vec<Test>,
-    /// (path, why it gives no symbol): a binary file, a submodule, a file the index leaves out
-    pub notes: Vec<(String, String)>,
+    /// (path, note): a binary file, a submodule, a file the index leaves out, a rename
+    pub notes: Vec<(String, Note)>,
     pub stopped: bool,
     /// the head commit, when the change is between two commits
     pub head: Option<String>,
@@ -73,6 +73,25 @@ pub struct Impact {
     pub(crate) head_paths: Vec<String>,
     /// every call the walk met
     pub(crate) edges: Vec<Edge>,
+}
+
+/// What a changed file's line under `notes` says.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum Note {
+    /// why it gives no symbol
+    Said(&'static str),
+    /// the path it was renamed from, which the pull request's author wrote
+    Renamed(String),
+}
+
+impl Note {
+    /// The note, a path in it written by `path` (in Markdown, as a code span).
+    pub fn text(&self, path: impl Fn(&str) -> String) -> String {
+        match self {
+            Note::Said(s) => s.to_string(),
+            Note::Renamed(old) => format!("renamed from {}", path(old)),
+        }
+    }
 }
 
 /// A call: the caller's chunk id and the location of the definition it calls.
@@ -310,7 +329,7 @@ struct Builder<'a> {
     /// the changed side is read from git's copies (staged, or a commit), not the working tree
     from_blobs: bool,
     changed: Vec<Changed>,
-    notes: Vec<(String, String)>,
+    notes: Vec<(String, Note)>,
     /// chunk ids, and (path, start, kind, qualname) of what has no id, already listed
     seen: HashSet<(i64, String, i64, String, String)>,
     /// every path the diff changed, as it is after the change: a deleted file has none
@@ -351,19 +370,19 @@ impl Builder<'_> {
         self.head_paths.extend(e.new.clone());
         if let (Some(old), Some(new)) = (&e.old, &e.new) {
             if old != new {
-                self.notes.push((new.clone(), format!("renamed from {}", shown(old))));
+                self.notes.push((new.clone(), Note::Renamed(old.clone())));
             }
         }
         if e.submodule {
-            self.notes.push((path, "a submodule: its commits are not read".into()));
+            self.notes.push((path, Note::Said("a submodule: its commits are not read")));
             return Ok(());
         }
         if e.binary {
-            self.notes.push((path, "a binary file".into()));
+            self.notes.push((path, Note::Said("a binary file")));
             return Ok(());
         }
         if let Some(new) = e.new.as_deref().filter(|n| !self.s.ix.has_file(n)) {
-            self.notes.push((new.to_string(), "not in the index: it has no definitions to name".into()));
+            self.notes.push((new.to_string(), Note::Said("not in the index: it has no definitions to name")));
             return Ok(());
         }
         let blob = |sha: &str| blobs.get(sha).map(Vec::as_slice).unwrap_or_default();
@@ -523,7 +542,7 @@ impl Impact {
         }
         if !self.notes.is_empty() {
             out.push(format!("notes: {}", self.notes.len()));
-            out.extend(self.notes.iter().map(|(p, n)| format!("{}  {n}", shown(p))));
+            out.extend(self.notes.iter().map(|(p, n)| format!("{}  {}", shown(p), n.text(|p| shown(p).into_owned()))));
         }
         out
     }
@@ -569,7 +588,7 @@ impl Impact {
                 with(with(with(v, "via", json!(c.via)), "undecided", json!(c.undecided)), "calls_deleted", json!(c.calls_deleted))
             }).collect::<Vec<_>>(),
             "tests": self.tests.iter().map(|t| json!({"path": t.path, "distance": t.distance, "via": t.via.as_ref().map(symbol)})).collect::<Vec<_>>(),
-            "notes": self.notes.iter().map(|(p, n)| json!({"path": p, "note": n})).collect::<Vec<_>>(),
+            "notes": self.notes.iter().map(|(p, n)| json!({"path": p, "note": n.text(|p| shown(p).into_owned())})).collect::<Vec<_>>(),
             "findings": self.findings.iter().map(|f| json!({
                 "kind": f.kind(), "severity": f.severity(), "path": f.path, "start": f.start, "end": f.end, "qualname": f.name, "text": f.text(),
                 "related": f.related().iter().map(|(path, name, start, end)| json!({"path": path, "qualname": name, "start": start, "end": end})).collect::<Vec<_>>(),

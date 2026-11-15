@@ -440,3 +440,27 @@ fn a_test_file_the_head_deletes_is_no_test_to_run() {
     let md = t.review(&["--base", &base_sha]);
     assert!(!md.contains("`tests/test_other.py` (distance"), "{md}");
 }
+
+/// A renamed file's old path is written by whoever opened the pull request: it is a code span,
+/// as every other path is, so it opens no comment, link or mention.
+#[test]
+fn a_rename_note_quotes_the_old_path() {
+    let (t, _) = base("rename_note");
+    let mut odd = vec!["lib/@octocat [click](https_evil.example).py"];
+    if cfg!(unix) {
+        odd.push("lib/x<!--.py");
+    }
+    for (i, old) in odd.iter().enumerate() {
+        t.write(old, &format!("def moved_{i}():\n    return {i}\n"));
+    }
+    t.commit("odd names");
+    let base_sha2 = t.git(&["rev-parse", "HEAD"]);
+    for (i, old) in odd.iter().enumerate() {
+        t.git(&["mv", old, &format!("lib/renamed_{i}.py")]);
+    }
+    t.commit("renames");
+    let md = t.review(&["--base", &base_sha2]);
+    for (i, old) in odd.iter().enumerate() {
+        assert!(md.contains(&format!("- `lib/renamed_{i}.py`: renamed from `{old}`\n")), "{md}");
+    }
+}

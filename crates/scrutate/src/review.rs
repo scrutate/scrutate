@@ -178,7 +178,7 @@ impl Review {
             dupes.push(format!("- (more than {MAX_DUPLICATES}: `scrutate review` lists the first {MAX_DUPLICATES})"));
         }
         section("New duplicates".into(), dupes);
-        section("Notes".into(), i.notes.iter().map(|(p, n)| format!("- {}: {n}", at(p, None))).collect());
+        section("Notes".into(), i.notes.iter().map(|(p, n)| format!("- {}: {}", at(p, None), n.text(code))).collect());
         if i.stopped {
             lines.push(String::new());
             lines.push(format!("_The walk stopped at {} callers._", crate::impact::MAX_CALLERS));

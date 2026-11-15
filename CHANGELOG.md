@@ -260,6 +260,8 @@ incompatible index by itself, and that is never breaking.
 
 ### Fixed
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
+- `review`'s comment puts a renamed file's old path in a code span, as every other path: a name
+  such as `x<!--.py` hid the rest of the comment, and `@name` notified a user.
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - The language server names the files of its answers under the folder as the editor sent it, also

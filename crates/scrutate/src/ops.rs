@@ -1533,7 +1533,7 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
     }
     if !i.notes.is_empty() {
         out.push(vec![Brief::head(format!("notes: {}", i.notes.len()))]);
-        out.extend(i.notes.iter().map(|(p, n)| vec![Brief::path(p).then(format!(" {n}"))]));
+        out.extend(i.notes.iter().map(|(p, n)| vec![Brief::path(p).then(format!(" {}", n.text(|p| shown(p).into_owned())))]));
     }
     out
 }
