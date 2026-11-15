@@ -397,6 +397,7 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `sendgrid-api-key` | gitleaks sendgrid-api-token (SendGrid's 22.43 layout) |
 | `mailgun-api-key` | gitleaks mailgun-private-api-token |
 | `database-password` | secretlint-rule-database-connection-string |
+| `url-token` | scrutate |
 | `url-password` | scrutate |
 | `bearer-token` | scrutate |
 | `basic-auth` | scrutate |
@@ -406,8 +407,9 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
-`url-password` takes the password of any other URL that carries one (`https://user:pass@host`)
-with a digit or a symbol in it; `bearer-token` an opaque token after `Bearer` with a digit in it;
+`url-token` takes a URL's user part of 20 or more characters with a digit in it, as a clone URL
+carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
+URL that carries one (`https://user:pass@host`) with a digit or a symbol in it; `bearer-token` an opaque token after `Bearer` with a digit in it;
 `basic-auth` the base64 after `Basic` when it decodes to a printable `user:password`. `env-secret`
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
 `KEY` or `CREDENTIALS`; `password` a quoted value of a name holding `password`, `secret` or

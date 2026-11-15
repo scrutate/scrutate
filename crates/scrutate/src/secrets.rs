@@ -212,6 +212,8 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["postgres", "mysql", "mariadb", "mongodb", "redis", "amqp", "mssql", "sqlserver"],
             real_value,
         ),
+        // a token as a URL's user, alone or before a placeholder password, as a clone URL carries one
+        rule("url-token", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://([A-Za-z0-9_-]{20,})(?::[^@/\s]*)?@[^/\s?#]", 1, 3.0, &["://"], opaque),
         // the password of any other URL that carries one (`https://user:pass@host`)
         rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]+:([^@/\s]+)@[^/\s?#]", 1, 0.0, &["://"], env_value),
         // an opaque token after `Bearer` (a header, a curl line); a JWT has its own rule
@@ -911,6 +913,7 @@ mod tests {
             line("sendgrid-api-key", "sg = ", format!("{}{}.{}", "SG.", fake(23, ALNUM, 22), fake(24, ALNUM, 43)), ""),
             line("mailgun-api-key", &format!("{}_API_KEY=", "MAILGUN"), format!("{}{}", "key-", fake(25, HEX, 32)), ""),
             line("database-password", "DATABASE_URL=postgres://app:", fake(26, ALNUM, 12), "@db.internal:5432/app"),
+            line("url-token", "url = \"https://", fake(66, HEX, 40), "@github.com/org/app.git\""),
             line("url-password", "remote = https://deploy:", format!("{}!{}", fake(62, ALNUM, 8), fake(63, ALNUM, 6)), "@git.example.com/app.git"),
             line("bearer-token", "headers = {\"Authorization\": \"Bearer ", format!("{}7", fake(64, ALNUM, 31)), "\"}"),
             line("basic-auth", "curl -H 'Authorization: Basic ", basic(&format!("deploy:{}", fake(65, ALNUM, 14))), "'"),
@@ -1104,6 +1107,19 @@ mod tests {
             assert_eq!(spans.len(), 1, "{body}");
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A token in a URL's user part is redacted, whatever follows it, and a plain user name is not.
+    #[test]
+    fn a_token_as_a_url_s_user_is_redacted() {
+        let token = fake(67, HEX, 40);
+        for line in [format!("git clone https://{token}@github.com/org/app.git"), format!("https://{token}{}x-oauth-basic@github.com/org/app", ':')] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(&token) && marks.iter().any(|m| m.kind == "url-token"), "{line} -> {out}");
+        }
+        for line in ["https://deploy@git.example.com/app.git", "ssh://git@github.com/org/app.git", "https://user_name_2024@example.com/"] {
+            assert!(redact(line).1.iter().all(|m| m.kind != "url-token"), "{line}");
+        }
     }
 
     /// The page as assembled is read again, so a mark must not be taken for a secret twice.
