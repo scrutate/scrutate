@@ -109,7 +109,10 @@
   submodule or git worktree inside an indexed checkout is its own repository with its own index
   (a linked worktree's starts as a copy of its main checkout's, see
   [The index directory](#the-index-directory)). Outside a repository the nearest directory above
-  holding `.scrutate` is used, else the current directory. A home directory kept in git is never
+  holding `.scrutate` is used, else the current directory; the climb stops short of the system's
+  temporary directory (and `/tmp` and `/var/tmp` on Unix), the home directory (also one kept in
+  git) and a filesystem root, whose index serves only that directory itself: a command in a directory below one runs as with no index above, and says in
+  one line that it is not using it. A home directory kept in git is never
   a top. In the home directory or at a filesystem root with no index there, a command that would
   build a first index exits 2 and says to pass `--root` or run `scrutate index`; either of those or
   `SCRUTATE_ROOT` builds there as asked, and an index already there is used. A path argument is

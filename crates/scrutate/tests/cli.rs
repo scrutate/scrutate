@@ -1775,6 +1775,36 @@ fn a_home_directory_kept_in_git_is_not_indexed_from_below_when_home_is_a_link() 
     }
 }
 
+/// Outside a repository the climb to an index above stops short of the temporary directory and
+/// the home directory: an index there answers for that directory alone, never for a project below
+/// it, which runs as with no index above and is told why. One a level lower is used as before.
+#[test]
+fn an_index_in_the_temporary_or_home_directory_does_not_answer_for_a_project_below_it() {
+    let t = Repo::plain("wide_stop");
+    t.write("projB/b.py", b"def beta_secret_b():\n    return 1\n");
+    t.write("proj/p.py", b"def proj_fn():\n    return 1\n");
+    t.write("proj/sub/s.py", b"def sub_fn():\n    return 2\n");
+    assert_eq!(t.run(&["index"]).0, 0);
+    assert_eq!(run_in(&t.root.join("proj"), &["--root", ".", "index"], &[]).0, 0);
+    let dir = t.root.to_string_lossy().into_owned();
+    let (tmp, home) = if cfg!(windows) { ("TMP", "USERPROFILE") } else { ("TMPDIR", "HOME") };
+    for (var, what) in [(tmp, "a temporary directory"), (home, "the home directory")] {
+        let env = [(var, dir.as_str())];
+        let a = t.root.join(format!("projA_{var}"));
+        fs::create_dir_all(&a).unwrap();
+        fs::write(a.join("a.py"), "def alpha_a():\n    return 1\n").unwrap();
+        let (code, out, err) = run_in(&a, &["symbol", "beta_secret_b"], &env);
+        assert!(code == 1 && !out.contains("b.py"), "{var}: a sibling's definition answered: {out}{err}");
+        assert!(err.contains("not using the index in") && err.contains(what), "{var}: {err}");
+        assert!(a.join(".scrutate").is_dir(), "{var}: the project's first index is its own");
+        let (code, out, err) = run_in(&a, &["symbol", "alpha_a"], &env);
+        assert!(code == 0 && out.contains("a.py:1"), "{var}: {out}{err}");
+        // one level lower, the project's own index is used from its subdirectory
+        let (code, out, err) = run_in(&t.root.join("proj/sub"), &["symbol", "sub_fn"], &env);
+        assert!(code == 0 && out.contains("sub/s.py:1") && err.contains("using the index in"), "{var}: {out}{err}");
+    }
+}
+
 #[test]
 fn rgignore_files_keep_files_out_of_the_code_index() {
     let r = Repo::new("rgignore");

@@ -952,11 +952,56 @@ fn names_below(dir: &Path, top: &Path) -> Vec<String> {
 /// The directory whose index a command run in `cwd` uses, when that is not `cwd`. The index of a
 /// repository is at its top (the first directory upward that holds `.git`: a directory, or a
 /// file in a submodule or worktree): a first build lands there, and the top's index wins over
-/// one an earlier run left in a subdirectory. Outside a repository: the nearest index above.
+/// one an earlier run left in a subdirectory. Outside a repository: the nearest index above, short
+/// of the temporary directory, the home directory and a filesystem root.
 pub(crate) fn index_above(cwd: &Path) -> Option<PathBuf> {
+    index_above_why(cwd).0
+}
+
+/// `index_above`, and when the climb stopped short of an index, why: the system temporary
+/// directory, the home directory and a filesystem root hold other projects' files, so an index
+/// there serves only that directory itself.
+pub(crate) fn index_above_why(cwd: &Path) -> (Option<PathBuf>, Option<String>) {
+    climb(cwd, wide)
+}
+
+/// The directory an index there would answer for unrelated projects below it, and what it is.
+fn wide(dir: &Path) -> Option<&'static str> {
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if dir.parent().is_none() {
+        Some("a filesystem root")
+    } else if is_home(dir) {
+        Some("the home directory")
+    } else if temp_dirs(std::env::temp_dir()).iter().any(|t| canonical(t) == canonical(dir)) {
+        Some("a temporary directory")
+    } else {
+        None
+    }
+}
+
+/// The system's temporary directories: the one it names (`named`, from `TMPDIR` or `TMP`), and on
+/// Unix also `/tmp` and `/var/tmp`, which stay shared when `TMPDIR` points elsewhere (always, on
+/// macOS).
+fn temp_dirs(named: PathBuf) -> Vec<PathBuf> {
+    let mut dirs = vec![named];
+    if cfg!(unix) {
+        dirs.extend(["/tmp", "/var/tmp"].map(PathBuf::from));
+    }
+    dirs
+}
+
+fn climb(cwd: &Path, wide: impl Fn(&Path) -> Option<&'static str>) -> (Option<PathBuf>, Option<String>) {
     let has_index = |d: &Path| d.join(crate::files::INDEX_DIR).is_dir();
     let mut nearest = None;
     for dir in cwd.ancestors() {
+        if dir != cwd && nearest.is_none() {
+            if let Some(what) = wide(dir) {
+                let why = has_index(dir).then(|| {
+                    format!("[scrutate] not using the index in {}: it is {what}; pass --root there to use it", crate::paths::plain_path(dir).display())
+                });
+                return (None, why);
+            }
+        }
         if nearest.is_none() && has_index(dir) {
             nearest = Some(dir);
         }
@@ -969,7 +1014,7 @@ pub(crate) fn index_above(cwd: &Path) -> Option<PathBuf> {
             break;
         }
     }
-    nearest.filter(|d| *d != cwd).map(Path::to_path_buf)
+    (nearest.filter(|d| *d != cwd).map(Path::to_path_buf), None)
 }
 
 /// `dir` is the home directory, the two compared with links resolved.
@@ -1184,9 +1229,13 @@ pub fn run() -> Result<i32> {
     };
     let mut found_index = None;
     if uses_index && !root_given {
-        if let Some(top) = cwd.as_deref().and_then(index_above) {
-            cli.root = top.clone();
-            found_index = Some(top);
+        match cwd.as_deref().map(index_above_why) {
+            Some((Some(top), _)) => {
+                cli.root = top.clone();
+                found_index = Some(top);
+            }
+            Some((None, Some(why))) => eprintln!("{why}"),
+            _ => {}
         }
     }
     // a search without the index never looks at the root: two canonical paths, 0.3 M instructions
@@ -2771,6 +2820,39 @@ pub fn main_exit() {
 mod tests {
     use clap::Parser;
     use proptest::prelude::*;
+
+    /// `/tmp` and `/var/tmp` stop the climb whatever `TMPDIR` says: on macOS it never names them.
+    #[cfg(unix)]
+    #[test]
+    fn tmp_and_var_tmp_stop_the_climb_whatever_tmpdir_names() {
+        for dir in ["/tmp", "/var/tmp"] {
+            assert_eq!(super::wide(std::path::Path::new(dir)), Some("a temporary directory"), "{dir}");
+            let real = std::fs::canonicalize(dir).unwrap();
+            assert_eq!(super::wide(&real), Some("a temporary directory"), "{}", real.display());
+        }
+        assert_eq!(super::wide(&std::env::temp_dir()), Some("a temporary directory"));
+        // on Linux TMPDIR is mostly unset, so temp_dir() is /tmp: with another one named, both stay
+        let dirs = super::temp_dirs(std::path::PathBuf::from("/elsewhere"));
+        assert!(["/tmp", "/var/tmp"].iter().all(|d| dirs.contains(&std::path::PathBuf::from(d))), "{dirs:?}");
+    }
+
+    /// A filesystem root cannot be written in a test: a directory stands in for one.
+    #[test]
+    fn the_climb_to_an_index_stops_at_a_filesystem_root() {
+        let t = std::env::temp_dir().join(format!("scrutate_climb_root_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join(crate::files::INDEX_DIR)).unwrap();
+        std::fs::create_dir_all(t.join("proj/sub")).unwrap();
+        let root = |d: &std::path::Path| (d == t).then_some("a filesystem root");
+        let (found, why) = super::climb(&t.join("proj/sub"), root);
+        assert_eq!(found, None);
+        assert!(why.is_some_and(|w| w.contains("a filesystem root")));
+        // the root itself, and an index below it, are used as before
+        assert_eq!(super::climb(&t, root), (None, None));
+        std::fs::create_dir_all(t.join("proj").join(crate::files::INDEX_DIR)).unwrap();
+        assert_eq!(super::climb(&t.join("proj/sub"), root), (Some(t.join("proj")), None));
+        let _ = std::fs::remove_dir_all(&t);
+    }
 
     /// `scrutate grep` in colour on a terminal, as `grep_command` writes it.
     fn coloured(dir: &std::path::Path, pattern: &str, multiline: bool) -> String {
