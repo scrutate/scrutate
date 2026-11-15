@@ -138,7 +138,9 @@ them under a user account with `bench/competitors/install_rivals.sh DIR`. claude
 grepai need Milvus and Ollama: `bench/competitors/claude-context.compose.yml` starts both, and its
 header has the model pull. Then run `yardstick.py --corpus DIR --queries FILE --out FILE` for
 W1 to W6, W9 and W10, and `yardstick.py --quality 200 --out FILE` for W8; `--only W4,W5` narrows
-a run. The output records each rival's version and the machine. clangd needs a
+a run, and starts only the tools those workloads have. A tool gets `--start-timeout` seconds (1800)
+to build its index or start its server; past that it is that tool's error and the run goes on. The
+output records each rival's version and the machine. clangd needs a
 `compile_commands.json` in the corpus, and gopls a Go corpus (`corpora.py --only hugo`).
 
 Then read the results:

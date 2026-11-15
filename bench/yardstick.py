@@ -13,8 +13,10 @@ holds its index), process with process (a program per request).
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import math
+import signal
 import statistics
 import time
 
@@ -42,21 +44,53 @@ def rank_in(hits, relevant) -> int | None:
     return None
 
 
-def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus: str, work: str) -> dict:
-    """Check, then time, every adapter on every query of a workload it serves."""
+def serves(a, q: dict) -> bool:
+    return q["workload"] in a.workloads and (a.languages is None or q.get("language") in a.languages)
+
+
+class StartTimeout(Exception):
+    pass
+
+
+def bounded(seconds: float, fn, *args):
+    """fn(*args), stopped by an exception after `seconds` where the platform has SIGALRM: a
+    subprocess.run inside fn kills its child as the exception passes through it."""
+    if seconds <= 0 or not hasattr(signal, "setitimer"):
+        return fn(*args)
+
+    def fire(*_):
+        raise StartTimeout(f"start took over {seconds:g} s")
+
+    old = signal.signal(signal.SIGALRM, fire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return fn(*args)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus: str, work: str, start_limit: float = 1800) -> dict:
+    """Check, then time, every adapter on every query of a workload it serves. Only an adapter
+    some query needs is started, each start within `start_limit` seconds."""
     tools: dict = {}
     started = []
     for a in adapters:
+        if not any(serves(a, q) for q in queries):
+            continue
         why = a.missing()
         tools[a.name] = {"form": a.form, "missing": why}
         if why:
             continue
         tools[a.name]["version"] = a.version()
         try:
-            tools[a.name]["setup"] = dataclasses.asdict(a.start(corpus, work))
+            tools[a.name]["setup"] = dataclasses.asdict(bounded(start_limit, a.start, corpus, work))
             started.append(a)
         except Exception as e:  # noqa: BLE001 - a tool that cannot start is reported, the run goes on
             tools[a.name]["error"] = f"{type(e).__name__}: {e}"
+            # a server it launched before it hung
+            with contextlib.suppress(Exception):
+                a.stop()
     rows: list[dict] = []
     try:
         for q in queries:
@@ -66,7 +100,7 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 found, _ = lb.reference(corpus, lb.file_list(corpus, q.get("mode", "ignore")), q["grep"])
                 q = {**q, "expect": sorted(found), "exact": True}
             live = []
-            for a in (a for a in adapters if w in a.workloads and (a.languages is None or q.get("language") in a.languages)):
+            for a in (a for a in adapters if serves(a, q)):
                 row = {"workload": w, "query": q["id"], "tool": a.name, "form": a.form}
                 rows.append(row)
                 if tools[a.name]["missing"]:
@@ -224,6 +258,7 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--only", help="workloads, comma-separated (W3,W4)")
+    ap.add_argument("--start-timeout", type=float, default=1800, metavar="S", help="seconds a tool may take to build its index or start (default 1800)")
     ap.add_argument("--quality", type=int, metavar="N", help="W8 alone: N of the QUALITY queries on the frozen corpus (bench/quality)")
     a = ap.parse_args()
     if a.smoke:
@@ -249,7 +284,7 @@ def main() -> int:
             # clangd indexes the files a compilation database lists, by absolute path
             with open(os.path.join(corpus, "compile_commands.json"), "w") as f:
                 json.dump([{"directory": os.path.realpath(corpus), "file": "point.c", "command": "cc -c point.c"}], f)
-        out = measure(adapters(), queries, a.runs, a.warmup, os.path.realpath(corpus), work)
+        out = measure(adapters(), queries, a.runs, a.warmup, os.path.realpath(corpus), work, a.start_timeout)
     # environment() hashes the binary; without one, the scrutate rows say missing and passed() fails the run
     out["environment"] = lb.environment() if os.path.isfile(lb.SCRUTATE) else {"scrutate": f"missing: {lb.SCRUTATE}"}
     # the pinned rivals' versions, as bench/competitors/install_rivals.sh wrote them

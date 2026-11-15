@@ -154,8 +154,9 @@ incompatible index by itself, and that is never breaking.
   time, and records each rival's version. A rival is timed against scrutate in the same form:
   the zoekt and livegrep servers against scrutate's MCP server, which answers indexed grep too. `bench/competitors/install_rivals.sh` installs every
   rival pinned by version and checksum; `yardstick.Dockerfile` and `claude-context.compose.yml`
-  run them in containers. CI runs `--smoke` on a small tree in Python, Rust, C and Go
-  ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+  run them in containers. `--only` starts only the tools its workloads have, and a tool's start
+  past `--start-timeout` (30 min) is that tool's error. CI runs `--smoke` on a small tree in
+  Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
 - A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter

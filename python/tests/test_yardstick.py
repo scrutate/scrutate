@@ -1,5 +1,6 @@
 """bench/yardstick.py checks every answer before it times one, and names the best rival per workload."""
 import os
+import subprocess
 import sys
 import time
 
@@ -134,3 +135,37 @@ def test_a_right_rival_without_a_scrutate_row_of_its_form_says_so():
         workloads = frozenset({"W4"})
     reason = Y.summary(run(Process("scrutate", RIGHT, form="process"), Fake("resident rival", RIGHT))["rows"])["W4"]["reason"]
     assert reason == "no scrutate row of form resident, so no rival has a time to compare"
+
+
+class Starts(Adapter):
+    """An adapter that records its start, which may run a command first."""
+
+    def __init__(self, name, workloads, command=None):
+        self.name, self.workloads, self.command = name, frozenset(workloads), command
+        self.started = self.stopped = False
+
+    def start(self, corpus, work):
+        self.started = True
+        if self.command:
+            subprocess.run(self.command, check=True)
+        return super().start(corpus, work)
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_only_a_tool_a_selected_query_needs_is_started():
+    unused, used = Starts("unused", {"W9"}), Starts("used", {"W1"})
+    out = Y.measure([unused, used], [{"workload": "W1", "id": "q"}], 1, 0, ".", ".")
+    assert not unused.started and used.started
+    assert "unused" not in out["tools"]
+
+
+def test_a_start_past_its_limit_is_that_tools_error_and_the_run_goes_on():
+    slow, other = Starts("slow", {"W1"}, ["sleep", "30"]), Starts("other", {"W1"})
+    t0 = time.perf_counter()
+    out = Y.measure([slow, other], [{"workload": "W1", "id": "q"}], 1, 0, ".", ".", start_limit=1)
+    assert time.perf_counter() - t0 < 10
+    assert "over 1 s" in out["tools"]["slow"]["error"]
+    assert slow.stopped and other.started
+    assert [r["status"] for r in out["rows"] if r["tool"] == "slow"] == ["error: StartTimeout: start took over 1 s"]
