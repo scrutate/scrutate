@@ -1885,8 +1885,24 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
     let quiet =
         matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..) | Answer::Files(..));
     let why = r.outside.as_deref().filter(|_| answer.is_empty());
+    // a person reads the CLI's answers as they are, unless SCRUTATE_REDACT=on: JSON is redacted
+    // as values before it is written, so it stays whole, and the closing line goes to stderr
+    let redact = crate::secrets::on(false);
+    if redact {
+        crate::secrets::know_key_lines_at(root);
+    }
     if r.json {
-        writeln!(p.out, "{}", serde_json::to_string_pretty(&answer.envelope(root))?)?;
+        let mut envelope = answer.envelope(root);
+        if redact {
+            let mut rj = crate::secrets::Redactor::default();
+            rj.redact_json(&mut envelope);
+            let mut note = String::new();
+            crate::secrets::close(&mut note, rj.total());
+            if !note.is_empty() {
+                writeln!(p.err, "{note}")?;
+            }
+        }
+        writeln!(p.out, "{}", serde_json::to_string_pretty(&envelope)?)?;
         // standard output keeps the JSON's shape, so the stop line goes beside it
         let note = answer.stop_note();
         if !note.is_empty() {
@@ -1910,14 +1926,10 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
         writeln!(p.err, "[scrutate] {w}")?;
     }
     p.code = if answer.is_empty() { 1 } else { 0 };
-    // a person reads the CLI's answers as they are, unless SCRUTATE_REDACT=on
-    if crate::secrets::on(false) {
-        let mut r = crate::secrets::Redactor::default();
-        if let std::borrow::Cow::Owned(s) = r.redact(&p.out).0 {
-            p.out = s;
-        }
-        if let Some(note) = r.note() {
-            p.out.push_str(&note);
+    if redact && !r.json {
+        let n = crate::secrets::Redactor::default().redact_in_place(&mut p.out);
+        crate::secrets::close(&mut p.out, n);
+        if n > 0 {
             p.out.push('\n');
         }
     }

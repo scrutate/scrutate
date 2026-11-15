@@ -24,11 +24,14 @@ incompatible index by itself, and that is never breaking.
   `review` named before. `review` renders the same list, and its Markdown and GitLab reports are
   unchanged.
 - Secret-safe answers: the MCP tools, the Grep hook and `lsp` replace a secret in what they
-  return with `[redacted:KIND]`, its name or armour kept, and say how many they redacted. The
+  return with `[redacted:KIND]`, its name or armour kept, in both response forms and in a
+  structural search capture of a value alone, and say how many they redacted; a key's body lines
+  are recorded in the text index by their hash, so any answer that shows one has it redacted. The
   detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,
   Google, OpenAI, Anthropic, npm, PyPI, JWT, Twilio, SendGrid, Mailgun, database URLs, private
-  keys, `.env` lines and a generic assignment rule). `SCRUTATE_REDACT=off` turns it off and `on`
-  turns it on for the CLI's index answers ([Security](docs/SECURITY.md#secrets-in-answers)).
+  keys, `.env` lines, quoted passwords and a generic assignment rule). `SCRUTATE_REDACT=off`
+  turns it off and `on` turns it on for the CLI's index answers
+  ([Security](docs/SECURITY.md#secrets-in-answers)).
 - Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a
   fixed margin, so a clearly better vendored match (`WalkBuilder.build_matchers` defined only
   under `vendor/`) still comes first, and it is never left out: `vendor/`, `third_party/`,
@@ -137,6 +140,9 @@ incompatible index by itself, and that is never breaking.
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- The text index is format 4, as it also records the hash of every line of a private key's body:
+  one an earlier version wrote is rebuilt once, the cost of a first build (about 12 s on Linux's
+  tree on an 8-vCPU server, 8% more CPU than format 3).
 - `review` marks as no test reaching it only a changed function, method, class, struct, trait,
   interface, type, enum or impl, the kinds with call edges: an edited constant, macro, key,
   field or Markdown section is no longer counted under "no test reaches", and is no GitLab issue.

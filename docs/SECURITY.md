@@ -322,42 +322,113 @@ marker is not).
 
 ## Secrets in answers
 
-What an agent reads is secret-safe by default: the MCP tools, the Grep hook and `lsp` pass every
-answer through `secrets.rs`, which replaces each secret it finds with `[redacted:KIND]` and keeps
-the key name, URL scheme or PEM armour around it. A page says how many it redacted, and the
-structured form counts them by kind. Items are redacted before the budget pages them, so a page
-edge never cuts a secret in two; only the items a page can show are redacted, and the lines before
-them are read for where a private key starts. `SCRUTATE_REDACT=off` turns it off; no tool argument
-does, so an agent cannot.
+What an agent reads is secret-safe by default: the MCP tools, the Grep hook and `lsp` replace each
+secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour around it.
+A text page ends with `(N secrets redacted: SCRUTATE_REDACT=off shows them)`, N counting the
+redactions that page shows; the structured form carries `"redacted": {KIND: count}` for what it
+holds, which may be more items than the page. `SCRUTATE_REDACT=off` turns it off and `on` turns it
+on for the CLI's index answers (`--json` redacted as values, the closing line on stderr); any other
+value keeps the default and says so on stderr. No tool argument turns it off, so an agent cannot.
 
-The detectors are ports of gitleaks v8.30.1 and secretlint v13.1.0 rules, each regex run only on
-text that holds one of its keywords (an Aho-Corasick pass), with gitleaks' entropy thresholds:
-AWS access key IDs and secret access keys; GitHub classic and fine-grained tokens; GitLab
-personal access tokens; Slack tokens and incoming webhooks; Stripe secret and restricted keys;
-Google API keys; OpenAI and Anthropic API keys; npm and PyPI tokens; JWTs; Twilio API key SIDs;
-SendGrid and Mailgun keys; database URLs with a password; PEM private key bodies, line by line
-between their armour lines; a line of base64 alone as wide as a key's body, near random, for a key
-read without its armour; `.env` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
-`KEY` or `CREDENTIALS`; and gitleaks' generic assignment rule (a name holding `key`, `token`,
-`secret`, `password` or kin, a value over 3.5 bits of entropy with a digit or symbol), without
-gitleaks' stopword list, which drops real secrets that hold a common word. Placeholders
-(`${VAR}`, `{{ x }}`, `<value>`), numbers as code writes them and identifiers in one case
-(`NL80211_AUTHTYPE_SAE`) are left alone.
+Where it runs (`secrets.rs`): an answer's items are redacted before the budget pages them, so no
+page edge cuts a secret in two, in the detailed and the concise form (only the items a page can
+show); then the page as assembled is read once more, so a form written later cannot skip it. A
+rule that reads a line as a whole reads the file's text, after the line number or path an answer
+writes before it (`    7  `, `a.py:3:`, `a.py-4-`). What a page cannot see is redacted in the
+answer first: a structural search capture as its whole source line reads it, so a value alone
+(`"key-..."`) is found by the name its line gives it; a line of a private key's body as its whole
+file reads it, at any size and in UTF-16 too, wherever `read_code` (from the middle of a file),
+`grep_code`, `references`, the Grep hook or `hook run` (by the file and line grep names) show it,
+armour on the page or not, reading only the files of what the page can show and each only as far
+as its last line shown. Every line of a private key's body in a file the text index holds is also
+recorded there by its hash, so whatever shows that line has it redacted by its text alone, with or
+without its file, its line number or its armour (`grep -r` and `rg` through `hook run`, a file
+name with a colon); and a line too long for `references` to show whole before the window
+around a use is cut from it, so the window never shows a value without its name. The Grep hook
+writes its lines through `hook::redacted`; `hook run` redacts what the search program prints, line
+by line as it streams. A path that holds a secret (a file named with a token) is redacted like any
+other text, so that path cannot be opened from the answer.
 
-Measured, every line of every text file through the redactor: on scrutate's own tree (477,017
-lines) each of the 35 redactions is a test's planted secret; on the Linux tree at c52356211790
-(43,843,823 lines) 197 redactions, 37 of them the bodies of the test private keys it ships and 160
-false, 0.036 per 10,000 lines (the bar is 1). A page of 24,000 bytes costs 0.65 ms to redact
-(release build, the Mac).
-`tests/secrets.rs` plants three secrets of each kind, a `.env` and private keys among them, asks
-every MCP tool that returns text and the Grep hook for them at two page sizes, and finds no byte of
-any.
+The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,
+each regex run only on text holding one of its keywords (an Aho-Corasick pass), with gitleaks'
+entropy thresholds; JSON's `\/` is read as `/`:
 
-Not covered: secrets in base64, hex or URL encoding (gitleaks decodes them; scrutate does not);
-formats outside the list above; a secret split over two lines of code or built at run time; the
-CLI and the Python bindings, which print what the files hold unless `SCRUTATE_REDACT=on` (the
-CLI's index answers only); and the index itself: `.scrutate/` keeps chunk text, secrets included,
-as before (mode 0700 on Unix).
+| Kind | Rule it comes from |
+|---|---|
+| `aws-access-key-id` | gitleaks aws-access-token |
+| `aws-secret-access-key` | secretlint-rule-aws |
+| `github-token` | gitleaks github-pat, github-oauth, github-app-token, github-refresh-token |
+| `github-fine-grained-token` | gitleaks github-fine-grained-pat |
+| `gitlab-token` | gitleaks gitlab-pat, gitlab-pat-routable |
+| `slack-token` | gitleaks slack-bot-token, slack-user-token, slack-app-token, slack-config-*, slack-legacy-* |
+| `slack-webhook` | gitleaks slack-webhook-url |
+| `stripe-key` | gitleaks stripe-access-token (secretlint-rule-stripe's length) |
+| `google-api-key` | gitleaks gcp-api-key |
+| `openai-api-key` | gitleaks openai-api-key |
+| `anthropic-api-key` | gitleaks anthropic-api-key, anthropic-admin-api-key |
+| `npm-token` | gitleaks npm-access-token |
+| `pypi-token` | gitleaks pypi-upload-token (any index's prefix) |
+| `jwt` | gitleaks jwt |
+| `twilio-api-key` | gitleaks twilio-api-key |
+| `sendgrid-api-key` | gitleaks sendgrid-api-token (SendGrid's 22.43 layout) |
+| `mailgun-api-key` | gitleaks mailgun-private-api-token |
+| `database-password` | secretlint-rule-database-connection-string |
+| `env-secret` | scrutate |
+| `password` | scrutate |
+| `key-material` | scrutate |
+| `generic-secret` | gitleaks generic-api-key (without its stopwords) |
+| `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
+
+`env-secret` takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
+`KEY` or `CREDENTIALS`; `password` a quoted value of a name holding `password`, `secret` or
+`token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
+random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside);
+`generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
+holding a common word. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
+assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
+string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> = "..."`), a value
+in up to two constructors (`Some(String::from("..."))`, `Optional.of("...")`) and a Rust raw
+string (`r"..."`, `r#"..."#`). A private key's
+body is redacted line by line between its armour, which is matched in any case (`Rsa Private
+Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
+a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
+writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone; hex values are
+kept as secrets.
+
+`tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
+it redacts 198 strings (`generic-secret` 128, `key-material` 32, `password` 1, `private-key` 37):
+the private keys are the test keys the kernel ships, and the other 161, 0.037 per 10,000 lines,
+were read one by one and none is a secret; in this
+repository's tracked files, none (a test holds it there). Building the detectors costs about 5 ms
+once a process on an Apple M3 Pro and 19 ms on an 8-vCPU x86 server (4.8 to 5.2 ms and 18.4 to
+18.9 ms in three runs each, load 1.4 on the server), and redacting a 24,000-byte page 0.26 ms and
+0.82 ms (medians of 101 runs).
+
+`tests/secrets.rs` plants three secrets of each kind (a `.env`, private keys with a last line
+shorter than any rule for base64 alone, a typed Rust constant, a line too long to show whole and a
+file named with a token among them) and asks every MCP tool that returns text, in both forms, at
+pages of 24,000 and 700 bytes, a page from inside a key among them, and the Grep hook, its context
+lines too; no byte of any secret comes back, each kind is marked, and with `SCRUTATE_REDACT=off`
+every one does. The CLI's `--json` stays one JSON document with it on.
+
+Marked although no secret: a constructor's argument under a secret's name
+(`secret_file = PathBuf::from("config/...")`, `TOKEN_SCOPES = Set.of(...)`, `token_msg =
+Ok(...)`), which costs readability only.
+
+Not covered, in assignments: two on one line; `=` inside a type's generics; a type over 80
+characters; a value built in a closure (`Lazy::new(|| ...)`) or a Kotlin `by lazy`; an f-string;
+a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borrowed`). Not
+covered elsewhere: a private key's short last line in a `search_code` or definition answer that
+starts inside the key (no armour on the page, and these answers are not read back from the file),
+or in a file that holds a key's body without its armour; a key's short last line in a file the
+text index does not hold yet (new since its last update, or one it skips), shown by `hook run`
+with no line number or with a colon in its file name; secrets in base64, hex or URL encoding
+(gitleaks decodes them; scrutate does not); formats outside the table; a secret split over two
+lines of code or built at run time; a value alone with neither a vendor prefix nor a name on its
+line (a name on the line before it); the CLI and the Python bindings, which print what the files
+hold unless `SCRUTATE_REDACT=on` (the CLI's index answers only); and the index itself:
+`.scrutate/` keeps chunk text, secrets included, and the hash of every key body line (mode 0700
+on Unix).
 
 ## Known gaps and residual risks
 

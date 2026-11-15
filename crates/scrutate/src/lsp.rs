@@ -779,6 +779,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
             Ok(mut result) => {
                 // what an editor's agent reads has its secrets redacted unless SCRUTATE_REDACT=off
                 if crate::secrets::on(true) {
+                    crate::secrets::know_key_lines_at(&srv.root);
                     crate::secrets::Redactor::default().redact_json(&mut result);
                 }
                 json!({"jsonrpc": "2.0", "id": id, "result": result})

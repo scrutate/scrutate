@@ -102,9 +102,18 @@ pub fn answer(input: &Value, budget: usize) -> Option<Answer> {
         return None;
     }
     let mut lines = search(&ask)?;
+    let (first, end, _) = window(lines.len(), ask.head, ask.offset);
+    let mut keyed = 0;
+    if crate::secrets::on(true) {
+        crate::secrets::know_key_lines_at(&ask.target);
+        keyed = key_lines(&mut lines[first..end]);
+        // a path that holds a secret is one too
+        let mut prefixes: Vec<String> = lines.iter_mut().map(|i| std::mem::take(&mut i.prefix)).collect();
+        keyed += crate::secrets::Redactor::default().redact_shown(&mut prefixes, first, budget).iter().sum::<usize>();
+        lines.iter_mut().zip(prefixes).for_each(|(i, p)| i.prefix = p);
+    }
     let mut texts: Vec<String> = lines.iter_mut().map(|i| std::mem::take(&mut i.text)).collect();
-    let first = window(texts.len(), ask.head, ask.offset).0;
-    let note = redacted(&mut texts, first, budget);
+    let note = redacted(&mut texts, first, budget, keyed);
     lines.iter_mut().zip(texts).for_each(|(i, t)| i.text = t);
     let mut answer = render(&ask, lines, budget);
     if let Some(note) = note {
@@ -116,14 +125,32 @@ pub fn answer(input: &Value, budget: usize) -> Option<Answer> {
 
 /// The lines a hook shows an agent with their secrets redacted, unless SCRUTATE_REDACT=off: from
 /// `first`, up to `room` bytes (`secrets::Redactor::redact_shown`). -> the closing line that says
-/// how many were redacted, when any were. Every hook writes its lines through this.
-pub(crate) fn redacted(lines: &mut [String], first: usize, room: usize) -> Option<String> {
+/// how many were redacted, `more` made before this among them, when any were. Every hook writes
+/// its lines through this.
+pub(crate) fn redacted(lines: &mut [String], first: usize, room: usize, more: usize) -> Option<String> {
     if !crate::secrets::on(true) {
         return None;
     }
-    let mut r = crate::secrets::Redactor::default();
-    r.redact_shown(lines, first, room);
-    r.note()
+    let n: usize = crate::secrets::Redactor::default().redact_shown(lines, first, room).iter().sum();
+    crate::secrets::note(n + more)
+}
+
+/// The lines of a private key's body redacted as their whole file reads them, armour shown or not
+/// (`-A 1` after the armour, a match on the last line alone). -> how many redactions.
+fn key_lines(items: &mut [Item]) -> usize {
+    let mut keys = crate::secrets::KeyFiles::default();
+    items
+        .iter_mut()
+        .map(|i| {
+            let Some((path, n)) = &i.at else { return 0 };
+            if !crate::secrets::could_be_key_line(&i.text) {
+                return 0;
+            }
+            let Some((line, k)) = keys.line(path, *n, || std::fs::File::open(&**path).ok()) else { return 0 };
+            i.text = line.to_string();
+            k
+        })
+        .sum()
 }
 
 fn read_ask(input: &Value) -> Option<Ask> {
@@ -377,7 +404,11 @@ mod windows_policy {
 
 /// One line of Grep's result list, before the paging.
 struct Item {
+    /// what Grep writes before the line: its path and number (`a.py:3:`, `a.py-4-`)
+    prefix: String,
     text: String,
+    /// the file and line number of a line of a file
+    at: Option<(Arc<str>, u64)>,
     /// the matching lines of a `count` line
     count: u64,
 }
@@ -451,7 +482,7 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
                 if ask.breaks {
                     if let Some((p, n)) = &last {
                         if *p != l.path || l.line > n + 1 {
-                            items.push(Item { text: "--".into(), count: 0 });
+                            items.push(Item { prefix: String::new(), text: "--".into(), count: 0, at: None });
                         }
                     }
                 }
@@ -469,12 +500,11 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
                     } else {
                         part
                     };
-                    let mut line = if dir { format!("{}{sep}", shown(&l.path)) } else { String::new() };
+                    let mut prefix = if dir { format!("{}{sep}", shown(&l.path)) } else { String::new() };
                     if ask.numbers {
-                        line.push_str(&format!("{}{sep}", l.line + k as u64));
+                        prefix.push_str(&format!("{}{sep}", l.line + k as u64));
                     }
-                    line.push_str(text);
-                    items.push(Item { text: line, count: 0 });
+                    items.push(Item { prefix, text: text.to_string(), count: 0, at: Some((l.path.clone(), l.line + k as u64)) });
                 }
             }
         }
@@ -482,7 +512,7 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
             for r in &records {
                 let Record::Count { path, count, .. } = r else { return None };
                 if *count > 0 {
-                    items.push(Item { text: format!("{}:{count}", shown(path)), count: *count });
+                    items.push(Item { prefix: String::new(), text: format!("{}:{count}", shown(path)), count: *count, at: None });
                 }
             }
         }
@@ -498,7 +528,7 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
                 files.push((ms, shown(path)));
             }
             files.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-            items.extend(files.into_iter().map(|(_, text)| Item { text, count: 0 }));
+            items.extend(files.into_iter().map(|(_, text)| Item { prefix: String::new(), text, count: 0, at: None }));
         }
     }
     Some(items)
@@ -534,7 +564,8 @@ fn plural(n: u64, one: &str, many: &str) -> String {
 fn render(ask: &Ask, items: Vec<Item>, budget: usize) -> Answer {
     let (start, end, limit) = window(items.len(), ask.head, ask.offset);
     let pages = pagination(limit, ask.offset);
-    let page: Vec<&str> = items[start..end].iter().map(|i| i.text.as_str()).collect();
+    let lines: Vec<String> = items[start..end].iter().map(|i| format!("{}{}", i.prefix, i.text)).collect();
+    let page: Vec<&str> = lines.iter().map(String::as_str).collect();
     let (pre, empty, post, noun) = match ask.shape {
         Shape::Content => {
             let empty = if ask.offset > 0 && !items.is_empty() { "No entries at this offset" } else { "No matches found" };
@@ -766,6 +797,8 @@ mod tests {
         assert_eq!(real_path(r"C:\Users\X\repo", r"C:\Users\X\repo", true).as_deref(), Some(r"C:\Users\X\repo"));
         assert_eq!(real_path(r"\\?\C:\elsewhere", r"C:\Users\X\link", true), None);
         assert_eq!(real_path(r"\\?\UNC\server\share\x", r"\\server\share\x", true), None);
+        // a verbatim path Claude Code never sends, as a cwd: Grep runs
+        assert_eq!(real_path(r"\\?\C:\x", r"\\?\C:\x", true), None);
     }
 
     #[test]

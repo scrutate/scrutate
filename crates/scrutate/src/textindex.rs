@@ -7,7 +7,9 @@
 //! (per document holding the trigram: its number, delta + LEB128, then two mask bytes, a bit for
 //! the low three bits of each byte that follows the trigram and a bit for each position of the
 //! trigram modulo 8), `docs.npy` (size, mtime, flags and status change time per document),
-//! `paths.bin` + `poff.npy` (paths), and `live-<generation>.bin` (which documents are current).
+//! `paths.bin` + `poff.npy` (paths), `keyhash.npy` + `keydoc.npy` (the `secrets::key_line_hash` of
+//! every line of a private key's body, and its document), and `live-<generation>.bin` (which
+//! documents are current).
 //! Segments are immutable; an update writes new segments and new liveness files, then swaps the
 //! manifest.
 
@@ -24,7 +26,7 @@ use regex_syntax::hir::{Class, Hir, HirKind};
 use crate::instant::{self, Files, Mode, Query};
 use crate::npy::{self, Backing, Npy};
 
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 4;
 /// Numbers per document in `docs.npy`: size, mtime, flags, status change time.
 const COLS: usize = 4;
 const MAX_SEGMENTS: usize = 4;
@@ -468,28 +470,36 @@ struct DocIn {
     ctime: i64,
     flags: i64,
     tris: Vec<(u32, u16)>,
+    /// the hashes of the file's private-key body lines
+    keys: Vec<i64>,
 }
 
 /// A file larger than this is read in pieces: mapping it would end the process when another
 /// one shortens the file under the read.
 const WHOLE: u64 = 64 << 20;
 
+/// The `secrets::key_line_hash` of every line of a private key's body in `bytes`.
+fn key_hashes(bytes: &[u8]) -> Vec<i64> {
+    let text = String::from_utf8_lossy(bytes);
+    crate::secrets::key_body_lines(&text).iter().map(|l| crate::secrets::key_line_hash(l)).collect()
+}
+
 fn read_doc(root: &Path, rel: String, size: u64, mtime: i64, ctime: i64) -> DocIn {
     let path = root.join(&rel);
     let read = if size > WHOLE {
-        File::open(&path).and_then(|f| stream_masks(f, 1 << 20))
+        File::open(&path).and_then(|f| stream_masks(f, 1 << 20)).map(|(flags, tris)| (flags, tris, Vec::new()))
     } else {
         std::fs::read(&path).map(|bytes| match direct(&bytes) {
-            Some(flags) => (flags, Vec::new()),
+            Some(flags) => (flags, Vec::new(), Vec::new()),
             None => match bytes.iter().position(|&b| b == 0) {
-                Some(i) => (BINARY, trigram_masks(&bytes[..i])),
-                None => (0, trigram_masks(&bytes)),
+                Some(i) => (BINARY, trigram_masks(&bytes[..i]), Vec::new()),
+                None => (0, trigram_masks(&bytes), key_hashes(&bytes)),
             },
         })
     };
     match read {
-        Ok((flags, tris)) => DocIn { rel, size, mtime, ctime, flags, tris },
-        Err(_) => DocIn { rel, size, mtime, ctime, flags: ALWAYS | RETRY, tris: Vec::new() },
+        Ok((flags, tris, keys)) => DocIn { rel, size, mtime, ctime, flags, tris, keys },
+        Err(_) => DocIn { rel, size, mtime, ctime, flags: ALWAYS | RETRY, tris: Vec::new(), keys: Vec::new() },
     }
 }
 
@@ -561,6 +571,8 @@ struct Segment {
     paths: Option<Backing>,
     live: Vec<u8>,
     ndocs: usize,
+    keyhash: Npy,
+    keydoc: Npy,
 }
 
 fn bytes(m: &Option<Backing>) -> &[u8] {
@@ -578,7 +590,9 @@ impl Segment {
         let paths = map_file(&d.join("paths.bin"))?;
         let live = std::fs::read(d.join(live)).with_context(|| format!("read {}/{live}", d.display()))?;
         let ndocs = docs.len() / COLS;
-        let s = Segment { name: name.to_string(), keys, ptr, post, docs, poff, paths, live, ndocs };
+        let keyhash = Npy::open(&d.join("keyhash.npy"))?;
+        let keydoc = Npy::open(&d.join("keydoc.npy"))?;
+        let s = Segment { name: name.to_string(), keys, ptr, post, docs, poff, paths, live, ndocs, keyhash, keydoc };
         s.validate(false).with_context(|| format!("text index segment {name}"))?;
         Ok(s)
     }
@@ -633,6 +647,12 @@ impl Segment {
     fn path(&self, d: usize) -> &str {
         std::str::from_utf8(self.path_bytes(d)).unwrap_or("")
     }
+    /// (hash, document) of every private-key body line its documents hold.
+    fn key_lines(&self) -> impl Iterator<Item = (i64, usize)> + '_ {
+        let (h, d): (&[i64], &[u32]) = (self.keyhash.view().unwrap_or(&[]), self.keydoc.view().unwrap_or(&[]));
+        h.iter().zip(d).map(|(&h, &d)| (h, d as usize)).filter(move |&(_, d)| d < self.ndocs)
+    }
+
     fn is_live(&self, d: usize) -> bool {
         self.live[d / 8] & (1 << (d % 8)) != 0
     }
@@ -794,7 +814,14 @@ fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
     write_synced(&dir.join("post.bin"), &enc)?;
     npy::save(&dir.join("keys.npy"), &keys, &[keys.len()])?;
     npy::save(&dir.join("ptr.npy"), &ptr, &[ptr.len()])?;
+    let (hash, doc): (Vec<i64>, Vec<u32>) = docs.iter().enumerate().flat_map(|(i, d)| d.keys.iter().map(move |&h| (h, i as u32))).unzip();
+    write_key_lines(dir, &hash, &doc)?;
     write_docs(dir, docs.iter().map(|d| (d.rel.as_str(), d.size, d.mtime, d.flags, d.ctime)))
+}
+
+fn write_key_lines(dir: &Path, hash: &[i64], doc: &[u32]) -> Result<()> {
+    npy::save(&dir.join("keyhash.npy"), hash, &[hash.len()])?;
+    npy::save(&dir.join("keydoc.npy"), doc, &[doc.len()])
 }
 
 fn write_docs<'a>(dir: &Path, docs: impl Iterator<Item = (&'a str, u64, i64, i64, i64)>) -> Result<()> {
@@ -880,7 +907,12 @@ fn merge_segments(dir: &Path, segs: &[&Segment]) -> Result<()> {
     w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
     npy::save(&dir.join("keys.npy"), &keys, &[keys.len()])?;
     npy::save(&dir.join("ptr.npy"), &ptr, &[ptr.len()])?;
-    Ok(())
+    let (hash, doc): (Vec<i64>, Vec<u32>) = segs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, s)| s.key_lines().filter(|&(_, d)| remap[i][d] != u32::MAX).map(|(h, d)| (h, remap[i][d])).collect::<Vec<_>>())
+        .unzip();
+    write_key_lines(dir, &hash, &doc)
 }
 
 // ------------------------------------------------------------------------- the index
@@ -972,6 +1004,11 @@ impl TextIndex {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         Err(last.unwrap_or_else(|| anyhow!("text index unreadable")).context("text index is damaged; rebuild it with `scrutate index --text --force`"))
+    }
+
+    /// The `secrets::key_line_hash` of every private-key body line the current files hold.
+    pub fn key_line_hashes(&self) -> std::collections::HashSet<i64> {
+        self.segs.iter().flat_map(|s| s.key_lines().filter(|&(_, d)| s.is_live(d)).map(|(h, _)| h)).collect()
     }
 
     pub fn files(&self) -> usize {
@@ -1496,7 +1533,8 @@ mod tests {
         let texts: Vec<Vec<u8>> = (0..300).map(|_| (0..rnd(40)).map(|_| words[rnd(words.len())]).collect::<String>().into_bytes()).collect();
         let tmp = std::env::temp_dir().join(format!("scrutate-seg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let doc = |i: usize, t: &[u8]| DocIn { rel: format!("f{i}"), size: t.len() as u64, mtime: 0, ctime: 0, flags: 0, tris: trigram_masks(t) };
+        let doc =
+            |i: usize, t: &[u8]| DocIn { rel: format!("f{i}"), size: t.len() as u64, mtime: 0, ctime: 0, flags: 0, tris: trigram_masks(t), keys: Vec::new() };
         let (a, b) = texts.split_at(170);
         write_segment(&tmp.join("a"), &a.iter().enumerate().map(|(i, t)| doc(i, t)).collect::<Vec<_>>()).unwrap();
         write_segment(&tmp.join("b"), &b.iter().enumerate().map(|(i, t)| doc(i, t)).collect::<Vec<_>>()).unwrap();

@@ -747,10 +747,12 @@ Answers are secret-safe: a secret in the text a tool returns is replaced with
 `generic-secret` and the other kinds [Security](SECURITY.md#secrets-in-answers) lists), its key
 name, URL scheme or PEM armour left in place, and the page ends with `(N secrets redacted:
 SCRUTATE_REDACT=off shows them)`; the structured form carries `"redacted": {KIND: count}`.
-Items are redacted before the budget pages them, so a page edge never cuts a secret in two. The
-Grep hook and `lsp` answer the same way. The CLI and the Python bindings print what the files
-hold; `SCRUTATE_REDACT=on` redacts the CLI's index answers too, and `SCRUTATE_REDACT=off` turns
-redaction off everywhere. No tool argument turns it off, so an agent cannot.
+Both forms are redacted, `detailed` and `concise`, before the budget pages them, so a page edge
+never cuts a secret in two, and a structural search capture as its whole line reads it. A path
+that holds a secret is redacted too. The Grep hook and `lsp` answer the same way. The CLI and the
+Python bindings print what the files hold; `SCRUTATE_REDACT=on` redacts the CLI's index answers
+too (`--json` as values, the closing line on stderr), and `SCRUTATE_REDACT=off` turns redaction
+off everywhere. No tool argument turns it off, so an agent cannot.
 
 Before a call the server brings the index up to date with the files that changed since the last
 call. A watch on the tree (FSEvents on macOS, one inotify watch per directory on Linux,
@@ -1147,7 +1149,7 @@ root.
 
 | Variable | Meaning |
 |---|---|
-| `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook, `hook run` and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts the CLI's index answers too |
+| `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook, `hook run` and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts the CLI's index answers too; any other value keeps the default and says so on stderr |
 | `SCRUTATE_HOOK_BASH` | `off` (or `0`, `false`, `no`): `hook bash` rewrites nothing, so every shell command runs as written ([setup](#setup-and-the-grep-hook)) |
 | `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none`; a model whose tables do not agree in size is refused with an error |
 | `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's makes `search` fail |
@@ -1160,7 +1162,8 @@ On/off variables follow the rule under Conventions.
 
 ### The index directory
 `.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays),
-`.scrutate/text/` (the text index: a manifest and immutable trigram segments),
+`.scrutate/text/` (the text index: a manifest and immutable trigram segments, which also hold the
+hash of every line of a private key's body),
 `.scrutate/tsquery/` (the `tsquery` cache), `.scrutate/answers/` (what `callers` and `callees`
 resolved, one file per request), `.scrutate/session.sock` while `serve` runs, and a
 `.gitignore` so it is never committed. On Unix only its owner can enter it (mode 0700, set by

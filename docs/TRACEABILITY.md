@@ -150,7 +150,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | R-9.6 | Fuzz tests | four cargo-fuzz targets (`fuzz/`), AddressSanitizer, ten-minute rounds, and 45 minutes per target every week in CI (`fuzz-weekly.yml`); four defects found and fixed, crash inputs replayed by the test gate | PASS |
 | R-9.7 | Regression tests | snapshot `expected.json`; fuzz regressions; `bench/leaderboard_regression.py` | PASS |
 | R-9.8 | Stress tests | robustness (5 MB line, 200k lines, deep nesting, 3 writers + 2 readers x 30); 12 concurrent text-index updates on SMB | PASS |
-| R-9.9 | Security tests | regex limits, path confinement, symlink escape, corruption, panic containment, fuzzing | PASS |
+| R-9.9 | Security tests | regex limits, path confinement, symlink escape, corruption, panic containment, fuzzing, no planted secret back from any MCP tool, form or page size, the hook or the CLI (tests/secrets.rs) | PASS |
 | R-9.10 | Cross-platform tests | full test suite on macOS arm64, Linux aarch64 and Linux x86_64 (`bench/results/platforms/`); in CI run 43013926055 (`9384c18`) the Rust tests passed on macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64 (five tests of files removed while open and of file names Windows forbids run on Unix only) | PASS |
 | R-9.11 | Traceability matrix | this document | PASS |
 | R-9.12 | Continuous gap analysis | RELEASE_READINESS.md; ROADMAP.md | PASS |

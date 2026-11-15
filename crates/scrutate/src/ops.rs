@@ -891,6 +891,13 @@ fn under(path: &str, root: &str) -> bool {
     path.strip_prefix(root.trim_end_matches('/')).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// The file at `path` under `root`, opened with read_range's checks: inside the repository by
+/// its parts and by its real path, and a regular file.
+fn repo_file(root: &std::path::Path, path: &str) -> Option<std::fs::File> {
+    let canon = std::fs::canonicalize(root.join(path)).ok().filter(|c| inside(root, path) && c.starts_with(root) && c.is_file())?;
+    std::fs::File::open(canon).ok()
+}
+
 /// Lines `start..=end` of a repository file, numbered, read only as far as they go and at most
 /// `READ_BYTES` of them; and how many lines the file has, when the read reached its end or the
 /// file is small enough to count them.
@@ -1332,6 +1339,18 @@ struct Written {
 }
 
 impl Brief {
+    /// Its texts and paths redacted in place. -> how many redactions.
+    fn redact(&mut self, r: &mut crate::secrets::Redactor) -> usize {
+        self.0
+            .iter_mut()
+            .map(|p| match p {
+                Piece::Text(t) | Piece::Path(t) => r.redact_in_place(t),
+                Piece::At(path, place) => r.redact_in_place(path) + r.redact_in_place(place),
+                Piece::Head => 0,
+            })
+            .sum()
+    }
+
     fn text(text: impl Into<String>) -> Brief {
         Brief(vec![Piece::Text(text.into())])
     }
@@ -1442,18 +1461,19 @@ impl Parts {
     /// The page from item `offset` on that fits `max_bytes`, and how many items it shows. A
     /// concise page holds the items the detailed one holds, so an offset means the same items in
     /// both forms.
-    fn within(&self, max_bytes: usize, offset: usize, form: Form) -> (String, usize) {
+    fn within(&self, max_bytes: usize, offset: usize, form: Form) -> (String, usize, bool) {
         let mut room = max_bytes;
         loop {
             let (out, shown, cut) = self.render(max_bytes, room, offset);
             if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
                 // the concise text of the same items when it fits, else the detailed page, which
                 // says how to go on
-                let text = match &self.brief {
-                    Some(brief) if form == Form::Concise => Some(self.render_brief(brief, offset, shown)).filter(|b| b.len() <= max_bytes).unwrap_or(out),
-                    _ => out,
+                let concise = match &self.brief {
+                    Some(brief) if form == Form::Concise => Some(self.render_brief(brief, offset, shown)).filter(|b| b.len() <= max_bytes),
+                    _ => None,
                 };
-                return (text, shown);
+                let used = concise.is_some();
+                return (concise.unwrap_or(out), shown, used);
             }
             room = room.saturating_sub(out.len() - max_bytes);
         }
@@ -1634,6 +1654,123 @@ impl Answer {
         self.text_page(None, max_bytes, offset, form, None).0
     }
 
+    /// What a page cannot see, redacted in the answer itself from the files under `root`: a
+    /// capture's text as its whole line reads it (a value alone, `"key-..."`, is no secret to the
+    /// detectors until its line names it); a line of a private key's body as its whole file reads
+    /// it, armour shown or not; and a long line before the window around a use is cut from it, so
+    /// the window never shows a value without its name. -> how many redactions each item got (for
+    /// answers whose items are lines of text, the whole count on the first).
+    /// Only what a page of `room` bytes from item `offset` can show is read for.
+    pub fn redact_in_context(&mut self, root: &std::path::Path, offset: usize, room: usize) -> Vec<usize> {
+        // every item a page shows takes 8 bytes at least, so none past this is on the page
+        let reach = offset.saturating_add(room / 8 + 1);
+        let mut keys = crate::secrets::KeyFiles::default();
+        let mut in_key = |path: &str, n: u64, text: &mut String| -> usize {
+            if !crate::secrets::could_be_key_line(text) {
+                return 0;
+            }
+            let Some((line, k)) = keys.line(path, n, || repo_file(root, path)) else { return 0 };
+            let end = if text.ends_with('\n') { "\n" } else { "" };
+            *text = format!("{line}{end}");
+            k
+        };
+        match self {
+            Answer::Read { path, lines, start, .. } if *start > 1 => {
+                let path = path.clone();
+                let first = *start as u64;
+                return lines
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(i, shown)| {
+                        // read_code's `    7  ` stays before the line
+                        let at = crate::secrets::split_line(shown).0.len();
+                        let mut text = shown[at..].to_string();
+                        let k = in_key(&path, first + i as u64, &mut text);
+                        if k > 0 {
+                            shown.replace_range(at.., &text);
+                        }
+                        k
+                    })
+                    .collect();
+            }
+            Answer::Grep { groups, .. } => {
+                let mut used = 0;
+                return groups
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(i, g)| {
+                        if i < offset || used > room {
+                            return 0;
+                        }
+                        used += crate::intel::group_text(g).len();
+                        g.lines.iter_mut().map(|l| in_key(&g.path, l.line, &mut l.text)).sum()
+                    })
+                    .collect();
+            }
+            Answer::Refs { refs, .. } => {
+                let mut lines = 0;
+                let n = refs
+                    .groups
+                    .iter_mut()
+                    .take_while(|g| {
+                        lines += g.lines.len() + 1;
+                        lines <= reach + g.lines.len() + 1
+                    })
+                    .map(|g| g.lines.iter_mut().map(|l| in_key(&g.path, l.line, &mut l.text)).sum::<usize>())
+                    .sum();
+                return vec![n];
+            }
+            Answer::Resolved { refs, .. } => {
+                let n = refs
+                    .occurrences
+                    .iter_mut()
+                    .take(reach)
+                    .map(|o| {
+                        let mut text = o.text.to_string();
+                        let k = in_key(&o.path, o.line, &mut text);
+                        let (text, at, k) = if k > 0 { (text, 0, k) } else { crate::secrets::redact_keeping(&o.text, o.at) };
+                        if k > 0 {
+                            (o.text, o.at) = (text.into(), at);
+                        }
+                        k
+                    })
+                    .sum();
+                return vec![n];
+            }
+            _ => {}
+        }
+        let Answer::Captures(caps, _) = self else { return Vec::new() };
+        let mut files: std::collections::HashMap<String, Option<Vec<String>>> = std::collections::HashMap::new();
+        caps.iter_mut()
+            .enumerate()
+            .map(|(i, c)| {
+                if i < offset || i >= reach {
+                    return 0;
+                }
+                let lines =
+                    files.entry(c.path.clone()).or_insert_with(|| crate::resolve::repo_text(root, &c.path).map(|t| t.lines().map(str::to_string).collect()));
+                let Some(line) = lines.as_ref().and_then(|l| l.get((c.line - 1).max(0) as usize)) else { return 0 };
+                let start = (c.column - 1).max(0) as usize;
+                if !line.get(start..).is_some_and(|rest| rest.starts_with(c.text.as_str())) {
+                    return 0;
+                }
+                let end = start + c.text.len();
+                let (mut out, mut at, mut n) = (String::new(), start, 0);
+                for (a, b, kind) in crate::secrets::spans(line).into_iter().filter(|&(a, b, _)| a < end && b > start) {
+                    let (a, b) = (a.max(at), b.min(end));
+                    out.push_str(&line[at..a]);
+                    out.push_str(&format!("[redacted:{kind}]"));
+                    (at, n) = (b, n + 1);
+                }
+                if n > 0 {
+                    out.push_str(&line[at..end]);
+                    c.text = out;
+                }
+                n
+            })
+            .collect()
+    }
+
     /// `text_as`, with how many items the page shows and how many the answer has. With the
     /// repository's `root`, a location of vendored code is marked as in the JSON form. With a
     /// `redactor` every item is redacted before the budget pages them, so no secret is cut in two
@@ -1644,7 +1781,7 @@ impl Answer {
         max_bytes: usize,
         offset: usize,
         form: Form,
-        redactor: Option<&mut crate::secrets::Redactor>,
+        mut redactor: Option<&mut crate::secrets::Redactor>,
     ) -> (String, usize, usize) {
         let mut parts = self.parts();
         if let Some(root) = root {
@@ -1657,13 +1794,25 @@ impl Answer {
                 }
             }
         }
-        if let Some(r) = redactor {
-            // the head, the items a page of max_bytes can show, and the tail
-            let mut ends = [std::mem::take(&mut parts.head), std::mem::take(&mut parts.tail)];
-            r.redact_shown(&mut ends[..1], 0, usize::MAX);
-            r.redact_shown(&mut parts.items, offset, max_bytes);
-            r.redact_shown(&mut ends[1..], 0, usize::MAX);
-            [parts.head, parts.tail] = ends;
+        // redacted before the budget pages them, so no page edge cuts a secret in two: the head, the
+        // items a page of max_bytes can show in either form, and the tail
+        let mut marks = (0, Vec::new(), Vec::new());
+        if let Some(r) = redactor.as_deref_mut() {
+            // the head and tail are no lines of a file, so they neither start nor end a key
+            let mut ends = crate::secrets::Redactor::default();
+            marks.0 = ends.redact_in_place(&mut parts.head);
+            marks.0 += ends.redact_in_place(&mut parts.tail);
+            marks.1 = r.redact_shown(&mut parts.items, offset, max_bytes);
+            if let Some(brief) = parts.brief.as_mut() {
+                let mut b = crate::secrets::Redactor::default();
+                let upto = marks.1.len().min(brief.len());
+                marks.2 = brief
+                    .iter_mut()
+                    .take(upto)
+                    .enumerate()
+                    .map(|(i, item)| if i < offset { 0 } else { item.iter_mut().map(|line| line.redact(&mut b)).sum() })
+                    .collect();
+            }
         }
         let briefs = parts.brief.as_ref().map(Vec::len);
         // a concise form that does not line up with the items would page other items
@@ -1671,7 +1820,13 @@ impl Answer {
         if briefs.is_some_and(|n| n != parts.items.len()) {
             parts.brief = None;
         }
-        let (text, shown) = parts.within(max_bytes, offset, form);
+        let (mut text, shown, concise) = parts.within(max_bytes, offset, form);
+        if let Some(r) = redactor {
+            // the page as assembled, once more: whatever a form writes passes here
+            let again = r.redact_in_place(&mut text);
+            let items = if concise { &marks.2 } else { &marks.1 };
+            r.shown = marks.0 + again + items.iter().skip(offset).take(shown).sum::<usize>();
+        }
         (text, shown, parts.items.len() + parts.rest)
     }
 

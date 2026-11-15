@@ -581,7 +581,14 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let mut reader = std::io::BufReader::new(out);
     let mut so = std::io::stdout().lock();
     let redact = crate::secrets::on(true);
+    if redact {
+        if let Ok(cwd) = std::env::current_dir() {
+            crate::secrets::know_key_lines_at(&cwd);
+        }
+    }
     let mut r = crate::secrets::Redactor::default();
+    // a line of a key's body grep shows without its armour, read back from its file
+    let mut keys = crate::secrets::KeyFiles::default();
     let (mut read, mut sent, mut cut) = (0usize, 0usize, false);
     let mut line = Vec::new();
     loop {
@@ -594,7 +601,18 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         }
         let shown: Vec<u8> = match std::str::from_utf8(&line) {
             Ok(t) if redact => {
-                let mut one = [t.to_string()];
+                let mut t = t.to_string();
+                let (prefix, text) = crate::secrets::split_line(&t);
+                if crate::secrets::could_be_key_line(text) {
+                    if let Some((path, n)) = crate::secrets::grep_place(prefix) {
+                        if let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok()) {
+                            let end = if text.ends_with('\n') { "\n" } else { "" };
+                            t = format!("{prefix}{key}{end}");
+                            *r.counts.entry("private-key").or_default() += k;
+                        }
+                    }
+                }
+                let mut one = [t];
                 r.redact_shown(&mut one, 0, usize::MAX);
                 let [t] = one;
                 t.into_bytes()

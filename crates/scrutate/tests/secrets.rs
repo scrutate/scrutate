@@ -62,15 +62,20 @@ fn planted() -> Vec<(&'static str, &'static str, String, String)> {
         add("mailgun-api-key", "config.py", &|s| format!("mailgun_key = \"{s}\""), format!("key-{}", chars(s, HEX, 32)));
         add("database-password", ".env", &|s| format!("DATABASE_URL=postgres://app:{s}@db.internal:5432/app"), chars(s, ALNUM, 14));
         add("env-secret", ".env", &|s| format!("SESSION_SECRET={s}"), format!("{}!{}", chars(s, ALNUM, 10), chars(s, ALNUM, 8)));
-        add("generic-secret", "config.py", &|s| format!("client_secret = \"{s}\""), chars(s, ALNUM, 18));
+        add("password", "config.py", &|s| format!("db_password = \"{s}\""), format!("{}@{}!{}", chars(s, ALNUM, 6), chars(s, ALNUM, 5), chars(s, ALNUM, 4)));
+        add("generic-secret", "settings.yml", &|s| format!("client_secret: {s}"), chars(s, ALNUM, 18));
         add("private-key", "keys.pem", &|s| s.to_string(), chars(s, ALNUM, 64));
+        // typed, in Rust
+        add("aws-secret-access-key", "conf.rs", &|s| format!("pub const aws_secret_access_key: &str = \"{s}\";"), chars(s, &format!("{ALNUM}/+"), 40));
+        // a Rust constant, read whole and by its symbol (the concise form carries its line)
+        add("github-token", "conf.rs", &|s| format!("pub const TOKEN: &str = \"{s}\";"), format!("ghp_{}", chars(s, ALNUM, 36)));
     }
     out
 }
 
 /// The planted tree: code that uses the secrets, a `.env`, and three private keys.
-fn tree() -> (PathBuf, Vec<(&'static str, String)>) {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_{}", std::process::id()));
+fn tree(test: &str) -> (PathBuf, Vec<(&'static str, String)>) {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_{test}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join(".git")).unwrap();
     let mut files: std::collections::BTreeMap<&str, String> = Default::default();
@@ -81,7 +86,10 @@ fn tree() -> (PathBuf, Vec<(&'static str, String)>) {
         if kind == "private-key" {
             // the armour written out here, so no file holds a key's armour around a body
             let armour = |edge: &str| format!("-----{edge} RSA {}-----", "PRIVATE KEY");
-            f.push_str(&format!("{}\n{line}\n{}\n{}\n", armour("BEGIN"), &line[..48], armour("END")));
+            // a last line shorter than any rule for base64 alone: only the key's armour finds it
+            let last = format!("{}==", &line[..22]);
+            f.push_str(&format!("{}\n{line}\n{last}\n{}\n", armour("BEGIN"), armour("END")));
+            secrets.push((kind, last));
         } else {
             f.push_str(&line);
             f.push('\n');
@@ -91,7 +99,31 @@ fn tree() -> (PathBuf, Vec<(&'static str, String)>) {
     for (name, text) in files {
         fs::write(root.join(name), text).unwrap();
     }
-    (fs::canonicalize(&root).unwrap(), secrets)
+    // a file named with a token: a path that is a secret is one too
+    let named = format!("ghp_{}", chars(&mut 99, ALNUM, 36));
+    fs::create_dir_all(root.join("keys")).unwrap();
+    fs::write(root.join(format!("keys/{named}.py")), "def rotate():\n    return 1\n").unwrap();
+    secrets.push(("github-token", named));
+    // armour in mixed case
+    let armour = |edge: &str, what: &str| format!("-----{edge} {what}-----");
+    let (body, last) = (chars(&mut 7, &format!("{ALNUM}+/"), 64), format!("{}==", chars(&mut 8, ALNUM, 22)));
+    fs::write(root.join("mixed.pem"), format!("{}\n{body}\n{last}\n{}\n", armour("BEGIN", "Rsa Private Key"), armour("END", "Rsa Private Key"))).unwrap();
+    secrets.extend([("private-key", body), ("private-key", last)]);
+    // a key in UTF-16 with its byte-order mark, as the engines decode it
+    let (body, last) = (chars(&mut 9, &format!("{ALNUM}+/"), 64), format!("{}==", chars(&mut 10, ALNUM, 22)));
+    let text = format!("{}\n{body}\n{body}\n{last}\n{}\n", armour("BEGIN", "RSA PRIVATE KEY"), armour("END", "RSA PRIVATE KEY"));
+    let utf16: Vec<u8> = [0xFF, 0xFE].into_iter().chain(text.encode_utf16().flat_map(u16::to_le_bytes)).collect();
+    fs::write(root.join("utf16.pem"), utf16).unwrap();
+    secrets.extend([("private-key", body), ("private-key", last)]);
+    // a line longer than references shows whole: its window around `rotate` starts inside the value
+    let value = format!("{}7", chars(&mut 77, ALNUM, 59));
+    fs::write(root.join("long.py"), format!("client_secret = \"{value}\"; {}rotate(); {}\n", "_ = 0; ".repeat(18), "_ = 0; ".repeat(40))).unwrap();
+    secrets.push(("password", value[value.len() - 16..].to_string()));
+    // a file that holds a marker's text and no secret: no redaction is counted for it
+    fs::write(root.join("notes.py"), "NOTE = \"[redacted:github-token] is how answers show a token\"\n").unwrap();
+    // as Claude Code has it: on Windows without the `\\?\` of canonicalize, which the hook declines
+    let root = fs::canonicalize(&root).unwrap();
+    (PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\")), secrets)
 }
 
 /// Every string of an MCP answer: its text and its structured form.
@@ -109,89 +141,178 @@ fn strings(v: &Value, out: &mut String) {
 
 #[test]
 fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() {
-    let (root, secrets) = tree();
+    let (root, secrets) = tree("tools");
     assert!(secrets.len() >= 60, "{}", secrets.len());
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
     let settings = scrutate::mcp::Settings::new(None);
     let mut seen = String::new();
-    // a page of 24,000 bytes, and pages of 700 that cut answers between a key's armour lines
+    // every tool that returns text, in both forms, at a page of 24,000 bytes and pages of 700 that
+    // cut answers between a key's armour lines
+    let calls: Vec<(&str, Value)> = {
+        let mut v = Vec::new();
+        for file in ["config.py", ".env", "keys.pem", "conf.rs"] {
+            v.push(("read_code", json!({"path": file, "start": 1, "end": 400})));
+            v.push(("outline", json!({"path": file})));
+            v.push(("dependencies", json!({"path": file})));
+            v.push(("dependents", json!({"target": file})));
+        }
+        // a key's body without its armour: a range that starts inside it, a search for its lines
+        v.push(("read_code", json!({"path": "keys.pem", "start": 2, "end": 3})));
+        v.push(("read_code", json!({"path": "mixed.pem"})));
+        v.push(("read_code", json!({"path": "mixed.pem", "start": 3})));
+        v.push(("grep_code", json!({"pattern": "==$", "max_results": 1000})));
+        for pattern in [".", "=", "KEY", "-----", "^[A-Za-z0-9]{40,}$"] {
+            v.push(("grep_code", json!({"pattern": pattern, "max_results": 1000})));
+        }
+        for query in ["secret token key password", "aws github slack stripe", "private key", "ghp rotate"] {
+            v.push(("search_code", json!({"query": query})));
+        }
+        for name in ["settings", "client_secret", "SETTINGS", "rotate"] {
+            v.push(("find_symbol", json!({"name": name})));
+            v.push(("references", json!({"name": name})));
+            v.push(("callers", json!({"name": name})));
+            v.push(("callees", json!({"name": name})));
+        }
+        for symbol in ["TOKEN", "SETTINGS"] {
+            v.push(("read_code", json!({"path": if symbol == "SETTINGS" { "config.py" } else { "conf.rs" }, "symbol": symbol})));
+            v.push(("references", json!({"symbol": symbol})));
+        }
+        v.push(("structural_search", json!({"lang": "rust", "query": "(string_literal) @s"})));
+        // a capture that holds the value alone, and one that holds the whole assignment
+        v.push(("structural_search", json!({"lang": "python", "query": "(string) @s"})));
+        v.push(("structural_search", json!({"lang": "python", "query": "(assignment) @a"})));
+        v.push(("call_path", json!({"from": "settings", "to": "rotate"})));
+        v.push(("similar_code", json!({"target": "config.py:4"})));
+        v.push(("duplicates", json!({})));
+        v.push(("impact", json!({})));
+        v.push(("repo_map", json!({})));
+        v.push(("dead_code", json!({})));
+        v.push(("find_files", json!({"query": "env"})));
+        v.push(("find_files", json!({"query": "rotate"})));
+        v
+    };
+    let mut kinds_seen = std::collections::BTreeSet::new();
     for size in [24_000, 700] {
-        let mut call = |tool: &str, args: Value| {
-            let mut offset = 0;
-            loop {
-                let mut a = args.clone();
-                a["max_bytes"] = json!(size);
-                a["offset"] = json!(offset);
-                let c = scrutate::mcp::call_tool(&session, tool, &a, &settings, &Default::default());
-                seen.push_str(&c.text);
-                strings(&c.structured, &mut seen);
-                let next = c.text.split("call again with offset=").nth(1).and_then(|r| r.split(|ch: char| !ch.is_ascii_digit()).next()?.parse().ok());
-                match next {
-                    Some(n) if n > offset => offset = n,
-                    _ => break,
+        for form in ["detailed", "concise"] {
+            for (tool, args) in &calls {
+                let mut offset = 0;
+                loop {
+                    let mut a = args.clone();
+                    a["max_bytes"] = json!(size);
+                    a["offset"] = json!(offset);
+                    a["response_format"] = json!(form);
+                    let c = scrutate::mcp::call_tool(&session, tool, &a, &settings, &Default::default());
+                    let mut text = c.text.clone();
+                    strings(&c.structured, &mut text);
+                    for (kind, secret) in &secrets {
+                        assert!(!text.contains(secret.as_str()), "{tool} {form} {size} offset {offset}: {kind} {secret} came back:\n{}", c.text);
+                    }
+                    kinds_seen.extend(secrets.iter().filter(|(k, _)| text.contains(&format!("[redacted:{k}]"))).map(|(k, _)| *k));
+                    // the closing line counts redactions, never a marker's text a file holds
+                    if *tool == "read_code" && args["path"] == "notes.py" {
+                        assert!(!c.text.contains("secret redacted"), "{}", c.text);
+                    }
+                    seen.push_str(&text);
+                    let next = c.text.split("call again with offset=").nth(1).and_then(|r| r.split(|ch: char| !ch.is_ascii_digit()).next()?.parse().ok());
+                    match next {
+                        Some(n) if n > offset => offset = n,
+                        _ => break,
+                    }
                 }
             }
-        };
-        for file in ["config.py", ".env", "keys.pem"] {
-            call("read_code", json!({"path": file, "start": 1, "end": 400}));
-            call("outline", json!({"path": file}));
         }
-        for pattern in [".", "=", "KEY", "-----"] {
-            call("grep_code", json!({"pattern": pattern, "max_results": 1000}));
-        }
-        for query in ["secret token key password", "aws github slack stripe", "private key"] {
-            call("search_code", json!({"query": query}));
-        }
-        for name in ["settings", "client_secret", "SETTINGS"] {
-            call("find_symbol", json!({"name": name}));
-            call("references", json!({"name": name}));
-            call("callers", json!({"name": name}));
-            call("callees", json!({"name": name}));
-        }
-        call("similar_code", json!({"target": "config.py:4"}));
-        call("repo_map", json!({}));
-        call("dead_code", json!({}));
-        call("find_files", json!({"query": "env"}));
-        // a key's body without its armour: a range that starts inside it, a search for its lines
-        call("read_code", json!({"path": "keys.pem", "start": 2, "end": 3}));
-        call("grep_code", json!({"pattern": "^[A-Za-z0-9]{40,}$", "max_results": 1000}));
-        drop(call);
     }
+    let read = scrutate::mcp::call_tool(&session, "read_code", &json!({"path": "notes.py"}), &settings, &Default::default());
+    assert!(read.text.contains("is how answers show a token") && !read.text.contains("secret redacted"), "{}", read.text);
     // the Grep hook, as Claude Code's Grep would ask for every line
-    let hook = |env: &[(&str, &str)]| {
+    let hook = |env: &[(&str, &str)], ask: Value| {
         let home = root.with_extension("home");
         let mut c = Command::new(BIN);
         c.args(["hook", "grep"]).current_dir(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         c.env("HOME", &home)
+            .env("USERPROFILE", &home)
             .env("XDG_STATE_HOME", home.join("state"))
+            .env("LOCALAPPDATA", home.join("state"))
             .env("CLAUDE_PROJECT_DIR", &root)
             .env_remove("CLAUDE_CONFIG_DIR")
             .env("SCRUTATE_MAX_BYTES", "1000000");
         for (k, v) in env {
             c.env(k, v);
         }
-        let input = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": root.to_str().unwrap(), "tool_input": {"pattern": ".", "output_mode": "content", "-n": true}, "tool_use_id": "t1", "permission_mode": "default"});
+        let input = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": root.to_str().unwrap(), "tool_input": ask, "tool_use_id": "t1", "permission_mode": "default"});
         let mut child = c.spawn().unwrap();
         child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
         String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap()
     };
-    let hooked = hook(&[]);
+    let every_line = json!({"pattern": ".", "output_mode": "content", "-n": true});
+    let hooked = hook(&[], every_line.clone());
     assert!(hooked.contains("[redacted:"), "the hook answered: {hooked}");
     seen.push_str(&hooked);
-    for (kind, secret) in &secrets {
-        assert!(!seen.contains(secret.as_str()), "{kind}: {secret} came back");
+    // a key's body as context lines (`keys.pem-3-`), with and without numbers
+    for ask in [
+        json!({"pattern": "BEGIN", "output_mode": "content", "-A": 8}),
+        json!({"pattern": "BEGIN", "output_mode": "content", "-C": 2}),
+        json!({"pattern": "BEGIN", "output_mode": "content", "-A": 8, "-n": false}),
+    ] {
+        let answer = hook(&[], ask.clone());
+        assert!(answer.contains("[redacted:private-key]"), "{ask}: {answer}");
+        for (kind, secret) in &secrets {
+            assert!(!answer.contains(secret.as_str()), "{ask}: {kind} {secret} came back: {answer}");
+        }
+        seen.push_str(&answer);
     }
-    // every kind is marked, in the text and in the structured form's counts
+    for (kind, secret) in &secrets {
+        let at = seen.lines().filter(|l| l.contains(secret.as_str())).take(3).collect::<Vec<_>>().join("\n");
+        assert!(!seen.contains(secret.as_str()), "{kind}: {secret} came back:\n{at}");
+    }
+    // every kind is marked
     for (kind, _) in &secrets {
-        assert!(seen.contains(&format!("[redacted:{kind}]")), "{kind} is never marked");
+        assert!(kinds_seen.contains(kind) || hooked.contains(&format!("[redacted:{kind}]")), "{kind} is never marked");
+    }
+    // `hook run`, the search a rewritten Bash command asks: grep's own lines, context and a key's
+    // last line alone among them
+    #[cfg(unix)]
+    for ask in [["-rn", "-e", "."], ["-rn", "-A8", "BEGIN"], ["-rn", "-e", "==$"]] {
+        let home = root.with_extension("home");
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--", "grep"])
+            .args(ask)
+            .arg(".")
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(text.contains("[redacted:"), "hook run grep {ask:?}: {text}");
+        for (kind, secret) in &secrets {
+            assert!(!text.contains(secret.as_str()), "hook run grep {ask:?}: {kind} {secret} came back");
+        }
+        seen.push_str(&text);
     }
     assert!(seen.contains("secrets redacted: SCRUTATE_REDACT=off shows them"));
     // the documented opt-out returns raw text
-    let raw = hook(&[("SCRUTATE_REDACT", "off")]);
-    assert!(
-        !raw.contains("[redacted:") && secrets.iter().filter(|(k, _)| *k != "env-secret" && *k != "database-password").all(|(_, s)| raw.contains(s.as_str())),
-        "{raw}"
-    );
+    let raw = hook(&[("SCRUTATE_REDACT", "off")], every_line);
+    // the one marker's text a file holds (notes.py), and every secret as written
+    assert_eq!(raw.matches("[redacted:").count(), 1, "{raw}");
+    for (kind, secret) in &secrets {
+        assert!(raw.contains(secret.as_str()), "{kind}: {secret} missing from the raw answer");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// With SCRUTATE_REDACT=on the CLI's `--json` stays one JSON document: the closing line goes to
+/// stderr.
+#[test]
+fn the_cli_s_json_stays_whole_when_it_redacts() {
+    let (root, secrets) = tree("cli");
+    let out = Command::new(BIN).args(["read", "config.py", "--json"]).current_dir(&root).env("SCRUTATE_REDACT", "on").stdin(Stdio::null()).output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    let v: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{e}: {text}"));
+    assert!(v.to_string().contains("[redacted:"), "{text}");
+    assert!(!secrets.iter().any(|(_, s)| text.contains(s.as_str())));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("secrets redacted"));
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -228,4 +349,119 @@ fn no_tracked_file_holds_a_secret() {
         }
     }
     assert!(found.is_empty(), "secret-shaped text in tracked files (build it at run time, or add it to ALLOWED with why):\n{}", found.join("\n"));
+}
+
+/// docs/SECURITY.md lists every detector with the rule it comes from.
+#[test]
+fn the_security_doc_lists_every_detector_and_its_source() {
+    let doc = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/SECURITY.md")).unwrap();
+    let detectors = scrutate::secrets::detectors();
+    for (kind, source) in &detectors {
+        assert!(doc.contains(&format!("| `{kind}` | {source} |")), "{kind} ({source}) is not in SECURITY.md's table");
+    }
+    // and the table names no other
+    let section = &doc[doc.find("## Secrets in answers").unwrap()..];
+    let rows = section.lines().skip(1).take_while(|l| !l.starts_with("## ")).filter(|l| l.starts_with("| `")).count();
+    assert_eq!(rows, detectors.len(), "SECURITY.md's table has rows no detector has");
+}
+
+/// A key in a file over 1 MB is redacted as the whole file reads it: a page from its middle, its
+/// short last line found alone by grep_code and by the Grep hook.
+#[test]
+fn a_key_over_a_megabyte_is_redacted_from_its_middle_and_by_its_last_line() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_big_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let armour = |edge: &str| format!("-----{edge} RSA {}-----", "PRIVATE KEY");
+    let (body, last) = (chars(&mut 5, &format!("{ALNUM}+/"), 64), format!("{}==", chars(&mut 6, ALNUM, 22)));
+    let mut big = format!("{}\n", armour("BEGIN"));
+    for _ in 0..24_000 {
+        big.push_str(&body);
+        big.push('\n');
+    }
+    big.push_str(&format!("{last}\n{}\n", armour("END")));
+    assert!(big.len() > 1_500_000);
+    fs::write(root.join("big.pem"), big).unwrap();
+    let root = fs::canonicalize(&root).unwrap();
+    let root = PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\"));
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    let settings = scrutate::mcp::Settings::new(None);
+    for (tool, args) in [
+        ("read_code", json!({"path": "big.pem", "start": 4, "end": 6})),
+        ("read_code", json!({"path": "big.pem", "start": 24_001, "end": 24_003})),
+        ("grep_code", json!({"pattern": "==$"})),
+    ] {
+        let c = scrutate::mcp::call_tool(&session, tool, &args, &settings, &Default::default());
+        let mut text = c.text.clone();
+        strings(&c.structured, &mut text);
+        assert!(!text.contains(&last) && !text.contains(&body) && text.contains("[redacted:"), "{tool} {args}: {}", c.text);
+    }
+    let home = root.with_extension("home");
+    let input = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": root.to_str().unwrap(), "tool_input": {"pattern": "==$", "output_mode": "content", "-n": true}, "tool_use_id": "t1", "permission_mode": "default"});
+    let mut c = Command::new(BIN);
+    c.args(["hook", "grep"]).current_dir(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    c.env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("LOCALAPPDATA", home.join("state"))
+        .env("CLAUDE_PROJECT_DIR", &root)
+        .env_remove("CLAUDE_CONFIG_DIR");
+    let mut child = c.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+    let hooked = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    assert!(!hooked.contains(&last) && hooked.contains("[redacted:private-key]"), "the hook answered: {hooked}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A key's body lines are known by their text once indexed, so `hook run` finds them whatever the
+/// program writes before them: no line number (`grep -r`, `rg` piped), a colon in the file name,
+/// context lines.
+#[cfg(unix)]
+#[test]
+fn an_indexed_key_s_lines_are_found_by_their_text_through_hook_run() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_known_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::create_dir_all(root.join("keys")).unwrap();
+    let armour = |edge: &str| format!("-----{edge} RSA {}-----", "PRIVATE KEY");
+    let mut lines = Vec::new();
+    for (i, name) in ["keys/k.pem", "keys/a:1:b.pem", "top.pem"].into_iter().enumerate() {
+        let seed = &mut (40 + i as u64);
+        let mut body: Vec<String> = (0..4).map(|_| format!("M{}", chars(seed, &format!("{ALNUM}+/"), 63))).collect();
+        body.push(format!("{}==", chars(seed, ALNUM, 22)));
+        fs::write(root.join(name), format!("{}\n{}\n{}\n", armour("BEGIN"), body.join("\n"), armour("END"))).unwrap();
+        lines.extend(body);
+    }
+    let root = fs::canonicalize(&root).unwrap();
+    let home = root.with_extension("home");
+    let run = |args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    run(&["index"]);
+    for ask in [
+        &["grep", "-r", "-e", "==$", "."][..],
+        &["grep", "-rn", "-e", "==$", "."],
+        &["grep", "-rn", "-A8", "BEGIN", "."],
+        &["rg", "==$", "keys"],
+        &["rg", "-n", "==$"],
+        &["rg", "-n", "-A8", "BEGIN"],
+    ] {
+        let mut args = vec!["hook", "run", "--"];
+        args.extend_from_slice(ask);
+        let text = run(&args);
+        assert!(text.contains("[redacted:private-key]"), "hook run {ask:?}: {text}");
+        for line in &lines {
+            assert!(!text.contains(line.as_str()), "hook run {ask:?}: {line} came back:\n{text}");
+        }
+    }
+    let _ = fs::remove_dir_all(&root);
 }

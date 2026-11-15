@@ -199,9 +199,14 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
     // a wrong value is refused with the other arguments
     let form = ops::Form::from_tool(args).unwrap_or_default();
     match ops::Op::from_tool(name, args).and_then(|op| session.run_counted(&op, cancel, count)) {
-        Ok(answer) => {
-            // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off
+        Ok(mut answer) => {
+            // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off; a capture
+            // of a value alone, as its line reads it
             let redact = crate::secrets::on(true);
+            if redact {
+                crate::secrets::know_key_lines_at(session.root());
+            }
+            let context = if redact { answer.redact_in_context(session.root(), offset, max_bytes) } else { Vec::new() };
             let mut r = crate::secrets::Redactor::default();
             let (mut text, shown, total) = answer.text_page(Some(session.root()), max_bytes, offset, form, redact.then_some(&mut r));
             let mut structured = answer.structured(session.root(), text.len(), max_bytes, offset, shown, total);
@@ -211,11 +216,8 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
                 if rj.total() > 0 {
                     structured["redacted"] = json!(rj.counts);
                 }
-                // the redactions the page shows, not those of items past it
-                if let Some(note) = crate::secrets::note(text.matches("[redacted:").count()) {
-                    text.push_str(if text.ends_with('\n') { "" } else { "\n" });
-                    text.push_str(&note);
-                }
+                // the structured form counts what it holds; the text, what its page shows
+                crate::secrets::close(&mut text, r.shown + context.iter().skip(offset).take(shown).sum::<usize>());
             }
             if structured["result"].is_null() {
                 // a client that shows only the structured form still gets the part that fits
