@@ -128,9 +128,9 @@ jobs:
         with:
           persist-credentials: false
           # the doc-shift check reads HEAD^ (a pull request's merge ref: its first parent is the base),
-          # and on a push every commit since the one before it
+          # and on a push the commit before it
           fetch-depth: ${{ github.event_name == 'push' && '0' || '2' }}
-      # no new Rust item between a doc comment and the item it documented, in each new commit
+      # no new Rust item between a doc comment and the item it documented, in what a push or pull request adds
       - name: doc comments stay on their items
         env:
           EVENT: ${{ github.event_name }}
@@ -138,7 +138,9 @@ jobs:
         run: |
           # a new branch has an all-zero `before`; a force push may name a commit this clone lacks
           if [ "$EVENT" = push ] && [ "${BEFORE//0/}" != "" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            python3 tools/check_doc_shift.py --each "$BEFORE..HEAD"
+            # the push as one change: a commit of the push whose shift a later one fixed passes, as
+            # the first push of a long history to main needs; a shift left in the tree fails
+            python3 tools/check_doc_shift.py "$BEFORE..HEAD"
           else
             python3 tools/check_doc_shift.py HEAD
           fi
