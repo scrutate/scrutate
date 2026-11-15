@@ -406,7 +406,7 @@ fn a_search_path_that_does_not_exist_is_an_error() {
 
 #[cfg(unix)]
 #[test]
-fn an_unreadable_file_in_the_walk_does_not_change_the_exit_code() {
+fn an_unreadable_file_in_the_walk_exits_2_after_the_matches() {
     use std::os::unix::fs::PermissionsExt;
     let d = Dir::new("unreadable");
     d.write("dir/a.txt", b"foo\n");
@@ -415,9 +415,10 @@ fn an_unreadable_file_in_the_walk_does_not_change_the_exit_code() {
     if fs::read(d.0.join("dir/b.txt")).is_ok() {
         return; // running as root
     }
-    let (code, _, _) = d.run(&["grep", "foo", "dir"]);
+    let (code, out, _) = d.run(&["grep", "foo", "dir"]);
     fs::set_permissions(d.0.join("dir/b.txt"), fs::Permissions::from_mode(0o644)).unwrap();
-    assert_eq!(code, 0);
+    // as ripgrep: the readable file's match prints, and the error gives 2
+    assert_eq!((code, out.as_str()), (2, "dir/a.txt:1:foo\n"));
 }
 
 #[test]
@@ -1690,4 +1691,38 @@ fn a_line_that_is_not_utf_8_is_printed_as_its_bytes_as_ripgrep_prints_it() {
     assert_eq!(raw(&["grep", "-n", "foo", "long.txt"]), [&b"1:"[..], &long].concat());
     // a JSON text is a string: the bytes that are not UTF-8 are U+FFFD there
     assert!(String::from_utf8(raw(&["grep", "--json", "bar", "bad.txt"])).unwrap().contains("foo \u{FFFD}\u{FFFD} bar"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_path_that_cannot_be_read_exits_2_as_ripgrep_does() {
+    use std::os::unix::fs::PermissionsExt;
+    // ripgrep 15.2.0: an error reading any path, named or walked, gives 2 even when a match was
+    // found, as a missing path does; 1 stays "no match"
+    let d = Dir::new("readerrors");
+    d.write("ok.txt", b"foo\n");
+    d.write("locked.txt", b"foo\n");
+    fs::create_dir_all(d.0.join("lockdir")).unwrap();
+    fs::set_permissions(d.0.join("locked.txt"), fs::Permissions::from_mode(0o000)).unwrap();
+    fs::set_permissions(d.0.join("lockdir"), fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(d.0.join("locked.txt")).is_ok() {
+        // root reads it anyway
+        fs::set_permissions(d.0.join("lockdir"), fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let code = |args: &[&str]| d.run(args).0;
+    assert_eq!(code(&["grep", "foo", "locked.txt"]), 2);
+    assert_eq!(code(&["grep", "foo", "lockdir"]), 2);
+    assert_eq!(code(&["grep", "foo", "locked.txt", "ok.txt"]), 2);
+    assert_eq!(code(&["grep", "-l", "foo", "."]), 2);
+    assert_eq!(code(&["grep", "foo"]), 2);
+    assert_eq!(code(&["grep", "-c", "foo", "."]), 2);
+    assert_eq!(code(&["grep", "foo", "ok.txt"]), 0);
+    assert_eq!(code(&["grep", "nothing", "ok.txt"]), 1);
+    fs::set_permissions(d.0.join("lockdir"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(d.0.join("locked.txt"), fs::Permissions::from_mode(0o644)).unwrap();
+    // -L: a dangling link or a loop the walk meets is an error too
+    std::os::unix::fs::symlink("nowhere", d.0.join("dangling")).unwrap();
+    assert_eq!(code(&["grep", "-L", "foo", "."]), 2);
+    assert_eq!(code(&["grep", "foo", "."]), 0, "without -L a link is not followed");
 }

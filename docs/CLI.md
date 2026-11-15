@@ -215,9 +215,11 @@ count and the threads taken on stderr each time they change; `SCRUTATE_COUNT_KEY
 number) keeps a count of its own, apart from the one the user's other searches join, as the
 tests of the count do.
 
-Files that cannot be read, or not to the end, are named in stderr warnings (the first ten) and
-do not change the exit code. A search path that does not exist is named in a warning and the
-exit code is 2; matches in the other paths still print. On Linux, files on `/proc`, `/sys` or
+Files that cannot be read, or not to the end, are named in stderr warnings (the first ten), and
+the exit code is then 2, as ripgrep gives it, after any matches: a search path that does not
+exist, a file or directory without read permission, named or found by the walk, a dangling link
+or a loop that `-L` follows, an archive member not searched to its end, and PCRE2's match limit.
+Matches in the other paths still print; exit 1 means only that nothing matched. On Linux, files on `/proc`, `/sys` or
 another kernel pseudo filesystem (debugfs, tracefs, securityfs, configfs, cgroup) give their size
 as 0 and can answer the first read short, so they are read until the kernel has no more. The walk
 finds them by one `statfs` per root and per directory named `proc` or `sys` below one (with

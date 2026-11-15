@@ -316,6 +316,10 @@ incompatible index by itself, and that is never breaking.
 - `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
   fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
   row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
+- `grep` exits 2 when it could not search a path, as ripgrep does, after any matches: a named or
+  walked file or directory it cannot read, a dangling link or a loop `-L` follows, an archive
+  member it stops in, and PCRE2's match limit. A named unreadable file exited 1, which reads as
+  "no match", and a walk with unreadable files exited 0 ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep`'s plain output (piped, no colour) prints a line that is not UTF-8 as its own bytes, as
   ripgrep does (`foo \xff\xfe bar`), where it printed U+FFFD for each bad byte, with or without
   `--sort`; `--json` text keeps U+FFFD ([CLI](docs/CLI.md#conventions)).

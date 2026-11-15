@@ -2216,11 +2216,11 @@ fn pcre2_look_around_backreferences_and_the_match_limit() {
     assert_eq!(code, 1, "-F makes the pattern literal");
     let (code, out, _) = r.run(&["grep", "-P", "-w", "-e", "ab", "-e", "abc", "t.txt"]);
     assert_eq!((code, out.as_str()), (0, "4:abc\n"));
-    // exponential backtracking stops at PCRE2's match limit and says so
+    // exponential backtracking stops at PCRE2's match limit and says so, exit 2 as ripgrep gives
     let t0 = std::time::Instant::now();
     let (code, out, err) = r.run(&["grep", "-P", "^(a|aa)+$", "trap.txt"]);
     assert!(t0.elapsed() < std::time::Duration::from_secs(20));
-    assert_eq!((code, out.as_str()), (1, ""));
+    assert_eq!((code, out.as_str()), (2, ""));
     assert!(err.contains("trap.txt") && err.contains("match limit"), "{err}");
     let (code, _, err) = r.run(&["grep", "-P", "(?<=", "t.txt"]);
     assert_eq!(code, 2);
@@ -2353,7 +2353,8 @@ fn search_zip_stops_a_member_whose_line_is_too_long_and_goes_on() {
     r.write("a.tar.gz", &e.finish().unwrap());
     r.write("c.txt", b"needle c\n");
     let (code, out, err) = r.run(&["grep", "--sort", "-z", "needle"]);
-    assert_eq!((code, out.as_str()), (0, "a.tar.gz{b.txt}:1:needle b\nc.txt:1:needle c\n"), "{err}");
+    // a member not searched to its end is a search error: exit 2 after the matches
+    assert_eq!((code, out.as_str()), (2, "a.tar.gz{b.txt}:1:needle b\nc.txt:1:needle c\n"), "{err}");
     assert!(err.contains("a.tar.gz{long.txt}: a line longer than 64 MiB"), "{err}");
 }
 
@@ -2405,7 +2406,7 @@ fn search_zip_skips_a_tar_member_whose_long_name_is_too_long() {
     assert_eq!(
         (code, out.as_str()),
         (
-            0,
+            2,
             format!(
                 "a.tar{{after.txt}}:1:needle after\na.tar{{{gnu_name}}}:1:needle gnu\na.tar{{{pax_name}}}:1:needle pax\na.tar{{xattr.txt}}:1:needle xattr\n"
             )

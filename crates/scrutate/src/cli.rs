@@ -2202,10 +2202,6 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     interrupt::install(Arc::clone(&cancel));
     // Ctrl-C also ends `--update`'s wait for another process's lock
     crate::index::stop_waits_on(Arc::clone(&cancel));
-    let roots = match &f.paths {
-        Paths::Walk(roots) => roots.clone(),
-        Paths::List { .. } | Paths::Memory(_) => Vec::new(),
-    };
     let colour = color_choice(out.no_color) != ColorChoice::Never;
     let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
     let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
@@ -2217,7 +2213,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         f.paths = Paths::List { root, files };
     }
     if let Some(sink) = sink {
-        return grep_plain(&roots, &q, &f, out, cancel, sink);
+        return grep_plain(&q, &f, out, cancel, sink);
     }
     // buffered: one write per 64 KB instead of several per matching line
     let mut w = match out.page {
@@ -2392,7 +2388,8 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     if stats.cancelled && !q.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
     }
-    Ok(if missing_root(&roots, &stats) {
+    // as ripgrep: a path that could not be read, named or walked, gives 2 even after a match
+    Ok(if stats.errors > 0 {
         2
     } else if found {
         0
@@ -2463,12 +2460,6 @@ fn broken_pipe(e: &anyhow::Error) -> bool {
     e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
 }
 
-/// A path given to search does not exist or cannot be opened (grep's exit 2); files the walk
-/// cannot read do not count.
-fn missing_root(roots: &[PathBuf], stats: &instant::Stats) -> bool {
-    stats.errors > 0 && roots.iter().any(|r| r.as_os_str() != "-" && std::fs::metadata(r).is_err())
-}
-
 /// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
 fn warn_failures(stats: &instant::Stats) {
     for f in &stats.failures {
@@ -2481,7 +2472,7 @@ fn warn_failures(stats: &instant::Stats) {
 }
 
 /// Plain unsorted output, written by the search threads (see `instant::PlainSink`).
-fn grep_plain(roots: &[PathBuf], q: &Query, f: &Files, out: GrepOutput, cancel: Arc<AtomicBool>, sink: Arc<instant::PlainSink>) -> Result<i32> {
+fn grep_plain(q: &Query, f: &Files, out: GrepOutput, cancel: Arc<AtomicBool>, sink: Arc<instant::PlainSink>) -> Result<i32> {
     let stats = instant::search(q, f, Arc::clone(&cancel), Output::Plain(Arc::clone(&sink)))?;
     warn_failures(&stats);
     let found = stats.matches > 0;
@@ -2511,7 +2502,8 @@ fn grep_plain(roots: &[PathBuf], q: &Query, f: &Files, out: GrepOutput, cancel: 
     if stats.cancelled && !q.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
     }
-    Ok(if missing_root(roots, &stats) {
+    // as ripgrep: a path that could not be read, named or walked, gives 2 even after a match
+    Ok(if stats.errors > 0 {
         2
     } else if found {
         0
