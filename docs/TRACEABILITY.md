@@ -96,7 +96,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.99.1, `rust-version` 1.91; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
 | R-5.2 | Modular, cohesive, independently testable | 29 modules (`lib.rs`); tests per module | test layout | PASS |
 | R-5.3 | Correctness, memory safety, predictable resources, concurrency, maintainability | pinned ranking features (`tests/ranking_pins.rs`) and a ranking quality floor (`bench/quality.py`); unsafe inventory (SECURITY.md); fuzzing with AddressSanitizer; bounded buffers | ranking pins, quality floor, robustness, fuzzing | PASS |
-| R-5.4 | Minimal dependencies | 213 crates in the release binary (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |
+| R-5.4 | Minimal dependencies | 214 crates in the release binary (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |
 | R-5.5 | No dead code, duplicated logic, unnecessary allocations, unjustified abstractions | `-D warnings`, clippy clean; Engine A's per-file search shared by the walk and the indexed path | `cargo clippy --all-targets -D warnings` | PASS |
 | R-5.6 | Async only where beneficial | none used | design note | PASS |
 | R-5.7 | `cargo fmt`, `cargo clippy`, `cargo test`, dependency auditing | all gates | TEST_RESULTS.md | PASS |
