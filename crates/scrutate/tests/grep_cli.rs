@@ -20,7 +20,10 @@ struct Dir(PathBuf);
 
 impl Dir {
     fn new(name: &str) -> Dir {
-        let root = std::env::temp_dir().join(format!("scrutate_grepcli_{}_{}", name, std::process::id()));
+        Dir::new_in(&std::env::temp_dir(), name)
+    }
+    fn new_in(base: &Path, name: &str) -> Dir {
+        let root = base.join(format!("scrutate_grepcli_{}_{}", name, std::process::id()));
         tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
@@ -338,11 +341,12 @@ fn after_and_before_win_over_context_in_either_order() {
 }
 
 /// `grep foo . > out.txt` in the tree it searches, with the file size capped at 10 MB so a search
-/// that reads its own output stops (SIGXFSZ) instead of growing without bound.
+/// that reads its own output stops (SIGXFSZ) instead of growing without bound. It runs under the
+/// target directory: on tmpfs, often the temporary directory, the walk never reached the output.
 #[cfg(unix)]
 #[test]
 fn a_walk_skips_the_file_standard_output_writes() {
-    let d = Dir::new("ownoutput");
+    let d = Dir::new_in(Path::new(env!("CARGO_TARGET_TMPDIR")), "ownoutput");
     let lines: String = (0..2000).map(|i| format!("foo {i}\n")).collect();
     for i in 0..50 {
         d.write(&format!("f{i:02}.txt"), lines.as_bytes());
