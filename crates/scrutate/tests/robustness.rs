@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+#[path = "support/tag.rs"]
+mod tag;
+
 use scrutate::index::Index;
 use scrutate::instant::{self, Files, Mode, Output, Pattern, Query, Record};
 use scrutate::parse::parse_source;
@@ -18,6 +21,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_rob_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         Repo { root }

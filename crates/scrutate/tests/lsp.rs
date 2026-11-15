@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 use serde_json::{json, Value};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
@@ -21,6 +24,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_lsp_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         Repo { root }

@@ -11,6 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 struct Dir(PathBuf);
@@ -18,6 +21,7 @@ struct Dir(PathBuf);
 impl Dir {
     fn new(name: &str) -> Dir {
         let root = std::env::temp_dir().join(format!("scrutate_grepcli_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         Dir(canon(&root))

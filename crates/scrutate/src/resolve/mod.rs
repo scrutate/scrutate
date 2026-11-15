@@ -2663,6 +2663,7 @@ mod tests {
     /// line of `path` containing it; answers "path qualname" of the definition or the failure reason.
     fn indexed(tag: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Searcher) {
         let root = std::env::temp_dir().join(format!("scrutate_resolve_{tag}_{}", std::process::id()));
+        crate::claim_test_tree(&root);
         let _ = std::fs::remove_dir_all(&root);
         for (p, body) in files {
             let f = root.join(p);

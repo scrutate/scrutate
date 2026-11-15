@@ -973,6 +973,7 @@ mod tests {
     /// A repository of one function, its session, and its first build done.
     fn fixture(name: &str) -> (PathBuf, Session) {
         let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
+        crate::claim_test_tree(&root);
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
@@ -1296,6 +1297,7 @@ mod tests {
     /// `watched`, with safety walks at most once per `safety`.
     fn watched_with(name: &str, files: usize, every: Every, safety: Option<Duration>) -> (PathBuf, Arc<Session>) {
         let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
+        crate::claim_test_tree(&root);
         let _ = std::fs::remove_dir_all(&root);
         for i in 0..files {
             let dir = root.join(format!("src/d{}", i % 20));

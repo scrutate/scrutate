@@ -525,6 +525,7 @@ mod tests {
     /// A tree under the temporary directory; a name ending in `/` is a directory.
     fn tree(name: &str, entries: &[(&str, &str)]) -> PathBuf {
         let root = std::env::temp_dir().join(format!("scrutate_files_{name}_{}", std::process::id()));
+        crate::claim_test_tree(&root);
         let _ = std::fs::remove_dir_all(&root);
         for (rel, text) in entries {
             let p = root.join(rel);

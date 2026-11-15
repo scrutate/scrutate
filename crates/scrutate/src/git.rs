@@ -822,6 +822,7 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
     /// test hands git or puts in a variable comes from here.
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("scrutate_git_{name}_{}", std::process::id()));
+        crate::claim_test_tree(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         plain_dir(&std::fs::canonicalize(dir).unwrap())

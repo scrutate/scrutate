@@ -6,6 +6,9 @@
 mod rg;
 use rg::have_rg;
 
+#[path = "support/tag.rs"]
+mod tag;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,6 +22,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_shell_hook_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Repo { root }

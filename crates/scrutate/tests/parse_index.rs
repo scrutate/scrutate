@@ -6,6 +6,9 @@ use canon::canon;
 use scrutate::parse::parse_source;
 use scrutate::search::prune_indices;
 
+#[path = "support/tag.rs"]
+mod tag;
+
 #[test]
 fn candidate_cut_keeps_the_lowest_indices_on_tied_scores() {
     let lin = vec![1.0f32; 300];
@@ -429,6 +432,7 @@ fn ts_abstract_methods_declared_functions_and_namespaces_are_symbols() {
 
 fn tree(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("scrutate_parse_index_{name}_{}", std::process::id()));
+    tag::claim(&root);
     let _ = std::fs::remove_dir_all(&root);
     for (rel, body) in files {
         let p = root.join(rel);

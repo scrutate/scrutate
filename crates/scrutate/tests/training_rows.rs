@@ -5,10 +5,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 fn tree(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!("scrutate_training_{}_{}", name, std::process::id()));
+    tag::claim(&root);
     let _ = fs::remove_dir_all(&root);
     for (rel, text) in files {
         let p = root.join(rel);

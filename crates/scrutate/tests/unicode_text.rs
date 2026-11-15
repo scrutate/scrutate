@@ -5,6 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 use scrutate::text::{name_key, query_terms, tokenize2};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
@@ -16,6 +19,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str, files: &[(&str, String)]) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_unicode_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         for (rel, text) in files {

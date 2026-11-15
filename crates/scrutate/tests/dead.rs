@@ -6,6 +6,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
@@ -17,6 +20,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str, files: &[(&str, &str)]) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_dead_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         for (rel, body) in files {
             let p = root.join(rel);
@@ -452,7 +456,7 @@ fn a_fortran_definition_called_in_another_case_is_not_dead_without_the_grammar()
     // Fortran ignores case; a build without its grammar still reads `call dowork()` as naming
     // `DoWork`, so the answer is undecided at worst
     let r = Repo::new(
-        "fortran_case",
+        "fortran_case_no_grammar",
         &[("m.f90", "program main\n  call dowork()\nend program main\n\nsubroutine DoWork()\n  call CALLER()\nend subroutine DoWork\n\nsubroutine caller()\nend subroutine caller\n")],
     );
     let v = r.json(&["dead"]);

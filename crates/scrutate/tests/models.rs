@@ -9,6 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 struct Tmp(PathBuf);
@@ -16,6 +19,7 @@ struct Tmp(PathBuf);
 impl Tmp {
     fn new(name: &str) -> Tmp {
         let p = std::env::temp_dir().join(format!("scrutate_models_{}_{}", name, std::process::id()));
+        tag::claim(&p);
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         Tmp(canon(&p))

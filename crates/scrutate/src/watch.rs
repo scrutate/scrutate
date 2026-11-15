@@ -1416,6 +1416,7 @@ mod tests {
     /// A repository with a text index (its manifest is enough for the walks).
     fn tree(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("scrutate_burst_{name}_{}", std::process::id()));
+        crate::claim_test_tree(&root);
         let _ = std::fs::remove_dir_all(&root);
         for d in [".git/info", "src/deep", "gone_dir", ".scrutate/text"] {
             std::fs::create_dir_all(root.join(d)).unwrap();

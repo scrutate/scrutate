@@ -74,6 +74,17 @@ use std::path::Path;
 
 use anyhow::Result;
 
+/// Tests only: claims `dir` as the calling test's temp tree; panics, naming both tests, when
+/// another test holds it, since two tests on one tree remove and rewrite each other's files.
+#[cfg(test)]
+pub(crate) fn claim_test_tree(dir: &Path) {
+    static TEST_TREES: std::sync::Mutex<Option<std::collections::HashMap<std::path::PathBuf, String>>> = std::sync::Mutex::new(None);
+    let me = std::thread::current().name().unwrap_or("?").to_string();
+    let mut held = TEST_TREES.lock().unwrap_or_else(|p| p.into_inner());
+    let other = held.get_or_insert_with(Default::default).entry(dir.to_path_buf()).or_insert_with(|| me.clone()).clone();
+    assert!(other == me, "{} is the temp tree of both {other} and {me}: give each test its own tag", dir.display());
+}
+
 pub use stores::Repo;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -6,6 +6,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 use serde_json::{json, Value};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
@@ -17,6 +20,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str, files: usize) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_mcpp_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("pkg")).unwrap();
         for i in 0..files {

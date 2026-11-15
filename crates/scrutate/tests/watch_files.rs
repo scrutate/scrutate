@@ -11,6 +11,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 struct Repo {
@@ -20,6 +23,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_watchfiles_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         Repo { root: canon(&root) }

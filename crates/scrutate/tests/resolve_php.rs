@@ -6,6 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 #[path = "support/agreement.rs"]
 mod agreement;
 
@@ -18,6 +21,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str, files: &[(&str, &str)]) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_resolve_php_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         for (rel, body) in files {
             let p = root.join(rel);

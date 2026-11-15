@@ -645,6 +645,7 @@ mod tests {
     /// call sends.
     fn fixture(name: &str) -> (std::path::PathBuf, Session, Mutex<Vec<Value>>) {
         let root = std::env::temp_dir().join(format!("scrutate_mcp_{name}_{}", std::process::id()));
+        crate::claim_test_tree(&root);
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();

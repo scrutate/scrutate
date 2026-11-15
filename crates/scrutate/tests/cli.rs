@@ -10,6 +10,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/tag.rs"]
+mod tag;
+
 #[path = "support/conforms.rs"]
 mod schema;
 use schema::conforms;
@@ -23,6 +26,7 @@ struct Repo {
 impl Repo {
     fn new(name: &str) -> Repo {
         let root = std::env::temp_dir().join(format!("scrutate_cli_{}_{}", name, std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         Repo { root }
