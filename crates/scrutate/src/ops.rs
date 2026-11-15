@@ -47,6 +47,13 @@ pub const READ_LINES: i64 = 400;
 pub const READ_BYTES: usize = 1_000_000;
 /// Definitions one `read` of a name returns at most.
 pub const READ_DEFINITIONS: usize = 20;
+/// Commits `read --history` lists for a definition when not told how many, and the most.
+pub const HISTORY_COMMITS: usize = 5;
+pub const HISTORY_MAX: usize = 50;
+/// Definitions of one answer that get a history: each costs a run of git.
+pub const HISTORY_DEFINITIONS: usize = 10;
+/// The oldest git whose `log -L` the history is read with.
+pub const HISTORY_GIT: (u32, u32) = (2, 25);
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
 /// the 10,000 at which Codex cuts a tool result and Claude Code warns.
 pub const AGENT_BYTES: usize = 24_000;
@@ -81,12 +88,15 @@ pub enum Op {
         limit: usize,
     },
     /// A line range of `path`, or with `symbol` (a name or a location) every definition it names,
-    /// whole; `path` then keeps the definitions in that file.
+    /// whole; `path` then keeps the definitions in that file. `history`: with `symbol`, the last
+    /// that many commits that changed each definition (none at 0).
     Read {
         path: Option<String>,
         symbol: Option<String>,
         start: i64,
         end: Option<i64>,
+        #[serde(default)]
+        history: usize,
     },
     Outline {
         path: String,
@@ -249,7 +259,8 @@ impl Op {
                 if let Some(end) = end.filter(|e| *e < start) {
                     bail!("end ({end}) is before start ({start})");
                 }
-                Op::Read { path, symbol, start, end }
+                let history = natural("history")?.unwrap_or(0).min(HISTORY_MAX as u64) as usize;
+                Op::Read { path, symbol, start, end, history }
             }
             "outline" => Op::Outline { path: text("path")? },
             "dependencies" => Op::Deps { path: text("path")? },
@@ -680,7 +691,7 @@ pub enum Answer {
         defs: Vec<crate::index::Symbol>,
     },
     /// Whole definitions, each with its numbered lines and the definitions inside it.
-    Definitions(Vec<(ChunkRow, String, Vec<crate::index::Symbol>)>, Option<Stop>),
+    Definitions(Vec<(ChunkRow, String, Vec<crate::index::Symbol>)>, Option<Stop>, Option<Histories>),
     Outline {
         path: String,
         rows: Vec<ChunkRow>,
@@ -795,7 +806,7 @@ fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (resolved, stopped) = cut(resolved, *limit, RAISE_LIMIT);
             Answer::Callees { resolved, external, from, stopped }
         }
-        Op::Read { path, symbol: Some(symbol), .. } => {
+        Op::Read { path, symbol: Some(symbol), history, .. } => {
             let mut rows = match crate::intel::location(symbol) {
                 Some((path, line)) => s.ix.chunk_at(&repo_path(s, path), line)?.into_iter().collect(),
                 None => {
@@ -825,7 +836,8 @@ fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 &s.ix.root,
                 &read.iter().map(|(r, ..)| r.path.as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
             );
-            Answer::Definitions(read, stopped)
+            let histories = (*history > 0).then(|| histories(s, &read, *history));
+            Answer::Definitions(read, stopped, histories)
         }
         Op::Read { path, start, end, .. } => {
             let path = path.as_deref().unwrap_or("");
@@ -1147,6 +1159,87 @@ pub fn repo_path(s: &Searcher, given: &str) -> String {
         .and_then(|p| p.strip_prefix(&s.ix.root).ok().map(|r| crate::instant::slashed(r.to_string_lossy())))
         .filter(|p| indexed(p))
         .unwrap_or(plain)
+}
+
+/// The commits that changed each definition an answer reads, for the first `HISTORY_DEFINITIONS`.
+#[derive(Clone, Debug, Default)]
+pub struct Histories {
+    pub each: Vec<History>,
+    /// definitions past the first `HISTORY_DEFINITIONS`, which have none
+    pub more: usize,
+    /// why no definition has one
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct History {
+    pub commits: Vec<crate::git::Commit>,
+    /// why there are none: the definition changed since HEAD, HEAD has no such file, or git failed
+    pub note: Option<&'static str>,
+}
+
+impl History {
+    /// `history:` and a line a commit, or the note.
+    fn lines(&self) -> Vec<String> {
+        match self.note {
+            Some(note) => vec![format!("(history: {note})")],
+            None if self.commits.is_empty() => vec!["(history: no commit changed these lines)".to_string()],
+            None => std::iter::once("history:".to_string())
+                .chain(self.commits.iter().map(|c| format!("  {} {} {}", c.id.get(..12).unwrap_or(&c.id), c.date, shown(&c.subject))))
+                .collect(),
+        }
+    }
+}
+
+impl Histories {
+    /// The line after the definitions: why there is no history, or that some have none.
+    fn tail(&self) -> String {
+        match &self.note {
+            Some(note) => format!("(no history: {note})"),
+            None if self.more > 0 => format!("(history for the first {HISTORY_DEFINITIONS} definitions)"),
+            None => String::new(),
+        }
+    }
+}
+
+/// The last `n` commits that changed each definition's lines, read with `git log -L` from HEAD's
+/// copy of its file, its lines followed there through any uncommitted edit.
+fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)], n: usize) -> Histories {
+    let more = defs.len().saturating_sub(HISTORY_DEFINITIONS);
+    let none = |note: String| Histories { each: Vec::new(), more: 0, note: Some(note) };
+    let git = match crate::git::Git::new(&s.ix.root) {
+        Ok(g) => g,
+        Err(e) => {
+            let e = e.to_string();
+            return none(if e.contains("not in a git repository") {
+                "not in a git repository".into()
+            } else if e.contains("not installed") {
+                "git is not installed or not on PATH".into()
+            } else {
+                e
+            });
+        }
+    };
+    match git.version() {
+        Ok(v) if v >= HISTORY_GIT => {}
+        Ok((a, b)) => return none(format!("git {a}.{b} is older than {}.{}, the oldest whose log -L this reads", HISTORY_GIT.0, HISTORY_GIT.1)),
+        Err(e) => return none(e.to_string()),
+    }
+    let one = |r: &ChunkRow| match git.at_head(&r.path, r.start, r.end) {
+        Ok(crate::git::AtHead::Lines(a, b)) => match git.line_log(&r.path, a, b, n) {
+            Ok(commits) => History { commits, note: None },
+            Err(_) => History { commits: Vec::new(), note: Some("git could not follow these lines") },
+        },
+        Ok(crate::git::AtHead::Changed) => History { commits: Vec::new(), note: Some("changed since HEAD") },
+        Ok(crate::git::AtHead::Absent) => History { commits: Vec::new(), note: Some("not in HEAD") },
+        Err(_) => History { commits: Vec::new(), note: Some("git could not read the file") },
+    };
+    // each history is a git of its own walking the file's past: they run at once
+    let each = std::thread::scope(|sc| {
+        let runs: Vec<_> = defs.iter().take(HISTORY_DEFINITIONS).map(|(r, ..)| sc.spawn(|| one(r))).collect();
+        runs.into_iter().map(|h| h.join().unwrap_or_else(|_| History { commits: Vec::new(), note: Some("git could not follow these lines") })).collect()
+    });
+    Histories { each, more, note: None }
 }
 
 /// Most definitions a filtered symbol lookup reads before the filter, however few it keeps.
@@ -1728,7 +1821,7 @@ impl Answer {
             Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits.iter().map(|h| h.path.as_str()).collect(),
             Answer::Callees { resolved, from, .. } => resolved.iter().map(|h| h.path.as_str()).chain(from.iter().map(String::as_str)).collect(),
             Answer::Grep { groups, .. } => groups.iter().map(|g| g.path.as_str()).collect(),
-            Answer::Definitions(defs, _) => defs.iter().map(|(c, ..)| c.path.as_str()).collect(),
+            Answer::Definitions(defs, ..) => defs.iter().map(|(c, ..)| c.path.as_str()).collect(),
             Answer::Outline { path, .. } | Answer::Deps { path, .. } => vec![path.as_str()],
             Answer::Rdeps { rows, .. } => rows.iter().map(|r| r.0.as_str()).collect(),
             Answer::Refs { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.groups.iter().map(|g| g.path.as_str())).collect(),
@@ -1750,7 +1843,7 @@ impl Answer {
             Answer::Callees { resolved, external, .. } => resolved.is_empty() && external.is_empty(),
             Answer::Grep { groups, .. } => groups.is_empty(),
             Answer::Read { lines, .. } => lines.is_empty(),
-            Answer::Definitions(defs, _) => defs.is_empty(),
+            Answer::Definitions(defs, ..) => defs.is_empty(),
             Answer::Outline { rows, .. } => rows.is_empty(),
             Answer::Deps { deps, .. } => deps.is_empty(),
             Answer::Rdeps { rows, .. } => rows.is_empty(),
@@ -2064,16 +2157,28 @@ impl Answer {
                 ),
                 ..Parts::default()
             },
-            Answer::Definitions(defs, stopped) => Parts {
+            Answer::Definitions(defs, stopped, histories) => Parts {
                 items: defs
                     .iter()
-                    .map(|(c, text, _)| format!("{}:{}-{}  [{}] {}\n{text}", shown(&c.path), c.start, c.end, c.kind, shown(symbol_name(c))))
+                    .enumerate()
+                    .map(|(i, (c, text, _))| {
+                        let head = format!("{}:{}-{}  [{}] {}\n{text}", shown(&c.path), c.start, c.end, c.kind, shown(symbol_name(c)));
+                        match histories.as_ref().and_then(|h| h.each.get(i)) {
+                            Some(h) => format!("{head}\n{}", h.lines().join("\n")),
+                            None => head,
+                        }
+                    })
                     .collect(),
-                tail: stop_line(*stopped, "definitions"),
+                tail: [histories.as_ref().map(Histories::tail).unwrap_or_default(), stop_line(*stopped, "definitions")]
+                    .into_iter()
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 noun: "definitions",
                 brief: Some(
                     defs.iter()
-                        .map(|(c, text, members)| {
+                        .enumerate()
+                        .map(|(i, (c, text, members))| {
                             let line = |n: i64| text.lines().nth((n - c.start) as usize).filter(|_| n >= c.start).map(code_of);
                             let mut out = vec![Brief::at(&c.path, c.start, c.end, &named(symbol_name(c)))];
                             out.extend(line(c.start).map(|l| Brief::text(format!("  {l}"))));
@@ -2081,6 +2186,9 @@ impl Answer {
                                 let code = line(m.start).map_or_else(|| named(sym_name(m)).into_owned(), str::to_string);
                                 Brief::text(format!("  {}-{}  {code}", m.start, m.end))
                             }));
+                            if let Some(h) = histories.as_ref().and_then(|h| h.each.get(i)) {
+                                out.extend(h.lines().into_iter().skip(1).map(Brief::text));
+                            }
                             out
                         })
                         .collect(),
@@ -2458,7 +2566,7 @@ impl Answer {
     pub fn stopped(&self) -> Option<Stop> {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
-            Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
+            Answer::Definitions(_, stopped, _) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
             Answer::Impact(i) if i.stopped => Some(Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" }),
             _ => None,
         }
@@ -2490,13 +2598,30 @@ impl Answer {
             Answer::Read { lines, start, total, .. } => {
                 json!({"text": lines.join("\n"), "start": start, "end": start + lines.len() as i64 - 1, "file_lines": total})
             }
-            Answer::Definitions(defs, _) => json!({
-                "definitions": defs.iter().map(|(c, text, _)| {
-                    let mut v = chunk_json(c);
-                    v["text"] = json!(text);
-                    v
-                }).collect::<Vec<_>>(),
-            }),
+            Answer::Definitions(defs, _, histories) => {
+                let mut v = json!({
+                    "definitions": defs.iter().enumerate().map(|(i, (c, text, _))| {
+                        let mut v = chunk_json(c);
+                        v["text"] = json!(text);
+                        if let Some(h) = histories.as_ref().and_then(|h| h.each.get(i)) {
+                            v["history"] = json!(h.commits.iter().map(|c| json!({"commit": c.id, "date": c.date, "subject": c.subject})).collect::<Vec<_>>());
+                            if let Some(note) = h.note {
+                                v["history_note"] = json!(note);
+                            }
+                        }
+                        v
+                    }).collect::<Vec<_>>(),
+                });
+                if let Some(h) = histories {
+                    if let Some(note) = &h.note {
+                        v["history_note"] = json!(note);
+                    }
+                    if h.more > 0 {
+                        v["history_more"] = json!(h.more);
+                    }
+                }
+                v
+            }
             Answer::Outline { rows, .. } => {
                 rows.iter().map(|r| json!({"kind": r.kind, "name": r.name, "qualname": r.qualname, "start": r.start, "end": r.end})).collect()
             }

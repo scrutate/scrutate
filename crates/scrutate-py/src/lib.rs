@@ -767,6 +767,7 @@ impl Repo {
             symbol: None,
             start,
             end: Some(end),
+            history: 0,
         };
         let r = py.detach(|| self.session.run(&op, &Arc::default()));
         let e = match r {

@@ -639,6 +639,9 @@ pub enum Cmd {
         /// last line [default: 400 lines from start]
         #[arg(long, allow_negative_numbers = true)]
         end: Option<i64>,
+        /// with --symbol, the last N commits that changed each definition [default: 5]
+        #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "5")]
+        history: Option<usize>,
         #[arg(long)]
         json: bool,
     },
@@ -1555,9 +1558,9 @@ pub fn run() -> Result<i32> {
             run_op(&cli.root, Op::Refs { name, max_results, textual, def }.scoped(filter.into()), json, page, outside.as_deref())
         }
         Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page, outside.as_deref()),
-        Cmd::Read { path, symbol, start, end, json } => {
+        Cmd::Read { path, symbol, start, end, history, json } => {
             // the read_code tool's arguments, so the operation checks them as it checks a call
-            let args = serde_json::json!({"path": path.map(|p| here.path(&p)), "symbol": symbol.map(|s| here.location(&s)), "start": start, "end": end});
+            let args = serde_json::json!({"path": path.map(|p| here.path(&p)), "symbol": symbol.map(|s| here.location(&s)), "start": start, "end": end, "history": history});
             run_op(&cli.root, Op::from_tool("read_code", &args)?, json, page, outside.as_deref())
         }
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),

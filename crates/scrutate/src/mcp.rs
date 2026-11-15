@@ -159,7 +159,8 @@ fn tool_table_unscoped() -> Value {
         {"name": "read_code", "short": "Read lines of a file or a whole definition.", "description": "Read a line range of a file (`path`, `start`, `end`), or one whole definition: `symbol` is a name, `Class.method`, or a location from another answer (`src/a.py:12-40`). A name with several definitions returns each; `path` then keeps the ones in that file.",
          "inputSchema": {"type": "object", "properties": {
              "path": {"type": ["string", "null"], "default": null}, "symbol": {"type": ["string", "null"], "default": null},
-             "start": {"type": "integer", "default": 1}, "end": {"type": ["integer", "null"], "default": null}}}},
+             "start": {"type": "integer", "default": 1}, "end": {"type": ["integer", "null"], "default": null},
+             "history": {"type": "integer", "default": 0, "description": "with symbol, the last this many commits (at most 50) that changed each definition"}}}},
         {"name": "outline", "short": "Symbols of a file.", "description": "Symbols of a file in source order (kind, name, line range).",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
         {"name": "dependencies", "short": "Imports of a file.", "description": "Modules a file imports, resolved to repository files where possible.",

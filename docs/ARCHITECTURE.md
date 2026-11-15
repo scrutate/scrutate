@@ -815,7 +815,10 @@ they do. It reads the diff through `git.rs`, which runs `git` in the root, the o
 starts: `git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the changed
 lines of each side, `git ls-files --others --exclude-standard` for untracked files, `git
 rev-parse` and `git merge-base` for the base commit, and one `git cat-file --batch` for the base
-copies (and, with `--staged`, the staged copies). Every call passes `--no-optional-locks`,
+copies (and, with `--staged`, the staged copies). `read --history` reads a definition's commits
+through it too: `git log -L start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first
+found there through `git diff -U0 HEAD -- path` when the file has uncommitted edits
+(`Git::at_head`). Every call passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
 helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
 a commit id, which every later call uses. Git sees this process's environment, a relative
@@ -1077,7 +1080,7 @@ model's tables. Ranking is watched by the pinned features above and by the quali
 - Components are replaceable behind small interfaces: a grammar is a registry row; the ranker is
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
-  that a CLI, an MCP server and Python call directly. `impact` runs the `git` program (`git.rs`) found on
+  that a CLI, an MCP server and Python call directly. `impact` and `read --history` run the `git` program (`git.rs`) found on
   `PATH`, which reads the repository; nothing in the repository names a program to run. The one
   file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A
   command line call may use a session a running `serve` offers on a local socket, and never

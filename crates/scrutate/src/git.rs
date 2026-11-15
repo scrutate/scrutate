@@ -221,6 +221,60 @@ impl Git {
         Ok(entries)
     }
 
+    /// The version of git, as (major, minor).
+    pub(crate) fn version(&self) -> Result<(u32, u32)> {
+        let out = String::from_utf8_lossy(&self.run(&["--version"])?).into_owned();
+        let v = out.split_whitespace().nth(2).unwrap_or_default();
+        let mut parts = v.split('.').map(|p| p.parse::<u32>().ok());
+        match (parts.next().flatten(), parts.next().flatten()) {
+            (Some(a), Some(b)) => Ok((a, b)),
+            _ => bail!("git said its version is {}", out.trim()),
+        }
+    }
+
+    /// The commits, newest first and at most `n`, that changed lines `start` to `end` of `path` (from
+    /// the index root) as HEAD holds them; `git log -L` follows those lines through renames.
+    pub(crate) fn line_log(&self, path: &str, start: i64, end: i64, n: usize) -> Result<Vec<Commit>> {
+        // the path is all that follows the range's colon, so a colon or a dash in it reads as itself
+        let range = format!("{start},{end}:{}", plain(path));
+        let n = n.to_string();
+        let out =
+            self.run(&["log", "--no-color", "--no-ext-diff", "--no-textconv", "-L", &range, "-s", "-n", &n, "--date=short", "--format=%x01%H%x00%ad%x00%s"])?;
+        Ok(out
+            .split(|&b| b == b'\n')
+            .filter_map(|line| line.strip_prefix(b"\x01"))
+            .filter_map(|line| {
+                let mut parts = line.splitn(3, |&b| b == 0).map(|p| String::from_utf8_lossy(p).into_owned());
+                Some(Commit { id: parts.next()?, date: parts.next()?, subject: parts.next().unwrap_or_default() })
+            })
+            .collect())
+    }
+
+    /// Where lines `start` to `end` of the working tree's `path` are in HEAD's copy of the file.
+    pub(crate) fn at_head(&self, path: &str, start: i64, end: i64) -> Result<AtHead> {
+        let path = plain(path);
+        if !self.output(&["cat-file", "-e", &format!("HEAD:./{path}")])?.0 {
+            return Ok(AtHead::Absent);
+        }
+        let patch = self.run(&["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-U0", "HEAD", "--", &path])?;
+        let mut shift = 0;
+        for (old_count, new_start, new_count) in hunks(&patch) {
+            // with no new lines, the hunk takes lines out between new_start and the line after it
+            let (touches, before) = if new_count > 0 {
+                (new_start <= end && new_start + new_count > start, new_start + new_count <= start)
+            } else {
+                (new_start >= start && new_start < end, new_start < start)
+            };
+            if touches {
+                return Ok(AtHead::Changed);
+            }
+            if before {
+                shift += new_count - old_count;
+            }
+        }
+        Ok(AtHead::Lines(start - shift, end - shift))
+    }
+
     /// The contents of these blobs, by id, read by one `git cat-file --batch`.
     pub(crate) fn blobs(&self, ids: &BTreeSet<String>) -> Result<BTreeMap<String, Vec<u8>>> {
         let ids: Vec<&String> = ids.iter().filter(|id| !id.is_empty() && id.bytes().any(|b| b != b'0')).collect();
@@ -282,6 +336,26 @@ fn raw_entries(raw: &[u8]) -> Result<Vec<Entry>> {
     Ok(out)
 }
 
+/// A commit that changed some lines.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Commit {
+    pub id: String,
+    /// the author date, `YYYY-MM-DD`
+    pub date: String,
+    pub subject: String,
+}
+
+/// Where some lines of the working tree are in HEAD's copy of their file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtHead {
+    /// at these lines, unchanged
+    Lines(i64, i64),
+    /// some of them changed since HEAD
+    Changed,
+    /// HEAD has no such file
+    Absent,
+}
+
 #[derive(Default)]
 struct Section {
     binary: bool,
@@ -291,6 +365,28 @@ struct Section {
 
 /// The files of a `-U0` patch, by the path they have after the change (before it, when deleted):
 /// their changed lines on each side and whether git found them binary.
+/// The (old count, new start, new count) of each hunk of a one-file `-U0` patch.
+fn hunks(patch: &[u8]) -> Vec<(i64, i64, i64)> {
+    let side = |t: &str| -> Option<(i64, i64)> {
+        let t = t.trim_start_matches(['-', '+']);
+        match t.split_once(',') {
+            Some((a, n)) => Some((a.parse().ok()?, n.parse().ok()?)),
+            None => Some((t.parse().ok()?, 1)),
+        }
+    };
+    patch
+        .split(|&b| b == b'\n')
+        .filter_map(|line| line.strip_prefix(b"@@ -"))
+        .filter_map(|h| {
+            let h = String::from_utf8_lossy(h);
+            let mut sides = h.split(' ');
+            let (_, old_count) = side(sides.next()?)?;
+            let (new_start, new_count) = side(sides.next()?)?;
+            Some((old_count, new_start, new_count))
+        })
+        .collect()
+}
+
 fn sections(patch: &[u8]) -> BTreeMap<String, Section> {
     let mut out = BTreeMap::new();
     let mut cur: Option<(String, Section)> = None;
@@ -461,6 +557,66 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         assert_eq!(s["new.py"].new, vec![(1, 1)]);
         assert!(s["img.png"].binary && !s["a.py"].binary);
         assert_eq!(s["t\tab.py"].new, vec![(1, 1)]);
+    }
+
+    /// git run in `root` with its own configuration only.
+    fn git_in(root: &Path, args: &[&str]) {
+        let mut c = Command::new("git");
+        c.args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).current_dir(root);
+        for name in SIX {
+            c.env_remove(name);
+        }
+        let out = c.envs([("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_NOSYSTEM", "1")]).stdin(Stdio::null()).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    fn commit_file(root: &Path, rel: &str, text: &str, message: &str) {
+        std::fs::write(root.join(rel), text).unwrap();
+        git_in(root, &["add", "-A"]);
+        git_in(root, &["commit", "-q", "-m", message]);
+    }
+
+    #[test]
+    fn a_line_log_lists_the_commits_that_changed_those_lines_newest_first_through_a_rename() {
+        let root = scratch("line_log");
+        repo(&root);
+        commit_file(&root, "old.py", "def f(x):\n    return x\n\n\ndef g(y):\n    return y\n", "add f and g");
+        commit_file(&root, "old.py", "def f(x):\n    return x + 1\n\n\ndef g(y):\n    return y\n", "edit f");
+        git_in(&root, &["mv", "old.py", "new.py"]);
+        git_in(&root, &["commit", "-q", "-m", "rename"]);
+        commit_file(&root, "new.py", "def f(x):\n    return x + 1\n\n\ndef g(y):\n    return y * 2\n", "edit g");
+        commit_file(&root, "new.py", "def f(x):\n    return x + 2\n\n\ndef g(y):\n    return y * 2\n", "edit f again");
+        let git = Git::new(&root).unwrap();
+        let subjects = |start, end, n| git.line_log("new.py", start, end, n).unwrap().into_iter().map(|c| c.subject).collect::<Vec<_>>();
+        assert_eq!(subjects(1, 2, 10), ["edit f again", "edit f", "add f and g"]);
+        assert_eq!(subjects(5, 6, 10), ["edit g", "add f and g"]);
+        assert_eq!(subjects(1, 2, 1), ["edit f again"]);
+        let c = &git.line_log("new.py", 1, 2, 1).unwrap()[0];
+        assert!(c.id.len() == 40 && c.id.bytes().all(|b| b.is_ascii_hexdigit()), "{}", c.id);
+        assert!(c.date.len() == 10 && c.date.as_bytes()[4] == b'-', "{}", c.date);
+        // a path git could read as a range or an option
+        for odd in ["a:b.py", "-x.py"] {
+            commit_file(&root, odd, "def h():\n    return 1\n", &format!("add {odd}"));
+            assert_eq!(git.line_log(odd, 1, 2, 10).unwrap().into_iter().map(|c| c.subject).collect::<Vec<_>>(), [format!("add {odd}")]);
+        }
+    }
+
+    #[test]
+    fn head_lines_follow_the_working_tree_through_uncommitted_edits() {
+        let root = scratch("at_head");
+        repo(&root);
+        let text = "import os\n\n\ndef f(x):\n    return x\n\n\ndef g(y):\n    return y\n";
+        commit_file(&root, "m.py", text, "add");
+        let git = Git::new(&root).unwrap();
+        assert_eq!(git.at_head("m.py", 4, 5).unwrap(), AtHead::Lines(4, 5));
+        // three lines above f, and one taken out below it
+        std::fs::write(root.join("m.py"), format!("# a\n# b\n# c\n{}", text.replace("    return y\n", ""))).unwrap();
+        assert_eq!(git.at_head("m.py", 7, 8).unwrap(), AtHead::Lines(4, 5));
+        std::fs::write(root.join("m.py"), text.replace("return x", "return x * 3")).unwrap();
+        assert_eq!(git.at_head("m.py", 4, 5).unwrap(), AtHead::Changed);
+        assert_eq!(git.at_head("m.py", 8, 9).unwrap(), AtHead::Lines(8, 9), "an edit above leaves g's lines");
+        std::fs::write(root.join("new.py"), "def n():\n    pass\n").unwrap();
+        assert_eq!(git.at_head("new.py", 1, 2).unwrap(), AtHead::Absent);
     }
 
     #[test]

@@ -100,7 +100,8 @@ test files to run, and its findings.
 
 **[Git](docs/ARCHITECTURE.md#intelligence-intelrs)**: the one module that runs the `git` program
 (`git.rs`, `git::Git`): the base commit, the diff with the changed lines of each side, the
-untracked files and the blobs of base copies. Impact reads a change through it.
+untracked files and the blobs of base copies. Impact reads a change through it, and `read
+--history` the commits that changed a definition's lines.
 
 **[Filter](docs/CLI.md#engine-b)**: what `search`, `symbol` and `refs` keep (`filter::Filter`):
 files by glob (`-g`), by type (`-t`) and by the language they were parsed as (`--lang`), and
