@@ -21,15 +21,22 @@ a file (its definitions) is read for each request, as before, since an update ch
 changing the file.
 
 The store is bounded by weight, not by count: a file weighs its text, the bytes kept beside it,
-and its tree counted as eight times its text. Past 256 MiB (`PARSED_CAP`) the least recently used
-files go first, and a file that alone weighs more is not kept. The cap is stated in
-[CLI](../CLI.md).
+and 110 bytes for each node of its tree (`NODE_BYTES`). That is what a kept file takes beyond its
+text, measured on Linux by `tests/parsed_memory.rs` (a store filled past a 96 MiB cap, RSS read
+before and after, three runs each): 88 bytes a node for C, 104 to 106 for this repository's Rust,
+whose imports add more, and 107 to 109 for both together, where the freed trees of evicted files
+stay with the allocator. A tree takes 18 to 46 times its text, so counting it as a multiple of
+the text, as the first version did at eight times, let a full store hold two to six times its
+cap. Past 256 MiB (`PARSED_CAP`) the least recently used files go first, and a file that alone
+weighs more is not kept (its older parse is dropped). The cap is stated in [CLI](../CLI.md).
 
 ## Consequences
 
-- A second request about any name parses no file the first one parsed, until a file changes
+- A second request about any name parses no file the first one parsed, until a file changes or
+  is evicted to keep the store under its cap
   (`resolve::tests::a_repeat_request_parses_no_file_it_parsed_before`).
-- A process holds up to the cap more than before; a one-shot command (`scrutate callers` from
-  the shell) pays only the hash of each file it reads.
+- A process holds up to the cap more than before, within a quarter
+  (`tests/parsed_memory.rs` asserts it on Linux); a one-shot command (`scrutate callers` from the
+  shell) pays only the hash of each file it reads.
 - The other parse sites (index update, `tsquery`, `dead`) keep their own reads. Moving them onto
   this store is a later step, and its rule stays: a parsed file is found by its content.

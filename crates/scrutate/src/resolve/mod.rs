@@ -359,11 +359,40 @@ pub(crate) struct Parsed {
 }
 
 impl Parsed {
-    /// What the store counts for it: the text, the bytes kept beside it, and the tree, which takes
-    /// about this many times the text.
+    /// What the store counts for it: the text, the bytes kept beside it, and the tree by its
+    /// nodes, each `NODE_BYTES`.
     fn weight(&self) -> usize {
-        const TREE_PER_BYTE: usize = 8;
-        self.src.len() * (1 + if self.tree.is_some() { TREE_PER_BYTE } else { 0 }) + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8)
+        let nodes = self.tree.as_ref().map_or(0, |t| t.root_node().descendant_count());
+        self.src.len() + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8) + nodes * NODE_BYTES
+    }
+}
+
+/// The memory a kept file takes per node of its tree beyond its text, as `tests/parsed_memory.rs`
+/// measures it on Linux: 88 bytes for C, 104 to 106 for Rust, whose imports add more.
+const NODE_BYTES: usize = 110;
+
+/// A store filled with the files `paths` of `ix`'s root, for a test of the memory a full store
+/// takes; dropped, it frees them.
+#[doc(hidden)]
+pub struct ParsedProbe(ParsedStore);
+
+impl ParsedProbe {
+    /// Parse `paths` as the resolver does and keep them in a store of weight `cap`.
+    pub fn fill(ix: &Index, paths: &[String], cap: usize) -> Result<ParsedProbe> {
+        let mut rv = Resolver::new(ix)?;
+        let mut store = ParsedStore::new(cap);
+        for p in paths {
+            let bytes = repo_bytes(&ix.root, p).unwrap_or_default();
+            let hash = crate::index::content_hash(&bytes);
+            store.put((ix.root.clone(), p.clone()), hash, std::sync::Arc::new(rv.parse(p, bytes)));
+        }
+        Ok(ParsedProbe(store))
+    }
+
+    /// (weight, text bytes, tree nodes) of what the store holds.
+    pub fn held(&self) -> (usize, usize, usize) {
+        let files = self.0.files.values();
+        files.fold((0, 0, 0), |(w, t, n), (_, p, _)| (w + p.weight(), t + p.src.len(), n + p.tree.as_ref().map_or(0, |t| t.root_node().descendant_count())))
     }
 }
 
@@ -402,12 +431,12 @@ impl ParsedStore {
 
     fn put(&mut self, key: (std::path::PathBuf, String), hash: String, parsed: std::sync::Arc<Parsed>) {
         let w = parsed.weight();
-        if w > self.cap {
-            return;
-        }
         if let Some((_, old, used)) = self.files.remove(&key) {
             self.by_use.remove(&used);
             self.weight -= old.weight();
+        }
+        if w > self.cap {
+            return;
         }
         while self.weight + w > self.cap {
             let Some((_, oldest)) = self.by_use.pop_first() else { break };
@@ -2810,6 +2839,10 @@ mod tests {
         assert!(store.get(&key("a"), "2").is_none(), "another content hash is another file");
         store.put(key("big"), "1".into(), file(&"x".repeat(11)));
         assert!(store.get(&key("big"), "1").is_none() && store.weight <= 10);
+        // a file that grew past the cap leaves no older parse of itself behind
+        store.put(key("a"), "2".into(), file(&"y".repeat(11)));
+        assert!(store.get(&key("a"), "1").is_none() && store.get(&key("a"), "2").is_none());
+        assert_eq!(store.weight, 4, "only c is left");
     }
 
     fn resolver_case(tag: &str, files: &[(&str, &str)], checks: &[(&str, &str, &str, &str)]) {
