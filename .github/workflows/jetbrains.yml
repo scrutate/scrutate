@@ -49,10 +49,17 @@ jobs:
         with:
           distribution: zulu
           java-version: "21"
-      # basic: the open-source cache provider over actions/cache
+      # setup-gradle's own download checks no checksum: Gradle comes from services.gradle.org here,
+      # checked against the SHA-256 it publishes before it is unpacked
+      - name: Gradle 9.9.1
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-9.9.1-bin.zip
+          echo "d8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228  $RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-9.9.1/bin" >> "$GITHUB_PATH"
+      # basic: the open-source cache provider over actions/cache; the Gradle on PATH above runs
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
-          gradle-version: 9.9.1
           cache-provider: basic
       - name: Go to Declaration through LSP4IJ
         working-directory: integrations/jetbrains/test

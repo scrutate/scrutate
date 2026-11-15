@@ -783,7 +783,11 @@
   "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  },
- "jetbrains.yml:lsp4ij:0bae9bf837": {
+ "jetbrains.yml:lsp4ij:b8d3357199": {
+  "step": "Gradle 9.9.1",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:83906fca59": {
   "step": "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  }
