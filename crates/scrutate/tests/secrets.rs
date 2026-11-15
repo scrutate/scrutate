@@ -364,6 +364,7 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
             strings(&ask(method, params), &mut answers);
         }
         let _ = child.kill();
+        let _ = child.wait();
         for (kind, secret) in &secrets {
             assert!(!answers.contains(secret.as_str()), "lsp: {kind} {secret} came back: {answers}");
         }
