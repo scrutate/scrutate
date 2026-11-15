@@ -316,6 +316,10 @@ incompatible index by itself, and that is never breaking.
 - `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
   fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
   row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
+- `impact` lists a caller of a deleted definition that calls it through an import alias
+  (`from util import helper as h`, JavaScript `import { helper as h }`) or, where names ignore
+  case, in another case (PHP `dothing()` for a deleted `DoThing`), as `callers` does for a live
+  one; it listed none, and the tests behind it were missed ([CLI](docs/CLI.md#engine-b)).
 - `refs`, `callers` and `callees` take one decision per call site, so they agree: `refs` of a
   constructor lists its class's instantiations (`new Box(1)`, `Point(1)`, Ruby `Invoice.new`,
   JavaScript `super(..)`), which `callers` already listed; in a language the resolver does not

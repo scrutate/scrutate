@@ -322,7 +322,7 @@ impl<'a> Names<'a> {
         // ASCII lowercase keeps every byte where it is, so the columns hold
         let any_case = self.langs.folds(path, "function") && name.is_ascii();
         let wanted = if any_case { name.to_ascii_lowercase() } else { name.to_string() };
-        let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
+        let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false, external_free: false };
         let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
         for (i, line) in src[from..].lines().enumerate().map(|(i, l)| (i + first, l)).take((end - start + 1).max(0) as usize) {
             let low = if any_case { std::borrow::Cow::Owned(line.to_ascii_lowercase()) } else { std::borrow::Cow::Borrowed(line) };
@@ -354,7 +354,11 @@ impl<'a> Names<'a> {
                         elsewhere |= receiver || !matches!(why, Reason::Rivals | Reason::NoGrammar | Reason::Unread | Reason::TooDeep);
                     }
                     // an import from outside, a local, a field or a string is decided: not this definition
-                    Tie::Elsewhere(_) => seen = true,
+                    Tie::Elsewhere(why) => {
+                        seen = true;
+                        let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));
+                        uses.external_free |= why == Reason::External && !receiver;
+                    }
                 }
             }
         }
@@ -532,13 +536,24 @@ impl<'a> Names<'a> {
         let s = self.s;
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
         let is_free = free(&gone.kind, &gone.qualname);
-        let mut out = Vec::new();
-        for row in s.ix.callers_of(&gone.name)? {
-            if !langs.same_family(&gone.path, &row.path) {
+        // the call sites `callers` asks for a live definition: the name, its other cases where the
+        // language ignores case, and the local names imports give it (their rows still name it)
+        let mut sites: Vec<(ChunkRow, String)> = s.ix.callers_of(&gone.name)?.into_iter().map(|r| (r, gone.name.clone())).collect();
+        if langs.folds(&gone.path, &gone.kind) {
+            for other in self.other_cases(&gone.name)? {
+                sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| langs.folds(&r.path, "function")).map(|r| (r, other.clone())));
+            }
+        }
+        for (local, file) in self.aliases_of(std::slice::from_ref(gone), &langs)? {
+            sites.extend(s.ix.callers_of(&local)?.into_iter().filter(|r| r.path == file).map(|r| (r, local.clone())));
+        }
+        let (mut out, mut seen) = (Vec::new(), HashSet::new());
+        for (row, name) in sites {
+            if !langs.same_family(&gone.path, &row.path) || !seen.insert(row.id) {
                 continue;
             }
-            let uses = self.uses(&row.path, (row.start, row.end), &gone.name);
-            if uses.got.is_empty() && (if is_free { uses.unsure_free } else { uses.unsure }) {
+            let uses = self.uses(&row.path, (row.start, row.end), &name);
+            if uses.got.is_empty() && (if is_free { uses.unsure_free || uses.external_free } else { uses.unsure }) {
                 out.push(Hit::from_row(&row, true));
                 if out.len() >= limit {
                     break;
@@ -1254,6 +1269,9 @@ pub(crate) struct Uses {
     /// every unresolved one is a call without a receiver in a language the resolver does not
     /// read: it runs the definition in its own file when there is one (`own`)
     pub(crate) own_file: bool,
+    /// one without a receiver names what the repository defines nowhere: a call of a definition
+    /// the tree no longer has may be
+    pub(crate) external_free: bool,
 }
 
 /// Whether the definition (`path`, `kind`, `qualname`) is what a call without a receiver in the

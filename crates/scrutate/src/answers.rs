@@ -181,7 +181,7 @@ impl Stored {
                     out.extend(id.to_le_bytes());
                 }
             }
-            out.push(u.unsure as u8 | (u.unsure_free as u8) << 1 | (u.own_file as u8) << 2);
+            out.push(u.unsure as u8 | (u.unsure_free as u8) << 1 | (u.own_file as u8) << 2 | (u.external_free as u8) << 3);
         }
         if out.len() as u64 > MAX_BYTES {
             bail!("too large to keep");
@@ -292,7 +292,10 @@ fn decode(b: &[u8], header: &[u8], limit: usize) -> Result<HashMap<Site, Uses>> 
         let mut ids = || -> Result<HashSet<i64>> { (0..r.n()?).map(|_| r.i64()).collect() };
         let (got, dispatched) = (ids()?, ids()?);
         let flags = r.take(1)?[0];
-        out.insert(site, Uses { got, dispatched, unsure: flags & 1 != 0, unsure_free: flags & 2 != 0, own_file: flags & 4 != 0 });
+        out.insert(
+            site,
+            Uses { got, dispatched, unsure: flags & 1 != 0, unsure_free: flags & 2 != 0, own_file: flags & 4 != 0, external_free: flags & 8 != 0 },
+        );
     }
     if r.pos != b.len() {
         bail!("trailing bytes");

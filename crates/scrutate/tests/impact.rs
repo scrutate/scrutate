@@ -648,3 +648,52 @@ fn a_partial_clone_fetches_nothing_and_says_what_it_lacks() {
     assert_eq!(code, 2, "{out}{err}");
     assert!(err.contains("this partial clone lacks"), "{err}");
 }
+
+#[test]
+fn a_deleted_definition_called_through_an_alias_or_in_another_case_keeps_its_caller() {
+    // Python and JavaScript import it under another name; PHP names a function in any case
+    // (tree, files, the file as edited, the caller)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], (&'a str, &'a str), &'a str);
+    let cases: [Case; 3] = [
+        (
+            "deleted_alias_py",
+            &[
+                ("lib/__init__.py", ""),
+                ("lib/util.py", "def helper():\n    return 1\n\n\ndef keep():\n    return 2\n"),
+                ("lib/app.py", "from lib.util import helper as h\n\n\ndef run():\n    return h()\n"),
+            ],
+            ("lib/util.py", "def keep():\n    return 2\n"),
+            "lib/app.py:4-5",
+        ),
+        (
+            "deleted_alias_js",
+            &[
+                ("util.js", "export function helper() {\n  return 1;\n}\n\nexport function keep() {\n  return 2;\n}\n"),
+                ("app.js", "import { helper as h } from \"./util.js\";\n\nexport function run() {\n  return h();\n}\n"),
+            ],
+            ("util.js", "export function keep() {\n  return 2;\n}\n"),
+            "app.js:3-5",
+        ),
+        (
+            "deleted_case_php",
+            &[
+                ("a.php", "<?php\nfunction DoThing() {\n  return 1;\n}\n\nfunction keep() {\n  return 2;\n}\n"),
+                ("b.php", "<?php\nfunction user() {\n  return dothing();\n}\n"),
+            ],
+            ("a.php", "<?php\nfunction keep() {\n  return 2;\n}\n"),
+            "b.php:2-4",
+        ),
+    ];
+    for (name, files, (path, after), caller) in cases {
+        let t = Tree::new(name);
+        t.git(&["init", "-q"]);
+        for (rel, text) in files {
+            t.write(rel, text);
+        }
+        t.commit("first");
+        t.write(path, after);
+        let v = t.json(&[]);
+        let gone: Vec<&str> = v["callers"].as_array().unwrap().iter().filter(|c| c["calls_deleted"] == true).map(|c| c["id"].as_str().unwrap()).collect();
+        assert_eq!(gone, [caller], "{name}: {v}");
+    }
+}

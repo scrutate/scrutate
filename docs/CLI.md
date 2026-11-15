@@ -614,7 +614,9 @@ line per item:
   `(undecided)`). A deleted definition has no location to ask about, so its distance `1` callers
   are the definitions whose code still calls its name where the resolver ties that call to no
   existing definition (not a namesake elsewhere, a local or an outside import; a deleted method
-  is matched by name, with the receiver's type where the resolver decides it). Each is marked
+  is matched by name, with the receiver's type where the resolver decides it). As `callers` does,
+  the name is also asked under the local names imports give it (`helper as h`) and, where the
+  language ignores case, in its other cases (PHP `dothing()` for `DoThing`). Each is marked
   `(calls a deleted definition)`, the first thing the diff breaks, and the walk goes on from it.
   Windows and modules are not followed. `--depth N` (at most 10, `0` for none, default 3) stops
   the walk; past three steps a much used function's callers grow toward most of the repository

@@ -867,8 +867,10 @@ kind and qualified name ([CLI](CLI.md#impact) has the statuses and windows). The
 followed breadth first through one `Names` for the whole request, each step the answer of
 `Names::callers` for one location (as `callers --limit 500`), so the answer agrees with `callers`
 and each file is parsed once. A deleted definition is not in the index, so its first step is
-`Names::callers_of_deleted`: the call edges of its name (`Index::callers_of`) whose call the
-resolver ties to no existing definition. The test files are those with the index's test flag
+`Names::callers_of_deleted`: the call edges of its name (`Index::callers_of`), of its other cases
+where the language ignores case and of the local names imports give it, whose call the resolver
+ties to no existing definition (a call without a receiver of a name the repository defines nowhere
+included). The test files are those with the index's test flag
 (`text::is_test_path`) among the changed definitions, the callers and the changed files.
 
 Last, `findings::find` makes the answer's findings from what the walk kept: each changed file's
