@@ -27,7 +27,7 @@ impl How {
     }
 }
 
-/// Named definitions `query` matches, best first: exact, prefix, humps, contains (a query of three
+/// Named definitions `query` matches, best first: exact, prefix, humps, contains (a key of three
 /// characters or more), each class by name (shorter first), each name's definitions as the index
 /// orders them (outside tests, shorter, by path and line); at most `limit`.
 pub fn ranked(ix: &Index, query: &str, limit: usize) -> Result<Vec<(ChunkRow, How)>> {

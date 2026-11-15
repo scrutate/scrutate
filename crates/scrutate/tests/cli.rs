@@ -732,6 +732,9 @@ fn a_name_that_holds_the_query_is_a_near_match_from_three_characters_only() {
     assert_eq!(hits("ice"), [("BookingsService".to_string(), "contains".to_string())]);
     // neither a prefix nor humps of the name, and two characters: no contains match
     assert_eq!(hits("ic"), []);
+    // counted after `_` is dropped: `s_e` is the two characters `se`, `s_er` the three `ser`
+    assert_eq!(hits("s_e"), []);
+    assert_eq!(hits("s_er"), [("BookingsService".to_string(), "contains".to_string())]);
 }
 
 #[test]
