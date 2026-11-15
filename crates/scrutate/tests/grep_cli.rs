@@ -1742,16 +1742,39 @@ fn a_crlf_line_keeps_its_carriage_return_in_sorted_and_cut_output() {
     assert_eq!(raw(&["grep", "-n", "--max-bytes", "1000", "foo", "a.txt"]), b"1:foo one\r\n3:foo two\r\n");
 }
 
-/// `--max-results N -A M` prints the M lines after the Nth match before it stops, a match among
-/// them as context, so it stays N matches; sorted or not, the same lines.
+/// `--max-results N -A M` prints the M lines after the Nth match before it stops, as ripgrep's
+/// `-m N` does in one file: a match among them prints as a match and does not count, and the
+/// lines do not reach past M; with -v too. The expected output is rg 15.2.0's `rg -n -m N`.
 #[test]
 fn max_results_keeps_the_trailing_context_of_its_last_match() {
     let d = Dir::new("maxresults_after");
     d.write("a.txt", b"foo 1\nx\nfoo 2\nfoo 3\ny\nz\n");
+    let cases: [(&[&str], &str); 10] = [
+        (&["3", "-A", "1"], "1:foo 1\n2-x\n3:foo 2\n4:foo 3\n5-y\n"),
+        (&["1", "-A", "2"], "1:foo 1\n2-x\n3:foo 2\n"),
+        (&["1", "-A", "3"], "1:foo 1\n2-x\n3:foo 2\n4:foo 3\n"),
+        (&["2", "-C", "1"], "1:foo 1\n2-x\n3:foo 2\n4:foo 3\n"),
+        (&["2", "-A", "1", "-v"], "2:x\n3-foo 2\n--\n5:y\n6:z\n"),
+        (&["1", "-A", "2", "-v"], "2:x\n3-foo 2\n4-foo 3\n"),
+        (&["1", "-A", "1", "-v"], "2:x\n3-foo 2\n"),
+        (&["1", "-B", "1", "-v"], "1-foo 1\n2:x\n"),
+        (&["3", "-C", "1", "-v"], "1-foo 1\n2:x\n3-foo 2\n4-foo 3\n5:y\n6:z\n"),
+        (&["2", "-B", "1", "-v"], "1-foo 1\n2:x\n--\n4-foo 3\n5:y\n"),
+    ];
     for sort in [&[][..], &["--sort"][..]] {
-        let (_, out, _) = d.run(&[&["grep"][..], sort, &["--max-results", "3", "-A", "1", "foo", "a.txt"]].concat());
-        assert_eq!(out, "1:foo 1\n2-x\n3:foo 2\n4:foo 3\n5-y\n", "{sort:?}");
-        let (_, out, _) = d.run(&[&["grep"][..], sort, &["--max-results", "1", "-A", "2", "foo", "a.txt"]].concat());
-        assert_eq!(out, "1:foo 1\n2-x\n3-foo 2\n", "{sort:?}");
+        for (args, want) in cases {
+            let all = [&["grep"][..], sort, &["--max-results"], args, &["foo", "a.txt"]].concat();
+            let (code, out, err) = d.run(&all);
+            assert_eq!((code, out.as_str()), (0, want), "{all:?}: {err}");
+        }
     }
+    // in --json the match in the trailing context is a match, with its span
+    let (_, out, _) = d.run(&["grep", "--json", "--max-results", "1", "-A", "2", "foo", "a.txt"]);
+    let kinds: Vec<(String, u64, usize)> = out
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["type"] == "match" || v["type"] == "context")
+        .map(|v| (v["type"].as_str().unwrap().to_string(), v["line"].as_u64().unwrap_or(0), v["spans"].as_array().map_or(0, Vec::len)))
+        .collect();
+    assert_eq!(kinds, [("match".to_string(), 1, 1), ("context".to_string(), 2, 0), ("match".to_string(), 3, 1)], "{out}");
 }

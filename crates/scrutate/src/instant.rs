@@ -1700,8 +1700,9 @@ impl<'a> Sink for Collector<'a> {
 
     fn matched(&mut self, _s: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, std::io::Error> {
         if self.tail.is_some() {
-            // past the last match allowed: a match in its after-context is one more context line
-            return self.context_line(mat.bytes(), mat.line_number());
+            // past the last match allowed: a match in its after-context prints as a match, as
+            // ripgrep prints one after -m's last, and counts toward nothing
+            return self.line_out(mat.bytes(), mat.line_number(), true);
         }
         let bytes = mat.bytes();
         if self.count_each {
@@ -1718,7 +1719,7 @@ impl<'a> Sink for Collector<'a> {
     }
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
-        self.context_line(ctx.bytes(), ctx.line_number())
+        self.line_out(ctx.bytes(), ctx.line_number(), false)
     }
 
     fn context_break(&mut self, _s: &Searcher) -> Result<bool, std::io::Error> {
@@ -1874,14 +1875,16 @@ impl Collector<'_> {
         self.tail.is_some()
     }
 
-    /// A context line, `number` the searcher's line number; in the tail after the last match
-    /// allowed, the search ends with the tail's last line.
-    fn context_line(&mut self, bytes: &[u8], number: Option<u64>) -> Result<bool, std::io::Error> {
+    /// A context line, or a match in the tail after the last match allowed (`matched`), `number`
+    /// the searcher's line number; the search ends with the tail's last line.
+    fn line_out(&mut self, bytes: &[u8], number: Option<u64>, matched: bool) -> Result<bool, std::io::Error> {
         if self.convert && self.binary_at.is_some() {
             // as ripgrep: a context line past a NUL byte ends the output, `finish` writes the note
             return Ok(false);
         }
         let more = match self.tail.as_mut() {
+            // the searcher can hand over a line after the tail's last one ended the search
+            Some(0) => return Ok(false),
             Some(left) => {
                 *left -= 1;
                 *left > 0
@@ -1892,19 +1895,18 @@ impl Collector<'_> {
         if self.plain.is_some() {
             let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             let number = if self.numbered { number.unwrap_or(0) + self.line_base } else { 0 };
-            format_plain(&mut self.out, name, number, line, true);
+            format_plain(&mut self.out, name, number, line, !matched);
             return Ok(more);
         }
         let text = lossy(line);
+        let mut spans = if !matched || self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
+        if self.text_spans && !spans.is_empty() {
+            text_offsets(&mut spans, line, &text, matches!(text, std::borrow::Cow::Borrowed(_)));
+        }
         let raw = raw_of(self.raw.as_deref(), self.raw_text(bytes, line, matches!(text, std::borrow::Cow::Owned(_))));
-        self.push(Record::Context(Line {
-            path: Arc::clone(&self.path),
-            raw,
-            line: number.unwrap_or(0) + self.line_base,
-            column: 0,
-            text: text.into_owned(),
-            spans: Vec::new(),
-        }));
+        let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
+        let l = Line { path: Arc::clone(&self.path), raw, line: number.unwrap_or(0) + self.line_base, column, text: text.into_owned(), spans };
+        self.push(if matched { Record::Match(l) } else { Record::Context(l) });
         Ok(more)
     }
 
@@ -3108,14 +3110,12 @@ fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit
     let mut tail: Option<(Arc<str>, u64)> = None;
     for (_, mut r) in keyed {
         if left == 0 {
-            // that after-context, a match in it as context, so the answer keeps `n` matches
+            // that after-context; a match in it prints as a match, as ripgrep prints one after -m's
+            // last, and is not counted
             let Some((path, end)) = &tail else { break };
             let (Record::Context(l) | Record::Match(l)) = &r else { break };
             if l.path != *path || l.line > *end {
                 break;
-            }
-            if let Record::Match(l) = r {
-                r = Record::Context(Line { column: 0, spans: Vec::new(), ..l });
             }
             on_hit(r);
             continue;

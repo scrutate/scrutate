@@ -171,7 +171,7 @@ incompatible index by itself, and that is never breaking.
 ### Changed
 - `grep --max-results N` with after-context (`-A`, `-C`) prints the context of the Nth match
   before it stops, as `-m N` does, where it stopped at the match; a match inside that context
-  prints as a context line, so the output still holds N matches
+  prints as a match, as ripgrep prints one after `-m`'s last, and does not count toward N
   ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep` prints a CRLF line with its `\r`, matched and context lines alike, in streamed, sorted
   (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
