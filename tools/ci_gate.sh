@@ -5,6 +5,7 @@
 # covers it or why only CI runs it; tools/gate_parity.py (the gate-parity step) fails when a
 # workflow step is missing from the map, so the two cannot drift.
 #   bash tools/ci_gate.sh [--quick|--bench]
+#   bash tools/ci_gate.sh --key [--quick|--bench]   # the result file that run would use here
 #   (no flag)  every step below
 #   --quick    the Rust and tree checks only (no test suites, no release-build steps)
 #   --bench    the release build and the steps that use it only
@@ -20,19 +21,23 @@ export RUSTFLAGS="-D warnings"
 # the pinned ripgrep 15.2.0 (15.1.0 has the multi-root ignore bug 43e2f08ede fixed): differential
 # and fuzz compare against it, and the tests that run rg fail rather than skip without it
 export SCRUTATE_RG=$tools/rg PATH=$tools:$PATH SCRUTATE_TEST_NEEDS_RG=1
-# temp files on the disk beside this lane's target, not the shared /tmp tmpfs (16 GB with a per-user quota)
-target=${CARGO_TARGET_DIR:-$PWD/target}
-export TMPDIR="$target/tmp"
-rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
-sdk=$HOME/wasi-sdk
+# --key [MODE]: print the result file a run in MODE would read and write here, and run nothing
+[ "${1:-}" = --key ] && { key_only=1; shift; }
 mode=${1:-full}
-log=$(mktemp)
 # one result per (commit, gate version, mode, machine and tool versions): a commit that already
 # passed this exact gate here is not gated again by another session, and a pass on another box or
 # with other tools is never reused; GATE_FORCE=1 runs it anyway
 made_by="host=$(hostname) $(rustc -V 2>/dev/null) rg=$("$tools/rg" --version 2>/dev/null | head -1 | cut -d' ' -f2) gitleaks=$("$tools/gitleaks" version 2>/dev/null) actionlint=$("$tools/actionlint" -version 2>/dev/null | head -1) ruff=$("$venv/bin/ruff" --version 2>/dev/null | cut -d' ' -f2) cargo-deny=$("$tools/cargo-deny" --version 2>/dev/null | cut -d' ' -f2) zizmor=$("$venv/bin/zizmor" --version 2>/dev/null | cut -d' ' -f2) python=$(python3 -V 2>/dev/null | cut -d' ' -f2) shellcheck=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') wasi-sdk=$(head -1 "$HOME/wasi-sdk/VERSION" 2>/dev/null)"
 key="$(git rev-parse HEAD).$(sha256sum "$0" | cut -c1-12).$(printf '%s' "$made_by" | sha256sum | cut -c1-12).${mode#--}"
-res=$results/$key.pass out=$(mktemp)
+res=$results/$key.pass
+if [ -n "${key_only:-}" ]; then echo "$res"; exit 0; fi
+# temp files on the disk beside this lane's target, not the shared /tmp tmpfs (16 GB with a per-user quota)
+target=${CARGO_TARGET_DIR:-$PWD/target}
+export TMPDIR="$target/tmp"
+rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
+sdk=$HOME/wasi-sdk
+log=$(mktemp)
+out=$(mktemp)
 if [ -z "${GATE_FORCE:-}" ] && [ -f "$res" ]; then
   echo "[gate] $(git rev-parse --short=8 HEAD) already passed this gate ($mode) on $(sed -n 's/^made by host=\([^ ]*\).*/\1/p' "$res") at $(date -r "$res" '+%F %H:%M'); its result:"
   cat "$res"; exit 0
