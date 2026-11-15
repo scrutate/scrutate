@@ -214,8 +214,13 @@ struct State {
 impl State {
     /// The state in `file`; an empty one when it is missing or does not parse.
     fn load(file: &Path) -> State {
+        State::load_on(file, cfg!(windows))
+    }
+
+    /// `load` as it is on Windows (`windows`) or elsewhere.
+    fn load_on(file: &Path, windows: bool) -> State {
         let mut s: State = std::fs::read(file).ok().and_then(|b| serde_json::from_slice::<State>(&b).ok()).filter(|s| s.version == 1).unwrap_or_default();
-        s.plain_keys(cfg!(windows));
+        s.plain_keys(windows);
         s
     }
 
@@ -333,6 +338,18 @@ mod tests {
         s.bound(2.0 * week);
         assert_eq!(s.roots.values().map(BTreeMap::len).sum::<usize>(), MAX_ENTRIES);
         assert!(s.frecency("r", "a", 2.0 * week) > 0.0, "the most read file stays");
+    }
+
+    #[test]
+    fn a_state_file_kept_under_a_verbatim_root_is_found_under_the_plain_one() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp").join(format!("frecency_verbatim_{}", std::process::id()));
+        let file = dir.join(STATE_FILE);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = serde_json::json!({"version": 1, "roots": {r"\\?\C:\repo": {"a.py": {"score": 3.0, "at": 5.0}}}});
+        std::fs::write(&file, old.to_string()).unwrap();
+        let s = State::load_on(&file, true);
+        assert!((s.frecency(r"C:\repo", "a.py", 5.0) - 3.0).abs() < 1e-9, "{:?}", s.roots);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
