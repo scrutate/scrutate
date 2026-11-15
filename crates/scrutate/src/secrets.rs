@@ -292,7 +292,8 @@ static NOT_SECRET_NAMES: LazyLock<Regex> = LazyLock::new(|| {
 fn real_value(secret: &str, _: &str, _: &str) -> bool {
     let lower = secret.to_ascii_lowercase();
     let first = secret.chars().next().unwrap_or(' ');
-    !(matches!(lower.as_str(), "true" | "false" | "null" | "none" | "password" | "pass" | "secret" | "changeme")
+    !(matches!(lower.as_str(), "true" | "false" | "null" | "none")
+        || PLACEHOLDER_PASSWORDS.contains(&lower.as_str())
         || secret.chars().all(|c| c == first)
         || secret.starts_with(['$', '{', '%', '<', '/'])
         || lower.starts_with("os."))
@@ -353,13 +354,27 @@ fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
     }
     let Some(i) = out.iter().position(|&b| b == b':').filter(|&i| i > 0 && i + 1 < out.len()) else { return false };
     let password = String::from_utf8_lossy(&out[i + 1..]).to_ascii_lowercase();
-    out.iter().all(|b| (0x20..0x7f).contains(b)) && !matches!(password.as_str(), "password" | "passwd" | "pass" | "pwd" | "secret" | "changeme")
+    out.iter().all(|b| (0x20..0x7f).contains(b)) && !PLACEHOLDER_PASSWORDS.contains(&password.as_str())
 }
 
 /// A URL's password: no variable or placeholder word, and a digit or a symbol in it unless it is
 /// eight letters or more (`admin:admin@localhost` is a doc's example, a generated one is long).
 fn url_password(secret: &str, whole: &str, before: &str) -> bool {
-    real_value(secret, whole, before) && !NOT_SECRET_NAMES.is_match(whole) && (secret.len() >= 8 || secret.chars().any(|c| !c.is_ascii_alphabetic()))
+    real_value(secret, whole, before)
+        && !NOT_SECRET_NAMES.is_match(whole)
+        && (secret.len() >= 8 || secret.chars().any(|c| !c.is_ascii_alphabetic()))
+        && !placeholder_credentials(whole, secret)
+}
+
+/// The words a doc writes for a password, which every rule leaves as written.
+const PLACEHOLDER_PASSWORDS: [&str; 6] = ["password", "passwd", "pass", "pwd", "secret", "changeme"];
+
+/// A doc's example `user:password`: the password the user name again (`anonymous:anonymous`), or
+/// with the word password in it (`username:mypassword`).
+fn placeholder_credentials(whole: &str, secret: &str) -> bool {
+    let lower = secret.to_ascii_lowercase();
+    let user = whole.rfind(&format!(":{secret}")).map(|i| &whole[..i]).map(|u| &u[u.rfind(['/', ' ', '\t', '=', '"', '\'']).map_or(0, |j| j + 1)..]);
+    lower.contains("password") || lower.contains("passwd") || user.is_some_and(|u| u.eq_ignore_ascii_case(secret))
 }
 
 /// A `.env` value that is no placeholder and is not a name or a word alone.
@@ -1208,6 +1223,11 @@ mod tests {
             "https://admin:admin@localhost:8080/",
             "https://user:$PASSWORD@example.com/",
             "proxy = http://proxy.internal:3128",
+            // a doc's placeholders: the password the user name again, or the word password in it
+            "ftp://anonymous:anonymous@ftp.example.com/pub/",
+            "http_proxy = http://username:mypassword@proxy.example.com:3128/",
+            "DATABASE_URL = https://admin:changeme@db.local/",
+            "https://user:yourpassword@example.com/",
         ] {
             assert!(redact(line).1.iter().all(|m| m.kind != "url-password"), "{line}");
             // the line ends at the `@`: a password needs a host after it
