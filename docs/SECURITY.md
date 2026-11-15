@@ -491,7 +491,8 @@ as before (mode 0700 on Unix).
   place. scrutate never does (temp dir + rename; deletion only after the manifest no longer
   references them), so this needs an external actor; on Windows a mapped file cannot be deleted
   and GC retries later. A file the user names (a `SCRUTATE_SEMANTIC` model) is read whole, never
-  mapped: replacing it in place under a running process would end that process with SIGBUS.
+  mapped: replacing it in place under a running process would end that process with SIGBUS. `tests/maps.rs` lists every call that maps a file with why its file may be mapped (built-in
+  data, or segment files scrutate writes once), and a new one fails until it is listed.
 - **Index privacy on Windows**: `.scrutate/` inherits the repository directory's permissions there,
   so a file whose own permissions are narrower than its directory's has its chunks readable by
   whoever can read the repository directory. On Unix the directory is the owner's alone (above).
