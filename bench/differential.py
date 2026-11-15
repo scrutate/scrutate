@@ -23,6 +23,7 @@ then one is a single line of that size (the path that reads a file with no line 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import random
@@ -205,7 +206,8 @@ def rg_matches(out: bytes) -> set:
             d = r["data"]
             text = d["lines"].get("text")
             if text is None:
-                text = bytes.fromhex(d["lines"]["bytes"]).decode("utf8", "replace") if "bytes" in d["lines"] else ""
+                # rg gives a line that is not UTF-8 as base64
+                text = base64.b64decode(d["lines"]["bytes"]).decode("utf8", "replace") if "bytes" in d["lines"] else ""
             text = text.rstrip("\n").rstrip("\r")
             path = d["path"].get("text", "")
             path = path[2:] if path.startswith("./") else path
