@@ -55,7 +55,9 @@ pub fn ranked(ix: &Index, query: &str, limit: usize) -> Result<Vec<(ChunkRow, Ho
     }
     let mut out = Vec::new();
     for (k, how) in keys {
-        out.extend(ix.defs_named(&k)?.into_iter().map(|r| (r, how)));
+        // the spellings of a key match on their own: FB is humps of FooBar, not of foobar
+        let own = |r: &ChunkRow| if how == How::Humps { classify(query, &r.name) } else { Some(how) };
+        out.extend(ix.defs_named(&k)?.into_iter().filter_map(|r| own(&r).map(|h| (r, h))));
         if out.len() >= limit {
             break;
         }

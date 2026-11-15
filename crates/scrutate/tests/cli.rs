@@ -3084,6 +3084,8 @@ fn each_spelling_of_a_name_is_matched_by_its_own_words() {
         };
         for q in ["FoBa", "FB"] {
             assert!(hits(q).contains(&"FooBar humps".to_string()), "{q} with {first} first: {:?}", hits(q));
+            // each spelling under its own match: the one-word foobar has no humps FB
+            assert!(!hits(q).iter().any(|h| h.starts_with("foobar")), "{q} with {first} first: {:?}", hits(q));
         }
         std::fs::remove_file(r.root.join(format!("src/{second}"))).unwrap();
         assert_eq!(r.run(&["index"]).0, 0);
@@ -3099,4 +3101,28 @@ fn canon_gives_a_canonical_path_without_the_verbatim_prefix() {
     let c = canon(std::env::temp_dir());
     assert!(c.is_absolute() && c.is_dir(), "{}", c.display());
     assert!(!c.to_string_lossy().starts_with(r"\\?\"), "verbatim: {}", c.display());
+}
+
+#[test]
+fn a_humps_query_lists_only_the_spellings_whose_own_words_it_names() {
+    // two spellings of one name key: the humps query names the words of one of them
+    for (plain, words, queries) in [
+        ("foobar", "FooBar", &["FoBa", "FB"][..]),
+        ("setup", "setUp", &["SeUp", "SU"][..]),
+        ("filename", "fileName", &["FiNa", "FN"][..]),
+        ("foobar", "foo_bar", &["FB"][..]),
+    ] {
+        let r = Repo::new(&format!("humps_{words}"));
+        r.write("src/a.py", format!("def {plain}():\n    return 1\n").as_bytes());
+        r.write("src/b.py", format!("def {words}():\n    return 2\n").as_bytes());
+        assert_eq!(r.run(&["index"]).0, 0);
+        for q in queries {
+            let (_, out, _) = r.run(&["symbol", "--json", q]);
+            let got: Vec<String> = answer(&out)
+                .as_array()
+                .map(|a| a.iter().map(|h| format!("{} {}", h["name"].as_str().unwrap(), h["match"].as_str().unwrap_or(""))).collect())
+                .unwrap_or_default();
+            assert_eq!(got, [format!("{words} humps")], "{q} for {plain} and {words}");
+        }
+    }
 }

@@ -191,6 +191,13 @@ fn find_symbol_lists_near_matches_unless_exact() {
     assert!(r.err("find_symbol", json!({"name": "BkSvc", "exact": "yes"})).contains("exact"));
 }
 
+#[test]
+fn find_symbol_labels_each_spelling_by_its_own_match() {
+    let mut r = Repo::new("spellings", &[("a.py", "def foobar():\n    return 1\n"), ("b.py", "class FooBar:\n    pass\n")]);
+    let near = r.ok("find_symbol", json!({"name": "FB"}));
+    assert!(near.contains("[class] FooBar  (humps match)") && !near.contains("foobar"), "{near}");
+}
+
 fn many_lines(n: usize) -> String {
     (1..=n).map(|i| format!("x_{i} = {i}\n")).collect()
 }
