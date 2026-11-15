@@ -235,7 +235,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         rule(
             "shopify-token",
             "gitleaks shopify-access-token, shopify-custom-access-token, shopify-private-app-access-token, shopify-shared-secret",
-            r"\b(shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32})\b",
+            r"(shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32})",
             1,
             2.0,
             &["shpat_", "shpca_", "shppa_", "shpss_"],
@@ -1630,6 +1630,15 @@ mod tests {
         let mut r = Redactor::default();
         let steps: Vec<Hold> = pem(&long).iter().map(|l| r.hold(l)).collect();
         assert_eq!(steps[65], Hold::Release { public: false }, "the 65th body line ends the hold");
+    }
+
+    /// Shopify's tokens are found as gitleaks finds them, with no word boundary around them.
+    #[test]
+    fn a_shopify_token_inside_a_word_is_found() {
+        let token = format!("{}{}", "shpat_", fake(84, "0123456789abcdef", 32));
+        let line = format!("x = \"key_{token}\"");
+        let (out, marks) = redact(&line);
+        assert!(!out.contains(&token) && marks.iter().any(|m| m.kind == "shopify-token"), "{out}");
     }
 
     /// The page as assembled is read again, so a mark must not be taken for a secret twice.

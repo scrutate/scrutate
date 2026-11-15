@@ -469,6 +469,10 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
+Where a rule differs from its gitleaks v8.30.1 source, it marks more: `digitalocean-token` reads
+all three forms without regard to case (gitleaks only the refresh token), and `vault-token` takes
+a batch token above entropy 3.5 (gitleaks 4).
+
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
 URL that carries one (`https://user:pass@host`, also with no user; a password holding `@` runs to
