@@ -295,6 +295,9 @@ incompatible index by itself, and that is never breaking.
   when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
   where it named them under the resolved path and the editor opened a second tab of an open file
   ([CLI](docs/CLI.md#lsp)).
+- `bench/indexed.py` fails scrutate's concurrent throughput row only when scrutate's own queries
+  fail, and leaves out a rival whose queries failed, where any tool's failures failed scrutate's
+  row; a tool's server is used once its first query answers, in place of a fixed 10 s wait.
 - `refs`, `callers` and `callees` take one decision per call site, so they agree: `refs` of a
   constructor lists its class's instantiations (`new Box(1)`, `Point(1)`, Ruby `Invoice.new`,
   JavaScript `super(..)`), which `callers` already listed; in a language the resolver does not

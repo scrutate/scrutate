@@ -11,7 +11,9 @@ index size, query latency (p50 / p95 / p99 over every run of every query, proces
 query memory, and concurrent throughput (N clients issuing the query list for a fixed time).
 Every query's answer is first checked against the Python reference of bench/leaderboard.py on the
 same files; a tool that answers differently, or exits with a code other than 0 or 1, is
-disqualified for that query. Every measurement takes the tools in turn (A B, A B, ...), so load
+disqualified for that query. A tool's server is used once its first query answers (within 10 min).
+Only scrutate's own failed queries fail its concurrent throughput row; a rival whose queries failed
+is left out of that comparison and named. Every measurement takes the tools in turn (A B, A B, ...), so load
 drift on the machine does not turn into a difference between them; each comparison row says how
 many runs per tool it rests on.
 
@@ -178,6 +180,39 @@ def query_rss(cmd, cwd, measured):
     return int(kb[-1]) * 1024 if kb else measured
 
 
+def wait_ready(proc, probe, cwd, limit=600.0):
+    """Until `probe`, the tool's own first query, exits 0 or 1 against the server `proc` started;
+    an error when the server exits first or `limit` seconds pass."""
+    deadline = time.monotonic() + limit
+    while True:
+        if proc.poll() is not None:
+            raise SystemExit(f"{probe[0]}: its server exited ({proc.returncode}) before it answered")
+        rc = subprocess.run(probe, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+        if not lb.bad_exit([rc]):
+            return
+        if time.monotonic() > deadline:
+            raise SystemExit(f"{probe[0]}: its server did not answer within {limit:g} s (last exit {rc})")
+        time.sleep(0.2)
+
+
+def throughput_verdict(tools, names, runs):
+    """scrutate's concurrent throughput against the best rival whose queries all ran. FAIL only when
+    scrutate's own queries failed; a rival with failed queries is left out and named."""
+    failed = {n: tools[n]["throughput"]["failed_queries"] for n in names}
+    if failed["scrutate"]:
+        return {"runs": runs, "status": "FAIL", "why": f"{failed['scrutate']} of scrutate's queries exited with an error during the runs"}
+    left_out = {n: f"{k} queries exited with an error" for n, k in failed.items() if k}
+    ok = [n for n in names if n != "scrutate" and not failed[n]]
+    if not ok:
+        return {"runs": runs, "status": "n/a", "why": "every rival's queries failed", "left_out": left_out}
+    best = max(ok, key=lambda n: tools[n]["throughput"]["median"])
+    r, lo, hi = boot(tools["scrutate"]["throughput"]["qps"], tools[best]["throughput"]["qps"], statistics.median)
+    out = {"best": best, "ratio": r, "ci95": [lo, hi], "runs": runs, "status": status(lo, hi, lower_is_better=False)}
+    if left_out:
+        out["left_out"] = left_out
+    return out
+
+
 def server_rss(proc):
     """Resident bytes of a server process now (Linux /proc; elsewhere `ps`)."""
     try:
@@ -296,7 +331,12 @@ def main() -> int:
         for cmd in defs[n].get("server", []):
             servers.append(subprocess.Popen(cmd, cwd=a.corpus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
             owner[servers[-1].pid] = n
-            time.sleep(10)
+            try:
+                wait_ready(servers[-1], defs[n]["query"](QUERIES[0][1]), a.corpus)
+            except BaseException:
+                for p in servers:
+                    p.terminate()
+                raise
     try:
         # ---- correctness per query
         cache = os.path.join(os.path.dirname(os.path.abspath(a.out)), "cache")
@@ -412,15 +452,7 @@ def main() -> int:
         best = min(comps, key=lambda n: res["tools"][n]["index"]["bytes"])
         r = s["index"]["bytes"] / res["tools"][best]["index"]["bytes"]
         out["index size"] = {"best": best, "ratio": r, "status": "PASS" if r < 1 else "FAIL" if r > 1 else "PARTIAL"}
-        best = max(comps, key=lambda n: res["tools"][n]["throughput"]["median"])
-        failed = sum(res["tools"][n]["throughput"]["failed_queries"] for n in names)
-        if failed:
-            out["concurrent throughput"] = {"best": best, "runs": a.throughput_runs, "status": "FAIL",
-                                            "why": f"{failed} queries exited with an error during the runs"}
-        else:
-            r, lo, hi = boot(s["throughput"]["qps"], res["tools"][best]["throughput"]["qps"], statistics.median)
-            out["concurrent throughput"] = {"best": best, "ratio": r, "ci95": [lo, hi], "runs": a.throughput_runs,
-                                            "status": status(lo, hi, lower_is_better=False)}
+        out["concurrent throughput"] = throughput_verdict(res["tools"], names, a.throughput_runs)
         best = min(comps, key=lambda n: res["tools"][n]["latency"]["rss_median"])
         r = s["latency"]["rss_median"] / res["tools"][best]["latency"]["rss_median"]
         out["query memory"] = {"best": best, "ratio": r, "status": "PASS" if r < 0.95 else "FAIL" if r > 1.05 else "PARTIAL"}
