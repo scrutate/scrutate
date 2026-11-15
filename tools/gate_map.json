@@ -129,15 +129,15 @@
  },
  "ci.yml:wheels:09673e960c": {
   "step": "python -m pip install maturin pytest -c python/constraints.txt",
-  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
+  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t and 3.15t, 3.15's abi3t wheel, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },
  "ci.yml:wheels:089759143a": {
   "step": "cargo build --release -p scrutate --locked",
-  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
+  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t and 3.15t, 3.15's abi3t wheel, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },
  "ci.yml:wheels:595f140ff2": {
   "step": "build, install and test the wheel",
-  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
+  "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t and 3.15t, 3.15's abi3t wheel, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },
  "ci.yml:wheels:dcd60fa063": {
   "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -518,5 +518,273 @@
  "benchmarks.yml:gate:f7fcdca18a": {
   "step": "echo \"scope build walltime counts: $RESULTS\"",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
+ },
+ "release.yml:version:3e2a987305": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:version:8eab70b013": {
+  "step": "if [ \"$GITHUB_REF_TYPE\" = tag ]; then v=${GITHUB_REF_NAME#v}; else v=$(sed -n 's",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:ci:5e80b5a129": {
+  "step": "ci on the tagged commit",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:security:2bd9e8d3df": {
+  "step": "security on the tagged commit",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:4f8161e4d4": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:a2d504dc33": {
+  "step": "rustup toolchain install --no-self-update && rustup target add \"$TARGET\"",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:424d50bd74": {
+  "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:2e6920e3b8": {
+  "step": "sudo apt-get -o Acquire::Retries=5 install -y musl-tools",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:de66de5993": {
+  "step": "cargo build --release -p scrutate --target \"$TARGET\" --locked",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:1ba359b0a1": {
+  "step": "function order (glibc Linux)",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:f6b5931c73": {
+  "step": "the glibc binary needs no glibc newer than 2.34",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:78ed4a4a30": {
+  "step": "ripgrep 15.2.0 for the tests that compare with it",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:2003a5cab7": {
+  "step": "cargo test --release -p scrutate --target \"$TARGET\" --locked",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:026465c8aa": {
+  "step": "package",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:c5ff658a4f": {
+  "step": ".deb and .rpm",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:binaries:b4cc8cfeb2": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:wheels:c1e69a4d21": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:wheels:98de642451": {
+  "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:wheels:6699b52b08": {
+  "step": "notices of the crates compiled into the wheel",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:wheels:e8d1d5bf56": {
+  "step": "PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:wheels:e0102fd062": {
+  "step": "install and test the wheel on this platform",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:wheels:fd562285e2": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:vsix:f91a47a3d4": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:vsix:ca95b46abf": {
+  "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:vsix:4cb78fec2a": {
+  "step": "sed -i '/^<!-- Head written by/,/^<!-- End of head. -->/d' README.md",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:vsix:f6e5f35907": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:62ecb51c08": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:9259fd5454": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:cbea5720a7": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:58dc921c1d": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:881ba55232": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:61284af503": {
+  "step": "SBOM (CycloneDX, from the locked dependency graph)",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:4d46fadc78": {
+  "step": "combined checksums",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:b5303aa42b": {
+  "step": "build provenance for every file",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:77663fe090": {
+  "step": "the SBOM, bound to the archives it describes",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:release:f4e3c9b1e9": {
+  "step": "draft, attach, publish",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:testpypi:38d082bfdb": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:testpypi:fc12724c97": {
+  "step": "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:pypi:fac2ae5d70": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:pypi:90eab5129b": {
+  "step": "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:marketplace:01c228ec5d": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:marketplace:cd4d284adb": {
+  "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:marketplace:dc28ebbf2d": {
+  "step": "npx --yes @vscode/vsce@4.1.1 publish --oidc --packagePath \"dist/scrutate-$VERSIO",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:openvsx:a815ca07e3": {
+  "step": "echo \"no OVSX_PAT secret in the openvsx environment; Open VSX is skipped\"",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:openvsx:30abd13a8e": {
+  "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:openvsx:bc9a4a2b26": {
+  "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "release.yml:openvsx:cb1c2b6ded": {
+  "step": "npx --yes ovsx@1.4.0 publish \"dist/scrutate-$VERSION.vsix\"",
+  "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
+ },
+ "fuzz-weekly.yml:targets:ba025ffc5f": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:targets:893c44b725": {
+  "step": "echo \"targets=$(find fuzz/fuzz_targets -name '*.rs' -printf '%f\\n' | sed 's/\\.rs",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:cae5cc3ae7": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:cdc3d34303": {
+  "step": "rustup toolchain install \"$NIGHTLY\" --profile minimal --no-self-update",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:7cc5a8e7b4": {
+  "step": "cargo install cargo-fuzz --version 0.13.2 --locked",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:67f5c5db29": {
+  "step": "the corpus of the latest earlier run that kept one",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:1d42a60448": {
+  "step": "the fuzz lock is current and the root lock's",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:2f4e5191d8": {
+  "step": "cargo \"+$NIGHTLY\" fuzz build -O \"$TARGET\"",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:0bb5486f2c": {
+  "step": "cargo \"+$NIGHTLY\" fuzz run -O \"$TARGET\" -- -max_total_time=2700 -print_final_sta",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:85f71f9727": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "fuzz-weekly.yml:fuzz:64c3936478": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: the weekly fuzz run (hours of libFuzzer on nightly); the gate's fuzz-check checks that the same targets build"
+ },
+ "jetbrains.yml:lsp4ij:733d6bbd8c": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:a5260fcfa2": {
+  "step": "free disk space",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:b4c68ab184": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:57e3c6105d": {
+  "step": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:9dc8d33294": {
+  "step": "cargo build --release -p scrutate --locked",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:a257219726": {
+  "step": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:90227c93ed": {
+  "step": "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:99e059e37e": {
+  "step": "Go to Declaration through LSP4IJ",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "jetbrains.yml:lsp4ij:304b923335": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  }
 }

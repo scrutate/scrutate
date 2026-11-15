@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""The gate and CI cannot drift: every step of ci.yml, security.yml and benchmarks.yml, `run:` and
-`uses:` alike (and a job that calls another workflow), has an entry in tools/gate_map.json, keyed
-by workflow, job and a hash of what decides whether and how it runs: its command or action and
-inputs, its environment, shell, working directory, `if:` and `continue-on-error:`, the job's
-runner, matrix, `if:`, `continue-on-error:`, `needs:`, container and services, and the workflow's
-`on:`. The entry says what covers the step: `gate: NAME`
+"""The gate and CI cannot drift: every step of the six workflows (ci.yml, security.yml,
+benchmarks.yml, release.yml, fuzz-weekly.yml, jetbrains.yml), `run:` and `uses:` alike, and a job
+that calls another workflow, has an entry in tools/gate_map.json, keyed by workflow, job and a
+hash of what decides whether and how it runs: its command or action and inputs, its environment,
+shell, working directory, `if:` and `continue-on-error:`, the job's runner, matrix, `if:`,
+`continue-on-error:`, `needs:`, container and services, and the workflow's `on:`. The entry says
+what covers the step: `gate: NAME`
 (a step of tools/ci_gate.sh), `setup: ...` (what the box's setup installs) or `ci-only: why`. A
 step that is new or changed has no entry, an entry whose step is gone is stale, and a `gate:` name
 that tools/ci_gate.sh does not run is wrong: each fails.
@@ -22,7 +23,7 @@ import sys
 import yaml
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-WORKFLOWS = ("ci.yml", "security.yml", "benchmarks.yml")
+WORKFLOWS = ("ci.yml", "security.yml", "benchmarks.yml", "release.yml", "fuzz-weekly.yml", "jetbrains.yml")
 KINDS = ("gate:", "setup:", "ci-only:")
 
 

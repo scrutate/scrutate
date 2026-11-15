@@ -52,7 +52,7 @@ cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
 cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features; the tests that run or compare with rg skip without it, and fail without it when SCRUTATE_TEST_NEEDS_RG is set (CI, tools/ci_ripgrep.sh)
 cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
 bash tools/ci_gate.sh [--quick]                   # CI's Linux checks on a box set up by its ci_setup.sh; tools/gate_map.json names what covers each CI step
-python3 tools/gate_parity.py                      # every step of ci.yml, security.yml and benchmarks.yml, run: and uses:, is in that map, keyed by what decides how it runs (PyYAML from python[test])
+python3 tools/gate_parity.py                      # every step of the six workflows, run: and uses:, is in that map, keyed by what decides how it runs (PyYAML from python[test])
 python3 tools/fuzz_lock.py --check                # fuzz/Cargo.lock holds the root lock's versions; without --check it makes the file again
 python3 tools/gitleaks_config.py                  # .gitleaks.toml holds title and [extend] useDefault = true alone, in any case, and no .gitleaksignore sits beside it (Python 3.11+)
 cargo audit

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The checks of .github/workflows/ci.yml, security.yml and benchmarks.yml that a Linux box can run,
 # for the commit checked out here. tools/gate_map.json names, for every step of those workflows
-# (`run:` and `uses:`), the step below that covers it or why only CI runs it; tools/gate_parity.py (the
-# gate-parity step) fails when a workflow step is missing from the map, so the two cannot drift.
+# (`run:` and `uses:`), and of release.yml, fuzz-weekly.yml and jetbrains.yml, the step below that
+# covers it or why only CI runs it; tools/gate_parity.py (the gate-parity step) fails when a
+# workflow step is missing from the map, so the two cannot drift.
 #   bash tools/ci_gate.sh [--quick|--bench]
 #   (no flag)  every step below
 #   --quick    the Rust and tree checks only (no test suites, no release-build steps)
@@ -26,15 +27,18 @@ rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
 sdk=$HOME/wasi-sdk
 mode=${1:-full}
 log=$(mktemp)
-# one result per (commit, gate version, mode): a commit that already passed this exact gate is not
-# gated again by another session; GATE_FORCE=1 runs it anyway
-key="$(git rev-parse HEAD).$(sha256sum "$0" | cut -c1-12).${mode#--}"
+# one result per (commit, gate version, mode, machine and tool versions): a commit that already
+# passed this exact gate here is not gated again by another session, and a pass on another box or
+# with other tools is never reused; GATE_FORCE=1 runs it anyway
+made_by="host=$(hostname) $(rustc -V 2>/dev/null) rg=$("$tools/rg" --version 2>/dev/null | head -1 | cut -d' ' -f2) gitleaks=$("$tools/gitleaks" version 2>/dev/null) actionlint=$("$tools/actionlint" -version 2>/dev/null | head -1) ruff=$("$venv/bin/ruff" --version 2>/dev/null | cut -d' ' -f2) cargo-deny=$("$tools/cargo-deny" --version 2>/dev/null | cut -d' ' -f2) zizmor=$("$venv/bin/zizmor" --version 2>/dev/null | cut -d' ' -f2) python=$(python3 -V 2>/dev/null | cut -d' ' -f2) shellcheck=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') wasi-sdk=$(head -1 "$HOME/wasi-sdk/VERSION" 2>/dev/null)"
+key="$(git rev-parse HEAD).$(sha256sum "$0" | cut -c1-12).$(printf '%s' "$made_by" | sha256sum | cut -c1-12).${mode#--}"
 res=$results/$key.pass out=$(mktemp)
 if [ -z "${GATE_FORCE:-}" ] && [ -f "$res" ]; then
-  echo "[gate] $(git rev-parse --short=8 HEAD) already passed this gate ($mode) on $(hostname) at $(date -r "$res" '+%F %H:%M'); its result:"
+  echo "[gate] $(git rev-parse --short=8 HEAD) already passed this gate ($mode) on $(sed -n 's/^made by host=\([^ ]*\).*/\1/p' "$res") at $(date -r "$res" '+%F %H:%M'); its result:"
   cat "$res"; exit 0
 fi
 say() { echo "$@"; echo "$@" >>"$out"; }
+say "made by $made_by"
 # room to work: a gate that runs out of disk fails tests that are not at fault, so check first
 # a box close to full first trims idle lanes (cron does it every 30 min too)
 [ -x /srv/trim_targets.sh ] && /srv/trim_targets.sh 60 >/dev/null 2>&1
