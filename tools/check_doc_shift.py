@@ -4,8 +4,10 @@ documented, so the doc comment silently moves onto the new item.
 
 usage: check_doc_shift.py [REV | A..B | --each A..B | --diff FILE]   (default HEAD: the diff of REV^..REV)
 
-`--each A..B` checks every commit the range holds on its own, as a push of several commits needs:
-the diff of A..B alone can hide a commit whose shift a later one touched.
+`A..B` checks every commit the range holds on its own and reports a shift only while it is still in
+the tree at B: the item that lost its doc comment has no doc lines directly above it, whatever
+became of the newcomer or of the stolen lines; once it has some again, or is gone, the shift passes. The diff of A..B alone can hide one: an item removed above it in the same range makes
+the doc line read as added. `--each A..B` reports every commit's shifts, fixed later or not.
 
 A change block (added and removed lines between context lines) that follows unchanged `///`
 lines (attributes, over one line or several, and blank lines between them aside) and adds an item (fn, struct, enum, type,
@@ -60,8 +62,23 @@ def code_lines(lines: list[str]) -> list[str]:
     return out
 
 
+def doc_run(above: list[str]) -> list[str]:
+    """The `///` lines directly above, attributes and blank lines aside, stripped, in file order."""
+    run = []
+    for line in reversed([c for c in code_lines(above) if c.strip()]):
+        if not line.lstrip().startswith("///"):
+            break
+        run.append(line.strip())
+    return run[::-1]
+
+
 def shifted(diff: str) -> list[str]:
     """`path:line: text` of each added item that takes over the doc block above it."""
+    return [f"{path}:{n}: {t.strip()}" for path, n, t, _ in shifted_items(diff)]
+
+
+def shifted_items(diff: str) -> list[tuple[str, int, str, list[str]]]:
+    """(path, line, text, the doc lines it went in beneath) of each such item."""
     found, path, new_line, ctx, block = [], None, 0, [], []
 
     def close():
@@ -78,7 +95,7 @@ def shifted(diff: str) -> list[str]:
         # the documented item gone for good is a replacement; back below a new item, it lost its doc
         if added and (not removed or (added[0][2] != removed[0] and removed[0] in [a[2] for a in added])):
             n, t, _ = added[0]
-            found.append(f"{path}:{n}: {t.strip()}")
+            found.append((path, n, t, doc_run(before)))
 
     for raw in diff.splitlines():
         if raw.startswith("diff --git"):
@@ -106,18 +123,70 @@ def shifted(diff: str) -> list[str]:
     return found
 
 
+def lines_at(rev: str, path: str) -> list[str] | None:
+    shown = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True, text=True)
+    return shown.stdout.splitlines() if shown.returncode == 0 else None
+
+
+def under(lines: list[str], i: int, docs: list[str]) -> bool:
+    """Whether `docs` are among the doc lines directly above line `i`."""
+    run = doc_run(lines[max(0, i - 200):i])
+    return any(run[j:j + len(docs)] == docs for j in range(len(run) - len(docs) + 1))
+
+
+def lost_doc(rev: str, path: str, docs: list[str]) -> tuple[str, str] | None:
+    """(kind, name) of the item `docs` documented before commit `rev` took them."""
+    lines = lines_at(f"{rev}^", path)
+    if not lines or not docs:
+        return None
+    return next((item(l) for i, l in enumerate(lines) if item(l) and under(lines, i, docs)), None)
+
+
+def still_lost(tip: str, path: str, text: str, docs: list[str], gone: tuple[str, str]) -> int | None:
+    """The line at `tip` of `gone`, the item that lost `docs` to `text`, while it has no doc lines
+    directly above it; None once it has some again or is gone. Of several items of that name, the
+    one nearest the newcomer (or, renamed, the stolen doc lines) is meant."""
+    lines = lines_at(tip, path)
+    if lines is None:
+        return None
+    named = [i for i, l in enumerate(lines) if item(l) == gone]
+    anchor = [i for i, l in enumerate(lines) if item(l) == item(text)] or [i for i, l in enumerate(lines) if l.strip() == docs[0]]
+    if not named or (len(named) > 1 and not anchor):
+        return None
+    at = min(named, key=lambda i: min(abs(i - a) for a in anchor)) if anchor else named[0]
+    return None if doc_run(lines[max(0, at - 200):at]) else at + 1
+
+
+def still_in_tree(rng: str) -> list[str]:
+    """`path:line: text` at the range's end of each shift a commit of `rng` made and none fixed: the
+    item that lost its doc comment still has none."""
+    tip = rng.split("..", 1)[1] or "HEAD"
+    revs = subprocess.run(["git", "rev-list", "--reverse", rng], capture_output=True, text=True, check=True).stdout.split()
+    found = []
+    for r in revs:
+        diff = subprocess.run(["git", "show", "--format=", "-U5", "--diff-merges=first-parent", r, "--", "*.rs"], capture_output=True, text=True, check=True).stdout
+        for path, _, text, docs in shifted_items(diff):
+            gone = lost_doc(r, path, docs)
+            at = still_lost(tip, path, text, docs, gone) if gone and docs else None
+            line = f"{path}:{at}: {gone[0] if gone else ''} {gone[1] if gone else ''} has no doc comment since {text.strip()} took it (from {r[:8]})"
+            if at and line not in found:
+                found.append(line)
+    return found
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] == ["--each"]:
         revs = subprocess.run(["git", "rev-list", "--reverse", argv[1]], capture_output=True, text=True, check=True).stdout.split()
         return max((main([r]) for r in revs), default=0)
     if argv[:1] == ["--diff"]:
         diff = sys.stdin.read() if argv[1:2] in ([], ["-"]) else open(argv[1], encoding="utf-8").read()
+    elif argv and ".." in argv[0]:
+        diff = None
     else:
-        rev = argv[0] if argv else "HEAD"
         # `git show` reads a commit against its parent (a merge against the first), a root against nothing
-        cmd = ["git", "diff", "-U5", *rev.split("..", 1)] if ".." in rev else ["git", "show", "--format=", "-U5", "--diff-merges=first-parent", rev]
+        cmd = ["git", "show", "--format=", "-U5", "--diff-merges=first-parent", argv[0] if argv else "HEAD"]
         diff = subprocess.run([*cmd, "--", "*.rs"], capture_output=True, text=True, check=True).stdout
-    bad = shifted(diff)
+    bad = still_in_tree(argv[0]) if diff is None else shifted(diff)
     for b in bad:
         print(f"{b}\n    goes between a doc comment and the item it documented: insert it above the doc block")
     return 1 if bad else 0

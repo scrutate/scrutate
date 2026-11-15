@@ -147,9 +147,9 @@ if [ "$mode" != "--bench" ]; then
   else
     say "SKIP secret-scan (no .gitleaks.toml in this commit yet)"
   fi
-  # a new item slipped between a doc comment and the item it documented: the whole range since the
-  # release tip remote.py sends (refs/audit/release), so a shift in a middle commit that is still
-  # there at the tip is caught; the tip alone otherwise
+  # a new item slipped between a doc comment and the item it documented: each commit since the
+  # release tip remote.py sends (refs/audit/release), so a shift a middle commit made that is still
+  # there at the tip is caught and one a later commit fixed passes; the tip alone otherwise
   rel=$(git rev-parse -q --verify refs/audit/release 2>/dev/null)
   if [ -n "$rel" ] && [ "$rel" != "$(git rev-parse HEAD)" ] && git merge-base --is-ancestor "$rel" HEAD; then step doc-shift python3 tools/check_doc_shift.py "$rel..HEAD"
   else step doc-shift python3 tools/check_doc_shift.py HEAD; fi

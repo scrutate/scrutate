@@ -112,3 +112,61 @@ def test_each_commit_of_a_push_is_checked_not_only_the_last(tmp_path, monkeypatc
     assert C.main(["HEAD"]) == 0, "the last commit alone is clean"
     assert C.main(["--each", f"{before}..HEAD"]) == 1
     assert C.main(["--each", "HEAD^..HEAD"]) == 0
+
+
+def test_a_range_fails_on_a_shift_left_in_the_tree_and_passes_on_one_fixed_later(tmp_path, monkeypatch):
+    # an item removed above the shift in the same range makes the range's diff show the doc line as
+    # added; each commit is read on its own, and the tip decides
+    import subprocess
+
+    def commit(text: str, message: str) -> str:
+        (tmp_path / "x.rs").write_text(text)
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run([*git, "add", "x.rs"], cwd=tmp_path, check=True)
+        subprocess.run([*git, "commit", "-qm", message], cwd=tmp_path, check=True)
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    gone = "/// Where the root went.\nfn missing_root() -> bool {\n    false\n}\n\n"
+    doc = "/// The first files a search could not read.\n"
+    new = "/// As ripgrep: no file searched exits 2.\nfn searched_nothing() -> bool {\n    true\n}\n\n"
+    tail = "fn warn_failures() {\n    one();\n}\n"
+    base = commit("fn a() {}\n\n" + gone + doc + tail, "base")
+    commit("fn a() {}\n\n" + gone + doc + new + tail, "shift")
+    commit("fn a() {}\n\n" + doc + new + tail, "remove")
+    monkeypatch.chdir(tmp_path)
+    assert C.main([f"{base}..HEAD"]) == 1
+    commit("fn a() {}\n\n" + new + doc + tail, "fix")
+    assert C.main([f"{base}..HEAD"]) == 0
+    assert C.main(["--each", f"{base}..HEAD"]) == 1
+
+
+def test_a_range_follows_the_item_that_lost_its_doc(tmp_path, monkeypatch):
+    # a later commit that edits the stolen doc lines, or renames the newcomer, leaves `hello` without
+    # its doc: the shift stays reported; one that gives `hello` a doc again, in other words, passes
+    import subprocess
+
+    def commit(text: str, message: str) -> str:
+        (tmp_path / "x.rs").write_text(text)
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run([*git, "add", "x.rs"], cwd=tmp_path, check=True)
+        subprocess.run([*git, "commit", "-qm", message], cwd=tmp_path, check=True)
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    doc = "/// Says hello to the caller.\n/// Second line of the doc.\n"
+    hello = "fn hello() {}\n"
+    base = commit("fn a() {}\n\n" + doc + hello, "base")
+    shifted = commit("fn a() {}\n\n" + doc + "fn newcomer() {}\n\n" + hello, "shift")
+    monkeypatch.chdir(tmp_path)
+    commit("fn a() {}\n\n" + doc + "fn newcomer() {}\n\n" + hello + "\nfn other() {}\n", "unrelated")
+    assert C.main([f"{base}..HEAD"]) == 1
+    subprocess.run(["git", "reset", "-q", "--hard", shifted], cwd=tmp_path, check=True)
+    commit("fn a() {}\n\n" + doc.replace("doc.", "docs.") + "fn newcomer() {}\n\n" + hello, "doc typo")
+    assert C.main([f"{base}..HEAD"]) == 1
+    subprocess.run(["git", "reset", "-q", "--hard", shifted], cwd=tmp_path, check=True)
+    commit("fn a() {}\n\n" + doc + "fn renamed() {}\n\n" + hello, "rename")
+    assert C.main([f"{base}..HEAD"]) == 1
+    subprocess.run(["git", "reset", "-q", "--hard", shifted], cwd=tmp_path, check=True)
+    commit("fn a() {}\n\n" + doc + "fn newcomer() {}\n\n/// Greets whoever calls.\n" + hello, "new doc")
+    assert C.main([f"{base}..HEAD"]) == 0

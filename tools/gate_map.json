@@ -27,7 +27,7 @@
   "step": "smoke test the binary",
   "by": "gate: smoke"
  },
- "ci.yml:python:c5b2a0d261": {
+ "ci.yml:python:cd4d57577b": {
   "step": "doc comments stay on their items",
   "by": "gate: doc-shift"
  },

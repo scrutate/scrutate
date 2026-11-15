@@ -125,8 +125,8 @@ jobs:
         run: |
           # a new branch has an all-zero `before`; a force push may name a commit this clone lacks
           if [ "$EVENT" = push ] && [ "${BEFORE//0/}" != "" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            # the push as one change: a commit of the push whose shift a later one fixed passes, as
-            # the first push of a long history to main needs; a shift left in the tree fails
+            # each commit of the push on its own, the tip deciding: a shift a later commit fixed
+            # passes, as the first push of a long history to main needs; a shift left in the tree fails
             python3 tools/check_doc_shift.py "$BEFORE..HEAD"
           else
             python3 tools/check_doc_shift.py HEAD
