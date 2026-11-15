@@ -208,6 +208,9 @@ incompatible index by itself, and that is never breaking.
   command in a project below it runs as with no index above and says in one line which index it
   is not using, where it answered from that index, for a sibling project too
   ([CLI](docs/CLI.md#conventions)).
+- tree-sitter 0.27.2 (was 0.26.13), tree-sitter-scala 0.26.13 (was 0.26.9) and
+  tree-sitter-jsonnet 0.1.1 (was 0.0.1): Jsonnet's `for` object comprehensions parse as their own
+  node, and Scala's case bodies by their indentation.
 - `grep --max-results N` with after-context (`-A`, `-C`) prints the context of the Nth match
   before it stops, as `-m N` does, where it stopped at the match; a match inside that context
   prints as a match, as ripgrep prints one after `-m`'s last, and does not count toward N

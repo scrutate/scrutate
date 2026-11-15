@@ -112,7 +112,7 @@ pub(crate) fn broken(root: tree_sitter::Node, start: usize, end: usize) -> bool 
 /// a directory are left alone.
 pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], root: &Path) -> Result<Plan> {
     use rayon::prelude::*;
-    let (spec, language, q) = crate::intel::compile_query(lang, query)?;
+    let (spec, _, q) = crate::intel::compile_query(lang, query)?;
     let names = q.capture_names();
     let pieces = template(template_text, names)?;
     let outer = names.iter().position(|n| *n == "match");
@@ -126,7 +126,8 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
         .map_init(
             || {
                 let mut p = tree_sitter::Parser::new();
-                let ok = p.set_language(&language).is_ok();
+                // a worker makes its own: a Language is not Sync on wasm
+                let ok = p.set_language(&(spec.language)()).is_ok();
                 (p, ok)
             },
             |(parser, ok), f| {
@@ -168,7 +169,7 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 while let Some(m) = matches.next() {
                     // a capture's text runs from its first node to its last
                     let span = |k: usize| {
-                        let nodes = m.captures.iter().filter(|c| c.index as usize == k).map(|c| c.node.byte_range());
+                        let nodes = m.captures().iter().filter(|c| c.index as usize == k).map(|c| c.node.byte_range());
                         nodes.fold(None, |acc: Option<(usize, usize)>, r| Some(acc.map_or((r.start, r.end), |(s, e)| (s.min(r.start), e.max(r.end)))))
                     };
                     // without @match the widest capture, the first written on a tie

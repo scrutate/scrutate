@@ -655,9 +655,9 @@ impl<'a> Resolver<'a> {
         }
         let decl = self.def_row(id).and_then(|(path, _)| {
             let fi = self.file(&path);
-            def_node(&fi, id).map(|n| n.kind())
+            def_node(&fi, id).map(|n| n.kind().to_string())
         });
-        if JAVA_OBJECT_METHODS.contains(&name) || (decl == Some("enum_declaration") && JAVA_ENUM_METHODS.contains(&name)) {
+        if JAVA_OBJECT_METHODS.contains(&name) || (decl.as_deref() == Some("enum_declaration") && JAVA_ENUM_METHODS.contains(&name)) {
             return Err("external");
         }
         if let Some(f) = self.java_accessor(id, name) {

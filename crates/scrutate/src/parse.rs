@@ -2520,7 +2520,7 @@ pub fn sexp(spec: &'static LangSpec, source: &str) -> String {
         return "(parse failed)".into();
     };
     let mut out = String::new();
-    let mut stack: Vec<(Node, usize, Option<&'static str>)> = vec![(tree.root_node(), 0, None)];
+    let mut stack: Vec<(Node, usize, Option<&str>)> = vec![(tree.root_node(), 0, None)];
     while let Some((node, depth, field)) = stack.pop() {
         if !node.is_named() {
             continue;
@@ -2539,8 +2539,8 @@ pub fn sexp(spec: &'static LangSpec, source: &str) -> String {
         ));
         let n = node.child_count();
         for i in (0..n).rev() {
-            if let Some(ch) = node.child(i as u32) {
-                stack.push((ch, depth + 1, node.field_name_for_child(i as u32)));
+            if let Some(ch) = node.child(i) {
+                stack.push((ch, depth + 1, node.field_name_for_child(i)));
             }
         }
     }

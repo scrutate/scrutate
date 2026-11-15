@@ -891,7 +891,7 @@ pub fn tsquery_each(
     if cfg!(target_os = "wasi") {
         bail!("tsquery is not in the wasi build: it needs threads");
     }
-    let (spec, language, q) = compile_query(lang, query)?;
+    let (spec, _, q) = compile_query(lang, query)?;
     // a file that holds none of the literals every match needs is not parsed: its answer is empty
     let gate = required_literals(&q, query);
     let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
@@ -927,14 +927,14 @@ pub fn tsquery_each(
         let q_ref = &q;
         let gate_ref = &gate;
         let names_ref = &names;
-        let language_ref = &language;
         let stop_ref = &stop;
         let cached = cache.as_ref().map(|c| &c.entries);
         scope.spawn(move || {
             files_ref.par_iter().enumerate().for_each_init(
                 || {
                     let mut parser = tree_sitter::Parser::new();
-                    let ok = parser.set_language(language_ref).is_ok();
+                    // a worker makes its own: a Language is not Sync on wasm
+                    let ok = parser.set_language(&(spec.language)()).is_ok();
                     (parser, ok, tx.clone())
                 },
                 |(parser, ok, tx), (i, (path, rel, shown, known))| {
@@ -973,7 +973,7 @@ pub fn tsquery_each(
                                     let mut matches = cursor.matches(q_ref, tree.root_node(), src.as_bytes());
                                     use tree_sitter::StreamingIterator;
                                     while let Some(m) = matches.next() {
-                                        for c in m.captures {
+                                        for c in m.captures() {
                                             let node = c.node;
                                             let text = node.utf8_text(src.as_bytes()).unwrap_or("").lines().next().unwrap_or("").to_string();
                                             out.push(Capture {
@@ -1426,7 +1426,7 @@ mod literal_gate {
                 let mut it = cursor.captures(&all, tree.root_node(), src.as_bytes());
                 let mut w = Vec::new();
                 while let Some((m, i)) = it.next() {
-                    w.push(m.captures[*i].node.utf8_text(src.as_bytes()).unwrap().to_string());
+                    w.push(m.captures()[*i].node.utf8_text(src.as_bytes()).unwrap().to_string());
                 }
                 w.truncate(5);
                 w
