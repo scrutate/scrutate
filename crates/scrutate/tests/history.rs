@@ -280,6 +280,29 @@ fn a_shallow_clone_marks_where_its_history_is_cut() {
     assert!(text.contains(" edit f again  (history cut here: shallow clone: this commit or an older one changed these lines)"), "{text}");
 }
 
+/// A blobless clone lacks the blobs of f's older versions. The history fetches none of them, and
+/// its note says what impact and review say about the same clone.
+#[cfg(unix)]
+#[test]
+fn a_partial_clone_gives_the_history_note_impact_gives() {
+    let out = Command::new("git").arg("--version").output().unwrap();
+    let v: Vec<u32> = String::from_utf8_lossy(&out.stdout).split_whitespace().nth(2).unwrap_or("0.0").split('.').map(|n| n.parse().unwrap_or(0)).collect();
+    if (v[0], v.get(1).copied().unwrap_or(0)) < (2, 44) {
+        eprintln!("skipped: git {v:?} has no GIT_NO_LAZY_FETCH");
+        return;
+    }
+    let origin = shaped("lazy_origin");
+    origin.git(&["config", "uploadpack.allowFilter", "true"]);
+    let t = Tree::plain("lazy_clone");
+    t.git(&["clone", "-q", "--filter=blob:none", &format!("file://{}", origin.root.display()), "."]);
+    let marker = t.root.join(".git/fetched");
+    t.git(&["config", "remote.origin.uploadpack", &format!("touch '{}'; git-upload-pack", marker.display())]);
+    let v = t.json(&["read", "--symbol", "f", "--history"]);
+    assert!(!marker.exists(), "the history fetched from the remote: {v}");
+    let note = v["definitions"][0]["history_note"].as_str().unwrap_or_else(|| panic!("{v}"));
+    assert_eq!(note, "this partial clone lacks objects that git log needs: fetch them first (`git fetch`, or `git backfill`)", "{v}");
+}
+
 /// A definition with uncommitted edits is looked up in HEAD's copy without git rewriting
 /// .git/index or running the clean filter the configuration names.
 #[test]

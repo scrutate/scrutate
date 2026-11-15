@@ -233,10 +233,7 @@ impl Git {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
         match self.output(args)? {
             (true, out, _) => Ok(out),
-            (false, _, why) if why.contains("lazy fetching disabled") => {
-                bail!("this partial clone lacks objects that git {} needs: fetch them first (`git fetch`, or `git backfill`)", verb(args))
-            }
-            (false, _, why) => bail!("git {}: {why}", verb(args)),
+            (false, _, why) => Err(failed(args, &why)),
         }
     }
 
@@ -352,7 +349,11 @@ impl Git {
         let (out, status, why) = self.bounded(&args, limit)?;
         let stopped = status.is_none();
         if status.is_some_and(|s| !s.success()) {
-            bail!("git log: {why}");
+            // log -L names a blob it lacks without the lazy-fetch warning diff gives
+            if why.starts_with("unable to read ") && self.partial_clone() {
+                return Err(LacksObjects("log".into()).into());
+            }
+            return Err(failed(&args, &why));
         }
         // a stopped git may have printed part of a line
         let whole = if stopped { out.iter().rposition(|&b| b == b'\n').map_or(&out[..0], |i| &out[..i]) } else { &out[..] };
@@ -365,6 +366,14 @@ impl Git {
             })
             .collect();
         Ok((commits, stopped))
+    }
+
+    /// Whether this repository is a partial clone, which may lack objects by design.
+    fn partial_clone(&self) -> bool {
+        // older git names the promisor remote in extensions.partialClone, newer only marks the remote
+        self.output(&["config", "--get-regexp", r"^(extensions\.partialclone|remote\..*\.promisor)$"]).is_ok_and(|(ok, out, _)| {
+            ok && String::from_utf8_lossy(&out).lines().any(|l| l.split_once(' ').is_some_and(|(_, v)| !v.eq_ignore_ascii_case("false")))
+        })
     }
 
     /// git with `args`, stopped once it has run for `limit`: its output so far, its exit status
@@ -702,6 +711,27 @@ fn not_run(e: std::io::Error) -> anyhow::Error {
 
 /// The git command `args` run, past the options in front of it (`-c` and its setting,
 /// `--literal-pathspecs`); `--version` is one.
+/// git needed an object this partial clone lacks, and was told not to fetch it.
+#[derive(Debug)]
+pub(crate) struct LacksObjects(String);
+
+impl std::fmt::Display for LacksObjects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "this partial clone lacks objects that git {} needs: fetch them first (`git fetch`, or `git backfill`)", self.0)
+    }
+}
+
+impl std::error::Error for LacksObjects {}
+
+/// The error of a git that exited with `why`, the first line of its errors.
+fn failed(args: &[&str], why: &str) -> anyhow::Error {
+    if why.contains("lazy fetching disabled") {
+        LacksObjects(verb(args).to_string()).into()
+    } else {
+        anyhow!("git {}: {why}", verb(args))
+    }
+}
+
 fn verb<'a>(args: &[&'a str]) -> &'a str {
     args.get(verb_at(args)).copied().unwrap_or_default()
 }

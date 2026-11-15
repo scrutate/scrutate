@@ -341,7 +341,9 @@ incompatible index by itself, and that is never breaking.
   read.
 - `impact` and `review` fetch nothing in a partial clone: a blob the base needs and the clone lacks
   is an error that says to fetch it first, where git fetched it from the remote, writing
-  `.git/objects` and running the remote's upload program (git 2.44 and later).
+  `.git/objects` and running the remote's upload program (git 2.44 and later). `read --history`
+  fetches nothing either, and its note says the same (`this partial clone lacks objects that git
+  log needs: ...`), where it said that git could not follow the lines.
 - `read --history` runs no `gpg.program` when the configuration sets `log.showSignature`, and every
   diff and log git runs for scrutate is told to run no external diff or text conversion driver.
 - The language server names the files of its answers under the folder as the editor sent it, also
