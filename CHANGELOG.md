@@ -151,6 +151,10 @@ incompatible index by itself, and that is never breaking.
 - The text index is format 4, as it also records the hash of every line of a private key's body:
   one an earlier version wrote is rebuilt once, the cost of a first build (about 12 s on Linux's
   tree on an 8-vCPU server, 8% more CPU than format 3).
+- `search`, `symbol` and every other answer read the index's statistics without counting the
+  chunks table each time: the writer records the counts with each change, and the damage count
+  runs once per state of the database. A fresh process on the Linux tree's index (5.2 million
+  chunks) no longer spends about a second there ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - `review` marks as no test reaching it only a changed function, method, class, struct, trait,
   interface, type, enum or impl, the kinds with call edges: an edited constant, macro, key,
   field or Markdown section is no longer counted under "no test reaches", and is no GitLab issue.

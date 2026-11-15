@@ -437,7 +437,14 @@ NFC with final sigma folded.
     on segment open, deep validation in `scrutate check`; also a chunk text that does not inflate,
     a segment list that is not JSON, a segment without vectors under a model, an `index.db`
     deleted under an open index or that is a directory, a `seg` that is a file, an emptied
-    `chunks` table, and a chunk count that differs from `chunks_at` when the statistics are read;
+    `chunks` table, and a chunk count that differs from `chunks_at` when the statistics are read.
+    `chunks_at` holds the data version with two counts, all chunks and those that are not
+    constants or fields, written in the transaction of every change of the chunks, so reading
+    the statistics needs no count of millions of rows (a second on the Linux tree). The damage
+    count runs once per state: a passing one is recorded in `.scrutate/checked` (one line per
+    check) with the database file, the data version, `chunks_at` and the live count it found, so
+    an index written before `chunks_at` held that count is counted once too. A row deleted by hand outside scrutate keeps
+    the version, and the record is trusted then as the `quick_check` record is;
   - **cancellation**: an update checks a cancel flag between batches of 256 files and rolls back;
     a panic inside an update rolls back at once, and the next update clears a transaction left
     open;

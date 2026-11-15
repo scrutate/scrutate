@@ -831,8 +831,9 @@ pub fn decode_source(raw: &[u8]) -> Option<std::borrow::Cow<'_, str>> {
     Some(String::from_utf8_lossy(raw))
 }
 
-/// The file of the index directory that records the last passing `quick_check`: what
-/// `check_mark` gave then. An open that finds the same mark trusts that check.
+/// The file of the index directory that records, one line per check, the last database state
+/// that passed it: `quick_check` with what `check_mark` gave then (an open that finds the same
+/// mark trusts that check), `counts` with the state counted and its live chunk count.
 const CHECKED: &str = "checked";
 
 /// The identity of the database at `db_path` whose data version is `ver`: its file (device and
@@ -864,10 +865,41 @@ fn write_record(record: &Path, mark: &str) -> bool {
     done.is_ok()
 }
 
-/// The chunk count `chunks_at` ("<data version> <count>") records, when it was written for `ver`.
+/// Whether the database state `key` passed `check` (`quick_check`, `counts`), as the index
+/// directory's `CHECKED` record says: one line per check, the last state that passed it.
+fn passed(dir: &Path, check: &str, key: &str) -> bool {
+    std::fs::read_to_string(dir.join(CHECKED))
+        .is_ok_and(|t| t.lines().any(|l| l.split_once(' ').is_some_and(|(c, k)| c == check && k.trim_end() == key.trim_end())))
+}
+
+/// What the `CHECKED` record holds for `check`: the state that last passed it.
+fn passed_state(dir: &Path, check: &str) -> Option<String> {
+    let t = std::fs::read_to_string(dir.join(CHECKED)).ok()?;
+    t.lines().find_map(|l| l.split_once(' ').filter(|(c, _)| *c == check).map(|(_, k)| k.trim_end().to_string()))
+}
+
+/// Record that the database state `key` passed `check`, keeping the other checks' lines.
+fn record_pass(dir: &Path, check: &str, key: &str) -> bool {
+    let record = dir.join(CHECKED);
+    let old = std::fs::read_to_string(&record).unwrap_or_default();
+    let mut text: String = old.lines().filter(|l| l.split_once(' ').is_some_and(|(c, _)| c != check)).map(|l| format!("{l}\n")).collect();
+    text.push_str(&format!("{check} {}\n", key.trim_end()));
+    write_record(&record, &text)
+}
+
+/// The chunk counts `chunks_at` ("<data version> <all> <not constants or fields>") records,
+/// when it was written for `ver`: the writer sets it in the transaction of every change of the
+/// chunks. An index written before the second count has only the first.
+fn counts_at(at: Option<&str>, ver: Option<&str>) -> Option<(i64, Option<i64>)> {
+    let mut parts = at?.split(' ');
+    (parts.next() == ver).then_some(())?;
+    let all = parts.next()?.parse().ok()?;
+    Some((all, parts.next().and_then(|n| n.parse().ok())))
+}
+
+/// The count of all chunks `chunks_at` records for `ver`.
 fn counted(at: Option<&str>, ver: Option<&str>) -> Option<i64> {
-    let (v, n) = at?.split_once(' ')?;
-    (Some(v) == ver).then(|| n.parse().ok()).flatten()
+    counts_at(at, ver).map(|(all, _)| all)
 }
 
 /// SQLite errors that mean the file is not a usable database (as opposed to busy or I/O trouble).
@@ -1057,6 +1089,8 @@ pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
 thread_local! {
     /// How many `PRAGMA quick_check` walks this thread's opens ran.
     pub static QUICK_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// how many times this thread counted the chunks table for the damage check
+    pub static CHUNK_COUNTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Run once at the next `Index::chunks`: a test's writer commits between a query's reads.
     pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
     /// Run once right after an update loads its root's custom languages.
@@ -1370,7 +1404,7 @@ impl Index {
         }
         // what a passing check saw, with this open's own schema work and stamps on it
         if matches!(triage, Triage::Checked) {
-            write_record(&ix.dir.join(CHECKED), &check_mark(&ix.dir.join("index.db"), &ix.meta("data_version").unwrap_or_default()));
+            record_pass(&ix.dir, "quick_check", &check_mark(&ix.dir.join("index.db"), &ix.meta("data_version").unwrap_or_default()));
         }
         Ok(ix)
     }
@@ -1468,7 +1502,7 @@ impl Index {
         self.db.execute_batch("DELETE FROM refs; DELETE FROM dupkeys; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts;")?;
         self.set_meta("segments", "[]")?;
         let ver = self.bump_version()?;
-        self.set_meta("chunks_at", &format!("{ver} 0"))?;
+        self.set_meta("chunks_at", &format!("{ver} 0 0"))?;
         if let Some(sig) = stamp_for {
             self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
             self.set_meta("model_sig", sig)?;
@@ -1504,7 +1538,7 @@ impl Index {
         // a database unchanged since a passing check is not walked again
         let record = db_path.with_file_name(CHECKED);
         let mark = check_mark(db_path, &get("data_version").unwrap_or_default());
-        let trusted = std::fs::read_to_string(&record).is_ok_and(|r| r == mark);
+        let trusted = record.parent().is_some_and(|d| passed(d, "quick_check", &mark));
         // the full page walk is affordable for small databases; large ones rely on the error-driven
         // recovery in `recover_if_corrupt` (and on `scrutate check` for an explicit audit)
         let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
@@ -1756,16 +1790,37 @@ impl Index {
         if self.lex_ver.as_deref() != Some(ver.as_str()) {
             let store = self.lex.as_mut().unwrap();
             let n_rows: usize = store.segs.iter().map(|s| s.n).sum();
-            // one statement, so the counts and the version they are checked against are of one commit
-            let (at_ver, at, n_all, n_live): (Option<String>, Option<String>, i64, i64) = self.db.query_row(
-                "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), \
-                 (SELECT COUNT(*) FROM chunks), (SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field'))",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )?;
-            if counted(at.as_deref(), at_ver.as_deref()).is_some_and(|n| n != n_all) {
-                return Err(Damaged("the chunks table lost rows").into());
-            }
+            // the counts the writer recorded for this version, and the damage check (counting
+            // millions of chunks costs a second) once per state of the database
+            let at: Option<String> = self.db.query_row("SELECT value FROM meta WHERE key='chunks_at'", [], |r| r.get(0)).optional()?;
+            let counts_key = |at: Option<&str>| format!("{:?} {ver} {}", file_id(&self.dir.join("index.db")), at.unwrap_or(""));
+            // the record holds the state counted and its count of live chunks: an index written
+            // before `chunks_at` had that count is counted once, then read from the record
+            let recorded = passed_state(&self.dir, "counts")
+                .and_then(|s| s.rsplit_once(' ').filter(|(k, _)| *k == counts_key(at.as_deref())).and_then(|(_, n)| n.parse::<i64>().ok()));
+            let n_live = match recorded {
+                Some(n) => n,
+                None => {
+                    #[cfg(test)]
+                    CHUNK_COUNTS.with(|c| c.set(c.get() + 1));
+                    // one statement, so the counts and the version they are checked against are of one commit
+                    let (at_ver, at, n_all, n_live): (Option<String>, Option<String>, i64, i64) = self.db.query_row(
+                        "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), \
+                         (SELECT COUNT(*) FROM chunks), (SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field'))",
+                        [],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    )?;
+                    let lost = counts_at(at.as_deref(), at_ver.as_deref()).is_some_and(|(all, live)| all != n_all || live.is_some_and(|l| l != n_live));
+                    if lost {
+                        return Err(Damaged("the chunks table lost rows").into());
+                    }
+                    if at_ver.as_deref() == Some(ver.as_str()) {
+                        // a read-only index directory is counted again next time
+                        record_pass(&self.dir, "counts", &format!("{} {n_live}", counts_key(at.as_deref())));
+                    }
+                    n_live
+                }
+            };
             if n_rows as i64 == n_live {
                 store.prepare(None)?; // nothing was ever deleted: no need to read every id
             } else {
@@ -1889,7 +1944,7 @@ impl Index {
         if force {
             let _ = std::fs::remove_file(&record);
         }
-        let held = !force && std::fs::read_to_string(&record).is_ok_and(|r| r == check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
+        let held = !force && passed(&self.dir, "quick_check", &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
         self.gc_segments();
         let cur_ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         // vectors made anew replace every segment: what is held in memory is read again
@@ -1952,7 +2007,7 @@ impl Index {
             }
             self.log_left = !self.truncate_log();
             if held && !self.log_left {
-                write_record(&record, &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
+                record_pass(&self.dir, "quick_check", &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
             }
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
@@ -2251,7 +2306,8 @@ impl Index {
         st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         if changed {
             let ver = self.bump_version()?; // same transaction as the manifest: readers never see one without the other
-            self.set_meta("chunks_at", &format!("{ver} {}", st.chunks))?;
+            let live: i64 = self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |r| r.get(0))?;
+            self.set_meta("chunks_at", &format!("{ver} {} {live}", st.chunks))?;
         }
         Ok(changed)
     }
@@ -2439,8 +2495,9 @@ impl Index {
         let old = self.meta("data_version");
         let v = (old.as_deref().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0) + 1).to_string();
         self.set_meta("data_version", &v)?;
-        if let Some(n) = counted(self.meta("chunks_at").as_deref(), old.as_deref()) {
-            self.set_meta("chunks_at", &format!("{v} {n}"))?;
+        if let Some((all, live)) = counts_at(self.meta("chunks_at").as_deref(), old.as_deref()) {
+            let live = live.map(|n| format!(" {n}")).unwrap_or_default();
+            self.set_meta("chunks_at", &format!("{v} {all}{live}"))?;
         }
         Ok(v)
     }
@@ -3330,6 +3387,35 @@ mod tests {
     }
 
     #[test]
+    fn the_chunks_are_counted_once_per_state_of_the_database() {
+        let root = checked_repo("counts");
+        let counts = || super::CHUNK_COUNTS.with(|c| c.get());
+        let c0 = counts();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        ix.lex().unwrap();
+        assert_eq!(counts(), c0 + 1, "the first read of this state counts, once");
+        drop(ix);
+        // a fresh process, the same state: the writer's counts, no count
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.lex().unwrap();
+        assert_eq!(counts(), c0 + 1, "the same state is not counted again");
+        // a change of the chunks is a new state: counted once, and what died is not alive
+        std::fs::remove_file(root.join("m3.py")).unwrap();
+        ix.update(false).unwrap();
+        drop(ix);
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        let alive = ix.lex().unwrap().n_alive;
+        assert_eq!(counts(), c0 + 2, "a new state is counted");
+        assert_eq!(alive, ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |r| r.get::<_, i64>(0)).unwrap() as usize);
+        drop(ix);
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        assert_eq!(ix.lex().unwrap().n_alive, alive, "the recorded count stands for the deleted chunk too");
+        assert_eq!(counts(), c0 + 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn damage_a_trusted_record_hides_is_reported_by_the_first_read() {
         let root = checked_repo("forged");
         let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
@@ -3342,7 +3428,7 @@ mod tests {
             .ok()
             .and_then(|c| c.query_row("SELECT value FROM meta WHERE key='data_version'", [], |r| r.get::<_, String>(0)).ok())
             .unwrap_or_default();
-        std::fs::write(root.join(".scrutate").join(super::CHECKED), super::check_mark(&db, &ver)).unwrap();
+        std::fs::write(root.join(".scrutate").join(super::CHECKED), format!("quick_check {}", super::check_mark(&db, &ver))).unwrap();
         let before = super::QUICK_CHECKS.with(|c| c.get());
         match super::Index::open(&root, crate::models::ModelSet::none()) {
             Ok(ix) => {
