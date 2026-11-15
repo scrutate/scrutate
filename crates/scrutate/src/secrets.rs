@@ -216,8 +216,17 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         rule("url-token", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://([A-Za-z0-9_-]{20,})(?::[^@/\s]*)?@[^/\s?#]", 1, 3.0, &["://"], opaque),
         // the password of any other URL that carries one (`https://user:pass@host`)
         rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]+:([^@/\s]+)@[^/\s?#]", 1, 0.0, &["://"], env_value),
-        // an opaque token after `Bearer` (a header, a curl line); a JWT has its own rule
-        rule("bearer-token", "scrutate", r"(?i)\bbearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)", 1, 3.0, &["bearer"], opaque),
+        // an opaque token after `Bearer` or an `Authorization: Token` scheme (a header, a curl
+        // line); a JWT has its own rule
+        rule(
+            "bearer-token",
+            "scrutate",
+            r#"(?i)(?:\bbearer|\bauthorization["']?\s*[:=]\s*["']?token)[ \t]+([A-Za-z0-9._~+/-]{16,}=*)"#,
+            1,
+            3.0,
+            &["bearer", "authorization"],
+            opaque,
+        ),
         // HTTP Basic credentials: base64 of `user:password`
         rule("basic-auth", "scrutate", r"(?i)\bbasic[ \t]+([A-Za-z0-9+/]{8,}={0,2})", 1, 0.0, &["basic"], user_and_password),
         // a `.env` line (`NAME=value`, the name upper case): the value may hold any symbol
@@ -295,14 +304,19 @@ static NUMBER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?:0x[0-9a-f_]+|[0-9][0-9_]*(?:\.[0-9_]+)?(?:e[+-]?[0-9]+)?)(?:[ui](?:8|16|32|64|128|size)|f32|f64|[lu]{1,3})?$").unwrap()
 });
 
-/// A token: a real value shaped like one, mixing upper case, lower case and digits, or a run of
-/// 32 or more hex digits; a word with a number after it (`accesstoken12345678`) is none.
+/// A token: a real value shaped like one. It mixes upper case, lower case and digits, or runs
+/// letters and digits through each other (a change between them three times or more: one case
+/// with digits, as issuers write tokens), or is a UUID, or 32 or more hex digits; a word with a
+/// number after it (`accesstoken12345678`, `authenticationv2scheme`) is none.
 fn opaque(secret: &str, whole: &str, before: &str) -> bool {
     let has = |f: fn(&u8) -> bool| secret.as_bytes().iter().any(f);
     let mixed = has(u8::is_ascii_uppercase) && has(u8::is_ascii_lowercase) && has(u8::is_ascii_digit);
     let hex = secret.len() >= 32 && secret.bytes().all(|b| b.is_ascii_hexdigit()) && has(u8::is_ascii_digit);
-    real_value(secret, whole, before) && (mixed || hex)
+    let changes = secret.as_bytes().windows(2).filter(|w| w[0].is_ascii_digit() != w[1].is_ascii_digit() && w.iter().all(u8::is_ascii_alphanumeric)).count();
+    real_value(secret, whole, before) && (mixed || hex || UUID.is_match(secret) || (changes >= 3 && has(u8::is_ascii_alphabetic)))
 }
+
+static UUID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$").unwrap());
 
 /// Base64 that decodes to printable `user:password`, the password no doc's example word.
 fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
@@ -1120,6 +1134,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A token after `Bearer` or an `Authorization: Token` scheme, or as a URL's user, is redacted
+    /// in any of the shapes issuers give one: lower case or upper case with digits through it, a
+    /// UUID, hex; a word with a number after it and a placeholder are not.
+    #[test]
+    fn a_token_of_one_case_or_a_uuid_is_redacted() {
+        let ten = |seed: u64| fake(seed, "abcdefghijklmnopqrstuvwxyz0123456789", 40);
+        let upper = fake(77, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 40);
+        let uuid = format!("{}-{}-{}-{}-{}", fake(78, HEX, 8), fake(79, HEX, 4), fake(80, HEX, 4), fake(81, HEX, 4), fake(82, HEX, 12));
+        let (lower, drf, user) = (ten(83), ten(84), ten(85));
+        let hex = fake(86, HEX, 40);
+        for (line, secret) in [
+            (format!("curl -H \"Authorization: Bearer {lower}\" https://api.example.com"), &lower),
+            (format!("Authorization: Bearer {upper}"), &upper),
+            (format!("curl -H \"Authorization: Bearer {uuid}\" https://api.heroku.com/apps"), &uuid),
+            (format!("curl -H \"Authorization: Token {hex}\" https://api.example.com/"), &hex),
+            (format!("headers = {{'Authorization': 'Token {drf}'}}"), &drf),
+            (format!("git clone https://{user}@github.com/org/app.git"), &user),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
+        }
+        for line in [
+            "Authorization: Bearer accesstoken12345678",
+            "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE",
+            "Authorization: Token tokenauthentication2024",
+            "Set Authorization to Token based auth for the service.",
+            "git clone https://build_user_2024_ci_robot@github.com/org/app.git",
+        ] {
+            assert!(redact(line).1.is_empty(), "{line}");
+        }
+    }
+
     /// A token in a URL's user part is redacted, whatever follows it, and a plain user name is not.
     #[test]
     fn a_token_as_a_url_s_user_is_redacted() {
@@ -1201,7 +1247,7 @@ mod tests {
         let t0 = std::time::Instant::now();
         LazyLock::force(&RULES);
         LazyLock::force(&PREFILTER);
-        for re in [&NOT_SECRET_NAMES, &IDENTIFIER, &NUMBER, &HASH_PREFIX, &PEM_BEGIN, &PEM_END, &BASE64_RUN, &LINE_PREFIX] {
+        for re in [&NOT_SECRET_NAMES, &IDENTIFIER, &UUID, &NUMBER, &HASH_PREFIX, &PEM_BEGIN, &PEM_END, &BASE64_RUN, &LINE_PREFIX] {
             LazyLock::force(re);
         }
         println!("building the detectors, once a process: {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);

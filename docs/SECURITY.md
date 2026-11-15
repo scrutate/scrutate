@@ -409,9 +409,11 @@ entropy thresholds; JSON's `\/` is read as `/`:
 
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
-URL that carries one (`https://user:pass@host`) with a digit or a symbol in it; `bearer-token` an opaque token after `Bearer`. A token here mixes
-upper case, lower case and digits, or is a run of 32 or more hex digits, so a word with a number
-after it is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
+URL that carries one (`https://user:pass@host`) with a digit or a symbol in it; `bearer-token` an
+opaque token after `Bearer` or an `Authorization: Token` scheme. A token here mixes upper case,
+lower case and digits, or runs letters and digits through each other (one case with digits, a
+change between them three times or more), or is a UUID or 32 or more hex digits, so a word with a
+number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
 `user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
 `changeme`). `env-secret`
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
