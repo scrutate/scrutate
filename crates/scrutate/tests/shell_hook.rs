@@ -424,7 +424,15 @@ fn a_sort_value_is_read_as_ripgrep_reads_it() {
     r.write("src/a.txt", "load config here\nthe path to it\n");
     r.write("config/x.toml", "path = 1\n");
     r.write("TODO", "TODO: path\n");
+    r.write("config/y.toml", "--sort here\n");
+    // files in several directories, so an order the walk gives differs from path order
+    for (i, d) in ["a", "b/c", "d", "e/f/g", "src2", "z", "m/n", "k"].iter().enumerate() {
+        for j in 0..3 {
+            r.write(&format!("{d}/f{j}.txt"), &format!("load config {i} {j}\nthe path {i}\n"));
+        }
+    }
     for cmd in [
+        "rg -e --sort path config",
         "rg --sort path config",
         "rg --sort path src",
         "rg --sort path TODO .",
@@ -437,12 +445,15 @@ fn a_sort_value_is_read_as_ripgrep_reads_it() {
         let (want, _, want_code) = sh(&r.root, cmd);
         let got = rewrite(&r.root, cmd).map(|new| sh(&r.root, &new));
         if let Some((got, _, got_code)) = got {
-            let sorted = |s: &str| {
+            // in order, but where rg's own order is its parallel walk's
+            let order = |s: &str| {
                 let mut v: Vec<String> = s.lines().map(str::to_string).collect();
-                v.sort();
+                if cmd.contains("--sort none") {
+                    v.sort();
+                }
                 v
             };
-            assert_eq!((sorted(&got), got_code), (sorted(&want), want_code), "{cmd}");
+            assert_eq!((order(&got), got_code), (order(&want), want_code), "{cmd}");
         }
     }
 }
