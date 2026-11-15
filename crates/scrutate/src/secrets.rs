@@ -227,6 +227,8 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["bearer", "authorization"],
             opaque,
         ),
+        // the password after the user that `curl -u` or `--user` gives
+        rule("curl-user", "scrutate", r#"(?i)\bcurl\b[^\n]*?\s(?:-u|--user)(?:[ \t]+|=)["']?[^\s:"']+:([^\s"']+)"#, 1, 0.0, &["curl"], real_value),
         // HTTP Basic credentials: base64 of `user:password`
         rule("basic-auth", "scrutate", r"(?i)\bbasic[ \t]+([A-Za-z0-9+/]{8,}={0,2})", 1, 0.0, &["basic"], user_and_password),
         // a `.env` line (`NAME=value`, the name upper case): the value may hold any symbol
@@ -1197,6 +1199,28 @@ mod tests {
             // the line ends at the `@`: a password needs a host after it
             let at_end = format!("{line}@");
             assert!(redact(&at_end).1.iter().all(|m| m.kind != "url-password"), "{at_end}");
+        }
+    }
+
+    /// The password `curl -u` or `--user` gives is redacted; a variable is not.
+    #[test]
+    fn a_curl_user_s_password_is_redacted() {
+        let (a, b) = (fake(89, ALNUM, 14), fake(90, ALNUM, 14));
+        for (line, secret) in [
+            (format!("curl -u deploy:{a} https://api.example.com/"), &a),
+            (format!("curl --user admin:{b} https://api.example.com/"), &b),
+            (format!("curl -s --user=\"ci:{a}\" -X POST https://api.example.com/"), &a),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && marks.iter().any(|m| m.kind == "curl-user"), "{line} -> {out}");
+        }
+        for line in [
+            "curl -u $USER:$PASS https://api.example.com/",
+            "curl -u \"${API_USER}:${API_TOKEN}\" https://x",
+            "curl -u user:password https://x",
+            "curl -u deploy https://x",
+        ] {
+            assert!(redact(line).1.iter().all(|m| m.kind != "curl-user"), "{line}");
         }
     }
 

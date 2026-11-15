@@ -400,6 +400,7 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `url-token` | scrutate |
 | `url-password` | scrutate |
 | `bearer-token` | scrutate |
+| `curl-user` | scrutate |
 | `basic-auth` | scrutate |
 | `env-secret` | scrutate |
 | `password` | scrutate |
@@ -411,8 +412,9 @@ entropy thresholds; JSON's `\/` is read as `/`:
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
 URL that carries one (`https://user:pass@host`, also with no user), with a digit or a symbol in it
 or eight letters or more, and no variable (`$PASS`, `${...}`) or placeholder word; `bearer-token` an
-opaque token after `Bearer` or an `Authorization: Token` scheme. A token here mixes upper case,
-lower case and digits, or runs letters and digits through each other (one case with digits, a
+opaque token after `Bearer` or an `Authorization: Token` scheme; `curl-user` the password that
+`curl -u` or `--user` gives after the user, unless it is a variable. A token here mixes upper
+case, lower case and digits, or runs letters and digits through each other (one case with digits, a
 change between them three times or more), or is a UUID or 32 or more hex digits, so a word with a
 number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
 `user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
