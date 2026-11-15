@@ -208,7 +208,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         rule(
             "database-password",
             "secretlint-rule-database-connection-string",
-            r"(?i)\b((?:postgres(?:ql)?|mysqlx?|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver)://)([^:/\s@]*):([^@/\s]+)@([^/\s?#]+)",
+            r"(?i)\b((?:postgres(?:ql)?|mysqlx?|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver)://)([^:/\s@]*):([^/\s]+)@([^/\s?#@]+)",
             3,
             0.0,
             &["postgres", "mysql", "mariadb", "mongodb", "redis", "amqp", "mssql", "sqlserver"],
@@ -217,7 +217,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         // a token as a URL's user, alone or before a placeholder password, as a clone URL carries one
         rule("url-token", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://([A-Za-z0-9_-]{20,})(?::[^@/\s]*)?@[^/\s?#]", 1, 3.0, &["://"], opaque),
         // the password of any other URL that carries one (`https://user:pass@host`)
-        rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]*:([^@/\s]+)@[^/\s?#]", 1, 0.0, &["://"], url_password),
+        rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]*:([^/\s]+)@[^/\s?#@]", 1, 0.0, &["://"], url_password),
         // an opaque token after `Bearer` or an `Authorization: Token` scheme (a header, a curl
         // line); a JWT has its own rule
         rule(
@@ -1247,6 +1247,21 @@ mod tests {
             format!("{prog} -s https://example.com/a; ssh -u ops:deploy2024x host"),
         ] {
             assert!(redact(&line).1.iter().all(|m| m.kind != "curl-user"), "{line}");
+        }
+    }
+
+    /// A URL's password that holds `@`, written plain or as `%40`, is redacted whole, up to the last
+    /// `@` before the host, and the host stays.
+    #[test]
+    fn a_url_password_with_an_at_sign_is_redacted_whole() {
+        let (a, b) = (fake(91, ALNUM, 7), fake(92, ALNUM, 7));
+        for (scheme, kind) in [("https", "url-password"), ("postgres", "database-password")] {
+            for sep in ["@", "%40", "@@"] {
+                let line = format!("{scheme}://deploy:{a}{sep}{b}@git.example.com/app");
+                let (out, marks) = redact(&line);
+                assert!(!out.contains(&a) && !out.contains(&b) && marks.iter().any(|m| m.kind == kind), "{line} -> {out}");
+                assert!(out.ends_with("@git.example.com/app"), "{line} -> {out}");
+            }
         }
     }
 

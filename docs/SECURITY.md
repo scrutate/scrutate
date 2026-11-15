@@ -417,7 +417,8 @@ entropy thresholds; JSON's `\/` is read as `/`:
 
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
-URL that carries one (`https://user:pass@host`, also with no user), with a digit or a symbol in it
+URL that carries one (`https://user:pass@host`, also with no user; a password holding `@` runs to
+the last `@` before the host, as does `database-password`'s), with a digit or a symbol in it
 or eight letters or more, and no variable (`$PASS`, `${...}`) or placeholder word; `bearer-token` an
 opaque token after `Bearer` or an `Authorization: Token` scheme; `curl-user` the password that
 `curl -u` or `--user` gives after the user (also joined to `-u`, and a proxy's through `-U` or
