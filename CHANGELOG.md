@@ -216,11 +216,13 @@ incompatible index by itself, and that is never breaking.
   while an update runs, and says the same on stderr
   ([ADR 0002](docs/adr/0002-reads-during-a-write.md), [CLI](docs/CLI.md#the-index-directory)).
 - The MCP server, the language server and the Python bindings watch a tree on a local disk, and
-  a walk in the background finds within 60 s a change that makes no event; each call looks
-  only at the files the watch says changed since the last call, one `stat` each, where it looked
-  at every file of the tree. A cookie file the call writes and waits for keeps every write made
-  before the call in its answer; when the watch cannot vouch for fewer files, or cannot start, the
-  call looks at every file as before. `SCRUTATE_SESSION_DEBUG=1` says why
+  a walk in the background finds within 60 s a change that makes no event. On Linux and Windows
+  each call looks only at the files the watch says changed since the last call, one `stat` each,
+  where it looked at every file of the tree: a cookie file the call writes and waits for keeps
+  every write made before the call in its answer. On macOS every call still looks at every file,
+  whatever `--refresh-interval` says: FSEvents can give a write a later event than a cookie made
+  after it, so the cookie proves nothing there. When the watch cannot vouch for fewer files, or
+  cannot start, the call looks at every file as before. `SCRUTATE_SESSION_DEBUG=1` says why
   ([ADR 0001](docs/adr/0001-change-sets-and-the-cookie-barrier.md), [CLI](docs/CLI.md)).
 - A fresh process opens an index whose database it saw pass a check as fast as a running one:
   the `quick_check` walk and the schema work run once per state of the file, recorded in

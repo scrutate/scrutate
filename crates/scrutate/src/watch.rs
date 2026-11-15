@@ -304,7 +304,8 @@ const MOST_NOTED: usize = 10_000;
 /// What a watch saw, for the reads of a session (`fresh::Freshness`): every event as it arrives,
 /// so a read waits for no burst and no update. A read writes a cookie file and waits for its
 /// event (as Watchman's sync queries do), so a file written before the read started is noted;
-/// then the events since the read's token, as `Burst` reads them, are its change set. Whatever
+/// then the events since the read's token, as `Burst` reads them, are its change set. Where
+/// `ORDER_PROVES` is false (macOS) a read writes no cookie and its change set is every file. Whatever
 /// the events cannot vouch for (lost events, an error, a rule file, a directory that came or
 /// went, a directory's first watch, no watch at all) makes the change set every file.
 #[derive(Clone)]
@@ -1183,7 +1184,7 @@ mod fsevents {
     const ITEM_RENAMED: u32 = 0x800;
     const ITEM_IS_DIR: u32 = 0x20000;
     /// seconds the stream gathers events for before it calls back; the burst's own wait follows.
-    /// A session's read waits for its cookie's event, so this is short.
+    /// Short, so a burst starts soon after its changes.
     const LATENCY: f64 = 0.005;
 
     type Callback = unsafe extern "C" fn(*const c_void, *mut c_void, usize, *mut c_void, *const u32, *const u64);
