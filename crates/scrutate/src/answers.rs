@@ -1,6 +1,7 @@
 //! Stored resolution answers: what `Names` made of a name's occurrences in some lines of a file
-//! (`Uses`) for one `callers` or `callees` request, kept under `.scrutate/answers/`, so the same
-//! request on the same index and files resolves nothing again.
+//! (`Uses`) for one `callers` or `callees` request, and the import aliases of its targets that
+//! `callers` looked up, kept under `.scrutate/answers/`, so the same request on the same index and
+//! files resolves nothing again.
 //!
 //! One file per request kind and name. It holds the answers of one run and what that run read:
 //! the code index's database (the file's identity and its data version, which every update that
@@ -26,7 +27,7 @@ use crate::search::Searcher;
 
 /// Total size of `.scrutate/answers/`.
 pub const MAX_BYTES: u64 = 64 << 20;
-const MAGIC: &[u8] = b"scrutate-answers 1\n";
+const MAGIC: &[u8] = b"scrutate-answers 2\n";
 const MAX_ITEMS: usize = 1 << 24;
 
 /// A file's state on disk: a regular file and its stat, or anything else.
@@ -100,6 +101,10 @@ pub(crate) struct Stored {
     version: Option<String>,
     old: HashMap<Site, Uses>,
     new: HashMap<Site, Uses>,
+    /// the import aliases of a set of targets (their ids, sorted) as (local name, file), as the
+    /// stored run found them and as this run found them
+    old_aliases: HashMap<Vec<i64>, Vec<(String, String)>>,
+    new_aliases: HashMap<Vec<i64>, Vec<(String, String)>>,
     /// a site the stored run did not answer was asked: this run is not that run
     strayed: bool,
 }
@@ -118,8 +123,9 @@ impl Stored {
         let path = dir.join(format!("{}.bin", hex(&crate::tscache::hash(&[kind.as_bytes(), name.as_bytes()]))));
         // without a database identity or a data version nothing is known to be the same
         let known = version.is_some() && !db.is_empty();
-        let old = known.then(|| crate::files::read_regular(&path, MAX_BYTES)).flatten().and_then(|b| decode(&b, &header, limit).ok()).unwrap_or_default();
-        Stored { dir, path, header, version: version.filter(|_| known), old, new: HashMap::new(), strayed: false }
+        let (old, old_aliases) =
+            known.then(|| crate::files::read_regular(&path, MAX_BYTES)).flatten().and_then(|b| decode(&b, &header, limit).ok()).unwrap_or_default();
+        Stored { dir, path, header, version: version.filter(|_| known), old, new: HashMap::new(), old_aliases, new_aliases: HashMap::new(), strayed: false }
     }
 
     pub(crate) fn get(&mut self, site: &Site) -> Option<&Uses> {
@@ -132,6 +138,15 @@ impl Stored {
         self.new.insert(site, uses);
     }
 
+    /// The import aliases of the targets `ids` (sorted) that the stored run found.
+    pub(crate) fn aliases(&self, ids: &[i64]) -> Option<&Vec<(String, String)>> {
+        self.old_aliases.get(ids)
+    }
+
+    pub(crate) fn put_aliases(&mut self, ids: Vec<i64>, aliases: Vec<(String, String)>) {
+        self.new_aliases.insert(ids, aliases);
+    }
+
     /// Keep this run's answers when it read everything it answered from: a run that reached its
     /// end stands for any limit (`complete`), else for its own. Errors are ignored: the store only
     /// saves time.
@@ -139,7 +154,7 @@ impl Stored {
         if !self.old.is_empty() {
             touch(&self.path);
         }
-        if self.new.is_empty() || self.strayed || self.version.is_none() || s.ix.meta("data_version") != self.version {
+        if (self.new.is_empty() && self.new_aliases.is_empty()) || self.strayed || self.version.is_none() || s.ix.meta("data_version") != self.version {
             return;
         }
         let Some(reads) = READS.with(|r| {
@@ -182,6 +197,18 @@ impl Stored {
                 }
             }
             out.push(u.unsure as u8 | (u.unsure_free as u8) << 1 | (u.own_file as u8) << 2 | (u.external_free as u8) << 3);
+        }
+        let mut all = self.old_aliases.clone();
+        all.extend(self.new_aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+        put_n(&mut out, all.len());
+        for (ids, aliases) in &all {
+            put_n(&mut out, ids.len());
+            ids.iter().for_each(|id| out.extend(id.to_le_bytes()));
+            put_n(&mut out, aliases.len());
+            for (local, file) in aliases {
+                put_str(&mut out, local);
+                put_str(&mut out, file);
+            }
         }
         if out.len() as u64 > MAX_BYTES {
             bail!("too large to keep");
@@ -299,9 +326,12 @@ impl Counted {
     }
 }
 
+/// A stored run's answers per site, and the import aliases it found per set of targets.
+type Kept = (HashMap<Site, Uses>, HashMap<Vec<i64>, Vec<(String, String)>>);
+
 /// The answers of a stored run that went at least up to `limit` and read only files that are as
 /// they were.
-fn decode(b: &[u8], header: &[u8], limit: usize) -> Result<HashMap<Site, Uses>> {
+fn decode(b: &[u8], header: &[u8], limit: usize) -> Result<Kept> {
     let mut r = Reader { b, pos: 0 };
     if r.take(header.len())? != header {
         bail!("another request, index or build");
@@ -330,10 +360,16 @@ fn decode(b: &[u8], header: &[u8], limit: usize) -> Result<HashMap<Site, Uses>> 
             Uses { got, dispatched, unsure: flags & 1 != 0, unsure_free: flags & 2 != 0, own_file: flags & 4 != 0, external_free: flags & 8 != 0 },
         );
     }
+    let mut aliases = HashMap::new();
+    for _ in 0..r.n()? {
+        let ids = (0..r.n()?).map(|_| r.i64()).collect::<Result<Vec<_>>>()?;
+        let found = (0..r.n()?).map(|_| Ok((r.string()?, r.string()?))).collect::<Result<Vec<_>>>()?;
+        aliases.insert(ids, found);
+    }
     if r.pos != b.len() {
         bail!("trailing bytes");
     }
-    Ok(out)
+    Ok((out, aliases))
 }
 
 fn put_n(w: &mut Vec<u8>, n: usize) {

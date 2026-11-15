@@ -75,7 +75,7 @@ definition (`intel::DupKeys`): hashes of its body and of its words, its word cou
 MinHash band keys, made once per text at parse time and kept in the index (`dupkeys`).
 
 **[Kept answers](docs/ARCHITECTURE.md#intelligence-intelrs)**: what `callers`, `callees` and
-`dead` learned of each call site, stored per request (`answers.rs`, `.scrutate/answers/`) with
+`dead` learned of each call site, and the import aliases of their targets, stored per request (`answers.rs`, `.scrutate/answers/`) with
 what the run read. A later run uses them only while all of that is unchanged.
 
 **[Repo map](docs/CLI.md#engine-b)**: the files that define code, ranked by PageRank over the edges

@@ -592,6 +592,19 @@ impl<'a> Names<'a> {
     /// `from util import helper as h` in `app.py` gives ("h", "app.py"). A call there is stored
     /// under the alias.
     fn aliases_of(&mut self, targets: &[Hit], langs: &Langs) -> Result<Vec<(String, String)>> {
+        let mut ids: Vec<i64> = targets.iter().map(|t| t.id).collect();
+        ids.sort_unstable();
+        if let Some(kept) = self.stored.as_ref().and_then(|st| st.aliases(&ids)) {
+            return Ok(kept.clone());
+        }
+        let found = self.find_aliases(targets, langs)?;
+        if let Some(st) = self.stored.as_mut() {
+            st.put_aliases(ids, found.clone());
+        }
+        Ok(found)
+    }
+
+    fn find_aliases(&mut self, targets: &[Hit], langs: &Langs) -> Result<Vec<(String, String)>> {
         let targets: Vec<&Hit> = targets.iter().filter(|t| crate::resolve::may_alias(langs.id(&t.path))).collect();
         let names: HashSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
         // an import names the item (Rust's `use a::helper as h`) or the module that holds it
@@ -1511,4 +1524,89 @@ fn module_file(module: &str, from: &str, files: &HashSet<String>, root: &Path) -
     let slashed = module.replace("::", "/").replace('.', "/");
     let segs: Vec<&str> = slashed.split('/').filter(|s| !s.is_empty()).collect();
     crate::resolve::below_own_package(root, &segs).and_then(|rest| try_one(&rest.join("/")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `m/secrets.py` with `redact`, and thirty files under `app/` that import its module, every
+    /// third calling it.
+    fn tree(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("scrutate_names_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("m")).unwrap();
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        std::fs::write(root.join("m/__init__.py"), "").unwrap();
+        std::fs::write(root.join("m/secrets.py"), "def redact(text):\n    return text\n").unwrap();
+        for i in 0..30 {
+            let body = if i % 3 == 0 {
+                format!("import m.secrets\n\n\ndef f{i}():\n    return m.secrets.redact({i})\n")
+            } else {
+                format!("import m.secrets\n\n\ndef g{i}():\n    return {i}\n")
+            };
+            std::fs::write(root.join(format!("app/a{i}.py")), body).unwrap();
+        }
+        root
+    }
+
+    /// Whether this file system keeps answers: nothing is kept where it does not say when the
+    /// index was made.
+    fn keeps(root: &std::path::Path) -> bool {
+        let known = std::fs::metadata(root.join(".scrutate/index.db")).unwrap().created().is_ok();
+        assert!(known || !cfg!(any(target_os = "linux", target_os = "macos", windows)), "no creation time on a system that has one");
+        known
+    }
+
+    fn callers(repo: &mut crate::Repo) -> Vec<(String, i64)> {
+        let (hits, _) = repo.recovering(|s| Names::new(s)?.callers("redact", 31)).unwrap();
+        hits.into_iter().map(|h| (h.path, h.start)).collect()
+    }
+
+    /// A repeat of `callers` on an unchanged index and tree answers from what the first run kept:
+    /// it loads no file into the resolver, the files that import the target's module included.
+    #[test]
+    fn a_repeat_callers_loads_no_file_into_the_resolver() {
+        let root = tree("kept");
+        let (mut repo, _) = crate::open_updated(&root, true).unwrap();
+        if !keeps(&root) {
+            return;
+        }
+        let first = callers(&mut repo);
+        assert_eq!(first.len(), 10, "{first:?}");
+        crate::resolve::LOADS.with(|n| n.set(0));
+        assert_eq!(callers(&mut repo), first);
+        assert_eq!(crate::resolve::LOADS.with(|n| n.get()), 0, "the repeat loaded files into the resolver");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A kept answer never hides an importer added, edited or deleted since: every update of the
+    /// index moves its data version, which the kept file is keyed on, so a file the stored run
+    /// never read still counts.
+    #[test]
+    fn a_kept_answer_never_hides_an_importer_added_edited_or_deleted_since() {
+        let root = tree("moved");
+        let (mut repo, _) = crate::open_updated(&root, true).unwrap();
+        keeps(&root);
+        let kept = root.join(".scrutate/answers");
+        let step = |repo: &mut crate::Repo, change: &dyn Fn()| -> Vec<(String, i64)> {
+            callers(repo);
+            change();
+            repo.update(false).unwrap();
+            let now = callers(repo);
+            let _ = std::fs::remove_dir_all(&kept);
+            assert_eq!(now, callers(repo), "a run with nothing kept answers otherwise");
+            now
+        };
+        let added = |w: &[(String, i64)], f: &str| w.iter().any(|(p, _)| p == f);
+        let now =
+            step(&mut repo, &|| std::fs::write(root.join("app/new.py"), "from m.secrets import redact as scrub\n\n\ndef n():\n    return scrub(1)\n").unwrap());
+        assert!(added(&now, "app/new.py"), "a new importer: {now:?}");
+        let now =
+            step(&mut repo, &|| std::fs::write(root.join("app/a1.py"), "from m.secrets import redact as wipe\n\n\ndef g1():\n    return wipe(1)\n").unwrap());
+        assert!(added(&now, "app/a1.py"), "an importer by an edit: {now:?}");
+        let now = step(&mut repo, &|| std::fs::remove_file(root.join("app/new.py")).unwrap());
+        assert!(!added(&now, "app/new.py"), "a deleted importer: {now:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

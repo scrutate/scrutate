@@ -902,8 +902,10 @@ graph comes from the index's names alone (`Names::file_edges`; the edges and Pag
 
 `callers` and `callees` keep what they learn of each call site (`answers.rs`,
 `.scrutate/answers/`): one file per request (its kind and the name as given) holding, per call
-site (path, lines, name), the definitions its uses resolve to and which stayed unresolved, and
-what the run read: the index database (device, number and creation time of `index.db`) and its
+site (path, lines, name), the definitions its uses resolve to and which stayed unresolved, per
+set of target definitions the import aliases `callers` found for them (`Names::aliases_of`, which
+otherwise asks the resolver about every file that imports a target's module), and what the run
+read: the index database (device, number and creation time of `index.db`) and its
 data version, which every update that changes a row moves, the executable, the root, and the
 `stat` of every file the resolver read from disk, absent ones included. A run uses the file only
 when all of that is unchanged and the stored run went at least as far (one stopped at its limit

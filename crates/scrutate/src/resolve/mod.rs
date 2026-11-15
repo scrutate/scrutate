@@ -793,6 +793,12 @@ fn text<'s>(n: Node, src: &'s str) -> &'s str {
     n.utf8_text(src.as_bytes()).unwrap_or("")
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Files the resolvers of this thread loaded, for tests that a kept answer reads none.
+    pub(crate) static LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The text of `rel` under `root` when it is a regular file inside `root` of at most
 /// `MAX_FILE_BYTES`: a FIFO would block the read, and a symlink could lead out of the repository.
 pub fn repo_text(root: &std::path::Path, rel: &str) -> Option<String> {
@@ -1333,6 +1339,8 @@ impl<'a> Resolver<'a> {
         if let Some(f) = self.loaded.borrow_mut().get(path) {
             return f;
         }
+        #[cfg(test)]
+        LOADS.with(|n| n.set(n.get() + 1));
         let fi = Rc::new(self.load(path));
         self.loaded.borrow_mut().put(path, Rc::clone(&fi));
         fi
