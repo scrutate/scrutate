@@ -941,8 +941,9 @@ scrutate lsp
 A language server for editors (JSON-RPC 2.0 over stdin and stdout, `Content-Length` framing).
 The repository is the top of the one holding the editor's first workspace folder
 (`workspaceFolders`, else `rootUri`), found as for a command run in that folder, so the editor
-and a shell there share one index; `--root` when the editor sends no folder. A folder of another
-repository is not answered. With no folder and no `--root`, started in the home directory or at
+and a shell there share one index; `--root` when the editor sends no folder. Locations name files
+under the folder as the editor sent it, also when it is reached through a link, so the editor
+finds them among its open files. A folder of another repository is not answered. With no folder and no `--root`, started in the home directory or at
 a filesystem root with no index, the server builds none and says so in the log. It answers from
 the Engine B index:
 

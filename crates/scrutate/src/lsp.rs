@@ -256,6 +256,8 @@ fn range(line: u64, c0: u64, end_line: u64, c1: u64) -> Value {
 /// File lines for one request: the editor's text for open documents, the disk otherwise.
 struct Lines<'a> {
     root: &'a Path,
+    /// the root as the editor named it, for the locations an answer gives
+    given: &'a Path,
     docs: &'a HashMap<String, String>,
     cache: HashMap<String, Vec<String>>,
 }
@@ -302,7 +304,7 @@ impl Lines<'_> {
 
     fn location(&mut self, rel: &str, start: i64, end: i64, name: &str) -> Value {
         let (l, a, b) = self.name_pos(rel, start, end, name);
-        json!({"uri": path_to_uri(&self.root.join(rel)), "range": range(l, a, l, b)})
+        json!({"uri": path_to_uri(&self.given.join(rel)), "range": range(l, a, l, b)})
     }
 }
 
@@ -312,6 +314,9 @@ fn split_lines(text: &str) -> Vec<String> {
 
 struct Server {
     root: PathBuf,
+    /// `root` as the editor named it (a folder reached through a link keeps that name): the files
+    /// of an answer are named under it, as the editor has them open
+    given: PathBuf,
     /// `--root` named the root: without a folder from the editor it is used as given
     root_given: bool,
     /// None until `initialize`, and when the folder is refused or its index cannot be opened
@@ -346,7 +351,7 @@ impl Server {
     }
 
     fn lines(&self) -> Lines<'_> {
-        Lines { root: &self.root, docs: &self.docs, cache: HashMap::new() }
+        Lines { root: &self.root, given: &self.given, docs: &self.docs, cache: HashMap::new() }
     }
 
     fn initialize(&mut self, p: &Value) -> Value {
@@ -365,7 +370,8 @@ impl Server {
         // a folder from the editor is the user's choice; the server's own directory is not
         let refused = (!from_editor && !self.root_given && top.is_none()).then(|| crate::cli::no_first_build(&folder)).flatten();
         let root = top.unwrap_or(folder);
-        self.root = std::fs::canonicalize(&root).unwrap_or(root);
+        self.root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        self.given = root;
         let existed = crate::index::exists(&self.root);
         if let Some(why) = refused {
             eprintln!("{why}");
@@ -588,7 +594,7 @@ impl Server {
             if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
                 let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
                 decl = Some((d.path.clone(), l, a));
-                out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
+                out.push(json!({"uri": path_to_uri(&self.given.join(&d.path)), "range": range(l, a, l, b)}));
             }
             for o in r.of(def_id) {
                 let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
@@ -604,7 +610,7 @@ impl Server {
                 // the name as asked for, whole: `helper2` starts with `helper` but is another word
                 let whole = written.strip_prefix(ident.as_str()).is_some_and(|rest| !rest.chars().next().is_some_and(|c| word(&c)));
                 let width = if whole { ident.encode_utf16().count() } else { written.chars().take_while(word).map(char::len_utf16).sum() } as u64;
-                out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
+                out.push(json!({"uri": path_to_uri(&self.given.join(&o.path)), "range": range(l, a, l, a + width)}));
             }
             return Ok(Value::Array(out));
         }
@@ -616,7 +622,7 @@ impl Server {
             let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
             seen.insert((d.path.clone(), l, a));
             if include_decl {
-                out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
+                out.push(json!({"uri": path_to_uri(&self.given.join(&d.path)), "range": range(l, a, l, b)}));
             }
         }
         let width = ident.encode_utf16().count() as u64;
@@ -638,7 +644,7 @@ impl Server {
                     }
                     let (l, a) = (h.line.saturating_sub(1), byte_to_utf16(text, off));
                     if seen.insert((g.path.clone(), l, a)) {
-                        out.push(json!({"uri": path_to_uri(&self.root.join(&g.path)), "range": range(l, a, l, a + width)}));
+                        out.push(json!({"uri": path_to_uri(&self.given.join(&g.path)), "range": range(l, a, l, a + width)}));
                     }
                 }
             }
@@ -742,6 +748,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     }
     let mut srv = Server {
         root: root.to_path_buf(),
+        given: root.to_path_buf(),
         root_given,
         session: None,
         docs: HashMap::new(),
@@ -805,6 +812,7 @@ mod tests {
         session.building();
         let mut srv = Server {
             root: root.clone(),
+            given: root.clone(),
             root_given: true,
             session: Some(session),
             docs: HashMap::new(),
@@ -836,6 +844,7 @@ mod tests {
         session.building();
         let mut srv = Server {
             root: root.clone(),
+            given: root.clone(),
             root_given: true,
             session: Some(session),
             docs: HashMap::new(),
@@ -869,7 +878,7 @@ mod tests {
         std::os::unix::fs::symlink(root.join("src"), root.join("inlink")).unwrap();
         let root = root.canonicalize().unwrap();
         let docs = HashMap::from([("../open.py".to_string(), "from the editor\n".to_string())]);
-        let mut lines = Lines { root: &root, docs: &docs, cache: HashMap::new() };
+        let mut lines = Lines { root: &root, given: &root, docs: &docs, cache: HashMap::new() };
         assert_eq!(lines.get("src/a.py"), ["inside = 1", ""]);
         assert_eq!(lines.get("inlink/a.py"), ["inside = 1", ""]);
         // a link that leaves the root, a path that climbs out of it and an absolute one read nothing

@@ -218,6 +218,43 @@ fn real_file(top: &Path, loc: &Value) -> String {
     p.strip_prefix(&top).unwrap().to_string_lossy().replace('\\', "/")
 }
 
+/// Answers name files under the folder as the editor sent it, also when that folder is reached
+/// through a link: the editor has the file open under that name.
+#[cfg(unix)]
+#[test]
+fn answers_name_files_under_the_folder_as_the_editor_sent_it() {
+    let r = Repo::new("linked_folder");
+    r.write("real/proj/.git/HEAD", "ref: refs/heads/main\n");
+    r.write("real/proj/lib.py", "def handler():\n    return 1\n");
+    r.write("real/proj/app.py", "from lib import handler\n\n\ndef run():\n    return handler()\n");
+    std::os::unix::fs::symlink(r.root.join("real"), r.root.join("code")).unwrap();
+    let folder = r.root.join("code/proj");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    let given = uri(&folder);
+    c.request("initialize", json!({"processId": null, "rootUri": given, "workspaceFolders": [{"uri": given, "name": "proj"}], "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let at = json!({"textDocument": {"uri": uri(&folder.join("app.py"))}, "position": {"line": 4, "character": 12}});
+    let def = c.request("textDocument/definition", at.clone());
+    let mut refs_at = at;
+    refs_at["context"] = json!({"includeDeclaration": true});
+    let refs = c.request("textDocument/references", refs_at);
+    let ws = c.request("workspace/symbol", json!({"query": "handler"}));
+    let mut uris: Vec<String> = Vec::new();
+    for v in [&def["result"], &refs["result"]] {
+        uris.extend(v.as_array().unwrap_or_else(|| panic!("{v}")).iter().map(|l| l["uri"].as_str().unwrap().to_string()));
+    }
+    uris.extend(ws["result"].as_array().unwrap_or_else(|| panic!("{ws}")).iter().map(|s| s["location"]["uri"].as_str().unwrap().to_string()));
+    assert!(uris.len() >= 3, "{def} {refs} {ws}");
+    for u in &uris {
+        assert!(u.starts_with(&format!("{given}/")), "{u} is not under {given}");
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    let _ = child.wait();
+}
+
 #[test]
 fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
     let r = Repo::new("subfolder");
@@ -404,7 +441,7 @@ fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
     let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
     c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
     c.notify("initialized", json!({}));
-    let file = format!("{}/a%5Cb.py", uri(&fs::canonicalize(&r.root).unwrap()));
+    let file = format!("{}/a%5Cb.py", uri(&r.root));
     let def = c.request("textDocument/definition", json!({"textDocument": {"uri": file}, "position": {"line": 5, "character": 12}}));
     let uris: Vec<&str> = def["result"].as_array().unwrap_or_else(|| panic!("{def}")).iter().map(|l| l["uri"].as_str().unwrap()).collect();
     assert_eq!(uris, [file.as_str()], "{def}");

@@ -249,6 +249,10 @@ incompatible index by itself, and that is never breaking.
 ### Fixed
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
+- The language server names the files of its answers under the folder as the editor sent it, also
+  when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
+  where it named them under the resolved path and the editor opened a second tab of an open file
+  ([CLI](docs/CLI.md#lsp)).
 - `refs`, `callers` and `callees` take one decision per call site, so they agree: `refs` of a
   constructor lists its class's instantiations (`new Box(1)`, `Point(1)`, Ruby `Invoice.new`,
   JavaScript `super(..)`), which `callers` already listed; in a language the resolver does not
