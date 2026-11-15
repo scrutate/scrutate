@@ -1323,7 +1323,8 @@ being built. `scrutate index` (and `--force`) waits for the writer, at most 10 m
 fails with "another process has held the index write lock for 10 minutes" ("another process has
 held the text index lock for 10 minutes" when the text index's writer is the one it waits for).
 Ctrl-C ends the wait, as it does `watch`'s and that of `grep --index --update` (exit 130). A read-only index directory, or a read-only repository
-with a complete index, is answered from as it is. A `.scrutate` that is a symbolic link, or holds
+with a complete index, is answered from as it is; one that holds no files (a rebuild cut short
+after it cleared the index) and cannot be filled is an error (exit 2), never "(no results)". A `.scrutate` that is a symbolic link, or holds
 one, is refused: nothing is written or deleted outside the repository.
 ## Setup and the Grep hook
 

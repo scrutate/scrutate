@@ -373,6 +373,8 @@ impl Repo {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
             Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
             Err(e) if e.is::<index::Newer>() => Err(e),
+            // nothing to answer from: an empty answer would read as "nothing found"
+            Err(e) if !self.ix.has_files()? => Err(e.context("the index holds no files and could not be filled")),
             Err(e) => {
                 if !self.stale {
                     eprintln!("[scrutate] index not updated ({e:#}); answering from it as it is");

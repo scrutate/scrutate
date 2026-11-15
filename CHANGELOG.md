@@ -309,6 +309,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- An index that holds no files and cannot be filled (a rebuild cut short after it cleared the
+  index, opened where it cannot be written) answers with an error, exit 2, where every search and
+  lookup answered "(no results)" as if nothing matched ([CLI](docs/CLI.md)).
 - `watch` started with a pipe for its input ends when the pipe does, with exit code 0, so it no
   longer outlives an agent or script that started it and was killed; from a terminal or with no
   input it runs as before.

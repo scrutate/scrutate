@@ -819,3 +819,28 @@ fn a_segment_row_out_of_range_is_rebuilt_by_the_merge_of_the_next_update() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(files_of(&t.0), ["a.py", "b.py", "c.py"]);
 }
+
+/// An index that holds no files and cannot be filled (a rebuild cut short after its clear
+/// committed, then a directory nobody may write) answers with an error, not with "nothing found".
+#[cfg(unix)]
+#[test]
+fn an_empty_index_that_cannot_be_filled_is_an_error_not_an_empty_answer() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = Tmp::new("empty_readonly");
+    assert_eq!(run(&t.0, &["index", "--no-text"]).0, 0);
+    fs::write(t.0.join("a.py"), "def write_segment():\n    return 1\n").unwrap();
+    let mode = |m: u32| {
+        for p in [t.0.join(".scrutate"), t.0.clone()] {
+            fs::set_permissions(&p, fs::Permissions::from_mode(m)).unwrap();
+        }
+        for e in fs::read_dir(t.0.join(".scrutate")).unwrap().flatten() {
+            let _ = fs::set_permissions(e.path(), fs::Permissions::from_mode(if m == 0o555 { 0o444 } else { 0o644 }));
+        }
+    };
+    mode(0o555);
+    let out = Command::new(BIN).arg("--root").arg(&t.0).args(["symbol", "write_segment"]).stdin(Stdio::null()).output().unwrap();
+    mode(0o755);
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(2), "stdout {stdout:?} stderr {stderr:?}");
+    assert!(!stdout.contains("(no results)") && stderr.contains("holds no files"), "stdout {stdout:?} stderr {stderr:?}");
+}
