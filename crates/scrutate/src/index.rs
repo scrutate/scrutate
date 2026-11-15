@@ -3705,8 +3705,8 @@ mod tests {
         other.execute_batch("BEGIN").unwrap();
         let _: i64 = other.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
         let took = save(&mut ix, "x + 1");
-        // waiting for the reader would add a whole second
-        assert!(took < alone + std::time::Duration::from_millis(600), "waited {took:?}, {alone:?} with no reader");
+        // the wait it catches is a second; half of it fails too
+        assert!(took < alone + std::time::Duration::from_millis(350), "waited {took:?}, {alone:?} with no reader");
         assert!(ix.log_left, "the reader kept the log from being cut");
         other.execute_batch("COMMIT").unwrap();
         ix.update(false).unwrap();
@@ -4150,8 +4150,8 @@ mod tests {
         drop(save);
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
-        // waiting for the busy thread would add up to its 3 s
-        assert!(took < alone + std::time::Duration::from_millis(1500), "waited {took:?}, {alone:?} with every thread free");
+        // the wait it catches is the busy thread's 3 s; half of it fails too
+        assert!(took < alone + std::time::Duration::from_millis(1000), "waited {took:?}, {alone:?} with every thread free");
     }
 
     /// The word caches a thread has not freed yet map a word to its stem and an identifier to
