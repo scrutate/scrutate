@@ -141,6 +141,10 @@ incompatible index by itself, and that is never breaking.
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter
+  grammars with `-fjump-tables`, which GCC 15 drops at the `-O0` their `parser.c` asks for:
+  parsing was 1.8 times slower (Linux's C sources, 22 s against 12 s); a build outside the
+  repository sets it in `CFLAGS` ([Install](docs/INSTALL.md)).
 - `tsquery` does not parse a file that holds none of the strings every match of the query needs
   (`#eq?`, `#any-of?`): on Linux's tree a `kmalloc` call query takes 21 to 34 s against 95 to
   146 s on four threads, the same answer.

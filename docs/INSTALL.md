@@ -101,6 +101,17 @@ VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more). `.gitatt
 text files out with LF line ends everywhere, so a Windows build's compiled-in data
 (`crates/scrutate/data`) matches every other build.
 
+With GCC 15 or newer, parsing is about 1.8 times slower unless the grammars are compiled with
+`-fjump-tables`: their generated `parser.c` asks for `-O0`, and GCC 15 drops jump tables at
+`-O0` (tree-sitter #5971). tree-sitter #5984 makes the generator write
+`#pragma GCC optimize ("O0", "jump-tables")`, but of the grammars scrutate uses only tree-sitter-md
+ships it so far, and 31 still ship the old line with no newer crate. A build in this
+repository adds the flag on x86_64 and aarch64 Linux through `.cargo/config.toml`; if you set
+`CFLAGS` yourself, add `-fjump-tables` to it, since the target's own variable is read first. The
+x86_64 number is measured (Linux's C sources, GCC 15.2: 22 s against 12 s); aarch64 is from
+tree-sitter #5971's report, not measured here. `python3 tools/jump_tables.py target/release` says
+whether the built C grammar has its jump tables.
+
 ## Python package
 
 ```sh

@@ -7,3 +7,8 @@ PCRE2_SYS_STATIC = "1"
 MACOSX_DEPLOYMENT_TARGET = "13.0"
 # the reads that tests and `cargo run` make count in a frecency file under target/, never the user's
 XDG_STATE_HOME = { value = "target/tmp/state", force = true, relative = true }
+# GCC 15 drops the jump tables of a grammar's lexer at the -O0 its generated parser.c asks for (1.8x
+# slower parsing); tree-sitter #5984 fixes the generator: these two can go once every grammar crate
+# we use is regenerated after it, which tools/jump_tables.py reports
+CFLAGS_x86_64_unknown_linux_gnu = { value = "-fjump-tables", force = false }
+CFLAGS_aarch64_unknown_linux_gnu = { value = "-fjump-tables", force = false }
