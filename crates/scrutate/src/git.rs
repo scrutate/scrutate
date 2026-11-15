@@ -35,8 +35,8 @@ pub(crate) struct Entry {
 
 /// The `git` program run in the repository. Nothing it runs writes, or starts a program of the
 /// configuration's: no optional locks, no file system monitor, no external diff or text
-/// conversion, a diff that never refreshes the index (`diff-index`, `diff-tree`), and no clean or
-/// process filter. A revision is checked before it is passed, so it never reaches git as an
+/// conversion, a diff that never refreshes the index (`diff-index`, `diff-tree`), no clean or
+/// process filter, and no fetch of an object a partial clone lacks. A revision is checked before it is passed, so it never reaches git as an
 /// option.
 pub(crate) struct Git {
     dir: PathBuf,
@@ -144,6 +144,9 @@ impl Git {
                 c.envs(env.iter().map(|(name, value)| (name, plain_value(name, value))));
             }
         }
+        // a partial clone would fetch an object it lacks: network, a write to .git/objects, and
+        // the remote's upload program from the configuration (git 2.44 and later read this)
+        c.env("GIT_NO_LAZY_FETCH", "1");
         c
     }
 
@@ -156,6 +159,9 @@ impl Git {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
         match self.output(args)? {
             (true, out, _) => Ok(out),
+            (false, _, why) if why.contains("lazy fetching disabled") => {
+                bail!("this partial clone lacks objects that git {} needs: fetch them first (`git fetch`, or `git backfill`)", verb(args))
+            }
             (false, _, why) => bail!("git {}: {why}", verb(args)),
         }
     }
@@ -810,6 +816,7 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let own = std::env::vars().map(|(n, _)| n).filter(|n| n.to_ascii_uppercase().starts_with("GIT_"));
         let mut want: BTreeMap<String, Option<String>> = SIX.iter().map(|n| n.to_string()).chain(own).map(|n| (n, None)).collect();
         want.insert("GIT_DIR".into(), Some(dir.to_string_lossy().into_owned()));
+        want.insert("GIT_NO_LAZY_FETCH".into(), Some("1".into()));
         assert_eq!(got, want);
         let own: BTreeMap<String, Option<String>> = Git::new(&root)
             .unwrap()
@@ -817,7 +824,9 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
             .get_envs()
             .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned())))
             .collect();
-        assert_eq!(own, own_env().into_iter().map(|(n, v)| (n, Some(v))).collect());
+        let mut want: BTreeMap<String, Option<String>> = own_env().into_iter().map(|(n, v)| (n, Some(v))).collect();
+        want.insert("GIT_NO_LAZY_FETCH".into(), Some("1".into()));
+        assert_eq!(own, want);
     }
 
     #[test]

@@ -270,6 +270,9 @@ incompatible index by itself, and that is never breaking.
   writes `.git/index`, and with every filter driver emptied, so a touched file no longer has git
   rewrite the index (holding `index.lock` against your own `git add`) or run a clean filter such as
   Git LFS's ([Security](docs/SECURITY.md#running-git)).
+- `impact` and `review` fetch nothing in a partial clone: a blob the base needs and the clone lacks
+  is an error that says to fetch it first, where git fetched it from the remote, writing
+  `.git/objects` and running the remote's upload program (git 2.44 and later).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - The language server names the files of its answers under the folder as the editor sent it, also

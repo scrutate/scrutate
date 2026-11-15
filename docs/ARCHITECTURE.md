@@ -822,8 +822,9 @@ start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first found there
 commits the history stops at (`Git::shallow_boundaries`) are marked as the cut, never as a change.
 The diff is plumbing, which never refreshes the index, and every filter driver the configuration
 names is emptied for it (`Git::no_filters`); every call passes `--no-optional-locks`,
-`core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
-helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
+`core.fsmonitor=false`, `--no-ext-diff`, `--no-textconv` and `GIT_NO_LAZY_FETCH=1` (no fetch in
+a partial clone), so git writes nothing and starts no helper of its own; a revision is checked
+before it is passed (none starts with `-`) and resolved to
 a commit id, which every later call uses. Git sees this process's environment, a relative
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` made absolute against
 its working directory, where git reads such a value (`git::own_env`; a table in `git.rs` says

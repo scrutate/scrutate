@@ -610,3 +610,37 @@ fn impact_rewrites_no_index_and_runs_no_clean_filter() {
     let _ = fs::remove_file(&log);
     unchanged(&["--staged"]);
 }
+
+/// git 2.44 and later can be told not to fetch an object it lacks: (major, minor) of the git on
+/// PATH.
+fn git_version() -> (u32, u32) {
+    let out = Command::new("git").arg("--version").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut v = text.split_whitespace().nth(2).unwrap_or("0.0").split('.').map(|n| n.parse().unwrap_or(0));
+    (v.next().unwrap_or(0), v.next().unwrap_or(0))
+}
+
+/// A blobless clone lacks the base's old blobs. Reading the change must not fetch them, which
+/// writes .git/objects and runs the remote's upload program from the repository's configuration;
+/// the answer says what is missing.
+#[cfg(unix)]
+#[test]
+fn a_partial_clone_fetches_nothing_and_says_what_it_lacks() {
+    if git_version() < (2, 44) {
+        eprintln!("skipped: git {:?} has no GIT_NO_LAZY_FETCH", git_version());
+        return;
+    }
+    let origin = chain("lazy_origin");
+    origin.write("lib/core.py", "def deepest(x):\n    return x + 5\n\n\ndef spare(x):\n    return x\n");
+    origin.commit("second");
+    origin.git(&["config", "uploadpack.allowFilter", "true"]);
+    let t = Tree::new("lazy_clone");
+    t.git(&["clone", "-q", "--filter=blob:none", &format!("file://{}", origin.root.display()), "."]);
+    let marker = t.root.join(".git/fetched");
+    t.git(&["config", "remote.origin.uploadpack", &format!("touch '{}'; git-upload-pack", marker.display())]);
+    t.write("lib/core.py", "def deepest(x):\n    return x + 6\n\n\ndef spare(x):\n    return x\n");
+    let (code, out, err) = t.run(&["impact", "--base", "HEAD~1"]);
+    assert!(!marker.exists(), "impact fetched from the remote: {out}{err}");
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("this partial clone lacks"), "{err}");
+}

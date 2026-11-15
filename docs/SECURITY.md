@@ -82,7 +82,10 @@ program or its arguments. Every call only reads: `--no-optional-locks` (git writ
 the diff by plumbing that never refreshes the index (`git diff` writes `.git/index` back when a
 file's stat changed, holding `index.lock` against your own `git add` meanwhile), `-c
 core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and `--no-textconv` (no
-external diff or text conversion program from git's configuration).
+external diff or text conversion program from git's configuration), and `GIT_NO_LAZY_FETCH=1` (a
+partial clone fetches no object it lacks, which would write `.git/objects` and run the remote's
+upload program or `core.sshCommand`; `impact` then says to fetch them first. git 2.44 and later
+read it; an older git fetches).
 
 The one argument a caller gives is a revision (`--base`, the tool's `base`, `review --head`). An
 empty one, or one starting with `-`, is refused before git runs, so `--base=--output=x` cannot
