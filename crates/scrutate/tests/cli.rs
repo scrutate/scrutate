@@ -352,6 +352,21 @@ fn a_vendored_hit_is_marked_in_text_output_too() {
     assert!(out.lines().filter(|l| l.contains("lib/app.py")).all(|l| !l.contains("vendored")), "{out}");
 }
 
+/// A vendored hit's location is marked and its code is not, in `search`'s text and with `--also`.
+#[test]
+fn a_vendored_hit_s_code_comes_back_unmarked() {
+    let r = Repo::new("vendored_snippet");
+    r.write("vendor/frames/frames.py", b"def burst_frames(n):\n    # from vendor/frames/upstream.py\n    return n\n");
+    let other = Repo::new("vendored_snippet_other");
+    other.write("a.py", b"def unrelated():\n    return 0\n");
+    for args in [&["search", "burst_frames", "-k", "3"][..], &["search", "burst_frames", "-k", "3", "--also", other.root.to_str().unwrap()]] {
+        let (code, out, err) = r.run(args);
+        assert_eq!(code, 0, "{err}");
+        assert!(out.lines().next().is_some_and(|l| l.contains("[function, vendored] burst_frames")), "{args:?}: {out}");
+        assert!(out.lines().any(|l| l.ends_with("# from vendor/frames/upstream.py")), "{args:?}: {out}");
+    }
+}
+
 #[test]
 fn every_text_answer_marks_the_vendored_paths_its_json_marks() {
     let r = Repo::new("vendored_every_text");
@@ -396,8 +411,15 @@ fn every_text_answer_marks_the_vendored_paths_its_json_marks() {
         let got: std::collections::BTreeSet<String> =
             want.iter().filter(|p| lines.iter().any(|l| l.contains(p.as_str()) && l.contains("vendored"))).cloned().collect();
         assert_eq!(got, want, "{args:?}:\n{text}");
-        let unmarked: Vec<&&str> = lines.iter().filter(|l| l.split(": ").next().unwrap_or("").contains("vendor/leases") && !l.contains("vendored")).collect();
+        // a line that quotes a file's code (`path:12:5: code`) keeps it as it is: the answer ends
+        // with one line naming those files instead
+        let quotes = |l: &str| l.trim_start().split(' ').next().is_some_and(|w| w.ends_with(':') && w.matches(':').count() >= 2);
+        let names = |l: &&&str| l.split(": ").next().unwrap_or("").contains("vendor/leases");
+        let unmarked: Vec<&&str> = lines.iter().filter(|l| names(l) && !quotes(l) && !l.contains("vendored")).collect();
         assert!(unmarked.is_empty(), "{args:?}: {unmarked:?}\n{text}");
+        if lines.iter().any(|l| names(&l) && quotes(l)) {
+            assert!(lines.iter().any(|l| l.starts_with("vendored: ") && l.contains("vendor/leases")), "{args:?}: no note line\n{text}");
+        }
         any += want.len();
     }
     assert!(any >= 10, "the tree no longer exercises the marks: {any}");

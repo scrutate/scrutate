@@ -106,6 +106,36 @@ fn a_location_selects_that_one_definition() {
     assert!(r.err("callers", json!({"name": "helper.py:99"})).contains("no symbol at helper.py:99"));
 }
 
+/// A file's lines and a definition's code come back as the file has them, also when they name a
+/// vendored path: only the locations an answer writes are marked.
+#[test]
+fn code_that_names_a_vendored_path_comes_back_byte_for_byte() {
+    let conf = "def f():\n    # copied from vendor/lib.py\n    return 1\n";
+    let ignore = "node_modules/\nvendor/x.js\n";
+    let mut r = Repo::new("vendored_code", &[(".gitignore", ignore), ("src/conf.py", conf), ("vendor/lib.py", "def g():\n    return 2\n")]);
+    // the lines of a read, past their line numbers, are the file's
+    let content = |text: &str| -> Vec<String> {
+        text.lines().filter_map(|l| l.trim_start().split_once("  ").filter(|(n, _)| n.parse::<u64>().is_ok()).map(|(_, t)| t.to_string())).collect()
+    };
+    let text = r.ok("read_code", json!({"path": ".gitignore", "response_format": "detailed"}));
+    assert_eq!(content(&text), ["node_modules/", "vendor/x.js"], "{text}");
+    let text = r.ok("read_code", json!({"symbol": "f", "response_format": "detailed"}));
+    assert!(content(&text).contains(&"    # copied from vendor/lib.py".to_string()), "{text}");
+    for form in ["detailed", "concise"] {
+        let text = r.ok("read_code", json!({"path": ".gitignore", "response_format": form}));
+        assert!(!text.contains("vendored"), "{form}: {text}");
+        let text = r.ok("search_code", json!({"query": "copied from vendor lib", "response_format": form}));
+        assert!(!text.lines().any(|l| l.contains("# copied") && l.contains("vendored")), "{form}: {text}");
+        let text = r.ok("grep_code", json!({"pattern": "copied from", "response_format": form}));
+        assert!(!text.lines().any(|l| l.contains("# copied") && l.contains("vendored")), "{form}: {text}");
+    }
+    // a grep line of a vendored file: past its number, the file's line as it is
+    let text = r.ok("grep_code", json!({"pattern": "return 2"}));
+    assert!(text.lines().any(|l| l.trim_start().split_once(": ").is_some_and(|(n, t)| n.parse::<u64>().is_ok() && t == "    return 2")), "{text}");
+    // a location of the vendored file is still marked
+    assert!(r.ok("find_symbol", json!({"name": "g"})).lines().next().is_some_and(|l| l.contains("vendored")));
+}
+
 #[test]
 fn callees_that_are_all_external_say_no_no_results_in_either_form() {
     let mut r = Repo::new("only_external", &[("a.py", "import os\n\ndef run():\n    return os.getcwd()\n")]);

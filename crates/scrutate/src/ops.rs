@@ -469,17 +469,26 @@ pub fn envelope(root: &std::path::Path, mut result: Value, stopped: Option<Stop>
 
 /// Each line of `text` that names a path `vendored` holds (`path`, `path:start-end`,
 /// `path:line:column`, before any code the line quotes) is marked as the JSON item is:
-/// `[kind, vendored]` when the location is followed by a kind, else `(vendored)` at its end.
-pub fn mark_vendored_text(text: &str, vendored: &dyn Fn(&str) -> bool) -> String {
+/// `[kind, vendored]` when the location is followed by a kind, else `(vendored)` at its end. A
+/// line that quotes code (`path:12:5: code`) is left as it is, a mark never sharing a line with
+/// a file's text, and its path goes in `noted` for one note line at the end of the answer.
+pub fn mark_vendored_text(text: &str, vendored: &dyn Fn(&str) -> bool, noted: &mut Vec<String>) -> String {
     let mut out = String::with_capacity(text.len());
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        let Some(end) = vendored_location(line, vendored) else {
+        let Some((end, path, quotes)) = vendored_location(line, vendored) else {
             out.push_str(line);
             continue;
         };
+        if quotes {
+            if !noted.iter().any(|p| p == path) {
+                noted.push(path.to_string());
+            }
+            out.push_str(line);
+            continue;
+        }
         match line[end..].strip_prefix("  [").and_then(|r| r.find(']').map(|k| end + 3 + k)) {
             Some(close) => {
                 out.push_str(&line[..close]);
@@ -495,9 +504,34 @@ pub fn mark_vendored_text(text: &str, vendored: &dyn Fn(&str) -> bool) -> String
     out
 }
 
-/// Where the first location of a vendored path in `line` ends. Only the words before a
-/// location's closing `:` count: what follows it is the code of that line.
-fn vendored_location(line: &str, vendored: &dyn Fn(&str) -> bool) -> Option<usize> {
+/// A hit's block with its location line marked as `mark_vendored_text` marks it; the snippet
+/// below it is code and stays as it is.
+pub fn mark_hit_block(block: &str, vendored: &dyn Fn(&str) -> bool) -> String {
+    let (first, rest) = block.split_once('\n').map_or((block, None), |(f, r)| (f, Some(r)));
+    let marked = mark_vendored_text(first, vendored, &mut Vec::new());
+    rest.map_or_else(|| marked.clone(), |r| format!("{marked}\n{r}"))
+}
+
+/// The note line that names the vendored files of lines that quote code, or nothing.
+pub fn vendored_note(noted: &[String]) -> String {
+    if noted.is_empty() {
+        String::new()
+    } else {
+        format!("vendored: {}", noted.iter().map(|p| shown(p)).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// Where the first location of a vendored path in `line` ends. A line that starts with a line
+/// number (`12:` or `12` and two spaces) is a line of code, and only the words before a location
+/// that quotes code (`path:12:`, `path:12:5:`, `path:12:5`) count: what follows it is the code of
+/// that line. Code is never marked: an agent may copy it back into a file.
+/// Returns where the location ends, its path, and whether code follows it.
+fn vendored_location<'l>(line: &'l str, vendored: &dyn Fn(&str) -> bool) -> Option<(usize, &'l str, bool)> {
+    let body = line.trim_start_matches(' ');
+    let number = body.find(|c: char| !c.is_ascii_digit()).unwrap_or(body.len());
+    if number > 0 && (body[number..].starts_with(':') || body[number..].starts_with("  ") || number == body.len()) {
+        return None;
+    }
     let mut at = 0;
     for word in line.split(' ') {
         let start = at;
@@ -506,11 +540,16 @@ fn vendored_location(line: &str, vendored: &dyn Fn(&str) -> bool) -> Option<usiz
             continue;
         }
         // `path:12-14`, `path:12:5:`, `path`
-        let quoted_code = word.ends_with(':') && word[..word.len() - 1].rsplit(':').next().is_some_and(|n| n.parse::<u64>().is_ok());
+        // a location before quoted code: `path:12:` or `path:12:5:`, or `path:12:5` (a capture)
+        let numbers = |l: &str| !l.is_empty() && l.split(':').all(|n| n.parse::<u64>().is_ok());
+        let quoted_code = word.split_once(':').is_some_and(|(_, l)| match l.strip_suffix(':') {
+            Some(l) => numbers(l),
+            None => l.split(':').count() == 2 && numbers(l),
+        });
         let bare = word.trim_end_matches(':');
         let path = bare.split_once(':').filter(|(_, loc)| loc.starts_with(|c: char| c.is_ascii_digit())).map_or(bare, |(p, _)| p);
         if vendored(path) {
-            return Some(start + bare.len());
+            return Some((start + bare.len(), &line[start..start + path.len()], quoted_code));
         }
         if quoted_code {
             return None;
@@ -1787,7 +1826,16 @@ impl Answer {
         if let Some(root) = root {
             let v = crate::text::Vendored::of(root);
             let is = |p: &str| v.is(p);
-            parts.items = parts.items.iter().map(|item| mark_vendored_text(item, &is)).collect();
+            // a file's lines are its content, and a hit's lines below its location are its code
+            match self {
+                Answer::Read { .. } => {}
+                Answer::Hits { .. } => parts.items = parts.items.iter().map(|item| mark_hit_block(item, &is)).collect(),
+                _ => {
+                    let mut noted = Vec::new();
+                    parts.items = parts.items.iter().map(|item| mark_vendored_text(item, &is, &mut noted)).collect();
+                    parts.tail = joined(std::mem::take(&mut parts.tail), vendored_note(&noted));
+                }
+            }
             for line in parts.brief.iter_mut().flatten().flatten() {
                 if line.0.iter().any(|p| matches!(p, Piece::At(path, _) if v.is(path))) {
                     line.0.push(Piece::Text(" (vendored)".into()));
@@ -2449,6 +2497,30 @@ impl Answer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_location_is_marked_never_the_code_a_line_quotes() {
+        let v = |p: &str| p.starts_with("vendor/");
+        for same in
+            ["src/a.py:3:5  @c (call)  vendor/x.py", "   12  # copied from vendor/x.py", "    12: import vendor/x", "src/a.py:3: from vendor/x import y"]
+        {
+            assert_eq!(mark_vendored_text(same, &v, &mut Vec::new()), same);
+        }
+        assert_eq!(
+            mark_vendored_text("  app.py:4  calls vendor/l.py:1-1  [function] h", &v, &mut Vec::new()),
+            "  app.py:4  calls vendor/l.py:1-1  [function, vendored] h"
+        );
+        // a line that quotes a vendored file's code stays as it is; the answer notes the file once
+        let mut noted = Vec::new();
+        for line in ["vendor/x.py:3:5: code", "    vendor/x.py:9:1: more", "vendor/y.js:2:1  @c (call)  x"] {
+            assert_eq!(mark_vendored_text(line, &v, &mut noted), line);
+        }
+        assert_eq!(vendored_note(&noted), "vendored: vendor/x.py, vendor/y.js");
+        assert_eq!(
+            mark_hit_block("vendor/x.py:3-5  [function] f\n    # from vendor/z.py", &v),
+            "vendor/x.py:3-5  [function, vendored] f\n    # from vendor/z.py"
+        );
+    }
 
     #[test]
     fn on_windows_a_plain_path_is_under_the_root_canonicalize_gave() {

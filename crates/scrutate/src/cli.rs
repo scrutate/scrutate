@@ -1456,7 +1456,7 @@ pub fn run() -> Result<i32> {
                 } else {
                     let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
                     let blocks = crate::fmt::hit_blocks(&hits, &words, true, why);
-                    let blocks = blocks.iter().zip(&marked).map(|(b, &m)| if m { crate::ops::mark_vendored_text(b, &|_| true) } else { b.clone() }).collect();
+                    let blocks = blocks.iter().zip(&marked).map(|(b, &m)| if m { crate::ops::mark_hit_block(b, &|_| true) } else { b.clone() }).collect();
                     println!("{}", crate::ops::paged(blocks, "results", text_room(page.0), page.1));
                 }
             }
@@ -1916,7 +1916,7 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
         // a ranked search shows `--why` and lights up the words of every phrasing as given
         let words: Vec<String> = std::iter::once(query).chain(alt).flat_map(|q| query_words(q)).collect();
         let v = crate::text::Vendored::of(root);
-        let blocks = crate::fmt::hit_blocks(hits, &words, true, r.why).iter().map(|b| crate::ops::mark_vendored_text(b, &|p| v.is(p))).collect();
+        let blocks = crate::fmt::hit_blocks(hits, &words, true, r.why).iter().map(|b| crate::ops::mark_hit_block(b, &|p| v.is(p))).collect();
         writeln!(p.out, "{}", crate::ops::paged(blocks, "results", text_room(r.max_bytes), r.offset))?;
     } else {
         let text = answer.text_page(Some(root), text_room(r.max_bytes), r.offset, crate::ops::Form::Detailed, None).0;
