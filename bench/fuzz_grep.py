@@ -78,6 +78,14 @@ def make():
                 data = data[:at] + b"\xe9" + data[at:]
             elif r < 0.14:
                 data = b"\xef\xbb\xbf" + data
+            elif r < 0.20:
+                # a NUL where the reader's first reads end: in its 3-byte first read, just past it, in
+                # the first 64 KB or past them, as a binary file has it
+                pad = (("zz" * 40 + nl) * rnd.choice([0, 0, 1000])).encode()
+                data += pad
+                at = rnd.choice([0, 1, 2, 3, 4, rnd.randrange(len(data) + 1)])
+                data = data[:at] + b"\x00" + data[at:]
+                STATE["nul"].add(os.path.join(d, n))
             with open(os.path.join(WORK, d, n), "wb") as f:
                 f.write(data)
         if rnd.random() < 0.3:
@@ -152,6 +160,9 @@ def paths(a):
     while "-g" in a:
         i = a.index("-g")
         del a[i : i + 2]
+    if r < 0.7 and STATE["nul"]:
+        # a file with a NUL byte named on the command line: searched as ripgrep searches a named file
+        return a + [rnd.choice(sorted(STATE["nul"]))]
     if r < 0.8 or not dirs:
         return a + ["plain.txt"]
     if r < 0.85:

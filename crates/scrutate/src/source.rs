@@ -159,6 +159,8 @@ impl Source for Member<'_> {
 /// read into (a new zeroed buffer per file cost about 4% of the CPU of a Linux-tree search on Linux).
 pub(super) struct FileWorker {
     searcher: Searcher,
+    /// `searcher` without the binary check, for a file held whole that holds no NUL byte
+    text: Searcher,
     /// for files named on the command line, made on the first one
     named: Option<Searcher>,
     /// for the members of one archive, made on its first member
@@ -169,7 +171,14 @@ pub(super) struct FileWorker {
 }
 
 pub(super) fn file_worker(q: &Query) -> FileWorker {
-    FileWorker { searcher: make_searcher(q, BinaryDetection::quit(0), None, true, false), named: None, member: None, small: Vec::new(), out: Vec::new() }
+    FileWorker {
+        searcher: make_searcher(q, BinaryDetection::quit(0), None, true, false),
+        text: make_searcher(q, BinaryDetection::none(), None, true, false),
+        named: None,
+        member: None,
+        small: Vec::new(),
+        out: Vec::new(),
+    }
 }
 
 /// `heap`: the most bytes the searcher may hold, a line and its context (all of the input with -U).
@@ -193,6 +202,18 @@ pub(super) fn make_searcher(q: &Query, binary: BinaryDetection, heap: Option<usi
         .invert_match(q.invert)
         .max_matches(q.max_count)
         .build()
+}
+
+/// What the reader needs of a walked file `b`, whose first NUL is at `at`: in quit mode it stops
+/// at the read that meets the NUL, and its second read takes up to 64 KiB, so a NUL before that
+/// is met by then and nothing after it is ever read; copying the rest into the reader's buffer
+/// only cost time. (A named file's reader turns the NUL into a line break and reads on.)
+fn up_to_the_nul(b: &[u8], at: usize) -> &[u8] {
+    if at < (64 << 10) - 8 {
+        &b[..=at]
+    } else {
+        b
+    }
 }
 
 /// Files up to this size are read with one call (`first`) instead of reading until a zero-length
@@ -291,11 +312,19 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
     let mut sink = Collector { convert: named, out: std::mem::take(&mut w.out), ..r.collector(Arc::clone(&rel)) };
     let res = match whole {
-        // a file with a NUL byte is read as ripgrep reads it: a walked one through the reader, where
-        // the search stops at the read that meets the NUL, the first read being the 3 bytes of the
-        // BOM check; a named one as a slice where ripgrep maps it, through the reader on macOS
-        Some(b) if memchr::memchr(0, b).is_some() && (!named || !MAPS) => r.matcher.search_reader(searcher, b, &mut sink),
-        Some(b) => r.matcher.search_slice(searcher, b, &mut sink),
+        Some(b) => match memchr::memchr(0, b) {
+            // nothing for a binary check to find: one pass over the file, as before the NUL rules.
+            // A byte-order mark is transcoded, and the text it gives may hold a NUL
+            None if !src.expands() && !starts_with_bom(b) => r.matcher.search_slice(&mut w.text, b, &mut sink),
+            None => r.matcher.search_slice(searcher, b, &mut sink),
+            // a file with a NUL byte is read as ripgrep reads it: a walked one through the reader,
+            // where the search stops at the read that meets the NUL, the first read being the 3
+            // bytes of the BOM check; a named one as a slice where ripgrep maps it, through the
+            // reader on macOS
+            Some(at) if !named => r.matcher.search_reader(searcher, up_to_the_nul(b, at), &mut sink),
+            Some(_) if !MAPS => r.matcher.search_reader(searcher, b, &mut sink),
+            Some(_) => r.matcher.search_slice(searcher, b, &mut sink),
+        },
         None => src.stream(r.matcher, searcher, &mut sink),
     };
     match res {

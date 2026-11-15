@@ -103,6 +103,11 @@ def random_corpus(rng: random.Random, root: str) -> list[str]:
             # a Latin-1 byte: plain output prints it as it is, JSON as U+FFFD
             at = rng.randrange(len(data))
             data = data[:at] + b"\xe9" + data[at:]
+        elif rng.random() < 0.06:
+            # a NUL byte, as a binary file has it: in the reader's 3-byte first read, just past it,
+            # or anywhere (a file past 64 KB holds it past the first 64 KB about as often)
+            at = rng.choice([0, 1, 2, 3, 4, rng.randrange(len(data) + 1)])
+            data = data[:at] + b"\x00" + data[at:]
         with open(p, "wb") as f:
             f.write(data)
     if rng.random() < 0.3:
