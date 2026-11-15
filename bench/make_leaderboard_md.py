@@ -171,9 +171,9 @@ def engine_a(data, label):
         for key, name in METRICS.items():
             out.append(f"Status counts, {name}: " + "; ".join(
                 f"{mode} mode " + count_line([r["metrics"][key][mode]["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
-    head ="| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files | ratio vs best (95% CI) | status |"
+    head ="| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files | walk and read | ratio vs best (95% CI) | status |"
     out.append(head)
-    out.append("|" + "---|" * (len(TOOLS) + 5))
+    out.append("|" + "---|" * (len(TOOLS) + 6))
     for bid, r in data["benchmarks"].items():
         cells = []
         for t in TOOLS:
@@ -198,7 +198,7 @@ def engine_a(data, label):
             flag += f" (measured again; first: {first['status']}" + (f" {first['ratio']:.3f}" if first.get("ratio") else "") + ")"
         if r.get("resident") is not None and r["resident"] < 0.95:
             flag += f" ({r['resident']:.0%} of the files in the page cache)"
-        out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))} | {ratio} | {r['status']}{flag} |")
+        out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))} | {ms(r.get('walkread', {}).get('median'))} | {ratio} | {r['status']}{flag} |")
     out.append("")
     for bid, r in data["benchmarks"].items():
         n = r["reference"].get("files_not_compared")
@@ -347,6 +347,10 @@ def main() -> int:
         "thread counts: one per CPU and half that with a warm cache, up to 96 with a cold one (a disk takes more reads at once than "
         "there are cores). A row measured later under heavier load can read PARTIAL where a quieter run reads BLOCKED; PARTIAL is "
         "the weaker claim.",
+        "- The walk-and-read floor (`bench/walkread.c`) lists the tree and reads every file in it, skipping hidden entries and "
+        "reading no ignore rule, with the same thread counts: the least a search that has to find its files does, where the "
+        "read-files ceiling is handed the list. It is measured once per corpus and cache state, for the rows that search every "
+        "non-hidden file.",
         "- A benchmark where some tool's block medians differed by more than 25% was disturbed by other work and measured again once, "
         "whatever its status (`leaderboard.py --redo-unstable`); its status column also gives the first measurement, and the second "
         "reflects the machine as it was by then."]

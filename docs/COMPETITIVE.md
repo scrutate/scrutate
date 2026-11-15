@@ -50,7 +50,9 @@ where the others use one per core: 18 to 24% above the time to merely read the f
 **On macOS, opening files is the expensive part, and more threads make it slower.** Reading every
 file of the Linux tree and nothing else (the "read files" column, `bench/rawread.c`) is fastest on
 five threads, one per performance core: 518 ms. Scrutate searches the same files in 581 ms, 12%
-above that floor; the next tool takes 711 ms. On LLVM it is 10% above the floor, on 200,000 small
+above that floor; the next tool takes 711 ms. That floor is handed the list of files; the
+leaderboard's "walk and read" column (`bench/walkread.c`) is a second one, which lists the tree
+and reads every file in it, the least a search that has to find its files does. On LLVM it is 10% above the floor, on 200,000 small
 files within 1%. So Scrutate walks with one thread per performance core and adds threads when its
 reads show the files coming from disk: up to twice the cores on macOS, up to 64 on Linux
 ([Architecture](ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)).

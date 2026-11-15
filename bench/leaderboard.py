@@ -29,7 +29,10 @@ Per benchmark:
     bootstrap over the runs: PASS if it lies below 1, FAIL above 1, PARTIAL if it contains 1;
     BLOCKED (a tie at the hardware limit) when it contains 1 and both medians are within 15% of
     the time to merely read the same files (bench/rawread.c, the fastest of several thread
-    counts). The same rule, without BLOCKED, gives a status for CPU time (user + system) and for
+    counts). Beside it the row gives a second floor, the time to list the tree and read every
+    file in it (bench/walkread.c, no ignore rules, hidden entries skipped): the least a search
+    that has to find its files does, measured for the rows that search every non-hidden file
+    (the ignore and git modes). The same rule, without BLOCKED, gives a status for CPU time (user + system) and for
     peak resident memory, against the competitor lowest on that metric, for the default mode and
     for -j1 (`metrics`).
  5. Stability. A contender whose block medians differ by more than 25% was measured while the
@@ -570,10 +573,28 @@ def corpus_digest(corpora, name):
 
 
 RAWREAD: dict = {}
+WALKREAD: dict = {}
 
 
 def rawread_bin():
     return c_helper("rawread", "-pthread")
+
+
+def walkread_bin():
+    return c_helper("walkread", "-pthread")
+
+
+def fastest_floor(cmd, cdir, a, prepare):
+    """The fastest of a few thread counts: cold reads wait on the disk, which takes more of them at
+    once than there are cores, and warm reads on macOS are fastest on the performance cores alone."""
+    cpus = os.cpu_count() or 4
+    best = None
+    for threads in sorted({cpus, max(1, cpus // 2)} if a.cache == "warm" else {cpus, 24, 48, 96}):
+        rr = hyperfine(cmd + [str(threads)], cdir, {}, a.runs if a.cache == "warm" else min(a.runs, 10), 3, prepare)
+        cur = {"median": statistics.median(rr["times"]), "n": rr["n"], "threads": threads, "times": rr["times"]}
+        if best is None or cur["median"] < best["median"]:
+            best = cur
+    return best
 
 
 def run_bench(b, corpora, a, cache_dir):
@@ -699,16 +720,14 @@ def run_bench(b, corpora, a, cache_dir):
         # the ceiling depends only on the file set and the cache state: measured once per run
         key = f"{b['corpus']}|{b['mode']}|{a.cache}|{len(files)}"
         if key not in RAWREAD:
-            cpus = os.cpu_count() or 4
-            # the ceiling is the fastest of a few thread counts: cold reads wait on the disk, which
-            # takes more of them at once than there are cores, and warm reads on macOS are fastest
-            # on the performance cores alone
-            for threads in sorted({cpus, max(1, cpus // 2)} if a.cache == "warm" else {cpus, 24, 48, 96}):
-                rr = hyperfine([rawread_bin(), lst, str(threads)], cdir, {}, a.runs if a.cache == "warm" else min(a.runs, 10), 3, prepare)
-                cur = {"median": statistics.median(rr["times"]), "n": rr["n"], "threads": threads, "times": rr["times"]}
-                if key not in RAWREAD or cur["median"] < RAWREAD[key]["median"]:
-                    RAWREAD[key] = cur
+            RAWREAD[key] = fastest_floor([rawread_bin(), lst], cdir, a, prepare)
         res["rawread"] = {k: v for k, v in RAWREAD[key].items() if k != "times"}
+        if b["mode"] in ("ignore", "git"):
+            # the walk reads the tree, whatever the row's file list: one per corpus and cache state
+            wkey = f"{b['corpus']}|{a.cache}"
+            if wkey not in WALKREAD:
+                WALKREAD[wkey] = fastest_floor([walkread_bin(), "."], cdir, a, prepare)
+            res["walkread"] = {k: v for k, v in WALKREAD[wkey].items() if k != "times"}
     if not structural and a.cache == "warm":
         # a warm run is one whose files were in memory: on a machine short of it they are not
         res["resident"] = resident(lst, cdir)
@@ -940,12 +959,16 @@ def main() -> int:
     os.makedirs(cache_dir, exist_ok=True)
     data = json.load(open(a.out)) if os.path.exists(a.out) else {"benchmarks": {}}
     RAWREAD.update(data.get("rawread", {}))
+    WALKREAD.update(data.get("walkread", {}))
     if a.restatus:
         for r in data["benchmarks"].values():
             n = r["reference"]["files_listed"]
             raw = RAWREAD.get(f"{r['corpus']}|{r['mode']}|{r['cache']}|{n}")
             if raw and not r.get("concurrent"):
                 r["rawread"] = {k: v for k, v in raw.items() if k != "times"}
+            walk = WALKREAD.get(f"{r['corpus']}|{r['cache']}")
+            if walk and not r.get("concurrent") and r["mode"] in ("ignore", "git"):
+                r["walkread"] = {k: v for k, v in walk.items() if k != "times"}
             decide(r, [t for t, x in r["tools"].items() if x.get("status") == "ok"], r.get("runs", data["settings"]["runs"]), r.get("alpha", ALPHA))
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
@@ -988,6 +1011,7 @@ def main() -> int:
             r["first"] = {k: old.get(k) for k in ("status", "ratio", "ci95", "max_load")}
         data["benchmarks"][b["id"]] = r
         data["rawread"] = RAWREAD
+        data["walkread"] = WALKREAD
         json.dump(data, open(a.out, "w"), indent=1)
         best = r.get("best_competitor")
         print(f"  {r['status']}: scrutate {r['tools'].get('scrutate', {}).get('median', float('nan')) * 1000:.1f} ms; best competitor {best} "
