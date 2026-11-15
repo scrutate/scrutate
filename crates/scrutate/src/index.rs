@@ -3424,6 +3424,24 @@ impl Index {
         if !r.database_ok {
             r.problems.push(format!("database integrity: {integrity}"));
         }
+        // the rows the chunks carry beside them: each code definition's duplicate keys, and no
+        // key, call or import of a chunk or file the index no longer holds
+        let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+        for (sql, what) in [
+            (
+                format!("SELECT COUNT(*) FROM chunks c WHERE c.kind IN ({kinds}) AND NOT EXISTS (SELECT 1 FROM dupkeys d WHERE d.id = c.id)"),
+                "code definitions without duplicate keys",
+            ),
+            ("SELECT COUNT(*) FROM dupkeys WHERE id NOT IN (SELECT id FROM chunks)".to_string(), "duplicate keys of chunks that are gone"),
+            ("SELECT COUNT(*) FROM refs WHERE chunk_id NOT IN (SELECT id FROM chunks)".to_string(), "calls of chunks that are gone"),
+            ("SELECT COUNT(*) FROM imports WHERE path NOT IN (SELECT path FROM files)".to_string(), "imports of files that are gone"),
+        ] {
+            match self.db.query_row(&sql, [], |row| row.get::<_, i64>(0)) {
+                Ok(0) => {}
+                Ok(n) => r.problems.push(format!("{n} {what}")),
+                Err(e) => r.problems.push(format!("{what}: {e}")),
+            }
+        }
         r.chunks_db = self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |row| row.get(0))?;
         let names = self.segments();
         r.segments = names.len();
@@ -4213,6 +4231,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// `check` finds a code definition without its duplicate keys, and keys, calls and imports
+    /// left behind by a chunk or file that is gone.
+    #[test]
+    fn check_finds_the_rows_a_chunk_carries_out_of_step_with_it() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_check_rows_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "import os\n\n\ndef alpha(x):\n    return helper(x)\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(ix.check(false).unwrap().problems, Vec::<String>::new());
+        for (damage, said) in [
+            ("DELETE FROM dupkeys", "code definitions without duplicate keys"),
+            ("INSERT INTO dupkeys(id,nbody,body,words,ntok) VALUES (999999,1,1,1,1)", "duplicate keys of chunks that are gone"),
+            ("INSERT INTO refs(chunk_id,callee) VALUES (999999,'x')", "calls of chunks that are gone"),
+            ("INSERT INTO imports(path,module,line) VALUES ('gone.py','os',1)", "imports of files that are gone"),
+        ] {
+            ix.db.execute_batch(damage).unwrap();
+            let problems = ix.check(false).unwrap().problems;
+            assert!(problems.iter().any(|p| p.ends_with(said)), "{damage}: {problems:?}");
+            // what a rebuild does
+            ix.clear_in_place().unwrap();
+            ix.update(false).unwrap();
+            assert_eq!(ix.check(false).unwrap().problems, Vec::<String>::new(), "a rebuild puts it right");
+        }
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn each_definition_keeps_its_duplicate_keys_through_an_update() {
         use crate::intel::DupKeys;
@@ -4238,6 +4285,22 @@ mod tests {
         std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 2\n").unwrap();
         ix.update(false).unwrap();
         assert_eq!(check(&ix), 1);
+        // the reuse paths: a file moved under its name to another directory takes its artifact,
+        // and one deleted and put back takes the one the index kept
+        std::fs::write(root.join("b.py"), "def beta(y):\n    return y * 3\n").unwrap();
+        ix.update(false).unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::rename(root.join("b.py"), root.join("sub/b.py")).unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(check(&ix), 2, "after a move");
+        let body = std::fs::read(root.join("a.py")).unwrap();
+        std::fs::remove_file(root.join("a.py")).unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(check(&ix), 1, "after a delete");
+        std::fs::write(root.join("a.py"), body).unwrap();
+        ix.update(false).unwrap();
+        assert_eq!(check(&ix), 2, "after a restore");
+        assert_eq!(ix.check(false).unwrap().problems, Vec::<String>::new());
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }
