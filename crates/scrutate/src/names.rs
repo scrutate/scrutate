@@ -73,6 +73,11 @@ impl<'a> Names<'a> {
 
     /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
     pub fn references(&mut self, name: &str, max_results: u64) -> Result<Resolved> {
+        self.references_in(name, max_results, None)
+    }
+
+    /// `references`, Engine A walking only the files `scope` can admit.
+    pub fn references_in(&mut self, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>) -> Result<Resolved> {
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
         let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
@@ -80,6 +85,10 @@ impl<'a> Names<'a> {
         // another case only in a file of such a language
         let mut any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
         let walk = crate::files::repository_files(&s.ix.root);
+        let walk = match scope {
+            Some(f) => f.walk(walk),
+            None => walk,
+        };
         // an alias in such a language (`use function Lib\phpfn as pf`) is used in any case too
         let (mut occurrences, notes, mut truncated) = loop {
             if any_case {

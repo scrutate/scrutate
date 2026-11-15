@@ -1189,10 +1189,26 @@ pub fn group_text(g: &RefGroup) -> String {
 /// Definitions (index), callers (index) and every whole-word occurrence of `name` (Engine A),
 /// grouped by the enclosing symbol. Works without an index too (then only occurrences, ungrouped).
 pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<References> {
+    references_in(s, name, max_results, None)
+}
+
+/// `references` with what `scope` admits: Engine A walks only the files it can admit, and the
+/// definitions, callers and groups outside it are left out.
+pub fn references_in(s: &Searcher, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>) -> Result<References> {
     let bare = bare_name(s, name)?;
-    let definitions = s.ix.definitions(&bare)?;
-    let callers = s.callers(name, 200)?;
-    let (groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results), &crate::files::repository_files(&s.ix.root))?;
+    let mut definitions = s.ix.definitions(&bare)?;
+    let mut callers = s.callers(name, 200)?;
+    let walk = crate::files::repository_files(&s.ix.root);
+    let walk = match scope {
+        Some(f) => f.walk(walk),
+        None => walk,
+    };
+    let (mut groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results), &walk)?;
+    if let Some(f) = scope {
+        definitions.retain(|d| f.admits(&d.path, &d.kind));
+        callers.retain(|h| f.admits_path(&h.path));
+        groups.retain(|g| f.admits_path(&g.path));
+    }
     Ok(References { definitions, callers, groups, truncated })
 }
 

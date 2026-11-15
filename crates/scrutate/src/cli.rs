@@ -121,6 +121,29 @@ pub enum Shell {
     Elvish,
 }
 
+/// The scope filters of `search`, `symbol` and `refs` (`filter::Filter`).
+#[derive(clap::Args, Clone, Debug, Default)]
+pub struct FilterArgs {
+    /// keep files by glob, as grep -g (prefix ! to exclude); repeatable
+    #[arg(short = 'g', long = "glob")]
+    pub globs: Vec<String>,
+    /// keep files of this type, as grep -t (see --type-list; prefix ! to exclude); repeatable
+    #[arg(short = 't', long = "type", value_delimiter = ',')]
+    pub types: Vec<String>,
+    /// keep files parsed as this language (see `scrutate languages`); repeatable
+    #[arg(long = "lang", value_delimiter = ',')]
+    pub langs: Vec<String>,
+    /// keep definitions of this kind (function, class, method, ...); repeatable
+    #[arg(long = "kind", value_delimiter = ',')]
+    pub kinds: Vec<String>,
+}
+
+impl From<FilterArgs> for crate::filter::Filter {
+    fn from(a: FilterArgs) -> Self {
+        crate::filter::Filter { globs: a.globs, types: a.types, langs: a.langs, kinds: a.kinds }
+    }
+}
+
 /// The arguments of `scrutate grep`.
 #[derive(clap::Args)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
@@ -533,6 +556,8 @@ pub enum Cmd {
         why: bool,
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Unified: pick the engine from the query (regex-looking -> grep, otherwise ranked search; falls back to identifier grep without an index)
     Find {
@@ -550,6 +575,8 @@ pub enum Cmd {
         limit: usize,
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// which functions call this one?
     Callers {
@@ -634,6 +661,8 @@ pub enum Cmd {
         /// no resolution: definitions, callers and every whole-word occurrence grouped by enclosing symbol
         #[arg(long, conflicts_with = "def")]
         textual: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// code similar to a symbol or location (`name`, `Class.method` or `path:line`)
     Similar {
@@ -1402,7 +1431,8 @@ pub fn run() -> Result<i32> {
             println!("{}", serde_json::to_string(&v)?);
             Ok(0)
         }
-        Cmd::Search { query, alt, also, k, why, json } => {
+        Cmd::Search { query, alt, also, k, why, json, filter } => {
+            let filter = crate::filter::Filter::from(filter);
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().cloned());
             // each repository once, whatever the spelling; the first is the current one
@@ -1414,14 +1444,14 @@ pub fn run() -> Result<i32> {
                 }
             }
             if roots.len() == 1 {
-                let op = Op::Search { query, alt, k, snippets: true };
+                let op = Op::Search { query, alt, k, snippets: true }.scoped(filter);
                 return run_request(&cli.root, crate::session::Request { op, json, max_bytes: page.0, offset: page.1, outside: None, why });
             }
             // (hit, its repository) with the path a reader opens from here: another repository's
             // results carry its path as given
             let mut hits: Vec<(crate::search::Hit, usize)> = Vec::new();
             for (i, (root, _)) in roots.iter().enumerate() {
-                let op = Op::Search { query: query.clone(), alt: alt.clone(), k, snippets: true };
+                let op = Op::Search { query: query.clone(), alt: alt.clone(), k, snippets: true }.scoped(filter.clone());
                 let crate::ops::Answer::Hits { hits: part, .. } = open_fresh(root)?.run_as_is(&op)? else { unreachable!("a search answers hits") };
                 hits.extend(part.into_iter().map(|h| (h, i)));
             }
@@ -1508,7 +1538,9 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, limit, json } => run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }, json, page, outside.as_deref()),
+        Cmd::Symbol { name, limit, json, filter } => {
+            run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }.scoped(filter.into()), json, page, outside.as_deref())
+        }
         Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page, outside.as_deref()),
         Cmd::Callees { name, limit, json } => run_op(&cli.root, Op::Callees { name: here.location(&name), limit }, json, page, outside.as_deref()),
         Cmd::CallPath { from, to, depth, json } => {
@@ -1518,9 +1550,9 @@ pub fn run() -> Result<i32> {
         Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: here.path(&file) }, json, page, outside.as_deref()),
         Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target: here.path(&target) }, json, page, outside.as_deref()),
         Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: here.path(&file) }, json, page, outside.as_deref()),
-        Cmd::Refs { name, json, max_results, def, textual } => {
+        Cmd::Refs { name, json, max_results, def, textual, filter } => {
             let def = def.map(|d| if crate::intel::location(&d).is_some() { here.location(&d) } else { here.path(&d) });
-            run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page, outside.as_deref())
+            run_op(&cli.root, Op::Refs { name, max_results, textual, def }.scoped(filter.into()), json, page, outside.as_deref())
         }
         Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page, outside.as_deref()),
         Cmd::Read { path, symbol, start, end, json } => {
@@ -1912,7 +1944,7 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
         writeln!(p.err, "{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default())?;
         p.code = 1;
         return Ok(p);
-    } else if let (false, Op::Search { query, alt, .. }, Answer::Hits { hits, .. }) = (answer.is_empty(), &r.op, &answer) {
+    } else if let (false, Op::Search { query, alt, .. }, Answer::Hits { hits, .. }) = (answer.is_empty(), r.op.unscoped(), &answer) {
         // a ranked search shows `--why` and lights up the words of every phrasing as given
         let words: Vec<String> = std::iter::once(query).chain(alt).flat_map(|q| query_words(q)).collect();
         let v = crate::text::Vendored::of(root);

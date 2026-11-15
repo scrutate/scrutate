@@ -13,6 +13,7 @@ pub mod config;
 pub mod custom;
 pub mod dead;
 pub mod files;
+pub mod filter;
 pub mod finder;
 pub mod findings;
 pub mod fmt;

@@ -807,6 +807,30 @@ pub struct LexStore {
     pub avgdl: f64,
 }
 
+/// The chunks a search may return, one bit per chunk id.
+pub struct Allow {
+    bits: Vec<u64>,
+}
+
+impl Allow {
+    pub fn of(ids: &[i64]) -> Allow {
+        let top = ids.iter().copied().filter(|&i| i >= 0).max().map_or(0, |m| m as usize / 64 + 1);
+        let mut bits = vec![0u64; top];
+        for &i in ids.iter().filter(|&&i| i >= 0) {
+            bits[i as usize / 64] |= 1 << (i as usize % 64);
+        }
+        Allow { bits }
+    }
+
+    pub fn has(&self, id: i64) -> bool {
+        id >= 0 && self.bits.get(id as usize / 64).is_some_and(|w| w >> (id as usize % 64) & 1 == 1)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bits.iter().all(|w| *w == 0)
+    }
+}
+
 impl LexStore {
     pub fn open(base: &Path, names: &[String]) -> Result<LexStore> {
         let segs = names.iter().map(|n| Segment::open(&base.join(n))).collect::<Result<Vec<_>>>()?;
@@ -980,6 +1004,11 @@ impl LexStore {
 
     /// Top `limit` chunks by field-weighted BM25 -> (ids, scores), best first.
     pub fn search(&mut self, keys: &[i64], limit: usize) -> Result<(Vec<i64>, Vec<f32>)> {
+        self.search_in(keys, limit, None)
+    }
+
+    /// `search` over the chunks `allow` holds, or every chunk.
+    pub fn search_in(&mut self, keys: &[i64], limit: usize, allow: Option<&Allow>) -> Result<(Vec<i64>, Vec<f32>)> {
         if keys.is_empty() || self.n_alive == 0 {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -1019,12 +1048,12 @@ impl LexStore {
                     f[d] = 0.0;
                 }
             }
+            let ids = s.ids();
             for (r, al) in alive.iter().enumerate() {
-                if !al {
+                if !al || allow.is_some_and(|a| !a.has(ids[r])) {
                     acc[r] = 0.0;
                 }
             }
-            let ids = s.ids();
             for p in top_indices(&acc, limit, |v| v > 0.0) {
                 out_ids.push(ids[p]);
                 out_sc.push(acc[p]);
@@ -1089,20 +1118,26 @@ impl LexStore {
     /// with an inverted-file index scan their `nprobe` closest clusters (all of them when nprobe is
     /// at least the number of clusters, which makes the result exact).
     pub fn semantic_top(&self, qz: &[f32], limit: usize, nprobe: Option<usize>) -> Result<Vec<i64>> {
+        self.semantic_top_in(qz, limit, nprobe, None)
+    }
+
+    /// `semantic_top` over the chunks `allow` holds, or every chunk.
+    pub fn semantic_top_in(&self, qz: &[f32], limit: usize, nprobe: Option<usize>, allow: Option<&Allow>) -> Result<Vec<i64>> {
         let nprobe = nprobe.unwrap_or(self.nprobe);
         let mut out_ids: Vec<i64> = Vec::new();
         let mut out_sc: Vec<f32> = Vec::new();
         for si in 0..self.segs.len() {
             let s = &self.segs[si];
             let (part, sc): (Vec<usize>, Vec<f32>) = if s.ivf.is_some() {
-                self.ivf_scan(si, qz, limit, nprobe)
+                self.ivf_scan(si, qz, limit, nprobe, allow)
             } else {
                 let Some(m) = self.mix[si].as_ref() else {
                     continue;
                 };
                 let k = s.k;
-                let alive = &self.alive[si];
-                let sc: Vec<f32> = (0..s.n).map(|r| if alive[r] { dot64(&m[r * k..(r + 1) * k], qz) } else { f32::NEG_INFINITY }).collect();
+                let (alive, ids) = (&self.alive[si], s.ids());
+                let live = |r: usize| alive[r] && allow.is_none_or(|a| a.has(ids[r]));
+                let sc: Vec<f32> = (0..s.n).map(|r| if live(r) { dot64(&m[r * k..(r + 1) * k], qz) } else { f32::NEG_INFINITY }).collect();
                 let part = top_indices(&sc, limit, |v| v.is_finite());
                 let scs = part.iter().map(|&p| sc[p]).collect();
                 (part, scs)
@@ -1120,13 +1155,14 @@ impl LexStore {
     }
 
     /// -> (segment rows, scores) of the best `limit` live rows in the `nprobe` closest clusters.
-    fn ivf_scan(&self, si: usize, qz: &[f32], limit: usize, nprobe: usize) -> (Vec<usize>, Vec<f32>) {
+    fn ivf_scan(&self, si: usize, qz: &[f32], limit: usize, nprobe: usize, allow: Option<&Allow>) -> (Vec<usize>, Vec<f32>) {
         let s = &self.segs[si];
         let ivf = s.ivf.as_ref().unwrap();
         let k = s.k;
         let (vq, vs) = s.vec().unwrap(); // cluster order
         let order = ivf.order.view::<i32>().unwrap();
         let alive = self.alive_sorted[si].as_ref().unwrap();
+        let ids = s.ids();
         let ranges: Vec<(usize, usize)> = if nprobe < ivf.nclusters {
             let cs: Vec<f32> = (0..ivf.nclusters).map(|c| dot64(&ivf.cent[c * k..(c + 1) * k], qz)).collect();
             top_indices(&cs, nprobe, |_| true).into_iter().map(|c| (ivf.ptr[c] as usize, ivf.ptr[c + 1] as usize)).collect()
@@ -1140,7 +1176,7 @@ impl LexStore {
         for (a, b) in ranges {
             for p in a..b {
                 positions.push(p);
-                if !alive[p] {
+                if !alive[p] || allow.is_some_and(|a| !a.has(ids[order[p] as usize])) {
                     sc.push(f32::NEG_INFINITY);
                     continue;
                 }
@@ -1251,6 +1287,14 @@ impl LexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_allow_set_holds_the_ids_it_was_made_of() {
+        let a = Allow::of(&[3, 64, 200, 3]);
+        assert!(a.has(3) && a.has(64) && a.has(200));
+        assert!(!a.has(0) && !a.has(4) && !a.has(63) && !a.has(201) && !a.has(100_000) && !a.has(-1));
+        assert!(!a.is_empty() && Allow::of(&[]).is_empty());
+    }
 
     #[test]
     fn token_keys_match_python_blake2b() {

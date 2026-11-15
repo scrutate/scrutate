@@ -19,6 +19,11 @@ use crate::text::{literal_candidates, name_key, query_terms, query_wholes, Words
 pub const PRUNE: usize = 200; // the learned ranker sees (at most) this many candidates
 pub const LEX_LIMIT: usize = 100;
 pub const SEM_LIMIT: usize = 100;
+/// Candidates the exact source gives.
+const EXACT_LIMIT: usize = 60;
+/// How much larger a filtered search makes its pools each time too few hits pass, and the most.
+const FILTER_WIDEN: usize = 8;
+const FILTER_WIDEN_MAX: usize = 64;
 /// What a vendored hit loses from its ranker score: the bench/quality sweep put 0.5 and 1 at the
 /// unpenalized MRR@10 and 4 well below, while a strict tier lost a fifth of the queries.
 const VENDORED_MARGIN: f64 = 1.0;
@@ -378,6 +383,19 @@ impl Searcher {
 
     // ------------------------------------------------------------ candidates + features
     pub fn candidates(&mut self, query: &str, use_literal: bool) -> Result<Candidates> {
+        self.candidates_in(query, use_literal, 1, None, None)
+    }
+
+    /// `candidates` from pools `widen` times their size, the lexical and semantic ones drawn from
+    /// the chunks `allow` holds, keeping the rows `filter` admits.
+    fn candidates_in(
+        &mut self,
+        query: &str,
+        use_literal: bool,
+        widen: usize,
+        filter: Option<&crate::filter::Compiled>,
+        allow: Option<&crate::lex::Allow>,
+    ) -> Result<Candidates> {
         let q = QueryInfo::parse(query);
         self.sync()?;
         let keys = lex_keys(&q);
@@ -386,7 +404,7 @@ impl Searcher {
         let qz: Option<Vec<f32>> = model.and_then(|m| m.encode_query(&q.terms));
         let mut found: [Vec<i64>; 3] = Default::default();
         for s in Source::ALL {
-            found[s as usize] = self.find(s, &q, &keys, qz.as_deref())?;
+            found[s as usize] = self.find(s, &q, &keys, qz.as_deref(), widen, allow)?;
         }
         let want_lit = use_literal && !q.lits.is_empty();
         let mut ids: Vec<i64> = Vec::new();
@@ -400,7 +418,7 @@ impl Searcher {
             return Ok(Candidates { q, rows: Vec::new(), x: Vec::new(), found });
         }
         let by_id = self.ix.chunks(&ids)?;
-        ids.retain(|i| by_id.contains_key(i));
+        ids.retain(|i| by_id.get(i).is_some_and(|r| filter.is_none_or(|f| f.admits(&r.path, &r.kind))));
         let rows: Vec<ChunkRow> = ids.iter().map(|i| by_id[i].clone()).collect();
         let n = ids.len();
         let lit = if want_lit { Self::literal_hits(&q.lits, &rows) } else { HashMap::new() };
@@ -505,11 +523,11 @@ impl Searcher {
     }
 
     /// The ids `source` finds for the query, best first.
-    fn find(&mut self, source: Source, q: &QueryInfo, keys: &[i64], qz: Option<&[f32]>) -> Result<Vec<i64>> {
+    fn find(&mut self, source: Source, q: &QueryInfo, keys: &[i64], qz: Option<&[f32]>, widen: usize, allow: Option<&crate::lex::Allow>) -> Result<Vec<i64>> {
         Ok(match (source, qz) {
-            (Source::Exact, _) => self.exact(q, 60)?,
-            (Source::Lexical, _) => self.ix.lex()?.search(keys, LEX_LIMIT)?.0,
-            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_top(z, SEM_LIMIT, None)?,
+            (Source::Exact, _) => self.exact(q, EXACT_LIMIT * widen)?,
+            (Source::Lexical, _) => self.ix.lex()?.search_in(keys, LEX_LIMIT * widen, allow)?.0,
+            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_top_in(z, SEM_LIMIT * widen, None, allow)?,
             (Source::Semantic, None) => Vec::new(),
         })
     }
@@ -608,8 +626,50 @@ impl Searcher {
         self.hits(&c, &scores, k, with_text)
     }
 
+    /// `search` keeping the definitions `filter` admits. When it keeps at most half the files,
+    /// the lexical and semantic pools are drawn from their chunks alone (`allowed`). The pools
+    /// are cut before the rest of the filter sees them, so while fewer than `k` hits pass, the
+    /// search runs again with pools `FILTER_WIDEN` times as large, until the lexical and exact
+    /// pools come back short.
+    pub fn search_filtered(&mut self, query: &str, k: usize, with_text: bool, filter: &crate::filter::Compiled) -> Result<Vec<Hit>> {
+        let allow = self.allowed(filter)?;
+        if allow.as_ref().is_some_and(|a| a.is_empty()) {
+            return Ok(Vec::new());
+        }
+        let mut widen = 1;
+        loop {
+            let c = self.candidates_in(query, true, widen, Some(filter), allow.as_ref())?;
+            let short = c.found[Source::Exact as usize].len() < EXACT_LIMIT * widen && c.found[Source::Lexical as usize].len() < LEX_LIMIT * widen;
+            let scores = self.score(&c.x)?;
+            let hits = self.hits(&c, &scores, k, with_text)?;
+            if hits.len() >= k || short || widen >= FILTER_WIDEN_MAX {
+                return Ok(hits);
+            }
+            widen *= FILTER_WIDEN;
+        }
+    }
+
+    /// The chunks of the files `filter` keeps, when it keeps at most half of them: past that, most
+    /// candidates pass and the pools lose little to it.
+    fn allowed(&self, filter: &crate::filter::Compiled) -> Result<Option<crate::lex::Allow>> {
+        if !filter.has_files() {
+            return Ok(None);
+        }
+        let files = self.ix.files()?;
+        let kept: Vec<&str> = files.iter().map(String::as_str).filter(|p| filter.admits_path(p)).collect();
+        if kept.len() * 2 > files.len() {
+            return Ok(None);
+        }
+        Ok(Some(crate::lex::Allow::of(&self.ix.chunk_ids_in(&kept)?)))
+    }
+
     /// Several phrasings of one need (synonyms, guessed identifiers): rank-fuse the results.
     pub fn search_many(&mut self, queries: &[String], k: usize, with_text: bool) -> Result<Vec<Hit>> {
+        self.search_many_in(queries, k, with_text, None)
+    }
+
+    /// `search_many`, each phrasing searched with `search_filtered` when there is a filter.
+    pub fn search_many_in(&mut self, queries: &[String], k: usize, with_text: bool, filter: Option<&crate::filter::Compiled>) -> Result<Vec<Hit>> {
         let mut fused: HashMap<i64, f64> = HashMap::new();
         let mut meta: HashMap<i64, Hit> = HashMap::new();
         let mut first_seen: Vec<i64> = Vec::new();
@@ -617,7 +677,11 @@ impl Searcher {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 anyhow::bail!("cancelled");
             }
-            for (r, h) in self.search(q, 30, false)?.into_iter().enumerate() {
+            let found = match filter {
+                Some(f) => self.search_filtered(q, 30, false, f)?,
+                None => self.search(q, 30, false)?,
+            };
+            for (r, h) in found.into_iter().enumerate() {
                 *fused.entry(h.id).or_insert(0.0) += 1.0 / (60.0 + (r + 1) as f64);
                 meta.entry(h.id).or_insert_with(|| {
                     first_seen.push(h.id);

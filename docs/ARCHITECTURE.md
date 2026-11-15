@@ -906,6 +906,16 @@ file's new stat and reads it. The MCP server has no tool for it.
 <img src="assets/diagram-front-ends.svg" alt="The CLI, Python bindings, MCP server, language server and watcher go through one engine to one .scrutate directory." width="880">
 <br><sub>Every front end goes through the same operations to one <code>.scrutate/</code> directory.</sub>
 </p>
+A filter (`filter.rs`, from `-g`, `-t`, `--lang` and `--kind`, or the MCP arrays) narrows
+`search`, `symbol` and `refs`: `Op::Scoped` wraps the operation, and `Filter::compile` checks
+its names and builds grep's override and type matchers once. Search draws its lexical and semantic
+pools from the chunks of the admitted files (`lex::Allow`, one bit per chunk id, applied with the
+live rows) when the filter keeps at most half the files, drops the candidates it does not admit
+as their rows load, before features and the ranker, and widens its pools while fewer than `k`
+pass; symbol reads more definitions until enough pass; refs hands Engine A a walk
+narrowed to the files the globs and types can admit (`Compiled::walk`), then drops the
+definitions and occurrences outside the filter.
+
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
 the repository is small enough to index on the spot; otherwise identifier grep. `grep --index`
 sends an Engine A query through the text index. Both engines stay independently usable (`grep`,

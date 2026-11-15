@@ -102,6 +102,11 @@ test files to run, and its findings.
 (`git.rs`, `git::Git`): the base commit, the diff with the changed lines of each side, the
 untracked files and the blobs of base copies. Impact reads a change through it.
 
+**[Filter](docs/CLI.md#engine-b)**: what `search`, `symbol` and `refs` keep (`filter::Filter`):
+files by glob (`-g`), by type (`-t`) and by the language they were parsed as (`--lang`), and
+definitions by kind (`--kind`); the MCP tools take the same as `globs`, `types`, `langs` and
+`kinds`.
+
 **[Finding](docs/adr/0003-impact-findings.md)**: something a change does that a reviewer would want
 named (`findings::Finding`): a **new duplicate** (a head `dupes` group no base group matches) or a
 changed definition no test reaches. Impact makes the list; every front end and review render it.

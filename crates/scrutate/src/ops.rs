@@ -150,12 +150,44 @@ pub enum Op {
         query: String,
         limit: usize,
     },
+    /// `op`, a search, symbol or refs, keeping what `filter` admits
+    Scoped {
+        op: Box<Op>,
+        filter: crate::filter::Filter,
+    },
 }
 
 impl Op {
     /// The operation an MCP tool call or a `batch` line names, defaults filled in and limits
     /// clamped (the caller is a program: an absurd limit is cut, not refused).
     pub fn from_tool(name: &str, args: &Value) -> Result<Op> {
+        let op = Op::from_tool_unscoped(name, args)?;
+        if !matches!(name, "search_code" | "find_symbol" | "references") {
+            return Ok(op);
+        }
+        let strings = |k: &str| -> Result<Vec<String>> {
+            match args.get(k).filter(|v| !v.is_null()) {
+                None => Ok(Vec::new()),
+                Some(v) => v
+                    .as_array()
+                    .and_then(|a| a.iter().map(|x| x.as_str().map(str::to_string)).collect::<Option<Vec<_>>>())
+                    .ok_or_else(|| anyhow!("{k} must be an array of strings")),
+            }
+        };
+        let filter = crate::filter::Filter { globs: strings("globs")?, types: strings("types")?, langs: strings("langs")?, kinds: strings("kinds")? };
+        Ok(op.scoped(filter))
+    }
+
+    /// The operation, keeping what `filter` admits when it names anything.
+    pub fn scoped(self, filter: crate::filter::Filter) -> Op {
+        if filter.is_empty() {
+            self
+        } else {
+            Op::Scoped { op: Box::new(self), filter }
+        }
+    }
+
+    fn from_tool_unscoped(name: &str, args: &Value) -> Result<Op> {
         // a JSON null is an argument left out; any other value of the wrong type is an error
         let arg = |k: &str| args.get(k).filter(|v| !v.is_null());
         let wrong = |k: &str, ty: &str| anyhow!("{k} must be {ty}");
@@ -261,12 +293,21 @@ impl Op {
         !matches!(self, Op::Read { symbol: None, .. } | Op::Reindex { .. } | Op::Files { .. })
     }
 
+    /// The operation a filter narrows, or this one.
+    pub fn unscoped(&self) -> &Op {
+        match self {
+            Op::Scoped { op, .. } => op,
+            op => op,
+        }
+    }
+
     /// Repository files the arguments name (a path, or the file of a location), whose index
     /// entries an answer depends on even when it cites nothing.
     pub fn named_paths(&self) -> Vec<String> {
         let loc = |n: &str| crate::intel::location(n).map(|(p, _)| p.to_string());
         let plain = |p: &str| p.trim_start_matches("./").to_string();
         match self {
+            Op::Scoped { op, .. } => op.named_paths(),
             Op::Symbol { name, .. } | Op::Callers { name, .. } | Op::Callees { name, .. } => loc(name).into_iter().collect(),
             Op::Similar { target, .. } => loc(target).into_iter().collect(),
             Op::Path { from, to, .. } => loc(from).into_iter().chain(loc(to)).collect(),
@@ -716,6 +757,7 @@ impl Drop for Snapshot<'_> {
 
 fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
+        Op::Scoped { op, filter } => run_scoped(s, op, &filter.compile(&s.ix.root)?)?,
         Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().filter(|a| !a.is_empty() && *a != query).cloned());
@@ -1105,6 +1147,57 @@ pub fn repo_path(s: &Searcher, given: &str) -> String {
         .and_then(|p| p.strip_prefix(&s.ix.root).ok().map(|r| crate::instant::slashed(r.to_string_lossy())))
         .filter(|p| indexed(p))
         .unwrap_or(plain)
+}
+
+/// Most definitions a filtered symbol lookup reads before the filter, however few it keeps.
+const SCOPED_SYMBOLS_MAX: usize = 100_000;
+
+/// A search, symbol or refs answer keeping what `f` admits.
+fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<Answer> {
+    Ok(match op {
+        Op::Search { query, alt, k, snippets } => {
+            let mut qs = vec![query.clone()];
+            qs.extend(alt.iter().filter(|a| !a.is_empty() && *a != query).cloned());
+            let hits = if qs.len() == 1 { s.search_filtered(query, *k, *snippets, f)? } else { s.search_many_in(&qs, *k, *snippets, Some(f))? };
+            Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
+        }
+        Op::Symbol { name, limit } => {
+            // the lookup cuts before the filter sees its rows, so it reads more until enough pass
+            let want = limit.saturating_add(1);
+            let mut n = want;
+            let kept = loop {
+                let got = targets(s, name, n, false)?;
+                let short = got.len() < n;
+                let kept: Vec<Hit> = got.into_iter().filter(|h| f.admits(&h.path, &h.kind)).collect();
+                if kept.len() >= want || short || n >= SCOPED_SYMBOLS_MAX {
+                    break kept;
+                }
+                n = n.saturating_mul(4).min(SCOPED_SYMBOLS_MAX);
+            };
+            let (hits, stopped) = cut(kept, *limit, RAISE_LIMIT);
+            Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
+        }
+        Op::Refs { textual: true, .. } if f.has_kinds() => bail!("textual references have no definition kind: leave out the kinds, or the textual flag"),
+        Op::Refs { name, max_results, textual: true, .. } => {
+            let name = &name.trim().to_string();
+            Answer::Refs { name: name.clone(), refs: crate::intel::references_in(s, name, *max_results, Some(f))?, max_results: *max_results }
+        }
+        Op::Refs { name, max_results, def, .. } => {
+            let name = &name.trim().to_string();
+            let mut refs = Names::new(s)?.references_in(name, *max_results, Some(f))?;
+            refs.definitions.retain(|d| f.admits(&d.path, &d.kind));
+            let kept: std::collections::HashSet<i64> = refs.definitions.iter().map(|d| d.id).collect();
+            // with kinds, an occurrence counts only where it resolves to a definition kept
+            refs.occurrences.retain(|o| f.admits_path(&o.path) && (!f.has_kinds() || matches!(o.resolution, Ok((id, _)) if kept.contains(&id))));
+            refs.notes.retain(|(p, _)| f.admits_path(p));
+            let only = match def {
+                Some(spec) => Some(definition_at(s, &refs, name, spec)?),
+                None => None,
+            };
+            Answer::Resolved { name: name.clone(), refs, only, max_results: *max_results }
+        }
+        _ => bail!("only search, symbol and refs take a filter"),
+    })
 }
 
 /// The definitions `name` stands for: the one at a location (the `path:start-end` an earlier

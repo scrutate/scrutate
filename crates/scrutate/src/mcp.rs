@@ -110,7 +110,25 @@ fn drop_descriptions(schema: &mut Value) {
     }
 }
 
+/// The scope filters search_code, find_symbol and references take, as `search`, `symbol` and `refs` do.
+const FILTER_PARAMS: [(&str, &str); 4] = [
+    ("globs", "keep the files these globs match, as grep -g (`!` excludes)"),
+    ("types", "keep the files of these types, as grep -t (`!` excludes)"),
+    ("langs", "keep the files parsed as these languages"),
+    ("kinds", "keep the definitions of these kinds (function, class, method, ...)"),
+];
+
 fn tool_table() -> Value {
+    let mut table = tool_table_unscoped();
+    for t in table.as_array_mut().into_iter().flatten().filter(|t| matches!(t["name"].as_str(), Some("search_code" | "find_symbol" | "references"))) {
+        for (key, what) in FILTER_PARAMS {
+            t["inputSchema"]["properties"][key] = json!({"type": ["array", "null"], "items": {"type": "string"}, "default": null, "description": what});
+        }
+    }
+    table
+}
+
+fn tool_table_unscoped() -> Value {
     json!([
         {"name": "search_code", "short": "Search code by meaning or name.",
          "description": "Search the codebase by meaning or by name. Returns the best matching functions/classes with file:line and a snippet. `query` may be natural language (\"where do we refresh expired tokens\") or identifiers (`ClientSession.call_tool`). To improve recall put synonyms and likely identifier names in `alt_queries` (e.g. [\"renew credentials\", \"refresh_token\"], at most 10); results of all phrasings are fused. Vendored code (vendor/, third_party/, node_modules/, Pods/, minified files) ranks lower than the project's own by a fixed margin and is marked \"vendored\": true.",

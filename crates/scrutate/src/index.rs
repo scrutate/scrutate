@@ -3079,6 +3079,19 @@ impl Index {
         self.db.prepare_cached("SELECT 1 FROM files WHERE path=?1").and_then(|mut q| q.exists([path])).unwrap_or(false)
     }
 
+    /// The ids of the chunks of `paths`.
+    pub fn chunk_ids_in(&self, paths: &[&str]) -> Result<Vec<i64>> {
+        let mut out = Vec::new();
+        for part in paths.chunks(400) {
+            let ph = vec!["?"; part.len()].join(",");
+            let mut st = self.db.prepare(&format!("SELECT id FROM chunks WHERE path IN ({ph})"))?;
+            for r in st.query_map(params_from_iter(part.iter()), |r| r.get::<_, i64>(0))? {
+                out.push(r?);
+            }
+        }
+        Ok(out)
+    }
+
     /// The indexed files, the skipped ones aside, in table order.
     pub fn files(&self) -> Result<Vec<String>> {
         let mut st = self.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;

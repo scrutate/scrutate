@@ -3096,7 +3096,7 @@ fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit
 
 /// True when the walk with these overrides would not reach `rel` (an ancestor directory or the
 /// file itself is excluded).
-fn filtered_out(ov: &ignore::overrides::Override, rel: &str) -> bool {
+pub(crate) fn filtered_out(ov: &ignore::overrides::Override, rel: &str) -> bool {
     if ov.is_empty() {
         return false;
     }

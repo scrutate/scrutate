@@ -24,6 +24,10 @@ incompatible index by itself, and that is never breaking.
   with at most `| head` or `| tail` after it. `setup claude --hook` adds it beside the Grep hook,
   `setup codex --hook` to `$CODEX_HOME/hooks.json`; `hook stats` counts its searches apart;
   `SCRUTATE_HOOK_BASH=off` turns it off ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `search`, `symbol` and `refs` keep the files a glob (`-g`) or a type (`-t`) names, the files
+  parsed as a language (`--lang`) and the definitions of a kind (`--kind`), and the MCP tools
+  `search_code`, `find_symbol` and `references` take the same as `globs`, `types`, `langs` and
+  `kinds`. A filtered search still returns `-k` results when that many pass.
 - `impact`, its `--json` and the MCP `impact` tool list the change's findings: the duplicates it
   adds of code the repository has and the changed definitions no test reaches, which only
   `review` named before. `review` renders the same list, and its Markdown and GitLab reports are
