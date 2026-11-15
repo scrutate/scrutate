@@ -29,7 +29,8 @@ incompatible index by itself, and that is never breaking.
   are recorded in the text index by their hash, so any answer that shows one has it redacted. The
   detectors are ports of gitleaks and secretlint rules (AWS, GitHub, GitLab, Slack, Stripe,
   Google, OpenAI, Anthropic, npm, PyPI, JWT, Twilio, SendGrid, Mailgun, database URLs, private
-  keys, `.env` lines, quoted passwords and a generic assignment rule). `SCRUTATE_REDACT=off`
+  keys, `.env` lines, quoted passwords, URL passwords, bearer tokens, HTTP Basic credentials and a
+  generic assignment rule). `SCRUTATE_REDACT=off`
   turns it off and `on` turns it on for the CLI's index answers
   ([Security](docs/SECURITY.md#secrets-in-answers)).
 - Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a

@@ -212,6 +212,12 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["postgres", "mysql", "mariadb", "mongodb", "redis", "amqp", "mssql", "sqlserver"],
             real_value,
         ),
+        // the password of any other URL that carries one (`https://user:pass@host`)
+        rule("url-password", "scrutate", r"(?i)\b[a-z][a-z0-9+.-]{1,20}://[^:/\s@]+:([^@/\s]+)@[^/\s?#]", 1, 0.0, &["://"], env_value),
+        // an opaque token after `Bearer` (a header, a curl line); a JWT has its own rule
+        rule("bearer-token", "scrutate", r"(?i)\bbearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)", 1, 3.0, &["bearer"], opaque),
+        // HTTP Basic credentials: base64 of `user:password`
+        rule("basic-auth", "scrutate", r"(?i)\bbasic[ \t]+([A-Za-z0-9+/]{8,}={0,2})", 1, 0.0, &["basic"], user_and_password),
         // a `.env` line (`NAME=value`, the name upper case): the value may hold any symbol
         rule(
             "env-secret",
@@ -288,6 +294,35 @@ static NUMBER: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// A `.env` value that is no placeholder and is not a name or a word alone.
+/// A bearer token: a real value with a digit in it, so a word after `Bearer` is none.
+fn opaque(secret: &str, whole: &str, before: &str) -> bool {
+    real_value(secret, whole, before) && secret.bytes().any(|b| b.is_ascii_digit())
+}
+
+/// Base64 that decodes to printable `user:password`.
+fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let (mut bits, mut n, mut out) = (0u32, 0, Vec::new());
+    for c in secret.trim_end_matches('=').bytes() {
+        let Some(v) = value(c) else { return false };
+        bits = (bits << 6) | u32::from(v);
+        n += 6;
+        if n >= 8 {
+            n -= 8;
+            out.push((bits >> n) as u8);
+        }
+    }
+    let colon = out.iter().position(|&b| b == b':');
+    colon.is_some_and(|i| i > 0 && i + 1 < out.len()) && out.iter().all(|b| (0x20..0x7f).contains(b))
+}
+
 fn env_value(secret: &str, whole: &str, before: &str) -> bool {
     real_value(secret, whole, before) && !NOT_SECRET_NAMES.is_match(whole) && secret.chars().any(|c| !c.is_ascii_alphabetic())
 }
@@ -828,6 +863,20 @@ mod tests {
     const HEX: &str = "0123456789abcdef";
 
     /// A secret of each kind, as it might sit in code or a `.env` file: (kind, line, secret).
+    /// `text` in base64, as an HTTP Basic header carries it.
+    pub(crate) fn basic(text: &str) -> String {
+        const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in text.as_bytes().chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            for i in 0..4 {
+                out.push(if i <= chunk.len() { SET[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+            }
+        }
+        out
+    }
+
     pub(crate) fn samples() -> Vec<(&'static str, String, String)> {
         let line = |kind: &'static str, before: &str, secret: String, after: &str| (kind, format!("{before}{secret}{after}"), secret);
         vec![
@@ -854,6 +903,9 @@ mod tests {
             line("sendgrid-api-key", "sg = ", format!("{}{}.{}", "SG.", fake(23, ALNUM, 22), fake(24, ALNUM, 43)), ""),
             line("mailgun-api-key", &format!("{}_API_KEY=", "MAILGUN"), format!("{}{}", "key-", fake(25, HEX, 32)), ""),
             line("database-password", "DATABASE_URL=postgres://app:", fake(26, ALNUM, 12), "@db.internal:5432/app"),
+            line("url-password", "remote = https://deploy:", format!("{}!{}", fake(62, ALNUM, 8), fake(63, ALNUM, 6)), "@git.example.com/app.git"),
+            line("bearer-token", "headers = {\"Authorization\": \"Bearer ", format!("{}7", fake(64, ALNUM, 31)), "\"}"),
+            line("basic-auth", "curl -H 'Authorization: Basic ", basic(&format!("deploy:{}", fake(65, ALNUM, 14))), "'"),
             line("env-secret", "DB_PASSWORD=", format!("{}!{}", fake(27, ALNUM, 8), fake(28, ALNUM, 8)), ""),
             line("password", "db_password = \"", format!("{}@{}!{}#", fake(34, ALNUM, 4), fake(35, ALNUM, 4), fake(36, ALNUM, 4)), "\""),
             line("generic-secret", "client_secret: ", fake(29, ALNUM, 18), ""),
@@ -926,6 +978,14 @@ mod tests {
             "keypad_row0: keypad_row0_0 {",
             "x2apic_state = X2APIC_ON_LOCKED;",
             "wdrtas_token_get_sp = rtas_token(\"ibm,get-system-parameter\");",
+            // the shapes of credentials without one
+            "headers[\"Authorization\"] = \"Bearer \" + token",
+            "Authorization: Bearer <token>",
+            "The Bearer authentication scheme sends a bearer token.",
+            "git clone https://user:password@example.com/repo.git",
+            "url = \"https://${USER}:${PASS}@example.com\"",
+            "WWW-Authenticate: Basic realm=\"staging\"",
+            "Use basic authentication over TLS only.",
             // a typed parameter list: the annotation stops at its parameter's comma
             "    def __init__(self, token: str, repo: Optional[str] = \"AdminUser2024\"):",
             "fun connect(token: String, user: String = \"AdminUser2024\") {",

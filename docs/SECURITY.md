@@ -374,13 +374,19 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `sendgrid-api-key` | gitleaks sendgrid-api-token (SendGrid's 22.43 layout) |
 | `mailgun-api-key` | gitleaks mailgun-private-api-token |
 | `database-password` | secretlint-rule-database-connection-string |
+| `url-password` | scrutate |
+| `bearer-token` | scrutate |
+| `basic-auth` | scrutate |
 | `env-secret` | scrutate |
 | `password` | scrutate |
 | `key-material` | scrutate |
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
-`env-secret` takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
+`url-password` takes the password of any other URL that carries one (`https://user:pass@host`)
+with a digit or a symbol in it; `bearer-token` an opaque token after `Bearer` with a digit in it;
+`basic-auth` the base64 after `Basic` when it decodes to a printable `user:password`. `env-secret`
+takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
 `KEY` or `CREDENTIALS`; `password` a quoted value of a name holding `password`, `secret` or
 `token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
 random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside);
@@ -412,9 +418,11 @@ pages of 24,000 and 700 bytes, a page from inside a key among them, and the Grep
 lines too; no byte of any secret comes back, each kind is marked, and with `SCRUTATE_REDACT=off`
 every one does. The CLI's `--json` stays one JSON document with it on.
 
-Marked although no secret: a constructor's argument under a secret's name
+Marked although no secret: the body of a public key (an SSH `known_hosts` line, `PUBLIC KEY`
+armour), read as key material; a constructor's argument under a secret's name
 (`secret_file = PathBuf::from("config/...")`, `TOKEN_SCOPES = Set.of(...)`, `token_msg =
-Ok(...)`), which costs readability only.
+Ok(...)`), which costs readability only. Not detected: token families outside the table (any
+vendor's format scrutate has no rule for).
 
 Not covered, in assignments: two on one line; `=` inside a type's generics; a type over 80
 characters; a value built in a closure (`Lazy::new(|| ...)`) or a Kotlin `by lazy`; an f-string;

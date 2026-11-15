@@ -27,6 +27,20 @@ const ALNUM: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 const HEX: &str = "0123456789abcdef";
 
 /// (kind, file, line holding the secret, the secret): three of each kind.
+/// `text` in base64, as an HTTP Basic header carries it.
+fn basic(text: &str) -> String {
+    const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in text.as_bytes().chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            out.push(if i <= chunk.len() { SET[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    out
+}
+
 fn planted() -> Vec<(&'static str, &'static str, String, String)> {
     let mut seed = 7u64;
     let mut out = Vec::new();
@@ -64,6 +78,14 @@ fn planted() -> Vec<(&'static str, &'static str, String, String)> {
         add("env-secret", ".env", &|s| format!("SESSION_SECRET={s}"), format!("{}!{}", chars(s, ALNUM, 10), chars(s, ALNUM, 8)));
         add("password", "config.py", &|s| format!("db_password = \"{s}\""), format!("{}@{}!{}", chars(s, ALNUM, 6), chars(s, ALNUM, 5), chars(s, ALNUM, 4)));
         add("generic-secret", "settings.yml", &|s| format!("client_secret: {s}"), chars(s, ALNUM, 18));
+        add(
+            "url-password",
+            "config.py",
+            &|s| format!("REMOTE = \"https://deploy:{s}@git.example.com/app.git\""),
+            format!("{}!{}", chars(s, ALNUM, 8), chars(s, ALNUM, 6)),
+        );
+        add("basic-auth", "config.py", &|s| format!("AUTH = \"Basic {s}\""), basic(&format!("deploy:{}", chars(s, ALNUM, 14))));
+        add("bearer-token", "config.py", &|s| format!("HEADERS = {{\"Authorization\": \"Bearer {s}\"}}"), format!("{}7", chars(s, ALNUM, 31)));
         add("private-key", "keys.pem", &|s| s.to_string(), chars(s, ALNUM, 64));
         // typed, in Rust
         add("aws-secret-access-key", "conf.rs", &|s| format!("pub const aws_secret_access_key: &str = \"{s}\";"), chars(s, &format!("{ALNUM}/+"), 40));
