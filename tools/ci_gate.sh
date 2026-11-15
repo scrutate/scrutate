@@ -73,7 +73,7 @@ bindings() {
   rm -rf "$target/wheels"
   "$target/pyvenv/bin/maturin" build --release --strip -m crates/scrutate-py/Cargo.toml -o "$target/wheels" || return 1
   "$target/pyvenv/bin/pip" install -q --force-reinstall --no-deps "$target"/wheels/scrutate-*.whl || return 1
-  "$target/pyvenv/bin/python" -c "import scrutate; print(scrutate.__version__)" || return 1
+  "$target/pyvenv/bin/python" tools/gil_probe.py || return 1
   (cd python && SCRUTATE_BIN="$b" "$target/pyvenv/bin/python" -m pytest -q tests)
 }
 # the config exempts no file (tools/gitleaks_config.py: no allow list with paths in any spelling, no

@@ -71,10 +71,9 @@ def main() -> int:
                 rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, "pytest"])
                 row["checks"]["pytest installed"] = rc == 0
             if rc == 0:
-                probe = "import sys, scrutate; print(getattr(sys, '_is_gil_enabled', lambda: True)())"
-                rc, out = sh([exe, "-W", "error", "-c", probe])
+                rc, out = sh([exe, "-W", "error", os.path.join(ROOT, "tools", "gil_probe.py")])
                 if free:
-                    row["checks"]["GIL stays disabled after import (-W error)"] = rc == 0 and out.splitlines()[-1] == "False"
+                    row["checks"]["GIL stays disabled after import (-W error)"] = rc == 0
                 else:
                     row["checks"]["imports"] = rc == 0
                 rc, out = sh([exe, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_bindings.py"],

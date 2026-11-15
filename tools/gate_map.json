@@ -91,7 +91,7 @@
   "step": "cargo build --release -p scrutate --locked",
   "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },
- "ci.yml:wheels:a4b16b8c37": {
+ "ci.yml:wheels:0879a528fa": {
   "step": "build, install and test the wheel",
   "by": "ci-only: the wheel matrix runs interpreters and platforms the boxes lack (free-threaded 3.14t, macOS, Windows, arm64); the abi3 wheel is python-bindings"
  },

@@ -178,8 +178,8 @@ jobs:
         shell: bash
         run: |
           pip install --no-deps dist/scrutate-*.whl
-          # a module not marked gil_used = false turns the GIL back on at import, with only a warning
-          python -c "import scrutate, sys, sysconfig; print(scrutate.__version__); print(list(scrutate.grep('fn ', ['crates'], mode='literal'))[:1]); ft = sysconfig.get_config_var('Py_GIL_DISABLED') == 1; gil = getattr(sys, '_is_gil_enabled', lambda: True)(); print('free-threaded:', ft, 'gil enabled:', gil); assert not (ft and gil), 'importing scrutate turned the GIL on'"
+          python tools/gil_probe.py
+          python -c "import scrutate; print(list(scrutate.grep('fn ', ['crates'], mode='literal'))[:1])"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.kind }}

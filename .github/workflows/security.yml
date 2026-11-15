@@ -14,8 +14,10 @@ permissions: {}
 defaults:
   run:
     shell: bash
+# a run that release.yml calls has the caller's github.workflow, so a dry run on main never queues
+# behind a push run, nor is cancelled by one
 concurrency:
-  group: security-${{ github.ref }}
+  group: security-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   deny:

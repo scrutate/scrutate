@@ -24,8 +24,10 @@ permissions:
 defaults:
   run:
     shell: bash
+# a run that release.yml calls has the caller's github.workflow, so a dry run on main never queues
+# behind a push run, nor is cancelled by one
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CARGO_TERM_COLOR: always
@@ -200,8 +202,7 @@ jobs:
           maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i python
           python -m pip install --no-deps target/wheels/scrutate-*.whl
           # the bindings tests skip when the module does not load, so a broken wheel fails here
-          # a module not marked gil_used = false turns the GIL back on at import, with only a warning
-          python -c "import scrutate, sys, sysconfig; ft = sysconfig.get_config_var('Py_GIL_DISABLED') == 1; gil = getattr(sys, '_is_gil_enabled', lambda: True)(); print(scrutate.__version__, 'free-threaded:', ft, 'gil enabled:', gil); assert not (ft and gil), 'importing scrutate turned the GIL on'"
+          python tools/gil_probe.py
           bin="$GITHUB_WORKSPACE/target/release/scrutate"
           if [ "$RUNNER_OS" = Windows ]; then bin="$bin.exe"; fi
           cd python && SCRUTATE_BIN="$bin" python -m pytest -q tests/test_bindings.py
