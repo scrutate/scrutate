@@ -1023,6 +1023,47 @@ fn hook_run_holds_for_every_allowed_flag() {
     let _ = fs::remove_dir_all(&base);
 }
 
+/// A `--` that is a flag's value ends no flags: what `hook run` adds goes where the program's
+/// flags really end, so the search answers as the program alone does.
+#[test]
+fn hook_run_answers_as_the_program_when_a_flag_s_value_is_two_dashes() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_dashdash_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("d.txt"), "a -- b\nplain\n").unwrap();
+    let home = root.with_extension("home");
+    let alone = |ask: &[&str]| {
+        String::from_utf8_lossy(&Command::new(ask[0]).args(&ask[1..]).current_dir(&root).stdin(Stdio::null()).output().unwrap().stdout).into_owned()
+    };
+    let hooked = |ask: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--"])
+            .args(ask)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let mut asks: Vec<&[&str]> = vec![&["grep", "-e", "--", "d.txt"], &["grep", "-e", "--", "--", "d.txt"]];
+    if rg::have_rg() {
+        // `--trim` and `--heading` keep the search with rg itself, which `scrutate grep` would answer
+        asks.extend([
+            &["rg", "--trim", "-e", "--", "d.txt"][..],
+            &["rg", "--trim", "-e", "--", "--", "d.txt"],
+            &["rg", "--heading", "--regexp", "--", "d.txt"],
+        ]);
+    }
+    for ask in asks {
+        let want = alone(ask);
+        assert!(want.contains("a -- b"), "{ask:?} alone: {want}");
+        assert_eq!(hooked(ask), want, "{ask:?}");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// A line that is not UTF-8 (a stray byte, or a long line's piece cut inside a character) has its
 /// secrets redacted by `hook run` too.
 #[cfg(unix)]

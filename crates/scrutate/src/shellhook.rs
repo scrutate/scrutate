@@ -772,7 +772,7 @@ fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
         match argv[0].as_str() {
             "grep" => args.splice(0..0, [format!("--exclude-dir={}", crate::files::INDEX_DIR), "--color=never".into()]).for_each(drop),
             "rg" => {
-                let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+                let at = roles(&RG_FLAGS, &args).iter().position(|r| *r == Role::End).unwrap_or(args.len());
                 // rg weighs every --iglob after every --glob, so a user's --iglob would beat the glob alone
                 args.splice(at..at, [format!("--glob=!{}", crate::files::INDEX_DIR), format!("--iglob=!{}", crate::files::INDEX_DIR), "--color=never".into()])
                     .for_each(drop);
