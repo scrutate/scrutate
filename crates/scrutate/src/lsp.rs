@@ -1099,6 +1099,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A cancel stops a request's wait for the first build at once: the build is still running when
+    /// the request gives up, long before the wait would have run out.
+    #[test]
+    fn a_cancel_stops_the_wait_for_a_first_build_that_is_still_running() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_cancel_wait_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let session = Arc::new(Session::open(&root, crate::session::Every::given(None)).unwrap());
+        // a first build is running and does not end
+        session.building();
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            folders: vec![Folder { session: Some(Arc::clone(&session)), opened: true, ..Folder::new(root.clone(), root.clone()) }],
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_secs(20),
+            waited_out: Default::default(),
+            skipped: Default::default(),
+            cancel: Default::default(),
+        };
+        let flag = Arc::clone(&srv.cancel);
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let t0 = std::time::Instant::now();
+        let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+        let took = t0.elapsed();
+        canceller.join().unwrap();
+        assert_eq!(r.map_err(|e| e.0), Err(-32801));
+        assert!(took < std::time::Duration::from_secs(5), "the cancel did not stop the wait: {took:?}");
+        assert!(session.is_building(), "the request gave up while the build still ran");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Over several folders, a folder in its first build that is left out because another folder
     /// answered is logged once too, and when no folder answers, "still being built" (ask again)
     /// wins over a folder that has no index.
