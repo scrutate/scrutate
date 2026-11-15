@@ -209,6 +209,12 @@ impl Repo {
         Ok(Repo::around(Searcher::new(ix), Arc::clone(&self.writer)))
     }
 
+    /// The root opened again, as `open` opens it, with this repository's writer lock: for the tree
+    /// its path names now.
+    pub fn opened_again(&self) -> Result<Repo> {
+        Ok(Repo::around(crate::open(&self.root)?, Arc::clone(&self.writer)))
+    }
+
     /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
     /// is deleted, to be built again by this one.
     pub fn open_to_update(root: &Path, force: bool) -> Result<Repo> {

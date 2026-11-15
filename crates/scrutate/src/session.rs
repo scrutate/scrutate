@@ -115,6 +115,8 @@ impl Pending {
 struct Pool {
     idle: Vec<Repo>,
     open: usize,
+    /// moves on when the root's path names another tree: a reader of an older one is dropped
+    generation: u64,
 }
 
 #[derive(Default)]
@@ -213,28 +215,58 @@ impl Session {
         }
         let (session, stop, root) = (Arc::downgrade(self), Arc::clone(&self.unwatch), self.root().to_path_buf());
         std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
-            let update = |changes: &Changes| match (apply, session.upgrade()) {
+            let mut update = |changes: &Changes| match (apply, session.upgrade()) {
                 (true, Some(s)) => s.write(|repo| repo.update_stores(crate::stores::Writer::Watch, changes, false)).map(|_| ()),
                 _ => Ok(()),
             };
-            let ready = || {
+            let ready: Box<dyn FnOnce()> = Box::new(|| {
                 if apply {
                     eprintln!("[scrutate] watching {}", root.display())
                 }
-            };
+            });
             // the session's writer lock orders a burst's update with its other writes; the index's
             // own locks order it with other processes
             // reads that walk (a network file system) leave `serve --watch` its plain watch
-            let r = match &notes {
-                Some(n) => n.run(&root, &stop, ready, update),
-                None => crate::watch::run(&root, &stop, ready, update),
-            };
-            match r {
-                Err(e) if apply => eprintln!("[scrutate] watching stopped: {e:#}"),
-                Err(e) => debug(&format!("the watch stopped ({e:#}); reads walk the tree")),
-                Ok(()) => {}
+            let mut ready = Some(ready);
+            loop {
+                let ready = ready.take().unwrap_or(Box::new(|| {}));
+                let r = match &notes {
+                    Some(n) => n.run(&root, &stop, ready, &mut update),
+                    None => crate::watch::run(&root, &stop, ready, &mut update),
+                };
+                match r {
+                    Err(e) if e.is::<crate::watch::RootReplaced>() => {
+                        eprintln!("[scrutate] {}: root replaced; watching the new tree", root.display());
+                        match session.upgrade().map(|s| s.reopen()) {
+                            Some(Ok(())) => continue,
+                            Some(Err(e)) => eprintln!("[scrutate] watching stopped: the new tree could not be opened: {e:#}"),
+                            None => {}
+                        }
+                    }
+                    Err(e) if apply => eprintln!("[scrutate] watching stopped: {e:#}"),
+                    Err(e) => debug(&format!("the watch stopped ({e:#}); reads walk the tree")),
+                    Ok(()) => {}
+                }
+                break;
             }
         })?;
+        Ok(())
+    }
+
+    /// The root's path names another tree now (`watch::RootReplaced`): its stores are opened
+    /// afresh there, an index made if it has none (the next update builds it), and the readers of
+    /// the old tree are dropped, the busy ones when they come back.
+    pub fn reopen(&self) -> Result<()> {
+        let mut seed = lock(&self.seed);
+        let mut fresh = seed.opened_again()?;
+        fresh.set_count(Arc::clone(&self.written));
+        let opener = fresh.another()?;
+        *seed = fresh;
+        *lock(&self.opener) = opener;
+        let mut pool = lock(&self.pool);
+        pool.open -= pool.idle.len();
+        pool.idle.clear();
+        pool.generation += 1;
         Ok(())
     }
 
@@ -408,7 +440,7 @@ impl Session {
     /// reads in `count`. A reader whose call panicked is closed, not used again. `wait`: how long
     /// to wait for a reader when all are busy (None: as long as it takes, unless `cancel` is set).
     fn call<T>(&self, cancel: &Arc<AtomicBool>, count: Option<&Arc<FileCount>>, wait: Option<Duration>, f: impl FnOnce(&mut Repo) -> Result<T>) -> Result<T> {
-        let Some(mut repo) = self.reader(cancel, wait)? else { return Err(anyhow::anyhow!("every reader is busy")) };
+        let Some((generation, mut repo)) = self.reader(cancel, wait)? else { return Err(anyhow::anyhow!("every reader is busy")) };
         repo.set_cancel(Arc::clone(cancel));
         if let Some(count) = count {
             repo.set_count(Arc::clone(count));
@@ -418,33 +450,35 @@ impl Session {
                 repo.set_cancel(Arc::default());
                 repo.set_count(Arc::default());
                 let updated = repo.take_updated();
-                self.give_back(Some(repo));
+                self.give_back(generation, Some(repo));
                 self.note_update(updated);
                 r
             }
             Err(_) => {
                 drop(repo);
-                self.give_back(None);
+                self.give_back(generation, None);
                 Err(Panicked.into())
             }
         }
     }
 
-    fn reader(&self, cancel: &AtomicBool, wait: Option<Duration>) -> Result<Option<Repo>> {
+    /// A reader, with the pool's generation when it was taken or opened.
+    fn reader(&self, cancel: &AtomicBool, wait: Option<Duration>) -> Result<Option<(u64, Repo)>> {
         let started = Instant::now();
         let mut pool = lock(&self.pool);
         loop {
+            let generation = pool.generation;
             if let Some(repo) = pool.idle.pop() {
-                return Ok(Some(repo));
+                return Ok(Some((generation, repo)));
             }
             if pool.open < self.max_readers {
                 pool.open += 1;
                 drop(pool);
                 let opened = caught(|| lock(&self.opener).another());
                 if opened.is_err() {
-                    self.give_back(None);
+                    self.give_back(generation, None);
                 }
-                return opened.map(Some);
+                return opened.map(|r| Some((generation, r)));
             }
             if cancel.load(Ordering::Relaxed) || wait.is_some_and(|w| started.elapsed() >= w) {
                 return Ok(None);
@@ -463,9 +497,9 @@ impl Session {
 
     /// A reader back to the pool, or None for one that was closed. What it just read is the
     /// newest the others can know of: one that holds other segments lets them go.
-    fn give_back(&self, repo: Option<Repo>) {
+    fn give_back(&self, generation: u64, repo: Option<Repo>) {
         let mut pool = lock(&self.pool);
-        match repo {
+        match repo.filter(|_| generation == pool.generation) {
             Some(r) => {
                 if let Some(names) = r.ix.held_segments() {
                     pool.idle.iter_mut().for_each(|i| i.ix.release_segments_other_than(names));

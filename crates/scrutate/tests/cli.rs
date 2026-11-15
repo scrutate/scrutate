@@ -2543,6 +2543,56 @@ fn serve_watch_updates_the_index_while_serving() {
     assert!(line.contains("pkg/m3.py"), "{line}");
 }
 
+/// A copy renamed over the root while `serve --watch` runs (`cp -a`, then two renames): calls
+/// answer from the new tree, with its own index.
+#[cfg(unix)]
+#[test]
+fn serve_watch_answers_from_a_tree_renamed_over_the_root() {
+    use std::io::BufRead;
+    let r = python_repo("serveswap");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let mut child = Command::new(BIN)
+        .args(["--root", r.root.to_str().unwrap(), "serve", "--watch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let _guard = KillOnDrop(child);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stderr.lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    while !rx.recv_timeout(std::time::Duration::from_secs(30)).expect("watch starts").contains("watching") {}
+    let (new, old) = (r.root.with_extension("new"), r.root.with_extension("old"));
+    assert!(Command::new("cp").arg("-a").arg(&r.root).arg(&new).status().unwrap().success());
+    std::fs::write(new.join("pkg/swapped.py"), b"def served_from_the_new_tree():\n    return 5\n").unwrap();
+    std::fs::rename(&r.root, &old).unwrap();
+    std::fs::rename(&new, &r.root).unwrap();
+    while !rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the swap is seen").contains("root replaced") {}
+    let mut found = String::new();
+    for id in 1..=60 {
+        writeln!(
+            stdin,
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"find_symbol","arguments":{{"name":"served_from_the_new_tree"}}}}}}"#
+        )
+        .unwrap();
+        found.clear();
+        stdout.read_line(&mut found).unwrap();
+        if found.contains("pkg/swapped.py") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    assert!(found.contains("pkg/swapped.py"), "{found}");
+    let _ = std::fs::remove_dir_all(&old);
+}
+
 #[test]
 fn tsquery_cache_output_equals_a_fresh_parse() {
     let r = Repo::new("tscache");

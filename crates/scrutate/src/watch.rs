@@ -816,9 +816,41 @@ impl Safety {
     }
 }
 
-fn root_present(root: &Path) -> Result<()> {
+/// The watched root's path names another directory now (renamed over, or removed and made
+/// again): the watch and the stores opened there belong to the old tree.
+#[derive(Debug)]
+pub struct RootReplaced;
+
+impl std::fmt::Display for RootReplaced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the root was replaced")
+    }
+}
+
+impl std::error::Error for RootReplaced {}
+
+/// What the root's path names: its device and inode where there are such, and its birth time,
+/// since ext4 can give a directory made again its old inode number. None when it cannot be read.
+type RootId = Option<(u64, u64, Option<SystemTime>)>;
+
+fn root_id(root: &Path) -> RootId {
+    let m = std::fs::metadata(root).ok()?;
+    #[cfg(unix)]
+    let (dev, ino) = {
+        use std::os::unix::fs::MetadataExt;
+        (m.dev(), m.ino())
+    };
+    #[cfg(not(unix))]
+    let (dev, ino) = (0, 0);
+    Some((dev, ino, m.created().ok()))
+}
+
+fn root_present(root: &Path, id: &RootId) -> Result<()> {
     if !root.is_dir() {
         anyhow::bail!("{} is gone: the watched directory was removed or moved", root.display());
+    }
+    if id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id) {
+        return Err(RootReplaced.into());
     }
     Ok(())
 }
@@ -956,6 +988,11 @@ pub fn run_noting(
     mut on_change: impl FnMut(&Changes) -> Result<()>,
 ) -> Result<()> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
+    let id = root_id(&root);
+    // a tree that replaced the root has no cookie directory yet
+    if let Some(n) = notes {
+        let _ = std::fs::create_dir_all(&n.0.cookies);
+    }
     let (tx, rx) = mpsc::channel();
     #[cfg(target_os = "macos")]
     let Some(mut watcher) = fsevents::Stream::start(&root, tx) else {
@@ -992,7 +1029,7 @@ pub fn run_noting(
     // after a pause that doubles up to 30 s, whichever comes first
     let (mut failed, mut retry_at, mut pause) = (false, None::<Instant>, RETRY_FIRST);
     while !stop.load(Ordering::Relaxed) {
-        root_present(&root)?;
+        root_present(&root, &id)?;
         let mut burst = Burst { full: failed, ..Burst::default() };
         let mut wanted = retry_at.is_some_and(|t| Instant::now() >= t);
         for ev in poll.check() {
@@ -1023,7 +1060,7 @@ pub fn run_noting(
                 Err(_) => break,
             }
         }
-        root_present(&root)?;
+        root_present(&root, &id)?;
         let files = if burst.full { None } else { burst.files(&root, &code, &walked) };
         if files.as_ref().is_some_and(|f| f.code.is_empty() && f.text.is_empty()) {
             continue;
@@ -1050,6 +1087,7 @@ pub fn run_noting(
 /// nanosecond times, and the pause grows with what a check costs (about a tenth of the time at most).
 #[cfg(target_os = "macos")]
 fn run_timer(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
+    let id = root_id(root);
     on_change(&Changes::All)?;
     on_ready();
     let mut pause = POLL_MIN;
@@ -1061,7 +1099,7 @@ fn run_timer(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_cha
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        root_present(root)?;
+        root_present(root, &id)?;
         let t1 = Instant::now();
         if let Err(e) = on_change(&Changes::All) {
             eprintln!("[scrutate] update failed: {e:#}");

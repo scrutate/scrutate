@@ -1060,7 +1060,10 @@ update stops the watch; a later failure is reported and the watch goes on. Ctrl-
 a code index update in progress stops at its next batch of files, or block of rows while a large
 segment's vectors are clustered, and leaves the index as it was; a text index update in progress
 ends first. When `PATH` is removed or moved away, `watch` stops with an
-error (exit 2). Other processes can read and update the same index meanwhile; the indexes' own
+error (exit 2). When another directory takes its place (moved or copied there, as `mv repo.new repo`
+does, or removed and made again), stderr says `root replaced; watching the new tree`, and `watch`
+opens that tree's index (building it when it has none) and watches it; `serve --watch` and the
+watch of the MCP server, the language server and the Python bindings do the same. Other processes can read and update the same index meanwhile; the indexes' own
 locks order the writers, and stopping the process mid-update leaves the previous state in place.
 
 `serve --watch` runs the same watcher in a background thread while the server answers; when the

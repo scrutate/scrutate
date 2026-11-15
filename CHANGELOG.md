@@ -295,6 +295,9 @@ incompatible index by itself, and that is never breaking.
   when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
   where it named them under the resolved path and the editor opened a second tab of an open file
   ([CLI](docs/CLI.md#lsp)).
+- `watch` and `serve --watch` notice a directory put in place of the root (`mv repo repo.old; mv
+  repo.new repo`, or the root removed and made again), say `root replaced; watching the new tree`,
+  and index and watch the new tree, where they went on watching the old one and indexed nothing.
 - The yardstick times every rival of a form against one named scrutate adapter (resident:
   `scrutate-mcp`), and each row names its `base`, where the last scrutate adapter of the form won,
   so W5's refs rows were against `scrutate-lsp`, its callers rows against `scrutate-mcp`, and the

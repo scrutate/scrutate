@@ -1984,7 +1984,7 @@ fn watch_command(root: &Path) -> Result<i32> {
         Err(_) if stopped() => return Ok(130),
         s => s?,
     };
-    let update = |changes: &crate::stores::Changes| -> Result<()> {
+    let mut update = |changes: &crate::stores::Changes| -> Result<()> {
         // Ctrl-C stops an update at its next batch of files
         let up = session.write(|repo| {
             repo.set_cancel(Arc::clone(&stop));
@@ -2005,7 +2005,13 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    let r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update);
+    let mut r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), &mut update);
+    // the root's path names another tree: its index is opened (made when it has none), then watched
+    while r.as_ref().is_err_and(|e| e.is::<crate::watch::RootReplaced>()) && !stopped() {
+        eprintln!("[scrutate] {}: root replaced; watching the new tree", root.display());
+        session.reopen()?;
+        r = crate::watch::run(&root, &stop, || {}, &mut update);
+    }
     if stopped() {
         return Ok(130);
     }

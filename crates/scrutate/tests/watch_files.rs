@@ -187,6 +187,31 @@ fn watch_stops_with_an_error_when_its_root_is_removed() {
     assert!(err.iter().any(|l| l.contains("is gone")), "{err:?}");
 }
 
+/// A copy renamed over the root (`cp -a`, then two renames) is indexed and watched in its place,
+/// with a line that says so; `grep --index` reads the text index without updating it, so only
+/// the watch can index the file the copy adds.
+#[cfg(unix)]
+#[test]
+fn a_root_replaced_by_a_rename_is_indexed_and_watched_in_its_place() {
+    let r = Repo::new("rootswap");
+    r.write("a.py", b"def alpha():\n    return 1\n");
+    assert_eq!(r.run(&["index"]), 0);
+    let (_child, rx) = start_watch(&r.root);
+    wait_watching(&rx);
+    let (new, old) = (r.root.with_extension("new"), r.root.with_extension("old"));
+    assert!(Command::new("cp").arg("-a").arg(&r.root).arg(&new).status().unwrap().success());
+    fs::write(new.join("g.py"), b"def gamma_swapped_in():\n    return 3\n").unwrap();
+    fs::rename(&r.root, &old).unwrap();
+    fs::rename(&new, &r.root).unwrap();
+    wait_for(30, "the new tree to be indexed", || r.indexed("gamma_swapped_in"));
+    r.write("h.py", b"def eta_after_the_swap():\n    return 4\n");
+    wait_for(30, "a change in the new tree to be indexed", || r.indexed("eta_after_the_swap"));
+    let err: Vec<String> = rx.try_iter().collect();
+    assert!(err.iter().any(|l| l.contains("root replaced; watching the new tree")), "{err:?}");
+    assert!(!indexed_in(&old, "gamma_swapped_in"));
+    let _ = fs::remove_dir_all(&old);
+}
+
 /// Inotify watches the process holds, from /proc/PID/fdinfo.
 #[cfg(target_os = "linux")]
 fn inotify_watches(pid: u32) -> usize {
