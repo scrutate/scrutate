@@ -2066,8 +2066,9 @@ impl Index {
             if held && !self.log_left {
                 record_pass(&self.dir, "quick_check", &check_mark(&db_path, &self.meta("data_version").unwrap_or_default()));
             }
-            // a long-running process would otherwise keep a build's word caches for its whole life
-            rayon::broadcast(|_| crate::text::clear_caches());
+            // a long-running process would otherwise keep a build's word caches for its whole life;
+            // queued on every thread, not waited for, as a thread may be busy with another call
+            rayon::spawn_broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
         }
         st.seconds = t0.elapsed().as_secs_f64();
@@ -4076,6 +4077,68 @@ mod tests {
         ix.update(false).unwrap();
         assert!(ix.last_refresh.is_some());
         drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An update does not wait for every thread of the pool to free its word caches: a thread
+    /// busy with another call's search would hold it as long as that search runs.
+    #[test]
+    fn an_update_does_not_wait_for_a_busy_thread_to_free_its_caches() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_busy_pool_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let mut ix = pool.install(|| {
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            ix.update(false).unwrap();
+            ix
+        });
+        // another call's search keeps one thread of the pool busy
+        let (busy, release) = std::sync::mpsc::channel::<()>();
+        let (started, running) = std::sync::mpsc::channel::<()>();
+        pool.spawn(move || {
+            started.send(()).unwrap();
+            let _ = release.recv_timeout(std::time::Duration::from_secs(3));
+        });
+        running.recv().unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        let took = pool.install(|| {
+            let t = std::time::Instant::now();
+            ix.update_paths(&["a.py".into()], false).unwrap();
+            t.elapsed()
+        });
+        let _ = busy.send(());
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(took < std::time::Duration::from_millis(300), "waited {took:?}");
+    }
+
+    /// The word caches a thread has not freed yet map a word to its stem and an identifier to
+    /// its subwords, which depend on the word alone: a search on that thread after an update
+    /// answers from the new index, as with the caches empty.
+    #[test]
+    fn a_search_on_a_thread_that_still_holds_its_word_caches_answers_from_the_new_index() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_stale_caches_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha_beta(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        std::fs::write(root.join("a.py"), "def gamma_delta(x):\n    return x\n").unwrap();
+        ix.update_paths(&["a.py".into()], false).unwrap();
+        // entries from before the update, as a thread whose clear has not run yet holds them
+        let cached: Vec<_> = ["alpha_beta", "gamma_delta"].iter().map(|w| crate::text::ident_tokens(w)).collect();
+        assert!(crate::text::cache_len() > 0);
+        let mut s = crate::search::Searcher::new(ix);
+        let names = |s: &mut crate::search::Searcher, q: &str| -> Vec<String> { s.search(q, 5, false).unwrap().into_iter().map(|h| h.name).collect() };
+        assert_eq!(names(&mut s, "gamma delta"), ["gamma_delta"]);
+        assert!(!names(&mut s, "alpha beta").contains(&"alpha_beta".to_string()));
+        crate::text::clear_caches();
+        let fresh: Vec<_> = ["alpha_beta", "gamma_delta"].iter().map(|w| crate::text::ident_tokens(w)).collect();
+        assert_eq!(cached, fresh, "a cached entry is what the word gives anew");
+        assert_eq!(names(&mut s, "gamma delta"), ["gamma_delta"], "the same answer with the caches empty");
+        drop(s);
         let _ = std::fs::remove_dir_all(&root);
     }
 

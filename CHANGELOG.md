@@ -292,6 +292,10 @@ incompatible index by itself, and that is never breaking.
   directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
   file the link leads to; a link was already left alone only as the file itself
   ([CLI](docs/CLI.md#tsquery---rewrite)).
+- A call that saves an edit to the index no longer waits for every thread of the pool to free
+  its word caches: while another call's search kept one busy, it waited as long as that search
+  ran (4 to 25 s while other index builds ran in the same process). Each thread frees them when
+  it is next free.
 - The language server's `workspace/symbol` lists the symbols of a repository opened as its own
   folder inside another folder once, from the deepest folder that answered (the inner one, or
   while its first build runs the nearest one above it), where each folder whose index held them
