@@ -4333,9 +4333,13 @@ mod tests {
 
     /// An update does not wait for every thread of the pool to free its word caches: a thread
     /// busy with another call's search would hold it as long as that search runs. Shown by order,
-    /// not by time: the update returns while the busy thread is still busy.
+    /// not by time: the busy thread is let go only once the update has returned, so an update
+    /// that waited for it would never return, and the thread's cache is still full then. A wait
+    /// with a cap is not a case: rayon's only wait on pool threads is `broadcast`, which has none,
+    /// and one with a cap would be new code written to wait.
     #[test]
     fn an_update_does_not_wait_for_a_busy_thread_to_free_its_caches() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let root = std::env::temp_dir().join(format!("scrutate_ix_busy_pool_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -4346,25 +4350,43 @@ mod tests {
             ix.update(false).unwrap();
             ix
         });
-        // another call's search keeps one thread of the pool busy until it is let go, or for 10 s
-        // when an update that waits for it never returns to let it go
+        // another call's search fills a thread's caches and keeps it busy until the update returns
         let (release, held) = std::sync::mpsc::channel::<()>();
         let (started, running) = std::sync::mpsc::channel::<()>();
-        let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let done = std::sync::Arc::clone(&ended);
+        let (finished, ended) = std::sync::mpsc::channel::<()>();
+        let cached = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = std::sync::Arc::clone(&cached);
         pool.spawn(move || {
+            crate::text::ident_tokens("alpha_beta_gamma");
             started.send(()).unwrap();
-            let _ = held.recv_timeout(std::time::Duration::from_secs(10));
-            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = held.recv();
+            // the clear queued for this thread runs only after this job ends
+            seen.store(crate::text::cache_len(), Ordering::SeqCst);
+            finished.send(()).unwrap();
         });
         running.recv().unwrap();
+        // a watchdog lets the thread go when the update has not returned in 20 s: it waited
+        let stuck = std::sync::Arc::new(AtomicBool::new(false));
+        let (returned, watched) = std::sync::mpsc::channel::<()>();
+        let watchdog = {
+            let (stuck, release) = (std::sync::Arc::clone(&stuck), release.clone());
+            std::thread::spawn(move || {
+                if watched.recv_timeout(std::time::Duration::from_secs(20)).is_err() {
+                    stuck.store(true, Ordering::SeqCst);
+                    let _ = release.send(());
+                }
+            })
+        };
         std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
         pool.install(|| ix.update_paths(&["a.py".into()], false).unwrap());
-        let busy = !ended.load(std::sync::atomic::Ordering::SeqCst);
+        let _ = returned.send(());
         let _ = release.send(());
+        ended.recv().unwrap();
+        watchdog.join().unwrap();
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
-        assert!(busy, "the update returned only once the busy thread was done");
+        assert!(!stuck.load(Ordering::SeqCst), "the update returned only once the watchdog let the busy thread go");
+        assert!(cached.load(Ordering::SeqCst) > 0, "the busy thread's caches were cleared before the update returned");
     }
 
     /// The word caches a thread has not freed yet map a word to its stem and an identifier to
