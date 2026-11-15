@@ -6,6 +6,8 @@
 mod canon;
 #[path = "support/rg.rs"]
 mod rg;
+#[path = "support/tag.rs"]
+mod tag;
 use rg::have_rg;
 
 use canon::canon;
@@ -35,6 +37,7 @@ struct Tree {
 impl Tree {
     fn new(name: &str) -> Tree {
         let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("hook_{name}_{}", std::process::id()));
+        tag::claim(&base);
         let _ = fs::remove_dir_all(&base);
         let root = base.join("repo");
         fs::create_dir_all(root.join(".git")).unwrap();

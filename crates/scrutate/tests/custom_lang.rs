@@ -4,6 +4,8 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/tag.rs"]
+mod tag;
 use canon::canon;
 use std::fs;
 use std::path::PathBuf;
@@ -33,6 +35,7 @@ struct Tree {
 impl Tree {
     fn new(name: &str) -> Tree {
         let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("custom_lang_{name}_{}", std::process::id()));
+        tag::claim(&base);
         let _ = fs::remove_dir_all(&base);
         let root = base.join("repo");
         fs::create_dir_all(root.join(".git")).unwrap();

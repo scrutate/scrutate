@@ -4,6 +4,8 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/tag.rs"]
+mod tag;
 // only the Unix tests run rg here
 #[cfg(unix)]
 #[path = "support/rg.rs"]
@@ -106,6 +108,7 @@ fn planted() -> Vec<(&'static str, &'static str, String, String)> {
 /// The planted tree: code that uses the secrets, a `.env`, and three private keys.
 fn tree(test: &str) -> (PathBuf, Vec<(&'static str, String)>) {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_{test}_{}", std::process::id()));
+    tag::claim(&root);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join(".git")).unwrap();
     let mut files: std::collections::BTreeMap<&str, String> = Default::default();

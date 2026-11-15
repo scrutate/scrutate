@@ -4,6 +4,8 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/tag.rs"]
+mod tag;
 use canon::canon;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ struct Tree {
 impl Tree {
     fn new(name: &str) -> Tree {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("rewrite_{name}_{}", std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         // its own repository, so the work tree above lends it no ignore file
         fs::create_dir_all(root.join(".git")).unwrap();

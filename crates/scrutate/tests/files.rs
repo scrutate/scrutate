@@ -4,6 +4,8 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/tag.rs"]
+mod tag;
 use canon::canon;
 use std::fs;
 use std::io::Write;
@@ -22,6 +24,7 @@ struct Tree {
 impl Tree {
     fn new(name: &str) -> Tree {
         let top = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("files_{name}_{}", std::process::id()));
+        tag::claim(&top);
         let _ = fs::remove_dir_all(&top);
         let root = top.join("repo");
         fs::create_dir_all(root.join(".git")).unwrap();

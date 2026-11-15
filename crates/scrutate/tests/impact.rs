@@ -5,6 +5,8 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/tag.rs"]
+mod tag;
 use canon::canon;
 use std::fs;
 use std::io::Write;
@@ -25,6 +27,7 @@ struct Tree {
 impl Tree {
     fn new(name: &str) -> Tree {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("impact_{name}_{}", std::process::id()));
+        tag::claim(&root);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         Tree { root: canon(root) }

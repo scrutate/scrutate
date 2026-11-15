@@ -7,6 +7,8 @@
 
 #[path = "support/canon.rs"]
 mod canon;
+#[path = "support/tag.rs"]
+mod tag;
 use canon::canon;
 use std::fs;
 use std::io::{Read, Write};
@@ -28,6 +30,7 @@ struct Scratch {
 impl Scratch {
     fn new(name: &str) -> Scratch {
         let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("setup_{name}_{}", std::process::id()));
+        tag::claim(&base);
         let _ = fs::remove_dir_all(&base);
         for d in ["home", "codex", "config", "state", "data", "repo/.git", "repo/sub"] {
             fs::create_dir_all(base.join(d)).unwrap();
