@@ -159,7 +159,7 @@ notify = { version = "=9.0.0-rc.8", default-features = false, features = ["macos
 # a write goes through directories opened one by one, never through a link (already in the
 # tree through tar)
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", default-features = false, features = ["std", "fs"] }
+rustix = { version = "1", default-features = false, features = ["std", "fs", "process"] }
 
 # the same on Windows: opens and a rename relative to a directory handle (NtCreateFile,
 # NtSetInformationFile), already in the tree through other crates

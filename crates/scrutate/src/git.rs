@@ -330,27 +330,38 @@ impl Git {
     /// git with `args`, stopped once it has run for `limit`: its output so far, its exit status
     /// (none when stopped) and the first line of its errors.
     fn bounded(&self, args: &[&str], limit: std::time::Duration) -> Result<(Vec<u8>, Option<std::process::ExitStatus>, String)> {
-        /// Kills and reaps git on every way out, an early return and a panic too.
+        /// Kills and reaps git on every way out, an early return and a panic too: on Unix its whole
+        /// process group, so a wrapper's forked child goes with it.
         struct Reap(std::process::Child);
         impl Drop for Reap {
             fn drop(&mut self) {
+                #[cfg(unix)]
+                let _ = rustix::process::kill_process_group(rustix::process::Pid::from_child(&self.0), rustix::process::Signal::KILL);
                 let _ = self.0.kill();
                 let _ = self.0.wait();
             }
         }
-        let mut child = Reap(self.command(args)?.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(not_run)?);
+        let mut cmd = self.command(args)?;
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut child = Reap(cmd.spawn().map_err(not_run)?);
         let mut stdout = child.0.stdout.take().ok_or_else(|| anyhow!("git: no output"))?;
         let mut stderr = child.0.stderr.take().ok_or_else(|| anyhow!("git: no error output"))?;
-        let reader = std::thread::spawn(move || {
-            let mut out = Vec::new();
-            let _ = stdout.read_to_end(&mut out);
-            out
-        });
-        let errors = std::thread::spawn(move || {
-            let mut err = Vec::new();
-            let _ = stderr.read_to_end(&mut err);
-            err
-        });
+        // read as it comes, so what git printed is kept when a child it left holds the pipe open
+        let drain = |mut from: Box<dyn Read + Send>| {
+            let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let into = got.clone();
+            let h = std::thread::spawn(move || {
+                let mut buf = [0u8; 8192];
+                while let Ok(n @ 1..) = from.read(&mut buf) {
+                    into.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&buf[..n]);
+                }
+            });
+            (h, got)
+        };
+        let (reader, out) = drain(Box::new(stdout));
+        let (errors, err) = drain(Box::new(stderr));
         let deadline = std::time::Instant::now() + limit;
         let status = loop {
             if let Some(s) = child.0.try_wait()? {
@@ -362,8 +373,13 @@ impl Git {
             std::thread::sleep(std::time::Duration::from_millis(20));
         };
         drop(child);
-        let out = reader.join().unwrap_or_default();
-        let why = first_line(&errors.join().unwrap_or_default());
+        // the group is gone; a child outside it may still hold a pipe, so the wait is short
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        while !(reader.is_finished() && errors.is_finished()) && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let take = |b: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>| std::mem::take(&mut *b.lock().unwrap_or_else(|e| e.into_inner()));
+        let (out, why) = (take(&out), first_line(&take(&err)));
         Ok((out, status, why))
     }
 

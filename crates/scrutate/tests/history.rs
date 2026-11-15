@@ -308,3 +308,27 @@ fn an_inherited_pathspec_setting_leaves_the_history_whole() {
         assert_eq!(subjects(def), ["edit f again", "edit f", "add f and g"], "{var}: {def}");
     }
 }
+
+/// A git wrapper that forks rather than execs leaves a child holding git's output after git
+/// exits: the lookup still ends at its bound.
+#[cfg(unix)]
+#[test]
+fn a_forked_child_of_git_does_not_hold_the_lookup() {
+    let t = shaped("forked");
+    let (bin, path) = fake_git(&t, "*\" log \"*) printf '\\001%040d\\000%s\\000%s\\n' 1 2026-01-01 'the only'; sleep 30 & exit 0;;");
+    let started = std::time::Instant::now();
+    let out = Command::new(BIN)
+        .args(["--root", t.root.to_str().unwrap(), "read", "--symbol", "f", "--history", "--json"])
+        .current_dir(&t.root)
+        .envs(GIT_ENV)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let took = started.elapsed();
+    let _ = fs::remove_dir_all(&bin);
+    assert!(took < std::time::Duration::from_secs(15), "took {took:?}");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(subjects(&v["result"]["definitions"][0]), ["the only"], "{v}");
+}

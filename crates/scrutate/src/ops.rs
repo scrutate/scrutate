@@ -56,7 +56,12 @@ pub const HISTORY_DEFINITIONS: usize = 10;
 pub const HISTORY_GIT: (u32, u32) = (2, 25);
 /// How long one definition's history may take: `git log -L` walks its file's whole past.
 pub const HISTORY_SECONDS: u64 = 5;
-const HISTORY_STOPPED: &str = "history lookup stopped after 5 s on a long history; `git commit-graph write --reachable` makes it fast";
+const HISTORY_STOPPED: &str = concat!(
+    "history lookup stopped after ",
+    5, // HISTORY_SECONDS, checked below
+    " s on a long history; `git commit-graph write --reachable` makes it fast"
+);
+const _: () = assert!(HISTORY_SECONDS == 5, "HISTORY_STOPPED names HISTORY_SECONDS");
 /// What a shallow clone's boundary commit stands for in a history: not a change.
 const SHALLOW_CUT: &str = "history cut here: shallow clone: this commit or an older one changed these lines";
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
