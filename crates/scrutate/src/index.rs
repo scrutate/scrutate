@@ -3276,6 +3276,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A write by another program that keeps the database's size, its mtime and its data version
+    /// leaves only the change time to tell: the next open checks again.
+    #[test]
+    fn a_write_that_keeps_size_mtime_and_data_version_is_checked_again() {
+        let root = checked_repo("ctime_mark");
+        let checks = || super::QUICK_CHECKS.with(|c| c.get());
+        let open = || super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        let mut ix = open();
+        ix.update(false).unwrap();
+        drop(ix);
+        drop(open());
+        let db = root.join(".scrutate/index.db");
+        let (size, mtime) = std::fs::metadata(&db).map(|m| (m.len(), m.modified().unwrap())).unwrap();
+        let ver = |c: &rusqlite::Connection| c.query_row("SELECT value FROM meta WHERE key='data_version'", [], |r| r.get::<_, String>(0)).unwrap();
+        {
+            let c = rusqlite::Connection::open(&db).unwrap();
+            let before = ver(&c);
+            // a row rewritten in place with a value of the same length, the log folded back in
+            c.execute_batch("UPDATE files SET hash = upper(hash); PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+            assert_eq!(ver(&c), before);
+        }
+        std::fs::File::options().write(true).open(&db).unwrap().set_modified(mtime).unwrap();
+        let _ = std::fs::remove_file(db.with_extension("db-wal"));
+        assert_eq!(std::fs::metadata(&db).unwrap().len(), size, "the write kept the size");
+        let c0 = checks();
+        drop(open());
+        assert_eq!(checks(), c0 + 1, "a database written behind the index's back is checked again");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A check another binary recorded says nothing of the schema work this one does: an open by
     /// a binary whose schema differs checks once, then trusts its own record.
     #[test]
