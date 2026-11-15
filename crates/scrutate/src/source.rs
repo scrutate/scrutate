@@ -159,8 +159,6 @@ impl Source for Member<'_> {
 /// read into (a new zeroed buffer per file cost about 4% of the CPU of a Linux-tree search on Linux).
 pub(super) struct FileWorker {
     searcher: Searcher,
-    /// `searcher` without the binary check, for a file held whole that holds no NUL byte
-    text: Searcher,
     /// for files named on the command line, made on the first one
     named: Option<Searcher>,
     /// for the members of one archive, made on its first member
@@ -171,14 +169,7 @@ pub(super) struct FileWorker {
 }
 
 pub(super) fn file_worker(q: &Query) -> FileWorker {
-    FileWorker {
-        searcher: make_searcher(q, BinaryDetection::quit(0), None, true, false),
-        text: make_searcher(q, BinaryDetection::none(), None, true, false),
-        named: None,
-        member: None,
-        small: Vec::new(),
-        out: Vec::new(),
-    }
+    FileWorker { searcher: make_searcher(q, BinaryDetection::quit(0), None, true, false), named: None, member: None, small: Vec::new(), out: Vec::new() }
 }
 
 /// `heap`: the most bytes the searcher may hold, a line and its context (all of the input with -U).
@@ -227,7 +218,8 @@ fn splittable(o: &Query) -> bool {
 
 /// UTF-8 and UTF-16 byte-order marks: only the stream reader transcodes them.
 fn starts_with_bom(b: &[u8]) -> bool {
-    b.starts_with(&[0xEF, 0xBB, 0xBF]) || b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF])
+    // a slice pattern compares the bytes in place, where `starts_with` calls memcmp
+    matches!(b, [0xEF, 0xBB, 0xBF, ..] | [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..])
 }
 
 /// What the reader needs of a walked file `b`, whose first NUL is at `at`: in quit mode it stops
@@ -239,6 +231,39 @@ fn up_to_the_nul(b: &[u8], at: usize) -> &[u8] {
         &b[..=at]
     } else {
         b
+    }
+}
+
+/// Whether the reader quits on the walked file `b`, first NUL at `at`, having searched no line:
+/// only a line that ends in its first read, the 3 bytes of the BOM check, comes before the read
+/// that meets the NUL. Then a slice search, which quits at once, gives the same answer for less.
+fn nothing_before_the_nul(b: &[u8], at: usize, term: u8) -> bool {
+    at < (64 << 10) - 8 && !starts_with_bom(b) && (at < 3 || b[0] != term && b[1] != term && b[2] != term)
+}
+
+/// Search `b`, which holds no NUL byte the binary check could find, with that check off: one pass
+/// over the file. A second searcher would cost its 64 KiB line buffer on every start.
+fn unchecked<S: Sink>(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], sink: S) -> Result<(), S::Error> {
+    let checked = searcher.binary_detection().clone();
+    searcher.set_binary_detection(BinaryDetection::none());
+    let res = m.search_slice(searcher, b, sink);
+    searcher.set_binary_detection(checked);
+    res
+}
+
+/// Search `b`, held whole, whose first NUL byte is at `at`, as ripgrep reads it: a walked file
+/// through the reader, where the search stops at the read that meets the NUL, the first read being
+/// the 3 bytes of the BOM check; a named one as a slice where ripgrep maps it, through the reader
+/// on macOS.
+fn with_a_nul(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], at: usize, named: bool, sink: &mut Collector) -> std::io::Result<()> {
+    if !named && nothing_before_the_nul(b, at, searcher.line_terminator().as_byte()) {
+        m.search_slice(searcher, &b[..=at], sink)
+    } else if !named {
+        m.search_reader(searcher, up_to_the_nul(b, at), sink)
+    } else if !MAPS {
+        m.search_reader(searcher, b, sink)
+    } else {
+        m.search_slice(searcher, b, sink)
     }
 }
 
@@ -258,6 +283,8 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     };
     let mut fresh = None;
     let mut owned = None;
+    // `owned` is known to hold no NUL byte
+    let mut clear = false;
     let mut small = None;
     // a process that stays up maps no file: a named one held whole is the slice a map would be
     let resident = named && MAPS && !f.map_named;
@@ -283,7 +310,8 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
                     match split(r, at, len, (min / 8).max(1), &rel) {
                         Outcome::Done => return,
                         Outcome::Stream => {}
-                        Outcome::Buffer(b) => owned = Some(b),
+                        // `whole` takes only a source of one line with no NUL byte
+                        Outcome::Buffer(b) => (owned, clear) = (Some(b), true),
                     }
                 }
                 if owned.is_none() && hold_whole(len) {
@@ -312,18 +340,12 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
     let mut sink = Collector { convert: named, out: std::mem::take(&mut w.out), ..r.collector(Arc::clone(&rel)) };
     let res = match whole {
-        Some(b) => match memchr::memchr(0, b) {
+        Some(b) => match if clear { None } else { memchr::memchr(0, b) } {
             // nothing for a binary check to find: one pass over the file, as before the NUL rules.
             // A byte-order mark is transcoded, and the text it gives may hold a NUL
-            None if !src.expands() && !starts_with_bom(b) => r.matcher.search_slice(&mut w.text, b, &mut sink),
+            None if !src.expands() && !starts_with_bom(b) => unchecked(r.matcher, searcher, b, &mut sink),
             None => r.matcher.search_slice(searcher, b, &mut sink),
-            // a file with a NUL byte is read as ripgrep reads it: a walked one through the reader,
-            // where the search stops at the read that meets the NUL, the first read being the 3
-            // bytes of the BOM check; a named one as a slice where ripgrep maps it, through the
-            // reader on macOS
-            Some(at) if !named => r.matcher.search_reader(searcher, up_to_the_nul(b, at), &mut sink),
-            Some(_) if !MAPS => r.matcher.search_reader(searcher, b, &mut sink),
-            Some(_) => r.matcher.search_slice(searcher, b, &mut sink),
+            Some(at) => with_a_nul(r.matcher, searcher, b, at, named, &mut sink),
         },
         None => src.stream(r.matcher, searcher, &mut sink),
     };

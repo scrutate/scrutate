@@ -110,6 +110,9 @@ def random_corpus(rng: random.Random, root: str) -> list[str]:
             # or anywhere (a file past 64 KB holds it past the first 64 KB about as often)
             at = rng.choice([0, 1, 2, 3, 4, rng.randrange(len(data) + 1)])
             data = data[:at] + b"\x00" + data[at:]
+            # a line that ends in the reader's 3-byte first read is searched before the NUL
+            if rng.random() < 0.5:
+                data = rng.choice([b"\n", b"\n\n", b"a\n", b"zz\n", b"\r\n"]) + data
         with open(p, "wb") as f:
             f.write(data)
     if rng.random() < 0.3:

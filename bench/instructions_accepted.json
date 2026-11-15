@@ -5,5 +5,12 @@
   "since": "2026-11-16",
   "audit": "R3X-17a",
   "reason": "what 0.1.0 adds at start: 1,209,775 -> 1,226,735 instructions (1.0140) from e7d6c9d9 to 54ac083c, measured on the AWS build box; one commit over 0.25% (e043cd1e, Names::tie, +0.36%), the rest in steps under 3 K instructions each"
+ },
+ "binheavy/literal": {
+  "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
+  "limit": 1.02,
+  "since": "2026-11-16",
+  "audit": "R3X-14c",
+  "reason": "the NUL rules of FUZZ-02: a walked file with a NUL byte is answered as ripgrep reads it, which a slice search alone gets wrong when the first NUL comes late (lines before the read that meets it print, later ones do not). On 2,000 random 32 KB files and 200 text files: 11,504,716 instructions with the rules off, 11,635,811 with them (+65 per binary file: one memchr to the first NUL and the dispatch), against 11,519,548 on main (1.0101); ripgrep 15.2.0 counts 14,277,862 there (1.24 times main)"
  }
 }

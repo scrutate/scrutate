@@ -85,6 +85,9 @@ def make():
                 data += pad
                 at = rnd.choice([0, 1, 2, 3, 4, rnd.randrange(len(data) + 1)])
                 data = data[:at] + b"\x00" + data[at:]
+                # a line that ends in the reader's 3-byte first read is searched before the NUL
+                if rnd.random() < 0.5:
+                    data = rnd.choice([b"\n", b"\n\n", b"a\n", b"zz\n", b"\r\n", b"x\x00\n"]) + data
                 STATE["nul"].add(os.path.join(d, n))
             with open(os.path.join(WORK, d, n), "wb") as f:
                 f.write(data)
