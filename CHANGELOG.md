@@ -347,6 +347,11 @@ incompatible index by itself, and that is never breaking.
   `Store[]`, `Array<Store>` and `Record<string, Store>`, and a place of a tuple by its number
   (Python `tuple[Other, Store]` and `tuple[Store, ...]`, TypeScript `[Other, Store]`); the undecided note no
   longer speaks of another definition of the name when there is none ([CLI](docs/CLI.md#engine-b)).
+- `grep` on a file with a NUL byte prints what ripgrep 15.2.0 prints on the same platform. A walked
+  file is read as ripgrep reads it, so a match in its first 3 bytes, ripgrep's first read, prints
+  with the stop warning. A named file is one slice where ripgrep maps it (Linux, Windows): a NUL in
+  its first 64 KiB shows only the binary message, and a NUL ends no line. On macOS, where ripgrep
+  reads a named file, so does scrutate ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - On Windows the paths scrutate prints or hands to another program have no `\\?\` in front: the
   index and glob roots it reports, `watch`'s root, `search --also`'s `root`, the binary and project
   paths `setup` writes, Engine A's paths (a share as `//server/share`, where it printed

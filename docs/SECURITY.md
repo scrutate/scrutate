@@ -481,6 +481,9 @@ on Unix).
   - `lex.rs`: one `matrixmultiply::sgemm` call with lengths derived from the slices it is given;
   - `text.rs`: `from_utf8_unchecked` on a run of ASCII word bytes (ASCII boundaries are UTF-8
     boundaries);
+  - `source.rs`: `grep_searcher::MmapChoice::auto` for the searcher of the files named to a
+    one-shot `scrutate grep` or the Grep hook (`Files::map_named`), as ripgrep takes it, so such a
+    file is searched through a memory map where grep-searcher maps one (not on macOS);
   - `config.rs`: `std::env::set_var` during startup before any thread exists;
   - `cli.rs`: `signal(SIGINT, ...)` (Unix) and `SetConsoleCtrlHandler` (Windows) declarations,
     whose handler only swaps an atomic flag; on a second Ctrl-C the Unix handler restores the
@@ -582,6 +585,7 @@ on Unix).
   | `crates/scrutate/src/running.rs` | 12 |
   | `crates/scrutate/src/session.rs` | 5 |
   | `crates/scrutate/src/shellhook.rs` | 4 |
+  | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 25 |
   | `crates/scrutate/tests/cli.rs` | 1 |
@@ -601,8 +605,14 @@ on Unix).
   place. scrutate never does (temp dir + rename; deletion only after the manifest no longer
   references them), so this needs an external actor; on Windows a mapped file cannot be deleted
   and GC retries later. A file the user names (a `SCRUTATE_SEMANTIC` model) is read whole, never
-  mapped: replacing it in place under a running process would end that process with SIGBUS. `tests/maps.rs` lists every call that maps a file with why its file may be mapped (built-in
-  data, or segment files scrutate writes once), and a new one fails until it is listed.
+  mapped: replacing it in place under a running process would end that process with SIGBUS. A file
+  named to a one-shot `scrutate grep` or the Grep hook is mapped (not on macOS), as ripgrep maps
+  it: another process that shortens it while it is searched can end that process with `SIGBUS`,
+  the risk ripgrep takes for the same speed. A process that stays up (`serve`, `lsp`, a session),
+  where agents edit the files it searches, maps none of them: it reads a named file whole (up to
+  64 MiB) instead. `tests/maps.rs` lists every call that maps a file with why its file may be
+  mapped (built-in data, segment files scrutate writes once, or a file named to a one-shot grep),
+  and a new one fails until it is listed.
 - **Index privacy on Windows**: `.scrutate/` inherits the repository directory's permissions there,
   so a file whose own permissions are narrower than its directory's has its chunks readable by
   whoever can read the repository directory. On Unix the directory is the owner's alone (above).

@@ -1,7 +1,8 @@
-//! scrutate maps only files of its own that are immutable by construction, never a file the user supplies.
-//! Every place the crate maps a file into memory is on a list with why the file may be mapped:
-//! a process that stays up (`serve`, MCP, a session) dies by SIGBUS when a mapped file is cut
-//! under it, so a file the user controls is read instead.
+//! scrutate maps only files of its own that are immutable by construction, and the files named to a
+//! one-shot `scrutate grep` or the Grep hook, which ripgrep maps the same way (a process that ends
+//! with the search). Every place the crate maps a file into memory is on a list with why the file
+//! may be mapped: a process that stays up (`serve`, MCP, a session) dies by SIGBUS when a mapped
+//! file is cut under it, so a file the user controls is read there instead.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -17,6 +18,11 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ),
     ("textindex.rs", "open", "a text index segment's .npy arrays, written and renamed as a lexical segment's"),
     ("textindex.rs", "map_file", "a text index segment's post.bin and paths.bin, written and renamed as its arrays"),
+    (
+        "source.rs",
+        "make_searcher",
+        "a file named to a one-shot grep (Files::map_named, set by the CLI and the Grep hook only), as ripgrep maps it; a resident process reads it whole",
+    ),
 ];
 
 /// What maps a file: the memmap2 calls, and the crate's functions that map what they are given.

@@ -443,6 +443,7 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
         globs: ask.globs.clone(),
         types: ask.file_type.iter().cloned().collect(),
         paths_as_given: true,
+        map_named: true,
         ..Files::walk(vec![ask.target.clone()])
     };
     let cancel = Arc::new(AtomicBool::new(false));

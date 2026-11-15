@@ -1203,3 +1203,19 @@ fn a_tool_path_that_leaves_the_repository_and_comes_back_names_its_directory() {
     let plain = r.ok("grep_code", json!({"pattern": "return", "path": "pkg"}));
     assert_eq!(r.ok("grep_code", json!({"pattern": "return", "path": detour})), plain);
 }
+
+#[test]
+fn a_resident_grep_of_a_named_file_with_a_nul_byte_answers_as_one_mapped_slice() {
+    // a match past the first 64 KiB, in the read that also holds the NUL: a slice prints it, a
+    // read stopped at the NUL (ripgrep on macOS) does not. The server maps no file: it reads one
+    // whole up to 64 MiB, which gives what `scrutate grep` gives through its map
+    let maps = cfg!(any(unix, windows)) && !cfg!(target_os = "macos");
+    let body = format!("x first\n{}x mid\nnul\0 x\nx last\n", "pad\n".repeat(20000));
+    let mut r = Repo::new("named_nul", &[("big.txt", body.as_str())]);
+    let text = r.ok("grep_code", json!({"pattern": "x", "path": "big.txt"}));
+    assert!(text.contains("x first") && !text.contains("x last"), "{text}");
+    assert_eq!(text.contains("x mid"), maps, "{text}");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_scrutate")).args(["grep", "-n", "x", "big.txt"]).current_dir(&r.root).output().unwrap();
+    let cli = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(cli.contains("x mid"), maps, "the CLI maps it where it maps: {cli}");
+}

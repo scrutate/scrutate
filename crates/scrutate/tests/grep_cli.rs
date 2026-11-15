@@ -840,7 +840,8 @@ fn named_files_are_searched_as_ripgrep_does() {
         (&["-c", "foo", "nul.txt"], 0, "2\n".into()),
         (&["-l", "foo", "nul.txt"], 0, "nul.txt\n".into()),
         (&["-v", "foo", "nul.txt"], 0, format!("{}\n", note(7))),
-        (&["-v", "-c", "foo", "nul.txt"], 0, "2\n".into()),
+        // ripgrep 15.2.0: where it maps a named file `bar\0baz` is one line, on macOS two
+        (&["-v", "-c", "foo", "nul.txt"], 0, if cfg!(any(unix, windows)) && !cfg!(target_os = "macos") { "1\n" } else { "2\n" }.into()),
         (&["-v", "-l", "foo", "nul.txt"], 0, "nul.txt\n".into()),
         (&["zzz", "nul.txt"], 1, String::new()),
         (&["foo", "big.bin"], 0, format!("1:foo first\n{}\n", note(300094))),
@@ -1003,6 +1004,49 @@ fn a_reader_that_stops_reading_and_then_goes_away_ends_a_json_search() {
             std::thread::sleep(std::time::Duration::from_millis(20));
         };
         assert_eq!(status.code(), Some(0), "{args:?} in {dir}");
+    }
+}
+
+#[test]
+fn a_named_file_with_a_nul_byte_is_searched_as_ripgrep_searches_it() {
+    // ripgrep searches a named file through a memory map where grep-searcher maps one (not on
+    // macOS): one slice, whose first 64 KiB are checked for a NUL before any line prints, and past
+    // that the first matched line holding a NUL stops the output; a NUL ends no line. On macOS it
+    // reads the file, which turns a NUL into a line break and stops at the read that meets it
+    let maps = cfg!(any(unix, windows)) && !cfg!(target_os = "macos");
+    let d = Dir::new("namednul");
+    d.write("f1", b"x\r\nbar\r\nfoo x\r\nT\0bin x\n");
+    d.write("f2", &[&b"x line\n".repeat(20000)[..], b"pad\0 x tail\nx after\n"].concat());
+    d.write("f3", &[&b"x\n".repeat(20000)[..], b"pad\0pad\nx after\n"].concat());
+    d.write("f4", b"a\0x\nx\n");
+    // past the 1 MiB up to which a named file gets a searcher of its own
+    d.write("f5", &[&b"x line\n".repeat(160000)[..], b"pad\0 x tail\nx after\n"].concat());
+    let bin = |at: u32| format!("binary file matches (found \"\\0\" byte around offset {at})");
+    let lines = |n: usize, at: u32| (1..=n).map(|i| format!("{i}:x line")).chain([bin(at)]).collect::<Vec<_>>();
+    // ripgrep 15.2.0, `rg -n x F`, `rg -c x F` and `rg -v -c x F`: on Linux where it maps, on macOS
+    let cases: [(&str, Vec<String>, &str, &str); 5] = if maps {
+        [
+            ("f1", vec![bin(16)], "3", "1"),
+            ("f2", lines(20000, 140003), "20002", ""),
+            ("f3", vec![bin(40003)], "20001", "1"),
+            ("f4", vec![bin(1)], "2", ""),
+            ("f5", lines(160000, 1120003), "160002", ""),
+        ]
+    } else {
+        [
+            ("f1", vec!["1:x".to_string(), bin(16)], "3", "2"),
+            ("f2", lines(18724, 140003), "20002", "1"),
+            ("f3", vec!["1:x".to_string(), bin(40003)], "20001", "2"),
+            ("f4", vec![bin(1)], "2", "1"),
+            ("f5", lines(159154, 1120003), "160002", "1"),
+        ]
+    };
+    for (f, want, count, inverted) in cases {
+        let out = d.run(&["grep", "-n", "x", f]).1;
+        assert_eq!(out.lines().collect::<Vec<_>>(), want.iter().map(String::as_str).collect::<Vec<_>>(), "{f} -n");
+        assert_eq!(d.run(&["grep", "-c", "x", f]).1.trim(), count, "{f} -c");
+        assert_eq!(d.run(&["grep", "-v", "-c", "x", f]).1.trim(), inverted, "{f} -v -c");
+        assert_eq!(d.run(&["grep", "-l", "x", f]).1.trim(), f, "{f} -l");
     }
 }
 

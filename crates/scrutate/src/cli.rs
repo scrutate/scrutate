@@ -1379,6 +1379,8 @@ pub fn run() -> Result<i32> {
                 threads,
                 search_zip,
                 paths_as_given: !paths.is_empty(),
+                // this process ends with the search, so a named file may be mapped (Files::map_named)
+                map_named: true,
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 cwd: cwd.clone(),
                 ..Files::default()

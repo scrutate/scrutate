@@ -169,14 +169,21 @@ pub(super) struct FileWorker {
 }
 
 pub(super) fn file_worker(q: &Query) -> FileWorker {
-    FileWorker { searcher: make_searcher(q, BinaryDetection::quit(0), None, true), named: None, member: None, small: Vec::new(), out: Vec::new() }
+    FileWorker { searcher: make_searcher(q, BinaryDetection::quit(0), None, true, false), named: None, member: None, small: Vec::new(), out: Vec::new() }
 }
 
 /// `heap`: the most bytes the searcher may hold, a line and its context (all of the input with -U).
 /// `bom`: a byte-order mark at the start is transcoded, which only the start of a stream has.
-pub(super) fn make_searcher(q: &Query, binary: BinaryDetection, heap: Option<usize>, bom: bool) -> Searcher {
-    SearcherBuilder::new()
-        .binary_detection(binary)
+/// `mmap`: a file is searched through a memory map where grep-searcher maps one (not on macOS),
+/// as ripgrep searches the files named on its command line.
+pub(super) fn make_searcher(q: &Query, binary: BinaryDetection, heap: Option<usize>, bom: bool, mmap: bool) -> Searcher {
+    let mut b = SearcherBuilder::new();
+    if mmap {
+        // SAFETY: as ripgrep takes it for a named file: a file changed while it is searched can
+        // end the process (SIGBUS); scrutate writes no file it searches (docs/SECURITY.md)
+        b.memory_map(unsafe { grep_searcher::MmapChoice::auto() });
+    }
+    b.binary_detection(binary)
         .bom_sniffing(bom)
         .heap_limit(heap)
         .line_number(q.report == Report::Lines) // line numbers cost a pass over the buffer
@@ -191,6 +198,11 @@ pub(super) fn make_searcher(q: &Query, binary: BinaryDetection, heap: Option<usi
 /// Files up to this size are read with one call (`first`) instead of reading until a zero-length
 /// read; within it the searcher's binary check covers the whole file.
 pub(super) const SMALL_FILE: u64 = 64 << 10;
+/// Whether grep-searcher memory-maps a file (`MmapChoice::auto`) on this platform.
+const MAPS: bool = cfg!(any(unix, windows)) && !cfg!(target_os = "macos");
+/// Up to this size a named file is read whole where it would be mapped but the process may not
+/// map (Files::map_named); a larger one is streamed.
+const NAMED_WHOLE: u64 = 64 << 20;
 /// Files up to this size are streamed by a searcher made for the file, larger ones by the
 /// thread's. Reading them whole instead cost each thread a buffer the size of the largest such
 /// file it met (py-big: 12.6 MB peak resident on 5 threads, 8.2 MB streamed) for 1% fewer
@@ -217,16 +229,23 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     let limit = (src.expands() && !o.pattern.multiline).then_some(crate::archive::MAX_LINE);
     let mut searcher = if src.expands() {
         let binary = if named { BinaryDetection::convert(0) } else { BinaryDetection::quit(0) };
-        w.member.get_or_insert_with(|| make_searcher(o, binary, limit, true))
+        w.member.get_or_insert_with(|| make_searcher(o, binary, limit, true, false))
     } else if named {
-        w.named.get_or_insert_with(|| make_searcher(o, BinaryDetection::convert(0), None, true))
+        w.named.get_or_insert_with(|| make_searcher(o, BinaryDetection::convert(0), None, true, f.map_named))
     } else {
         &mut w.searcher
     };
     let mut fresh = None;
     let mut owned = None;
     let mut small = None;
-    if let Some(at) = src.at().filter(|_| splittable(o)) {
+    if named && MAPS && !f.map_named {
+        // a process that stays up maps no file: one held whole is the slice a map would be, for
+        // every query (one with a limit or context is not split, and would otherwise stream)
+        if let (Some(at), Some(len)) = (src.at(), src.size().filter(|&n| n <= NAMED_WHOLE)) {
+            owned = read_all(at, len);
+        }
+    }
+    if let Some(at) = src.at().filter(|_| owned.is_none() && splittable(o)) {
         // most files are small: one read of up to SMALL_FILE + 1 bytes takes such a file whole and
         // tells a larger one apart, with no call for the size (a `statx` per file otherwise: 96,000
         // of them on the Linux tree)
@@ -253,7 +272,13 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
                     // a searcher of its own, so the thread's keeps the buffer size it had: where a
                     // NUL byte after the first fill stops the output depends on that size. One
                     // thread meets the files in a fixed order and keeps its one searcher
-                    searcher = fresh.insert(make_searcher(o, if named { BinaryDetection::convert(0) } else { BinaryDetection::quit(0) }, None, true));
+                    searcher = fresh.insert(make_searcher(
+                        o,
+                        if named { BinaryDetection::convert(0) } else { BinaryDetection::quit(0) },
+                        None,
+                        true,
+                        named && f.map_named,
+                    ));
                 }
             }
         }
@@ -261,10 +286,10 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
     let mut sink = Collector { convert: named, out: std::mem::take(&mut w.out), ..r.collector(Arc::clone(&rel)) };
     let res = match whole {
-        // a file with a NUL byte is read as ripgrep reads every file: a named one's NULs become line
-        // breaks, and a walked one stops at the read that meets the NUL, the first read being the
-        // 3 bytes of the BOM check, so a match on a line ending there still prints
-        Some(b) if memchr::memchr(0, b).is_some() => r.matcher.search_reader(searcher, b, &mut sink),
+        // a file with a NUL byte is read as ripgrep reads it: a walked one through the reader, where
+        // the search stops at the read that meets the NUL, the first read being the 3 bytes of the
+        // BOM check; a named one as a slice where ripgrep maps it, through the reader on macOS
+        Some(b) if memchr::memchr(0, b).is_some() && (!named || !MAPS) => r.matcher.search_reader(searcher, b, &mut sink),
         Some(b) => r.matcher.search_slice(searcher, b, &mut sink),
         None => src.stream(r.matcher, searcher, &mut sink),
     };
@@ -386,6 +411,19 @@ pub(super) fn whole<A: ReadAt + Sync>(at: &A, size: u64, threads: usize) -> Opti
         });
     }
     (!stop.into_inner()).then_some(buf)
+}
+
+/// The `size` bytes of a source, or None when it reads short (it changed since `size` was taken).
+fn read_all<A: ReadAt>(at: &A, size: u64) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; usize::try_from(size).ok()?];
+    let mut done = 0;
+    while done < buf.len() {
+        match at.read_at(&mut buf[done..], done as u64) {
+            Ok(n) if n > 0 => done += n,
+            _ => return None,
+        }
+    }
+    Some(buf)
 }
 
 /// Fills `buf` from `off` in the source; false on a NUL byte, a line break before the source's
@@ -610,7 +648,7 @@ fn search_range<A: ReadAt>(r: &Run, at: &A, a: u64, b: u64, base: u64, rel: &Arc
     // its own matcher (its own regex cache pool) and its own searcher, without transcoding: the
     // middle of a source is not the start of a stream
     let matcher = r.matcher.clone();
-    let mut searcher = make_searcher(r.q, BinaryDetection::quit(0), None, false);
+    let mut searcher = make_searcher(r.q, BinaryDetection::quit(0), None, false, false);
     // with `hold` the plain text is formatted into `out` and never written to this sink
     let sink_plain = PlainSink::new(Box::new(std::io::sink()));
     let range_run = Run { matcher: &matcher, plain: if r.plain.is_some() { Some(&sink_plain) } else { None }, ..*r };

@@ -206,6 +206,10 @@ pub struct Files {
     /// files at least this large are searched as several ranges of whole lines at once (an eighth of
     /// it each): one huge file would otherwise keep a single core busy while the others idle
     pub split_file_bytes: u64,
+    /// a named file is searched through a memory map where the platform maps one, as ripgrep
+    /// searches it: for a process that ends with the search only, since a file another process
+    /// shortens under the map ends the process (a resident one reads a named file whole instead)
+    pub map_named: bool,
     /// the custom languages `-t` names, when not those `custom::current` gives (a caller that
     /// searches for one repository among several in the process)
     pub customs: Option<Arc<crate::custom::Customs>>,
@@ -229,6 +233,7 @@ impl Default for Files {
             threads: 0,
             small_tree: None,
             split_file_bytes: 64 << 20,
+            map_named: false,
             customs: None,
         }
     }
@@ -3305,7 +3310,7 @@ mod tests {
             };
             let rel: Arc<str> = label(&file, &[os(b"/r")], &walked);
             let mut sink = r.collector(Arc::clone(&rel));
-            matcher.search_slice(&mut source::make_searcher(&o, BinaryDetection::quit(0), None, true), b"a x\n", &mut sink).unwrap();
+            matcher.search_slice(&mut source::make_searcher(&o, BinaryDetection::quit(0), None, true, false), b"a x\n", &mut sink).unwrap();
             report(&r, sink, rel, false);
         }
         plain.flush().unwrap();
