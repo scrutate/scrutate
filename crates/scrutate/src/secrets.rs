@@ -293,7 +293,6 @@ static NUMBER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?:0x[0-9a-f_]+|[0-9][0-9_]*(?:\.[0-9_]+)?(?:e[+-]?[0-9]+)?)(?:[ui](?:8|16|32|64|128|size)|f32|f64|[lu]{1,3})?$").unwrap()
 });
 
-/// A `.env` value that is no placeholder and is not a name or a word alone.
 /// A bearer token: a real value with a digit in it, so a word after `Bearer` is none.
 fn opaque(secret: &str, whole: &str, before: &str) -> bool {
     real_value(secret, whole, before) && secret.bytes().any(|b| b.is_ascii_digit())
@@ -323,6 +322,7 @@ fn user_and_password(secret: &str, _: &str, _: &str) -> bool {
     colon.is_some_and(|i| i > 0 && i + 1 < out.len()) && out.iter().all(|b| (0x20..0x7f).contains(b))
 }
 
+/// A `.env` value that is no placeholder and is not a name or a word alone.
 fn env_value(secret: &str, whole: &str, before: &str) -> bool {
     real_value(secret, whole, before) && !NOT_SECRET_NAMES.is_match(whole) && secret.chars().any(|c| !c.is_ascii_alphabetic())
 }
@@ -870,7 +870,6 @@ mod tests {
     pub(crate) const ALNUM: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     const HEX: &str = "0123456789abcdef";
 
-    /// A secret of each kind, as it might sit in code or a `.env` file: (kind, line, secret).
     /// `text` in base64, as an HTTP Basic header carries it.
     pub(crate) fn basic(text: &str) -> String {
         const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -885,6 +884,7 @@ mod tests {
         out
     }
 
+    /// A secret of each kind, as it might sit in code or a `.env` file: (kind, line, secret).
     pub(crate) fn samples() -> Vec<(&'static str, String, String)> {
         let line = |kind: &'static str, before: &str, secret: String, after: &str| (kind, format!("{before}{secret}{after}"), secret);
         vec![

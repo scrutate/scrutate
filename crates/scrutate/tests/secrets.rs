@@ -26,7 +26,6 @@ fn chars(seed: &mut u64, set: &str, n: usize) -> String {
 const ALNUM: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const HEX: &str = "0123456789abcdef";
 
-/// (kind, file, line holding the secret, the secret): three of each kind.
 /// `text` in base64, as an HTTP Basic header carries it.
 fn basic(text: &str) -> String {
     const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -41,6 +40,7 @@ fn basic(text: &str) -> String {
     out
 }
 
+/// (kind, file, line holding the secret, the secret): three of each kind.
 fn planted() -> Vec<(&'static str, &'static str, String, String)> {
     let mut seed = 7u64;
     let mut out = Vec::new();
