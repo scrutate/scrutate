@@ -350,19 +350,22 @@ NFC with final sigma folded.
   callees, call counts, a file's imports and every import, the counts `check` and `stats` print).
   Each question keeps the order its callers read, and its statement is cached on the connection. A
   test that damages the index does it through `Index::damage_for_tests`.
-- **Names** (`names`, `names_tri`): one row per distinct definition name key with its display
-  name, word initials and a count, kept by the same writes as `chunks` (a file's chunks add one
-  per name, its delete takes them back off, a name at zero goes), and an FTS5 trigram index over
-  the keys (external content, `detail='none'`, no column sizes) for `symbol`'s near matches
-  (`symmatch.rs`): prefix is a key range, humps an initials range then `classify`, contains a
-  trigram `LIKE` for three characters or more. On the Linux tree (2,975,031 names) they cost
-  391 MB, 7.3% of `.scrutate` (5,381 to 5,772 MB): `names` 185 MB, its key index 98 MB, trigrams
-  62 MB, initials index 46 MB; the build took about 40 to 60 s longer on a shared 8-vCPU box,
-  too noisy to be closer. Looked up alone through a resident `serve`, p95 over 30 queries: an
-  exact name 0.9 ms, prefix 7 to 10 ms, contains 9 to 13 ms, humps 61 ms, one or two letters
-  under 3 ms. A cold `symbol` process pays the freshness scan first (about 0.8 s there, the same
-  as before). Keyed by name in a table without rowids, the names took more room (396 MB
-  against 362 MB): the initials and trigram tables then carry the whole key.
+- **Names** (`names`, `names_tri`): one row per spelling of a definition name, keyed by name key
+  and name (`setup` and `setUp` share a key and are two rows), with its word initials and a count,
+  kept by the same writes as `chunks` (a file's chunks add one per spelling, its delete takes them
+  back off, a spelling at zero goes), and an FTS5 trigram index over each row's key (external
+  content, `detail='none'`, no column sizes) for `symbol`'s near matches (`symmatch.rs`): prefix
+  is a key range, humps an initials range then `classify` on that spelling's words, contains a
+  trigram `LIKE` for three characters or more. On the Linux tree (3,016,710 spellings of
+  2,975,031 keys) they cost 486 MB, 7.9% of `.scrutate` (6,168 MB): `names` 189 MB, its key index
+  (name key and name) 184 MB, trigrams 63 MB, initials index 49 MB. One row per key took 391 MB
+  and kept only the first spelling's words. Two full builds took 321 and 406 s against 398 s for
+  one row per key, on a shared 8-vCPU box too noisy to tell them apart. Looked up alone through a
+  resident `serve`, p95 over 30 queries: an exact name 1.7 ms, prefix 13 ms, contains 12 to 18 ms,
+  humps 49 ms, one or two letters under 4 ms. A cold `symbol` process pays the freshness scan
+  first (about 0.8 s there). Keyed by name in a table without rowids, the names took more room
+  (396 MB against 362 MB, one row per key): the initials and trigram tables then carry the whole
+  key.
 - **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays, Lucene-style.
   Per field (name, qualified name, signature, docs, body, path): BM25 postings (`ptr`, `doc`,
   `tf`) over a shared 63-bit token-hash vocabulary; `ids`, `dl`; int8 semantic vectors (`vec`, two

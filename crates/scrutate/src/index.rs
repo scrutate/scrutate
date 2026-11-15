@@ -54,7 +54,7 @@ CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path, start);
 CREATE INDEX IF NOT EXISTS chunks_name ON chunks(name_key);
 CREATE INDEX IF NOT EXISTS chunks_qual ON chunks(qual_key);
 CREATE INDEX IF NOT EXISTS chunks_kind ON chunks(kind);
-CREATE TABLE IF NOT EXISTS names(name_key TEXT PRIMARY KEY, name TEXT NOT NULL, initials TEXT NOT NULL, n INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS names(name_key TEXT NOT NULL, name TEXT NOT NULL, initials TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY(name_key, name));
 CREATE INDEX IF NOT EXISTS names_initials ON names(initials);
 CREATE VIRTUAL TABLE IF NOT EXISTS names_tri USING fts5(name_key, content='names', content_rowid='rowid', tokenize='trigram', detail='none', columnsize=0);
 CREATE TABLE IF NOT EXISTS refs(chunk_id INTEGER NOT NULL, callee TEXT NOT NULL);
@@ -2644,9 +2644,9 @@ impl Index {
         )?;
         let mut refs = self.db.prepare_cached("INSERT INTO refs(chunk_id,callee) VALUES(?1,?2)")?;
         let mut dups = self.db.prepare_cached("INSERT INTO dupkeys(id,nbody,body,words,ntok,bands) VALUES(?1,?2,?3,?4,?5,?6)")?;
-        let mut name = self
-            .db
-            .prepare_cached("INSERT INTO names(name_key,name,initials,n) VALUES(?1,?2,?3,1) ON CONFLICT(name_key) DO UPDATE SET n=n+1 RETURNING rowid, n")?;
+        let mut name = self.db.prepare_cached(
+            "INSERT INTO names(name_key,name,initials,n) VALUES(?1,?2,?3,1) ON CONFLICT(name_key, name) DO UPDATE SET n=n+1 RETURNING rowid, n",
+        )?;
         let mut tri = self.db.prepare_cached("INSERT INTO names_tri(rowid,name_key) VALUES(?1,?2)")?;
         for (c, calls, blob, dup) in rows {
             let cid = next_id;
@@ -2763,12 +2763,13 @@ impl Index {
         let mut q = self.db.prepare_cached("SELECT id FROM chunks WHERE path=?1")?;
         let ids: Vec<i64> = q.query_map([rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         if !ids.is_empty() {
-            let mut gone =
-                self.db.prepare_cached("SELECT name_key, count(*) FROM chunks WHERE path=?1 AND kind != 'window' AND name != '' GROUP BY name_key")?;
-            let counts: Vec<(String, i64)> = gone.query_map([rel], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            let mut less = self.db.prepare_cached("UPDATE names SET n=n-?2 WHERE name_key=?1 RETURNING rowid, n")?;
-            for (key, k) in counts {
-                if let Some((rowid, n)) = less.query_row(params![key, k], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).optional()? {
+            let mut gone = self
+                .db
+                .prepare_cached("SELECT name_key, name, count(*) FROM chunks WHERE path=?1 AND kind != 'window' AND name != '' GROUP BY name_key, name")?;
+            let counts: Vec<(String, String, i64)> = gone.query_map([rel], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+            let mut less = self.db.prepare_cached("UPDATE names SET n=n-?3 WHERE name_key=?1 AND name=?2 RETURNING rowid, n")?;
+            for (key, name, k) in counts {
+                if let Some((rowid, n)) = less.query_row(params![key, name, k], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).optional()? {
                     if n <= 0 {
                         // the trigram index is told what it held, then the row goes
                         self.db.execute("INSERT INTO names_tri(names_tri,rowid,name_key) VALUES('delete',?1,?2)", params![rowid, key])?;
@@ -3696,6 +3697,63 @@ mod tests {
         assert!(failed.is_err_and(|e| e.to_string() == "disk gone"));
         assert!(super::sync_file(&f).is_ok(), "this platform's own path");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_names_table_is_a_recount_of_the_chunks_through_edits_deletes_and_renames() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_names_recount_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // spellings that share a name key, and names with more than one word
+        let words = ["setup", "setUp", "SetUp", "getid", "getId", "make_point", "MakePoint", "alpha"];
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        let check = |ix: &super::Index, step: usize| {
+            let rows = |sql: &str| -> Vec<(String, String, String, i64)> {
+                ix.db.prepare(sql).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap().map(Result::unwrap).collect()
+            };
+            let table = rows("SELECT name_key, name, initials, n FROM names ORDER BY 1, 2");
+            let recount: Vec<_> =
+                rows("SELECT name_key, name, '', count(*) FROM chunks WHERE kind != 'window' AND name != '' GROUP BY name_key, name ORDER BY 1, 2")
+                    .into_iter()
+                    .map(|(k, name, _, n)| (k, name.clone(), crate::symmatch::initials(&name), n))
+                    .collect();
+            assert_eq!(table, recount, "step {step}");
+            // the trigram index holds exactly the table's rows
+            ix.db.execute("INSERT INTO names_tri(names_tri) VALUES('integrity-check')", []).unwrap();
+            let tri: i64 = ix.db.query_row("SELECT count(*) FROM names_tri", [], |r| r.get(0)).unwrap();
+            assert_eq!(tri as usize, table.len(), "step {step}: trigram rows");
+        };
+        for step in 0..60 {
+            let f = root.join(format!("f{}.py", next(5)));
+            match next(4) {
+                0 | 1 => {
+                    let body: String = (0..1 + next(4))
+                        .map(|i| match next(2) {
+                            0 => format!("def {}():\n    return {i}\n\n\n", words[next(words.len())]),
+                            _ => format!("class {}:\n    def run(self):\n        return {i}\n\n\n", words[next(words.len())]),
+                        })
+                        .collect();
+                    std::fs::write(&f, body).unwrap();
+                }
+                2 => {
+                    let _ = std::fs::remove_file(&f);
+                }
+                _ => {
+                    let _ = std::fs::rename(&f, root.join(format!("f{}.py", next(5))));
+                }
+            }
+            ix.update(false).unwrap();
+            check(&ix, step);
+        }
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -211,9 +211,9 @@ incompatible index by itself, and that is never breaking.
   The semantic model's tables are read where they lie in the binary instead of being copied.
   On a 61 MB index, `symbol` takes 16.5 ms where it took 86.7 ms, and `search` 68.8 ms where it
   took 174.6 ms ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
-- The index keeps a table of the distinct definition names with their word initials and a
-  trigram index over them, for `symbol`'s near matches; its schema version goes up, so an index
-  made before is rebuilt on its next use ([CLI](docs/CLI.md#engine-b)).
+- The index keeps a table of the definition names, one row per spelling, with their word
+  initials and a trigram index over them, for `symbol`'s near matches; its schema version goes
+  up, so an index made before is rebuilt on its next use ([CLI](docs/CLI.md#engine-b)).
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
   (7.5 MiB compressed), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
   crates; publishing waits for the release ([INSTALL](docs/INSTALL.md)).

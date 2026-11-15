@@ -3061,3 +3061,30 @@ fn a_name_no_file_defines_any_more_matches_no_query() {
     assert_eq!(names("build_po"), ["build_point"]);
     assert_eq!(names("bP"), ["build_point"]);
 }
+
+#[test]
+fn each_spelling_of_a_name_is_matched_by_its_own_words() {
+    // foobar and FooBar share a name key; FoBa and FB name FooBar's two words, whichever file the
+    // walk reads first, and stop matching once FooBar is gone
+    for (first, second) in [("a.py", "b.py"), ("b.py", "a.py")] {
+        let r = Repo::new(&format!("spellings_{first}"));
+        r.write(&format!("src/{first}"), b"def foobar():\n    return 1\n");
+        r.write(&format!("src/{second}"), b"class FooBar:\n    pass\n");
+        assert_eq!(r.run(&["index"]).0, 0);
+        let hits = |q: &str| -> Vec<String> {
+            let (_, out, _) = r.run(&["symbol", "--json", q]);
+            answer(&out)
+                .as_array()
+                .map(|a| a.iter().map(|h| format!("{} {}", h["name"].as_str().unwrap(), h["match"].as_str().unwrap_or(""))).collect())
+                .unwrap_or_default()
+        };
+        for q in ["FoBa", "FB"] {
+            assert!(hits(q).contains(&"FooBar humps".to_string()), "{q} with {first} first: {:?}", hits(q));
+        }
+        std::fs::remove_file(r.root.join(format!("src/{second}"))).unwrap();
+        assert_eq!(r.run(&["index"]).0, 0);
+        for q in ["FoBa", "FB"] {
+            assert_eq!(hits(q), Vec::<String>::new(), "{q} once FooBar is gone ({first} first)");
+        }
+    }
+}
