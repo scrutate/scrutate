@@ -542,10 +542,11 @@ packages the root's lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, `po
 untrusted: a name or version that is not one of its ecosystem's (a `/`, a `..`, a character
 outside letters, digits and `-._~+`) is refused by name. A store outside the repository (the cargo
 registry, the Go module cache) is the user's: the directory built from a name is canonicalized and
-refused when it resolves outside it. A store inside the repository (`node_modules`) is read
-through no link: every directory from the root down to the package must be one and none a link,
-so a `node_modules` that links out, or a package in it that does, is refused before a file is
-read. A path dependency is read from the repository's own index when it is
+refused when it resolves outside it. A store inside the repository (`node_modules`, `.venv`'s
+`site-packages`) is read through no link: every directory from the root down to the package must
+be one and none a link, so a `node_modules` or a `site-packages` that links out, or a package in
+`node_modules` that does, is refused before a file is read. Of a Python distribution only the
+files its `RECORD` lists are copied, none that is a link or lies under one. A path dependency is read from the repository's own index when it is
 inside the root and refused when it is outside. The package is copied to the user cache
 (`deps/` under `SCRUTATE_CACHE_DIR` or the platform's cache directory, mode 0700 on Unix): a
 linked file is copied only when it resolves inside the package, a linked directory is never

@@ -343,21 +343,43 @@ impl Dist {
     }
 }
 
-fn site_packages(root: &Path) -> Vec<PathBuf> {
-    let venv = root.join(".venv");
-    let mut out = vec![venv.join("Lib/site-packages")];
-    if let Ok(rd) = std::fs::read_dir(venv.join("lib")) {
-        let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path().join("site-packages")).collect();
-        dirs.sort();
-        out.extend(dirs);
+/// The `site-packages` directories of `.venv` (`lib/*/site-packages`, `Lib/site-packages`) that
+/// are the repository's own, reached through no link; and those that a link reaches.
+fn site_packages(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut found = vec![PathBuf::from(".venv/Lib/site-packages")];
+    if own(root, Path::new(".venv/lib")) {
+        if let Ok(rd) = std::fs::read_dir(root.join(".venv/lib")) {
+            let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| Path::new(".venv/lib").join(e.file_name()).join("site-packages")).collect();
+            dirs.sort();
+            found.extend(dirs);
+        }
     }
-    out.retain(|d| d.is_dir());
-    out
+    let (mut mine, mut linked) = (Vec::new(), Vec::new());
+    if !own(root, Path::new(".venv/lib")) && root.join(".venv/lib").is_dir() {
+        linked.push(root.join(".venv/lib"));
+    }
+    for rel in found {
+        if own(root, &rel) {
+            mine.push(root.join(&rel));
+        } else if root.join(&rel).is_dir() {
+            linked.push(root.join(&rel));
+        }
+    }
+    (mine, linked)
+}
+
+/// Whether `rel` is a directory of the repository reached from the root through no link.
+fn own(root: &Path, rel: &Path) -> bool {
+    let mut at = root.to_path_buf();
+    rel.components().all(|c| {
+        at.push(c);
+        matches!(c, Component::Normal(_)) && std::fs::symlink_metadata(&at).is_ok_and(|m| m.is_dir() && !is_link(&m))
+    })
 }
 
 fn dists(root: &Path) -> Vec<Dist> {
     let mut out = Vec::new();
-    for site in site_packages(root) {
+    for site in site_packages(root).0 {
         let Ok(rd) = std::fs::read_dir(&site) else { continue };
         let mut infos: Vec<String> = rd.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.ends_with(".dist-info")).collect();
         infos.sort();
@@ -519,6 +541,10 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
             }
         }
         Eco::Python => {
+            if let Some(linked) = site_packages(root).1.first() {
+                let shown = crate::fmt::echo(&shown_path(root, linked));
+                return Err(refused(l, &format!("{shown} is reached through a link, and a store in the repository is read through none")));
+            }
             let all = dists(root);
             let mine: Vec<&Dist> = all.iter().filter(|d| normalized(&d.name) == normalized(&l.name)).collect();
             let Some(d) = mine.iter().find(|d| d.version == l.version) else {
@@ -580,11 +606,14 @@ fn copy(l: &Locked, inst: &Installed, to: &Path, (max_files, max_bytes): (usize,
     match &inst.files {
         Some(list) => {
             for f in list {
-                let rel = Path::new(f);
-                // a file under a link to a directory: only the link's own target is checked above
-                let parent = inst.base.join(rel).parent().and_then(|p| std::fs::canonicalize(p).ok());
-                if parent.is_some_and(|p| p.starts_with(&inst.dir)) {
-                    one(&inst.base.join(rel), rel)?;
+                // a file of the package, or a directory on its way, that is a link is never read
+                let (rel, mut at) = (Path::new(f), inst.base.clone());
+                let plain = rel.components().all(|c| {
+                    at.push(c);
+                    std::fs::symlink_metadata(&at).is_ok_and(|m| !is_link(&m))
+                });
+                if plain {
+                    one(&at, rel)?;
                 }
             }
         }

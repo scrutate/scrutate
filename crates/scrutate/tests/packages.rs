@@ -435,3 +435,40 @@ fn a_package_reached_through_a_link_in_node_modules_is_refused_and_nothing_is_co
         assert!(!t.home.join("cache/deps/npm").exists(), "{name}: nothing is copied");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_site_packages_or_a_package_file_reached_through_a_link_is_never_read() {
+    let t = Tree::new("site_link");
+    t.uv_lock(&[("requests", "2.32.3")]);
+    let outside = t.home.join("othersite");
+    write(&outside.join("requests/api.py"), "def get(url):\n    return url\n");
+    write(&outside.join("requests-2.32.3.dist-info/RECORD"), "requests/api.py,,\n");
+    fs::create_dir_all(t.root.join(".venv/lib/python3.12")).unwrap();
+    std::os::unix::fs::symlink(&outside, t.root.join(".venv/lib/python3.12/site-packages")).unwrap();
+    let (code, out, err) = t.run(&["symbol", "--deps", "requests.get"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("refused") && !out.contains("api.py"), "{out}{err}");
+    assert!(!t.home.join("cache/deps/python").exists(), "nothing is copied");
+    // inside a site-packages of its own, a file of the package that links out is not copied
+    let t = Tree::new("record_link");
+    t.uv_lock(&[("requests", "2.32.3")]);
+    t.wheel("requests", "2.32.3", &[("requests/__init__.py", ""), ("requests/api.py", "def get(url):\n    return url\n")]);
+    write(&t.home.join("secret/keys.py"), "def stolen():\n    return 1\n");
+    let sp = t.root.join(".venv/lib/python3.12/site-packages");
+    std::os::unix::fs::symlink(t.home.join("secret/keys.py"), sp.join("requests/keys.py")).unwrap();
+    std::os::unix::fs::symlink(t.home.join("secret"), sp.join("requests/more")).unwrap();
+    // another package of the same site-packages is not this one's either
+    write(&sp.join("other/__init__.py"), "def borrowed():\n    return 2\n");
+    std::os::unix::fs::symlink("../other/__init__.py", sp.join("requests/borrowed.py")).unwrap();
+    let record = sp.join("requests-2.32.3.dist-info/RECORD");
+    let mut r = fs::read_to_string(&record).unwrap();
+    r.push_str("requests/keys.py,,\nrequests/more/keys.py,,\nrequests/borrowed.py,,\n");
+    fs::write(&record, r).unwrap();
+    let (code, out, err) = t.run(&["symbol", "--deps", "requests.get"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, _) = t.run(&["symbol", "--deps", "--exact", "requests.stolen"]);
+    assert_eq!(code, 1, "{out}");
+    let copy = t.home.join("cache/deps/python/requests@2.32.3/src/requests");
+    assert!(copy.join("api.py").is_file() && !copy.join("keys.py").exists() && !copy.join("more").exists() && !copy.join("borrowed.py").exists());
+}

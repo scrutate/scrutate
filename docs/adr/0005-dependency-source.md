@@ -40,13 +40,14 @@ The read boundary, which every rule below keeps:
    `-._~+`, no `.` or `..` part, an npm scope, a Go module path of such parts, a Go version that
    starts with `v`). A store outside the repository (`$CARGO_HOME/registry/src`, `$GOMODCACHE`)
    is the user's: the directory built from them is canonicalized and must stay under it. A store
-   inside the repository (`node_modules`) is the repository's, so it is read through no link: from
-   the root down to the package directory every part must be a directory and none a link, so no
-   link the repository ships can move the store out of it. Anything else is refused, by name,
+   inside the repository (`node_modules`, `.venv`'s `site-packages`) is the repository's, so it is
+   read through no link: from the root down to the package directory every part must be a
+   directory and none a link, so no link the repository ships can move the store out of it. Anything else is refused, by name,
    before a file is read.
 2. The copy never follows a link out of the package: a linked file is copied only when it
-   resolves inside the package directory, a linked directory is skipped, and a `RECORD` entry is
-   read only when its directory resolves inside `site-packages`.
+   resolves inside the package directory, a linked directory is skipped, and of a Python
+   distribution only the files its `RECORD` lists are copied, none that is a link or lies under
+   one.
 3. A copy holds at most 20,000 files and 256 MiB. A larger package is an error, and nothing of it
    is kept, so no half copy is ever indexed.
 4. The cache directories are created with mode 0700.
