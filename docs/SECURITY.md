@@ -380,6 +380,19 @@ as before (mode 0700 on Unix).
     Windows one passes the event on to the system's handler;
   - `hook.rs` (Windows): `RegOpenKeyExW` and `RegCloseKey` to see whether a policy key exists,
     with a nul-terminated name and the key closed;
+  - `shellhook.rs` (`hook run`, which ends the program it runs when it dies itself): on Unix a
+    `pipe` and `fcntl(FD_CLOEXEC)` on its two ends, so neither reaches the program; one
+    `getrlimit(RLIMIT_NOFILE)` into the two 64-bit words of an `rlimit`, read before the fork; and
+    a `Command::pre_exec` closure that calls only async-signal-safe functions (`getpid`, `fork`,
+    `close` or the `close_range` system call on Linux, `read`, `getppid`, `kill`, `_exit`). Its
+    `fork` is safe because `hook run` has one thread at the spawn (a debug build asserts it from
+    `/proc/self/task` on Linux). The forked watcher closes every descriptor but the pipe's read
+    end, waits for end of file, which comes when `hook run` dies, and sends `SIGKILL` to the
+    program only while the program is still its parent. The two descriptors it made are then
+    taken into `File`s once each. On Windows: `CreateJobObjectW`, `SetInformationJobObject`
+    with a zeroed `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` whose size it passes and
+    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and `AssignProcessToJobObject` with the child's own
+    handle; the job's handle stays open until the process ends;
   - `index.rs` (Windows): the status change time of a file, from `GetFileInformationByName`
     (looked up once with `LoadLibraryW` of the API set `api-ms-win-core-file-l2-1-4` and
     `GetProcAddress`, then transmuted to the signature winbase.h declares, as CPython does) with a
@@ -447,6 +460,7 @@ as before (mode 0700 on Unix).
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
   | `crates/scrutate/src/session.rs` | 5 |
+  | `crates/scrutate/src/shellhook.rs` | 4 |
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 21 |
   | `crates/scrutate/tests/cli.rs` | 1 |
