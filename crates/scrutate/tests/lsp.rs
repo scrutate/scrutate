@@ -341,7 +341,15 @@ fn a_folder_that_cannot_answer_leaves_the_others_answers() {
     c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder(&big)], "removed": []}}));
     let t = std::time::Instant::now();
     symbols(&mut c, "with a folder in its first build");
-    assert!(t.elapsed() < Duration::from_secs(15), "the build was waited for: {:?}", t.elapsed());
+    // set aside, not waited for: a wait that the build outlasts takes all of BUILD_WAIT, one it
+    // does not outlast answers from the folder and logs nothing
+    let left_out = "big is left out of this answer: the index is still being built";
+    assert!(
+        c.notifications.iter().any(|n| n["method"] == "window/logMessage" && n["params"]["message"].as_str().is_some_and(|m| m.ends_with(left_out))),
+        "{:?}",
+        c.notifications
+    );
+    assert!(t.elapsed() < scrutate::session::BUILD_WAIT, "the build was waited for: {:?}", t.elapsed());
     c.request("shutdown", Value::Null);
     c.notify("exit", Value::Null);
     drop(c);
