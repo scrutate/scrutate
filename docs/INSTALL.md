@@ -105,9 +105,14 @@ With GCC 15 or newer, parsing is about 1.8 times slower unless the grammars are 
 `-fjump-tables`: their generated `parser.c` asks for `-O0`, and GCC 15 drops jump tables at
 `-O0` (tree-sitter #5971). tree-sitter #5984 makes the generator write
 `#pragma GCC optimize ("O0", "jump-tables")`, but of the grammars scrutate uses only tree-sitter-md
-ships it so far, and 31 still ship the old line with no newer crate. A build in this
-repository adds the flag on x86_64 and aarch64 Linux through `.cargo/config.toml`; if you set
-`CFLAGS` yourself, add `-fjump-tables` to it, since the target's own variable is read first. The
+ships it so far, and the rest that set `-O0` still ship the old line with no newer crate: 22 in
+the default build, 31 with `--features extra-langs`. A build in this repository adds the flag on
+x86_64 and aarch64 Linux by setting `CFLAGS_x86_64_unknown_linux_gnu` and
+`CFLAGS_aarch64_unknown_linux_gnu` in `.cargo/config.toml`. The `cc` crate joins `CFLAGS`,
+`TARGET_CFLAGS` and the target's variables, so your own `CFLAGS` keeps the flag; only your own
+`CFLAGS_x86_64_unknown_linux_gnu` (or the aarch64 one) takes its place, so add `-fjump-tables` to
+that one if you set it. A build outside the repository (`cargo install`) does not read that file:
+give it `CFLAGS=-fjump-tables`. The
 x86_64 number is measured (Linux's C sources, GCC 15.2: 22 s against 12 s); aarch64 is from
 tree-sitter #5971's report, not measured here. `python3 tools/jump_tables.py target/release` says
 whether the built C grammar has its jump tables.
