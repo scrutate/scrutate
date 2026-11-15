@@ -102,13 +102,38 @@ pub(crate) fn own_env() -> Vec<(String, String)> {
     absolute_env(&std::env::current_dir().unwrap_or_default(), vars)
 }
 
+/// With GIT_DIR and no GIT_WORK_TREE: when that git directory's core.worktree (read against the
+/// git directory, as git reads it) does not hold `root`, why git finds no work tree here, naming
+/// both.
+fn tree_elsewhere(root: &Path, set: &[(String, String)]) -> Option<String> {
+    let probe = Git { dir: plain_dir(root), env: Env::Own(set.to_vec()), filters: Default::default() };
+    let text = |out: &[u8]| String::from_utf8_lossy(out.trim_ascii_end()).into_owned();
+    let (true, dir, _) = probe.output(&["rev-parse", "--absolute-git-dir"]).ok()? else { return None };
+    let (true, tree, _) = probe.output(&["config", "--get", "core.worktree"]).ok()? else { return None };
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let dir = PathBuf::from(text(&dir));
+    let tree = canonical(&dir.join(text(&tree)));
+    let plain = crate::paths::plain_path;
+    (!canonical(root).starts_with(&tree)).then(|| {
+        format!(
+            "GIT_DIR names {}, a git directory whose work tree is {}, not {}: run there, or unset GIT_DIR",
+            plain(&dir).display(),
+            plain(&tree).display(),
+            plain(root).display()
+        )
+    })
+}
+
 impl Git {
     /// git in this process's environment, a relative value of `FROM_START` read where it was set.
     pub(crate) fn new(root: &Path) -> Result<Git> {
         let set = own_env();
         let given = |name: &str| set.iter().any(|(n, v)| n == name && !v.is_empty());
         let dir_alone = given("GIT_DIR") && !given("GIT_WORK_TREE");
-        let git = Git::overriding(root, set)?;
+        let git = match Git::overriding(root, set.clone()) {
+            Err(e) if dir_alone => return Err(tree_elsewhere(root, &set).map_or(e, |why| anyhow!(why))),
+            r => r?,
+        };
         if dir_alone {
             git.root_s_own_git_dir(root)?;
         }

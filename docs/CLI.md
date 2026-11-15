@@ -675,7 +675,9 @@ it starts in, the root, as the work tree's top (unless `core.worktree` names one
 subdirectory the answers are the root's, where git started there would take that subdirectory as
 the top. A `GIT_DIR` that is not the root's own git directory and has no `core.worktree` stops
 the command with exit 2 (`read --history` gives that as its note): its history laid over this
-tree would be another repository's; set `GIT_WORK_TREE` with it. The MCP tool `impact` takes `base`, `staged` and `depth`
+tree would be another repository's; set `GIT_WORK_TREE` with it. One whose `core.worktree`
+names a tree that does not hold the root (a submodule's, from its superproject) stops it too,
+naming that tree. The MCP tool `impact` takes `base`, `staged` and `depth`
 and gives the same answer, findings included.
 
 ### `review`

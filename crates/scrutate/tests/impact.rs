@@ -476,6 +476,14 @@ fn with_git_dir_alone_a_subdirectory_answers_as_the_root_and_another_repository_
     // a configured core.worktree names the tree for git dirs of every kind
     t.git(&["config", "core.worktree", t.root.to_str().unwrap()]);
     assert_eq!(answers(&sub, &[("GIT_DIR", "../.git")]), from_root);
+    // a submodule's git directory names its own tree in core.worktree: the root is not in it
+    let modules = t.root.join(".git/modules/sub");
+    fs::create_dir_all(modules.parent().unwrap()).unwrap();
+    t.git(&["init", "-q", "--separate-git-dir", modules.to_str().unwrap(), t.root.join("sub").to_str().unwrap()]);
+    t.git(&["--git-dir", modules.to_str().unwrap(), "config", "core.worktree", "../../../sub"]);
+    let (code, text, err) = run(&t.root, &["impact"], &[("GIT_DIR", modules.to_str().unwrap())]);
+    assert_eq!(code, Some(2), "{text}{err}");
+    assert!(err.contains("a git directory whose work tree is") && err.contains("sub,"), "{err}");
 }
 
 #[test]

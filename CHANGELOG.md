@@ -304,7 +304,8 @@ incompatible index by itself, and that is never breaking.
 - `impact` and `review` with a `GIT_DIR` that is not the root's own git directory, no
   `GIT_WORK_TREE` and no `core.worktree` stop with exit 2 and say to set `GIT_WORK_TREE`
   (`read --history` gives that as its note), where they read that repository's history against
-  this tree.
+  this tree; one whose `core.worktree` is another tree (a submodule's, from its superproject)
+  names that tree, where the answer said the root was not in a git repository.
 - An idle `serve` or `lsp` lets go of the index segments another process
   replaced within 5 s, where it kept the deleted files mapped, their disk space held, until its
   next call.
