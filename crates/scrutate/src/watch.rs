@@ -878,8 +878,9 @@ fn root_id(root: &Path) -> RootId {
 /// renames (`mv repo repo.old; mv repo.new repo`) leaves it empty between them.
 const ROOT_GONE_AFTER: Duration = Duration::from_secs(2);
 
-/// The canonical `root` is still what `given`, the path the watch was started with, names: a
-/// link among them may be pointed at another directory, or dangle for a moment while it is.
+/// The canonical `root` is still what `given`, the path the watch was started with, names, and
+/// still names itself: a link among them may be pointed at another directory, or dangle for a
+/// moment while it is, and a link may be put where the root was.
 fn root_present(root: &Path, given: &Path, id: &RootId) -> Result<()> {
     let linked = given != root;
     let t0 = Instant::now();
@@ -890,6 +891,10 @@ fn root_present(root: &Path, given: &Path, id: &RootId) -> Result<()> {
         std::thread::sleep(Duration::from_millis(20));
     }
     if linked && std::fs::canonicalize(given).is_ok_and(|now| now != root) {
+        return Err(RootReplaced.into());
+    }
+    // a link put where the root was: its watches would be on the link, which sees nothing
+    if std::fs::canonicalize(root).is_ok_and(|now| now != root) {
         return Err(RootReplaced.into());
     }
     if id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id) {

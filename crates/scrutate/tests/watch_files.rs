@@ -234,44 +234,72 @@ fn a_root_replaced_by_a_rename_is_indexed_and_watched_in_its_place() {
 }
 
 /// The root renamed away and back: back within the 2 s grace, the watch goes on in it and a
-/// change after it is indexed well before the 30 s re-walk; back well after it (the grace starts
-/// when the watch sees the root missing, which a loaded machine delays), the watch has ended
-/// saying the root is gone.
+/// change after it is indexed well before the 30 s re-walk; back only once the watch has ended,
+/// which it does saying the root is gone (a clock would not do: the grace starts when the watch
+/// sees the root missing, and a loaded machine delays that).
 #[cfg(unix)]
 #[test]
 fn a_root_renamed_away_and_back_is_watched_again_or_gone() {
-    for (away_ms, back_in_time) in [(600, true), (6000, false)] {
-        let r = Repo::new(&format!("rootback_{away_ms}"));
+    for back_in_time in [true, false] {
+        let r = Repo::new(&format!("rootback_{back_in_time}"));
         r.write("a.py", b"def alpha():\n    return 1\n");
         assert_eq!(r.run(&["index"]), 0);
         let (mut child, rx) = start_watch(&r.root);
         wait_watching(&rx);
         let away = r.root.with_extension("away");
         fs::rename(&r.root, &away).unwrap();
-        std::thread::sleep(Duration::from_millis(away_ms));
-        fs::rename(&away, &r.root).unwrap();
         let t0 = Instant::now();
         if back_in_time {
+            std::thread::sleep(Duration::from_millis(600));
+            fs::rename(&away, &r.root).unwrap();
             std::thread::sleep(Duration::from_millis(500));
             r.write("b.py", b"def beta_after_the_trip():\n    return 2\n");
             while !r.indexed("beta_after_the_trip") {
-                assert!(t0.elapsed() < Duration::from_secs(15), "{away_ms} ms: no change indexed after the trip: {:?}", rx.try_iter().collect::<Vec<_>>());
+                assert!(t0.elapsed() < Duration::from_secs(15), "no change indexed after the trip: {:?}", rx.try_iter().collect::<Vec<_>>());
                 std::thread::sleep(Duration::from_millis(100));
             }
-            assert!(child.0.try_wait().unwrap().is_none(), "{away_ms} ms: watch ended");
+            assert!(child.0.try_wait().unwrap().is_none(), "watch ended");
         } else {
             let status = loop {
                 if let Some(s) = child.0.try_wait().unwrap() {
                     break s;
                 }
-                assert!(t0.elapsed() < Duration::from_secs(20), "{away_ms} ms: watch keeps running after the grace");
+                assert!(t0.elapsed() < Duration::from_secs(20), "watch keeps running with its root away");
                 std::thread::sleep(Duration::from_millis(100));
             };
+            fs::rename(&away, &r.root).unwrap();
             let err: Vec<String> = rx.iter().collect();
-            assert_eq!(status.code(), Some(2), "{away_ms} ms: {err:?}");
-            assert!(err.iter().any(|l| l.contains("is gone")), "{away_ms} ms: {err:?}");
+            assert_eq!(status.code(), Some(2), "{err:?}");
+            assert!(err.iter().any(|l| l.contains("is gone")), "{err:?}");
         }
     }
+}
+
+/// The root renamed away and a link to it put where it was: the watch follows the link to the
+/// tree, says so, and indexes a change written through the root's path.
+#[cfg(unix)]
+#[test]
+fn a_link_put_where_the_root_was_is_followed_to_the_tree() {
+    let r = Repo::new("rootlinked");
+    r.write("a.py", b"def alpha():\n    return 1\n");
+    assert_eq!(r.run(&["index"]), 0);
+    let (_child, rx) = start_watch(&r.root);
+    wait_watching(&rx);
+    let away = r.root.with_extension("away");
+    fs::rename(&r.root, &away).unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    std::os::unix::fs::symlink(&away, &r.root).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    r.write("b.py", b"def beta_through_the_link():\n    return 2\n");
+    let t0 = Instant::now();
+    while !indexed_in(&away, "beta_through_the_link") {
+        assert!(t0.elapsed() < Duration::from_secs(15), "no change indexed through the link: {:?}", rx.try_iter().collect::<Vec<_>>());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let err: Vec<String> = rx.try_iter().collect();
+    assert!(err.iter().any(|l| l.contains("root replaced")), "{err:?}");
+    let _ = fs::remove_file(&r.root);
+    let _ = fs::remove_dir_all(&away);
 }
 
 /// A deploy's `current` link pointed at another release while `watch current` runs, by a new link

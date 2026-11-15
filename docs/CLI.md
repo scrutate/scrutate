@@ -1103,7 +1103,7 @@ update stops the watch; a later failure is reported and the watch goes on. Ctrl-
 a code index update in progress stops at its next batch of files, or block of rows while a large
 segment's vectors are clustered, and leaves the index as it was; a text index update in progress
 ends first. When `PATH` is removed or moved away and nothing takes its place within 2 s, `watch`
-stops with an error (exit 2); when `PATH` itself comes back within the 2 s (renamed away and back), `watch` goes on watching it. When another directory takes its place (moved or copied there, as `mv repo.new repo`
+stops with an error (exit 2); when `PATH` itself comes back within the 2 s (renamed away and back), `watch` goes on watching it, and when a link to it is put where it was, `watch` says `root replaced; watching the new tree` and watches the tree through the link. When another directory takes its place (moved or copied there, as `mv repo.new repo`
 does, or removed and made again), stderr says `root replaced; watching the new tree`, and `watch`
 opens that tree's index (building it when it has none) and watches it. A `PATH` that goes through
 a link (a deploy's `current`) is followed the same way when the link is pointed at another
