@@ -389,13 +389,19 @@ fn key_body(line: &str) -> Body {
     if trimmed.is_empty() || trimmed.split_once(": ").is_some_and(|(h, _)| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphabetic() || c == '-')) {
         return Body::Skip;
     }
-    let core = trimmed.trim_start_matches(['"', '\'', '`']).trim_end_matches(['"', '\'', '`', ',', ';', '+', '\\', ' ']);
-    let core = core.strip_suffix("\\n").or_else(|| core.strip_suffix("\\r\\n")).unwrap_or(core).trim_end_matches(['"', '\'', '`']);
+    let core = key_core(trimmed);
     if core.is_empty() || !core.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=')) {
         return Body::NotKey;
     }
     let start = content + rest.find(core).unwrap_or(0);
     Body::Base64(start, start + core.len())
+}
+
+/// A key line's base64 without the quotes, separators, `+` and written-out `\n` that a key in a
+/// string of code puts around it: what the index hashes and a known line is looked up by.
+fn key_core(trimmed: &str) -> &str {
+    let core = trimmed.trim_start_matches(['"', '\'', '`']).trim_end_matches(['"', '\'', '`', ',', ';', '+', '\\', ' ']);
+    core.strip_suffix("\\n").or_else(|| core.strip_suffix("\\r\\n")).unwrap_or(core).trim_end_matches(['"', '\'', '`'])
 }
 
 /// `text` with every `\/` written `/`, and where each of its bytes came from in `text` (one more
@@ -669,10 +675,11 @@ pub(crate) fn redact_keeping(text: &str, at: usize) -> (String, usize, usize) {
     (out, moved, found.len())
 }
 
-/// The private-key body lines of the repository's files, by `key_line_hash`, as the index recorded
-/// them: a line of a key shown anywhere, with or without its file, its line number or its armour,
-/// is found by its text. Empty until an index is read (`know_key_lines`).
-static KNOWN_KEY_LINES: std::sync::RwLock<Option<std::sync::Arc<std::collections::HashSet<i64>>>> = std::sync::RwLock::new(None);
+/// For each root whose index was read (`know_key_lines_at`), the index's manifest time and its
+/// private-key body lines by `key_line_hash`: a line of a key shown anywhere, with or without its
+/// file, its line number or its armour, is found by its text.
+type KnownRoot = (std::path::PathBuf, Option<std::time::SystemTime>, std::sync::Arc<std::collections::HashSet<i64>>);
+static KNOWN_KEY_LINES: std::sync::RwLock<Vec<KnownRoot>> = std::sync::RwLock::new(Vec::new());
 
 /// How many places in a line are tried as the start of a key's line: after an answer's or a
 /// program's prefix (`path:3:`, `path-4-`, a tab), not after every dash of a long line.
@@ -682,19 +689,16 @@ const KEY_LINE_STARTS: usize = 8;
 /// recorded, for every redactor of this process to find by their text. Read again only when the
 /// index's database or its write-ahead log changed.
 pub(crate) fn know_key_lines_at(root: &std::path::Path) {
-    type Seen = (std::path::PathBuf, Option<std::time::SystemTime>, Option<std::time::SystemTime>);
-    static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
     let Some(top) = root.ancestors().find(|d| crate::textindex::exists(d)) else { return };
-    let db = crate::textindex::dir_of(top).join("manifest.json");
-    let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    let now: Seen = (top.to_path_buf(), mtime(&db), None);
-    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    if seen.as_ref() == Some(&now) {
+    let stamp = std::fs::metadata(crate::textindex::dir_of(top).join("manifest.json")).and_then(|m| m.modified()).ok();
+    let fresh = |known: &[KnownRoot]| known.iter().any(|(r, t, _)| r == top && *t == stamp);
+    if fresh(&KNOWN_KEY_LINES.read().unwrap_or_else(|e| e.into_inner())) {
         return;
     }
     let hashes = crate::textindex::TextIndex::open(top).ok().flatten().map(|t| t.key_line_hashes()).unwrap_or_default();
-    *KNOWN_KEY_LINES.write().unwrap_or_else(|e| e.into_inner()) = (!hashes.is_empty()).then(|| std::sync::Arc::new(hashes));
-    *seen = Some(now);
+    let mut known = KNOWN_KEY_LINES.write().unwrap_or_else(|e| e.into_inner());
+    known.retain(|(r, _, _)| r != top);
+    known.push((top.to_path_buf(), stamp, std::sync::Arc::new(hashes)));
 }
 
 /// FNV-1a 64 of a key body line's text, without its surrounding blanks: what the index stores,
@@ -717,15 +721,19 @@ pub(crate) fn key_body_lines(text: &str) -> Vec<String> {
 /// Every line of `text` whose text, whole or after one of its first separators, is a known key
 /// body line: as a span of that text.
 fn known_key_lines(text: &str, spans: &mut Vec<(usize, usize, &'static str)>) {
-    let Some(known) = KNOWN_KEY_LINES.read().ok().and_then(|k| k.clone()) else { return };
+    // a line any root's index knows is redacted in every root's answers: more marks, never fewer
+    let known: Vec<_> = KNOWN_KEY_LINES.read().unwrap_or_else(|e| e.into_inner()).iter().filter(|k| !k.2.is_empty()).map(|k| k.2.clone()).collect();
+    if known.is_empty() {
+        return;
+    }
     let mut at = 0;
     for line in text.split_inclusive('\n') {
         let starts = std::iter::once(0).chain(line.match_indices([':', '-', '\t']).map(|(i, _)| i + 1).take(KEY_LINE_STARTS));
         for start in starts {
             let rest = &line[start..];
-            let core = rest.trim();
-            if core.len() >= 4 && known.contains(&key_line_hash(core)) {
-                let a = at + start + (rest.len() - rest.trim_start().len());
+            let core = key_core(rest.trim());
+            if core.len() >= 4 && known.iter().any(|k| k.contains(&key_line_hash(core))) {
+                let a = at + start + rest.find(core).unwrap_or(0);
                 spans.push((a, a + core.len(), "private-key"));
                 break;
             }
@@ -1072,6 +1080,30 @@ mod tests {
             let (out, marks) = redact(&line);
             assert!(!marks.is_empty() && !out.contains(&aws) && !out.contains(&v), "{line} -> {out}");
         }
+    }
+
+    /// A process that serves two repositories finds the key lines of both, whichever it read last.
+    #[test]
+    fn the_key_lines_of_every_root_read_are_known() {
+        let base = std::env::temp_dir().join(format!("scrutate_key_roots_{}", std::process::id()));
+        let b64 = format!("{ALNUM}+/");
+        let mut first = Vec::new();
+        for (i, name) in ["one", "two"].into_iter().enumerate() {
+            let root = base.join(name);
+            std::fs::create_dir_all(root.join(".git")).unwrap();
+            // a line ending in `+`, which a key in code also writes as a concatenation
+            let body = format!("M{}{}", fake(90 + i as u64, &b64, 62), ["+", "/"][i]);
+            std::fs::write(root.join("k.pem"), format!("{}\n{body}\n{}\n", armour("BEGIN", ""), armour("END", ""))).unwrap();
+            crate::textindex::update(&root, true, false).unwrap();
+            know_key_lines_at(&root);
+            first.push(body);
+        }
+        for body in &first {
+            let mut spans = Vec::new();
+            known_key_lines(&format!("k.pem:2:{body}"), &mut spans);
+            assert_eq!(spans.len(), 1, "{body}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// The page as assembled is read again, so a mark must not be taken for a secret twice.

@@ -49,6 +49,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("running.rs", "WATCHING", "the process's signal state"),
     ("running.rs", "STOP_ASKED", "the process's signal state"),
     ("running.rs", "MAY", "whether this process's stdout can block, asked once"),
+    ("secrets.rs", "KNOWN_KEY_LINES", "keyed by root; a line any root's index knows is redacted for every root"),
     ("text.rs", "STEM_CACHE", "per thread, stems of words, the same for every root"),
     ("text.rs", "IDENT_CACHE", "per thread, splits of identifiers, the same for every root"),
     ("text.rs", "OWN", "keyed by canonical root"),
