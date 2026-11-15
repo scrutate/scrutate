@@ -859,7 +859,10 @@ checks, one `stat` each, the files it cites and those its arguments name: when o
 gone, or a named file is new and a scan would index it, those files alone are indexed again and
 the answer computed again, once. A change in a file the answer does not cite or name waits for
 the next scan. At the end of its input (EOF) the server answers the calls in flight, lets a
-running index build finish, and exits.
+running index build finish, and exits. So a client killed during the first build leaves the
+server running until that build is committed (about 40 s on 20,000 files); a server started on
+the same root meanwhile is not held up by it, and answers from that build when it is done, where
+stopping it would leave the next server to build from the start.
 
 While it runs, the server offers its open index to command line calls of the same user on the
 same root: `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `outline`, `deps`, `rdeps`,
