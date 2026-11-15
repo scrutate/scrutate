@@ -107,7 +107,6 @@ fn a_rewritten_search_prints_what_ripgrep_prints() {
         "rg nothere",
         "rg foo missing_dir",
         "rg '('",
-        "rg --no-such-flag foo",
         "grep -rn foo .",
         "grep -rl foo src docs",
         "grep -rni 'FOO' --include='*.py' .",
@@ -126,6 +125,8 @@ fn a_rewritten_search_prints_what_ripgrep_prints() {
         assert_eq!(by_file(&got), by_file(&want), "{cmd:?} -> {new}\nrg stderr: {want_err}\nhook stderr: {got_err}");
         assert_eq!(got_err.is_empty(), want_err.is_empty(), "{cmd:?}: rg stderr {want_err:?}, hook stderr {got_err:?}");
     }
+    // a flag the hook does not know is left to rg, which reports it in its own words
+    assert_eq!(rewrite(&r.root, "rg --no-such-flag foo"), None);
     // the rest of the line runs as written, after each operator, with a glob the shell expands
     // and stderr redirected
     for cmd in [
@@ -318,6 +319,39 @@ fn a_command_the_hook_does_not_model_runs_as_written() {
     assert!(r.root.exists(), "nothing was deleted");
 }
 
+/// A `--` that is a flag's value (`-g --`, `-e --`) ends nothing for rg, so a flag after it that
+/// runs a program is live: hook run refuses it, and the hook rewrites or allows none of them.
+#[test]
+fn a_dashdash_given_as_a_flag_s_value_lets_no_program_run() {
+    let r = Repo::new("dashdash_value");
+    r.write("f.txt", "hello\n");
+    let prog = r.root.join("p");
+    std::fs::write(&prog, "#!/bin/sh\ntouch ran.txt\ncat \"$1\"\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let lines = [
+        "rg -g -- --pre=./p hello f.txt",
+        "rg -e -- --pre=./p hello f.txt",
+        "rg --regexp -- --pre=./p hello f.txt",
+        "rg -e -- -z hello f.txt",
+        "rg --glob -- --pre-glob=x --pre=./p hello f.txt",
+        "rg -iz hello f.txt",
+    ];
+    for line in lines {
+        let argv: Vec<&str> = line.split(' ').collect();
+        let out = Command::new(BIN).args(["hook", "run", "--"]).args(&argv).current_dir(&r.root).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{line}: {}", String::from_utf8_lossy(&out.stdout));
+        assert!(!r.root.join("ran.txt").exists(), "{line}: the program ran");
+        assert_eq!(rewrite(&r.root, line), None, "{line}: rewritten for Claude");
+        let codex = serde_json::json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "turn_id": "t", "cwd": &r.root, "tool_input": {"command": line}});
+        let mut child = Command::new(BIN).args(["hook", "bash"]).current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(codex.to_string().as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("allow"), "{line}: allowed for Codex");
+    }
+}
+
 #[test]
 fn hook_run_by_hand_runs_only_a_read_only_rg_grep_or_find() {
     let r = Repo::new("by_hand");
@@ -338,6 +372,13 @@ fn hook_run_by_hand_runs_only_a_read_only_rg_grep_or_find() {
         &["rg", "--pre=./prog", "foo"],
         &["rg", "-z", "foo"],
         &["rg", "--hostname-bin", "./h", "foo"],
+        &["rg", "-g", "--", "--pre=./prog", "foo", "keep.txt"],
+        &["rg", "-e", "--", "--pre=./prog", "foo", "keep.txt"],
+        &["rg", "--regexp", "--", "--pre=./prog", "foo", "keep.txt"],
+        &["rg", "-e", "--", "-z", "foo"],
+        &["rg", "--glob", "--", "--pre-glob=x", "foo"],
+        &["rg", "-iz", "foo"],
+        &["rg", "--exec-later", "x", "foo"],
         &[],
     ];
     for argv in refused {
@@ -379,11 +420,18 @@ fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
     r.write("docs/c.md", "the foo is here\nnothing\nfoo again\nTODO later\n");
     let corpus = include_str!("shell_hook_corpus.txt");
     let cmds: Vec<&str> = corpus.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).collect();
-    assert_eq!(cmds.len(), 200);
+    assert_eq!(cmds.len(), 206);
+    // a word that names a flag that runs a program: such a line is never rewritten
+    let runs = |c: &str| {
+        c.split(' ').any(|w| {
+            w.starts_with("--pre") || w == "--search-zip" || w.starts_with("--hostname-bin") || w.starts_with('-') && !w.starts_with("--") && w.contains('z')
+        })
+    };
     let mut rewritten = 0;
     let mut mismatches = Vec::new();
     for cmd in &cmds {
         let Some(new) = rewrite(&r.root, cmd) else { continue };
+        assert!(!runs(cmd), "a line with a flag that runs a program was rewritten: {cmd}");
         rewritten += 1;
         let (want, _, want_code) = sh(&r.root, cmd);
         let (got, _, got_code) = sh(&r.root, &new);

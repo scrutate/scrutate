@@ -1367,12 +1367,17 @@ the first `find` on `PATH` there may be System32's, another program.
 
 `hook run` is the boundary: an agent can type it, and a user may allow every command that starts
 with it. It runs only a bare `rg`, `grep` or `find` (not `./rg`, `/tmp/x/rg`, `env`, `sh` or
-anything else; on Windows not `find`, as the first one on `PATH` may be System32's) whose arguments, as the shell expanded them, only read: no `rg --pre`,
-`--pre-glob`, `-z` (`--search-zip`, whose decompressors are programs) or `--hostname-bin`, none of
-`scrutate grep`'s own flags that `rg` lacks (`--index` and `--update` write the text index), and in
-`find` only its read-only expressions (`-name`, `-type`, `-size`, `-mtime`, `-maxdepth`, `-print`,
-`-printf` and their kin; never `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
-`-fprint0`, `-fprintf` or `-fls`). Anything else exits 2 and runs nothing. A program is looked up
+anything else; on Windows not `find`, as the first one on `PATH` may be System32's) whose arguments, as the shell expanded them, are all on its allow-list:
+the `rg` and `grep` flags that only choose what is read and how it is printed (`-n`, `-i`, `-l`,
+`-c`, `-w`, `-F`, `-e`, `-g`, `-t`, `-A`/`-B`/`-C`, `--include`, `--hidden` and their kin), read as
+the program reads them, so a flag's value is skipped whatever it looks like (`-g --` gives `-g`
+the value `--`), and in `find` only its read-only expressions (`-name`, `-type`, `-size`,
+`-mtime`, `-maxdepth`, `-print`, `-printf` and their kin; never `-exec`, `-execdir`, `-ok`,
+`-okdir`, `-delete`, `-fprint`, `-fprint0`, `-fprintf` or `-fls`). A flag the list lacks, a rare
+one or a future release's, means no rewrite. A word naming `rg --pre`, `--pre-glob`, `-z`
+(`--search-zip`, whose decompressors are programs), `--hostname-bin`, or `scrutate grep`'s own
+`--index` and `--update` (they write the text index) is refused wherever it sits, as a value or
+after `--` too. Anything else exits 2 and runs nothing. A program is looked up
 in the directories of its `PATH` given as absolute paths and outside the current directory and its
 git work tree, never the current directory, a relative entry, a repository's own `bin` or
 scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,

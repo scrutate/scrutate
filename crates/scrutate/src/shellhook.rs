@@ -216,6 +216,212 @@ const NOT_RG: [&str; 14] = [
     "--word",
 ];
 
+/// Whether a long flag takes a value: none, one (after `=` or as the next word), or one only
+/// after `=` (GNU grep's `--color`).
+#[derive(Clone, Copy, PartialEq)]
+enum Takes {
+    No,
+    Value,
+    Joined,
+}
+
+/// The flags a program may be given here: every other flag is refused, so one this table does not
+/// know (a new release's, or a rare one) costs only the rewrite.
+struct Flags {
+    /// short flags without a value, which may stand together (`-rn`)
+    plain: &'static str,
+    /// short flags with a value: the rest of their cluster (`-tpy`), or the next word
+    valued: &'static str,
+    long: &'static [(&'static str, Takes)],
+}
+
+/// ripgrep 15's flags that only choose what is read and how it is printed. Not here: the ones that
+/// run a program (`RG_RUNS`) or that `rg` lacks (`NOT_RG`).
+const RG_FLAGS: Flags = Flags {
+    plain: "sFivxUPSwLauclbnNoqHI0.",
+    valued: "efEmjgdtTABCMr",
+    long: &[
+        ("--regexp", Takes::Value),
+        ("--file", Takes::Value),
+        ("--encoding", Takes::Value),
+        ("--engine", Takes::Value),
+        ("--max-count", Takes::Value),
+        ("--threads", Takes::Value),
+        ("--glob", Takes::Value),
+        ("--iglob", Takes::Value),
+        ("--ignore-file", Takes::Value),
+        ("--max-depth", Takes::Value),
+        ("--max-filesize", Takes::Value),
+        ("--type", Takes::Value),
+        ("--type-not", Takes::Value),
+        ("--after-context", Takes::Value),
+        ("--before-context", Takes::Value),
+        ("--context", Takes::Value),
+        ("--color", Takes::Value),
+        ("--colors", Takes::Value),
+        ("--context-separator", Takes::Value),
+        ("--field-context-separator", Takes::Value),
+        ("--field-match-separator", Takes::Value),
+        ("--max-columns", Takes::Value),
+        ("--path-separator", Takes::Value),
+        ("--replace", Takes::Value),
+        ("--sort", Takes::Value),
+        ("--sortr", Takes::Value),
+        ("--dfa-size-limit", Takes::Value),
+        ("--regex-size-limit", Takes::Value),
+        ("--case-sensitive", Takes::No),
+        ("--crlf", Takes::No),
+        ("--fixed-strings", Takes::No),
+        ("--ignore-case", Takes::No),
+        ("--invert-match", Takes::No),
+        ("--line-regexp", Takes::No),
+        ("--multiline", Takes::No),
+        ("--multiline-dotall", Takes::No),
+        ("--no-unicode", Takes::No),
+        ("--null-data", Takes::No),
+        ("--pcre2", Takes::No),
+        ("--smart-case", Takes::No),
+        ("--word-regexp", Takes::No),
+        ("--binary", Takes::No),
+        ("--follow", Takes::No),
+        ("--glob-case-insensitive", Takes::No),
+        ("--hidden", Takes::No),
+        ("--no-ignore", Takes::No),
+        ("--no-ignore-dot", Takes::No),
+        ("--no-ignore-exclude", Takes::No),
+        ("--no-ignore-files", Takes::No),
+        ("--no-ignore-global", Takes::No),
+        ("--no-ignore-parent", Takes::No),
+        ("--no-ignore-vcs", Takes::No),
+        ("--no-require-git", Takes::No),
+        ("--one-file-system", Takes::No),
+        ("--text", Takes::No),
+        ("--unrestricted", Takes::No),
+        ("--count", Takes::No),
+        ("--count-matches", Takes::No),
+        ("--files", Takes::No),
+        ("--files-with-matches", Takes::No),
+        ("--files-without-match", Takes::No),
+        ("--json", Takes::No),
+        ("--byte-offset", Takes::No),
+        ("--column", Takes::No),
+        ("--heading", Takes::No),
+        ("--no-heading", Takes::No),
+        ("--include-zero", Takes::No),
+        ("--line-number", Takes::No),
+        ("--no-line-number", Takes::No),
+        ("--null", Takes::No),
+        ("--only-matching", Takes::No),
+        ("--passthru", Takes::No),
+        ("--quiet", Takes::No),
+        ("--stats", Takes::No),
+        ("--trim", Takes::No),
+        ("--vimgrep", Takes::No),
+        ("--with-filename", Takes::No),
+        ("--no-filename", Takes::No),
+        ("--no-messages", Takes::No),
+        ("--no-config", Takes::No),
+        ("--max-columns-preview", Takes::No),
+        ("--type-list", Takes::No),
+    ],
+};
+
+/// GNU and BSD grep's flags that only choose what is read and how it is printed (grep has none
+/// that runs a program or writes a file, and the table holds it to that).
+const GREP_FLAGS: Flags = Flags {
+    plain: "EFGPiywxzvcLloqsbHhnTZUaIrR0123456789",
+    valued: "efmABCdD",
+    long: &[
+        ("--regexp", Takes::Value),
+        ("--file", Takes::Value),
+        ("--max-count", Takes::Value),
+        ("--after-context", Takes::Value),
+        ("--before-context", Takes::Value),
+        ("--context", Takes::Value),
+        ("--include", Takes::Value),
+        ("--exclude", Takes::Value),
+        ("--exclude-dir", Takes::Value),
+        ("--exclude-from", Takes::Value),
+        ("--binary-files", Takes::Value),
+        ("--directories", Takes::Value),
+        ("--devices", Takes::Value),
+        ("--label", Takes::Value),
+        ("--group-separator", Takes::Value),
+        ("--color", Takes::Joined),
+        ("--colour", Takes::Joined),
+        ("--extended-regexp", Takes::No),
+        ("--fixed-strings", Takes::No),
+        ("--basic-regexp", Takes::No),
+        ("--perl-regexp", Takes::No),
+        ("--ignore-case", Takes::No),
+        ("--no-ignore-case", Takes::No),
+        ("--word-regexp", Takes::No),
+        ("--line-regexp", Takes::No),
+        ("--null-data", Takes::No),
+        ("--invert-match", Takes::No),
+        ("--count", Takes::No),
+        ("--files-with-matches", Takes::No),
+        ("--files-without-match", Takes::No),
+        ("--only-matching", Takes::No),
+        ("--quiet", Takes::No),
+        ("--silent", Takes::No),
+        ("--no-messages", Takes::No),
+        ("--byte-offset", Takes::No),
+        ("--with-filename", Takes::No),
+        ("--no-filename", Takes::No),
+        ("--line-number", Takes::No),
+        ("--initial-tab", Takes::No),
+        ("--null", Takes::No),
+        ("--text", Takes::No),
+        ("--binary", Takes::No),
+        ("--recursive", Takes::No),
+        ("--dereference-recursive", Takes::No),
+        ("--line-buffered", Takes::No),
+        ("--no-group-separator", Takes::No),
+    ],
+};
+
+/// Whether `a` names a flag of `RG_RUNS` or `NOT_RG`, or is a cluster of short flags with `z` in
+/// it (`-iz`). `NOT_RG` too, since `scrutate grep`'s parser may take as a flag what rg takes as a value.
+fn rg_runs(a: &str) -> bool {
+    let flag = a.split_once('=').map_or(a, |(f, _)| f);
+    RG_RUNS.contains(&flag) || NOT_RG.contains(&flag) || a.starts_with('-') && !a.starts_with("--") && a[1..].contains('z')
+}
+
+/// Whether every word of `args` is a flag of `flags`, the value of one, or a positional word, read
+/// as the program reads them: a flag's value is skipped whatever it looks like, so only a `--` in
+/// a flag's place ends the flags.
+fn only_known(flags: &Flags, args: &[String]) -> bool {
+    let mut words = args.iter();
+    while let Some(a) = words.next() {
+        if a == "--" {
+            return true;
+        }
+        if a.starts_with("--") {
+            let (name, joined) = a.split_once('=').map_or((a.as_str(), false), |(n, _)| (n, true));
+            match flags.long.iter().find(|(n, _)| *n == name).map(|(_, t)| *t) {
+                None => return false,
+                Some(Takes::No) if joined => return false,
+                Some(Takes::Value) if !joined && words.next().is_none() => return false,
+                _ => {}
+            }
+        } else if a.len() > 1 && a.starts_with('-') {
+            for (i, c) in a[1..].char_indices() {
+                if flags.valued.contains(c) {
+                    if i + c.len_utf8() == a.len() - 1 && words.next().is_none() {
+                        return false;
+                    }
+                    break;
+                }
+                if !flags.plain.contains(c) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 /// find's expressions that only read and print; any other (`-exec`, `-execdir`, `-ok`, `-okdir`,
 /// `-delete`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`, ...) leaves the command alone.
 const FIND_READS: [&str; 46] = [
@@ -306,13 +512,10 @@ const FIND_MORE: [&str; 12] = ["-a", "-o", "-mount", "-noleaf", "-daystart", "-f
 /// Whether `argv` only reads files and writes to standard output.
 fn read_only(argv: &[String]) -> bool {
     match argv[0].as_str() {
-        "rg" => !argv[1..].iter().take_while(|a| *a != "--").any(|a| {
-            let flag = a.split_once('=').map_or(a.as_str(), |(f, _)| f);
-            // a cluster of short flags with `z` in it (`-iz`); a value that holds a `z` is left alone too
-            RG_RUNS.contains(&flag) || NOT_RG.contains(&flag) || a.starts_with('-') && !a.starts_with("--") && a[1..].contains('z')
-        }),
-        // GNU and BSD grep have no flag that runs a program or writes a file
-        "grep" => true,
+        // a flag that runs a program is refused wherever it sits, also as a value or after `--`;
+        // then every word must be one the table knows
+        "rg" => !argv[1..].iter().any(|a| rg_runs(a)) && only_known(&RG_FLAGS, &argv[1..]),
+        "grep" => only_known(&GREP_FLAGS, &argv[1..]),
         "find" => {
             let mut words = argv[1..].iter();
             while let Some(a) = words.next() {
@@ -809,7 +1012,23 @@ mod tests {
         for find in [&["find", ".", "-name", "*.py", "-type", "f"][..], &["find", ".", "-size", "-10k", "-mtime", "-1"]] {
             assert_eq!(allowed(&w(find)), !cfg!(windows), "{find:?}");
         }
-        for ok in [&["rg", "foo"][..], &["grep", "-rn", "foo", "src"], &["rg", "-i", "--", "-z"]] {
+        // a flag's value is skipped as rg skips it, whatever it looks like
+        for ok in [
+            &["rg", "foo"][..],
+            &["grep", "-rn", "foo", "src"],
+            &["rg", "-e", "--", "x"],
+            &["rg", "-g", "*.rs", "--", "-v"],
+            &["rg", "-ge", "foo"],
+            &["rg", "--glob=--", "foo"],
+            &["rg", "-n", "--", "foo", "src"],
+            // the tables: clusters, a value in its cluster, grep's -NUM, and --color with no value
+            &["rg", "-tpy", "-uu", "-.", "--hidden", "foo"],
+            &["rg", "--type=py", "--max-count", "3", "foo"],
+            &["grep", "-A3", "-rn", "foo", "src"],
+            &["grep", "-5", "foo", "a.txt"],
+            &["grep", "--color", "foo", "a.txt"],
+            &["grep", "--color=auto", "--include=*.py", "-rn", "foo", "."],
+        ] {
             assert!(allowed(&w(ok)), "{ok:?}");
         }
         for no in [
@@ -832,6 +1051,26 @@ mod tests {
             &["rg", "--hostname-bin", "./h", "x"],
             &["rg", "--index", "x"],
             &["rg", "--root", "/", "x"],
+            // a `--` that is a flag's value ends nothing: the next word is a flag
+            &["rg", "-g", "--", "--pre=./p", "hello", "f.txt"],
+            &["rg", "-e", "--", "--pre=./p", "hello", "f.txt"],
+            &["rg", "--regexp", "--", "--pre=./p", "hello", "f.txt"],
+            &["rg", "-e", "--", "-z", "hello"],
+            &["rg", "--glob", "--", "--pre-glob=x", "hello"],
+            &["rg", "-g", "--", "--index", "x"],
+            // and a flag that runs a program is refused wherever it sits, after a real `--` too
+            &["rg", "-i", "--", "-z"],
+            &["rg", "--", "--pre=./p", "x"],
+            &["rg", "-e", "--hostname-bin=./h", "x"],
+            // a flag without its value
+            &["rg", "x", "-e"],
+            &["rg", "x", "--glob"],
+            // a flag the table does not know, today's or a future release's
+            &["rg", "--exec-later", "x", "pat"],
+            &["rg", "-K", "pat"],
+            &["grep", "--no-such-flag", "foo"],
+            &["grep", "-p", "foo"],
+            &["grep", "--count=3", "foo"],
             &["cat", "x"],
             &["/bin/rg", "x"],
         ] {

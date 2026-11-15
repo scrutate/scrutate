@@ -269,11 +269,17 @@ the time, and no file name or text of the repository.
 its first command, when that command is a read-only search by `rg`, `grep` or `find`; the rest of
 the line stays as written. `scrutate hook run` is the boundary, as an agent can type it and a user
 may allow it without a prompt: it runs only a bare `rg`, `grep` or `find` looked up in the absolute
-directories of `PATH`, and refuses (exit 2, nothing run) every argument, as the shell expanded it,
-that runs a program or writes a file (`rg --pre`, `--pre-glob`, `-z`, `--hostname-bin`, the text
-index's `--index` and `--update`; `find -exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
-`-fprint0`, `-fprintf`, `-fls`, and any `find` expression outside its read-only list), so a file
-named `--pre=x` that a glob expands into is refused too. A command with a redirection to anything but the null
+directories of `PATH`, and its arguments, as the shell expanded them, must be on an allow-list:
+each program has a table of the flags that only choose what is read and how it is printed, with
+whether each takes a value, and the arguments are read as the program reads them (a flag's value
+is skipped whatever it looks like, so `rg -g -- --pre=./p` gives `-g` the value `--`, and
+`--pre` is a flag). Any other flag, a known one or a future release's, is refused (exit 2, nothing
+run; the hook leaves such a line alone). On top of that, a word that names a flag that runs a
+program or writes a file (`rg --pre`, `--pre-glob`, `-z` or a cluster with `z`, `--hostname-bin`,
+the text index's `--index` and `--update`) is refused wherever it sits, as a value or after `--`
+too, and `find` takes only its read-only expressions (never `-exec`, `-execdir`, `-ok`, `-okdir`,
+`-delete`, `-fprint`, `-fprint0`, `-fprintf` or `-fls`), so a file named `--pre=x` that a glob
+expands into is refused too. A command with a redirection to anything but the null
 device (`2>/dev/null`, `2>&1`, `>/dev/null`, `&>/dev/null`) is never rewritten: `2> ~/.bashrc`
 would truncate a file. Codex takes a rewrite only with `allow`, which approves the whole
 line, so for Codex the hook rewrites only a search with at most `| head` or `| tail` after it;

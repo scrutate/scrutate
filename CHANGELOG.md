@@ -14,8 +14,9 @@ incompatible index by itself, and that is never breaking.
   `scrutate hook run --` in front of it and keeps the rest of the line as written; `hook run`
   answers `rg` through `scrutate grep` with `rg`'s own output and runs `grep` and `find` as
   given, redacts secrets, and bounds the output to 24,000 bytes when no pipe takes it. It runs no
-  program other than a bare `rg`, `grep` or `find` from `PATH`, and no flag that runs a program
-  or writes a file. Codex, which takes a rewrite only with `allow`, gets one only for a search
+  program other than a bare `rg`, `grep` or `find` from `PATH`, and only the flags on each one's
+  allow-list of flags that read and print, read as the program reads them; any other flag leaves
+  the line alone. Codex, which takes a rewrite only with `allow`, gets one only for a search
   with at most `| head` or `| tail` after it. `setup claude --hook` adds it beside the Grep hook,
   `setup codex --hook` to `$CODEX_HOME/hooks.json`; `hook stats` counts its searches apart;
   `SCRUTATE_HOOK_BASH=off` turns it off ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
