@@ -639,11 +639,14 @@ set for both: a watch's events name files of either set, read by the same two wa
 
 A look at every file is one walk and one `stat` per file (`files::look`), whatever stores it
 serves: it enters each directory the code index's walk or Engine A's default walk enters, and
-gives each store the files its own walk would list. A command keeps no look between calls, so
-a file written just before a call is in its answer. A running server keeps one for `grep_code`
-and `references` (`files::KeptLook`): each change set of its watch looks at the files it names
-again, and a change set of every file drops it, so the next call takes a new look (on macOS
-every read's change set is every file, so each call looks).
+gives each store the files its own walk would list. The walk runs on a thread per core, each
+keeping what it found, and the list is sorted by path at its end. An update reads the stats the
+code index recorded beside that walk, on its own thread, and a file's recorded hash only when its
+stat changed ([ADR 0012](adr/0012-a-fresh-process-look.md)). A command keeps no look between
+calls, so a file written just before a call is in its answer. A running server keeps one for
+`grep_code` and `references` (`files::KeptLook`): each change set of its watch looks at the
+files it names again, and a change set of every file drops it, so the next call takes a new look
+(on macOS every read's change set is every file, so each call looks).
 
 `Writer::text` alone decides whether a text index is kept: `index` (unless `--no-text`) and
 `grep --index --update` build it; every other writer keeps one that exists. `tsquery` keys a

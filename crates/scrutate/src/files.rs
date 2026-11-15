@@ -518,22 +518,40 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
         let skipped = e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy());
         !skipped || held.as_ref().is_some_and(|r| !e.path().strip_prefix(&base).is_ok_and(|rel| left_out(r, rel, true)))
     });
-    let (mut out, mut listed) = (Vec::new(), crate::index::Listed::default());
-    for e in wb.build().flatten() {
-        if !e.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        let Ok(rel) = e.path().strip_prefix(root) else { continue };
-        let path = slashed(rel);
-        let repo = !path.split('/').any(|n| skipped(&walk.skip, n));
-        let code = repo && e.file_name() != ".git" && is_indexable(&path);
-        let text = rules.as_ref().is_some_and(|r| !left_out(r, rel, false));
-        if !(repo || text) {
-            continue;
-        }
-        let stat = if code || text { e.metadata().ok().map(|m| listed.stat(e.path(), &m)) } else { None };
-        out.push(Found { lossy: rel.to_str().is_none(), path, stat, repo, code, text });
+    // a stat per file is most of a fresh process's look at a large tree: the walk runs on every
+    // core, each thread keeping what it found until it ends
+    struct Sink<'a> {
+        found: Vec<Found>,
+        all: &'a std::sync::Mutex<Vec<Found>>,
     }
+    impl Drop for Sink<'_> {
+        fn drop(&mut self) {
+            self.all.lock().unwrap_or_else(|p| p.into_inner()).append(&mut self.found);
+        }
+    }
+    let all = std::sync::Mutex::new(Vec::new());
+    let (walk, rules, left_out) = (&walk, &rules, &left_out);
+    wb.threads(rayon::current_num_threads()).build_parallel().run(|| {
+        let mut sink = Sink { found: Vec::new(), all: &all };
+        let mut listed = crate::index::Listed::default();
+        Box::new(move |e| {
+            let Ok(e) = e else { return ignore::WalkState::Continue };
+            if !e.file_type().is_some_and(|t| t.is_file()) {
+                return ignore::WalkState::Continue;
+            }
+            let Ok(rel) = e.path().strip_prefix(root) else { return ignore::WalkState::Continue };
+            let path = slashed(rel);
+            let repo = !path.split('/').any(|n| skipped(&walk.skip, n));
+            let code = repo && e.file_name() != ".git" && is_indexable(&path);
+            let text = rules.as_ref().is_some_and(|r| !left_out(r, rel, false));
+            if repo || text {
+                let stat = if code || text { e.metadata().ok().map(|m| listed.stat(e.path(), &m)) } else { None };
+                sink.found.push(Found { lossy: rel.to_str().is_none(), path, stat, repo, code, text });
+            }
+            ignore::WalkState::Continue
+        })
+    });
+    let mut out = all.into_inner().unwrap_or_else(|p| p.into_inner());
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
 }

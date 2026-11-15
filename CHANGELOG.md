@@ -187,6 +187,10 @@ incompatible index by itself, and that is never breaking.
   left out every one, prints `no files were searched` on stderr and exits 2, as ripgrep 15.2.0
   does, where it exited 1 in silence; a path given still exits 1
   ([CLI](docs/CLI.md#conventions)).
+- A command on a large tree brings its index up to date sooner: the look at every file runs on
+  every core, beside the read of what the index recorded, and a file's recorded hash is read only
+  when its stat changed. On the Linux tree a warm `symbol` takes 314 ms where it took 843 ms
+  ([ADR 0012](docs/adr/0012-a-fresh-process-look.md)).
 - `grep` prints a CRLF line with its `\r`, matched and context lines alike, in streamed, sorted
   (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
   dropped the `\r`; `--json` and MCP text still carry no line end

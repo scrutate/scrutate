@@ -2170,7 +2170,7 @@ impl Index {
     /// Err when the files the update leaves would pass the quota, counted before anything is
     /// written. `files` is the whole tree, or with `only` the named files, which replace the
     /// `known` rows of those paths.
-    fn within_quota(&self, only: bool, known: &HashMap<String, (i64, i64, Option<i64>, String)>, files: &[(String, Option<Stat>)]) -> Result<()> {
+    fn within_quota(&self, only: bool, known: &HashMap<String, (i64, i64, Option<i64>)>, files: &[(String, Option<Stat>)]) -> Result<()> {
         let quota = crate::files::Quota::from_env()?;
         if !quota.is_set() {
             return Ok(());
@@ -2229,25 +2229,32 @@ impl Index {
         let relang = if only { Vec::new() } else { crate::custom::changed(&old_stamp, &lang_stamp) };
         let relang_file = |rel: &str| !relang.is_empty() && relang.iter().any(|e| crate::parse::basename(rel).to_lowercase().ends_with(e.as_str()));
         let scan_t0 = Instant::now();
-        type Known = HashMap<String, (i64, i64, Option<i64>, String)>;
+        // the recorded stat of each file; its hash is read only for a file whose stat changed
+        type Known = HashMap<String, (i64, i64, Option<i64>)>;
         let mut known: Known = HashMap::new();
-        let row =
-            |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, String>(4)?)));
+        let row = |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?)));
         let stat_of = |rel: &str| {
             let full = self.root.join(rel);
             std::fs::metadata(&full).ok().map(|m| Stat::of(&full, &m))
         };
         let files: Vec<(String, Option<Stat>)> = match look {
             Look::Walk | Look::Found(_) => {
-                let mut q = self.db.prepare("SELECT path,size,mtime_ns,ctime_ns,hash FROM files")?;
-                known = q.query_map([], row)?.collect::<rusqlite::Result<Known>>()?;
-                let walked;
-                let found = match look {
-                    Look::Found(f) => f,
-                    _ => {
-                        walked = crate::files::look(&self.root, false)?;
-                        &walked[..]
-                    }
+                // the walk of the tree and the read of what the index recorded run at once
+                let root = &self.root;
+                let (walked, read) = std::thread::scope(|s| {
+                    let walk = matches!(look, Look::Walk).then(|| s.spawn(|| crate::files::look(root, false)));
+                    let read = self
+                        .db
+                        .prepare("SELECT path,size,mtime_ns,ctime_ns FROM files")
+                        .and_then(|mut q| q.query_map([], row)?.collect::<rusqlite::Result<Known>>());
+                    (walk.map(|w| w.join().unwrap_or_else(|p| std::panic::resume_unwind(p))), read)
+                });
+                known = read?;
+                let walked = walked.transpose()?;
+                let found = match (look, &walked) {
+                    (Look::Found(f), _) => f,
+                    (_, Some(w)) => &w[..],
+                    _ => &[],
                 };
                 // a name that is not UTF-8 is looked up by the part of it the index can name, as before
                 let files: Vec<(String, Option<Stat>)> =
@@ -2257,7 +2264,7 @@ impl Index {
                 files
             }
             Look::Named(paths) => {
-                let mut q = self.db.prepare_cached("SELECT path,size,mtime_ns,ctime_ns,hash FROM files WHERE path=?1")?;
+                let mut q = self.db.prepare_cached("SELECT path,size,mtime_ns,ctime_ns FROM files WHERE path=?1")?;
                 for p in paths {
                     if let Some((p, k)) = q.query_row([p], row).optional()? {
                         known.insert(p, k);
@@ -2284,7 +2291,11 @@ impl Index {
                     }
                 }
             }
-            todo.push((rel.clone(), if force { None } else { known.get(rel).map(|k| k.3.clone()) }));
+            let hash = match (force, known.contains_key(rel)) {
+                (false, true) => self.db.prepare_cached("SELECT hash FROM files WHERE path=?1")?.query_row([rel], |r| r.get::<_, String>(0)).optional()?,
+                _ => None,
+            };
+            todo.push((rel.clone(), hash));
         }
         if !only {
             self.scan_cost = scan_t0.elapsed().as_secs_f64();
@@ -4664,6 +4675,24 @@ mod tests {
         assert_eq!(cached, fresh, "a cached entry is what the word gives anew");
         assert_eq!(names(&mut s, "gamma delta"), ["gamma_delta"], "the same answer with the caches empty");
         drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file whose stat moved but whose content did not is not parsed again: its recorded hash,
+    /// read only for a file whose stat changed, says it is the same.
+    #[test]
+    fn a_file_touched_but_not_changed_is_not_parsed_again() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_touched_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(root.join("a.py")).unwrap().set_modified(later).unwrap();
+        let st = ix.update(false).unwrap();
+        assert_eq!((st.files_looked, st.files_changed), (1, 0), "{st:?}");
+        drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }
 
