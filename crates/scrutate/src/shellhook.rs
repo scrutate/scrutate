@@ -749,6 +749,7 @@ pub fn bash_main() -> i32 {
 /// else, and for every `grep` and `find`, the program itself runs, so its own lines, messages and
 /// code come back. None when the program is on no allowed directory of PATH.
 fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
+    let argv = &without_colour(argv);
     let grep = if argv[0] == "rg" { grep_words(&argv[1..]).filter(|a| crate::cli::grep_takes(a)) } else { None };
     let mut c = if let Some(args) = grep {
         let mut c = Command::new(exe);
@@ -769,11 +770,12 @@ fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
         // later they come, and before any `--`
         let mut args: Vec<String> = argv[1..].to_vec();
         match argv[0].as_str() {
-            "grep" => args.insert(0, format!("--exclude-dir={}", crate::files::INDEX_DIR)),
+            "grep" => args.splice(0..0, [format!("--exclude-dir={}", crate::files::INDEX_DIR), "--color=never".into()]).for_each(drop),
             "rg" => {
                 let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
                 // rg weighs every --iglob after every --glob, so a user's --iglob would beat the glob alone
-                args.splice(at..at, [format!("--glob=!{}", crate::files::INDEX_DIR), format!("--iglob=!{}", crate::files::INDEX_DIR)]).for_each(drop);
+                args.splice(at..at, [format!("--glob=!{}", crate::files::INDEX_DIR), format!("--iglob=!{}", crate::files::INDEX_DIR), "--color=never".into()])
+                    .for_each(drop);
             }
             _ => {}
         }
@@ -791,6 +793,42 @@ fn command(exe: &std::path::Path, argv: &[String]) -> Option<Command> {
     }
     c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit());
     Some(c)
+}
+
+/// `argv` without its colour flags (and their values): the escape codes around a match would cut
+/// a secret in two before the redactor sees the line, so the search runs with `--color=never`.
+fn without_colour(argv: &[String]) -> Vec<String> {
+    let flags = if argv[0] == "rg" { &RG_FLAGS } else { &GREP_FLAGS };
+    let roles = roles(flags, &argv[1..]);
+    let mut out = vec![argv[0].clone()];
+    let mut drop_value = false;
+    for (a, role) in argv[1..].iter().zip(roles) {
+        let colour = role == Role::Flag && matches!(a.split_once('=').map_or(a.as_str(), |(n, _)| n), "--color" | "--colour" | "--colors");
+        if colour || drop_value && role == Role::Value {
+            drop_value = colour;
+            continue;
+        }
+        drop_value = false;
+        out.push(a.clone());
+    }
+    out
+}
+
+/// The flag of `argv` that has rg rewrite each line it prints (`--replace` puts text in place of
+/// the match, `--json` escapes it), so no redactor can see a secret in it whole.
+fn rewrites_lines(argv: &[String]) -> Option<&str> {
+    if argv[0] != "rg" {
+        return None;
+    }
+    argv[1..]
+        .iter()
+        .zip(roles(&RG_FLAGS, &argv[1..]))
+        .find(|(a, r)| {
+            *r == Role::Flag
+                && (matches!(a.split_once('=').map_or(a.as_str(), |(n, _)| n), "--replace" | "--json")
+                    || !a.starts_with("--") && a[1..].chars().find(|c| RG_FLAGS.valued.contains(*c)) == Some('r'))
+        })
+        .map(|(a, _)| a.as_str())
 }
 
 /// On Unix: the child dies when `hook run` does, however it dies (the agent's timeout, SIGKILL).
@@ -1053,6 +1091,10 @@ pub fn run_main(args: &[String]) -> i32 {
             );
             return 2;
         }
+    }
+    if let Some(flag) = rewrites_lines(argv) {
+        eprintln!("scrutate hook run: rg's {flag} changes each line before scrutate can find a secret in it: not run (`scrutate grep --json` gives JSON with secrets redacted)");
+        return 2;
     }
     let Ok(exe) = std::env::current_exe() else { return 2 };
     let Some(mut c) = command(&exe, argv) else {

@@ -1500,7 +1500,11 @@ the path and why, and nothing runs. A walk past 1,000,000 entries or 5 seconds s
 search exits 2 with a line asking for narrower paths (the Linux tree's 96,000 entries take about
 0.13 s). A `grep` also gets `--exclude-dir=.scrutate` first and an `rg` `--glob=!.scrutate` and
 `--iglob=!.scrutate` after its own flags (rg weighs every `--iglob` after every `--glob`), so the
-search skips the directory the walk skipped. A search for the
+search skips the directory the walk skipped. Colour is always off: the search's own `--color`,
+`--colour` and `--colors` are dropped and `--color=never` added, since escape codes around a
+match would cut a secret in two. An `rg` with `--replace` (`-r`) or `--json` exits 2 and runs
+nothing: both rewrite each line before scrutate can find a secret in it (`scrutate grep --json`
+gives JSON with secrets redacted). A search for the
 text `.scrutate`, the pattern and not a path, runs. A line
 with `\r` or another control character but tab and line feed is left alone.
 

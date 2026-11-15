@@ -879,7 +879,8 @@ fn hook_run_refuses_a_search_that_can_reach_an_index_file_whatever_its_output_sh
 
 /// Every flag the allow-list lets `rg` and `grep` take, against every way a search can reach an
 /// index file: each search that could reach one is refused before it runs, naming why, and the
-/// record's secret is in neither stream; in a tree without one, a planted key comes out redacted.
+/// record's secret is in neither stream; in a tree without one, no part of a planted key comes out
+/// raw, whatever the pattern marks or replaces.
 #[cfg(unix)]
 #[test]
 fn hook_run_holds_for_every_allowed_flag() {
@@ -953,7 +954,7 @@ fn hook_run_holds_for_every_allowed_flag() {
     if rg::have_rg() {
         programs.push("rg");
     }
-    let (mut asked, mut ran) = (0, 0);
+    let (mut asked, mut ran, mut leaks) = (0, 0, Vec::new());
     for program in programs {
         for (flag, takes) in allowed_flags(program) {
             let value = match (program, flag.as_str()) {
@@ -984,13 +985,15 @@ fn hook_run_holds_for_every_allowed_flag() {
                 Takes::Joined => ask.push(format!("{flag}={value}")),
             }
             let pattern_given = takes != Takes::No && matches!(flag.as_str(), "-e" | "--regexp" | "-f" | "--file");
-            if !pattern_given {
-                ask.push("aws".into());
-            }
             let follows = matches!((program, flag.as_str()), ("grep", "-R" | "--dereference-recursive") | ("rg", "-L" | "--follow"));
-            for (dir, path, by_following) in &reach {
+            let with = |pattern: &str, path: &str| {
                 let mut ask = ask.clone();
-                ask.push((*path).into());
+                ask.extend((!pattern_given).then(|| pattern.to_string()));
+                ask.push(path.into());
+                ask
+            };
+            for (dir, path, by_following) in &reach {
+                let ask = with("aws", path);
                 let (code, out, err) = run(dir, &ask);
                 asked += 1;
                 assert!(!out.contains(&secret) && !err.contains(&secret), "{ask:?} in {dir:?}: the record's secret came back:\n{out}\n{err}");
@@ -998,16 +1001,25 @@ fn hook_run_holds_for_every_allowed_flag() {
                     assert!(code == Some(2) && err.contains("index directory"), "{ask:?} in {dir:?}: not refused: {code:?} {out}\n{err}");
                 }
             }
-            let mut ask = ask.clone();
-            ask.push(".".into());
-            let (code, out, err) = run(&clean, &ask);
-            asked += 1;
-            ran += usize::from(code == Some(0));
-            assert!(!out.contains(&secret) && !err.contains(&secret), "{ask:?}: the record's secret came back:\n{out}\n{err}");
+            // a pattern inside a key is where a flag that marks or replaces the match cuts it
+            for pattern in ["aws", "AKIA", &key_secret[16..20]] {
+                let ask = with(pattern, ".");
+                let (code, out, err) = run(&clean, &ask);
+                asked += 1;
+                ran += usize::from(code == Some(0));
+                let pieces = [&key[4..], &key_secret[..10], &key_secret[30..], &secret[..]];
+                if let Some(line) = out.lines().chain(err.lines()).find(|l| pieces.iter().any(|p| l.contains(p))) {
+                    leaks.push(format!("{ask:?}: {}", line.escape_debug()));
+                }
+                if pattern_given {
+                    break;
+                }
+            }
         }
     }
+    assert!(leaks.is_empty(), "a key came back raw:\n{}", leaks.join("\n"));
     // the table is not empty and most of its searches did run in the clean tree
-    assert!(asked > 500 && ran * 2 > asked / (reach.len() + 1), "{asked} asked, {ran} ran");
+    assert!(asked > 500 && ran * 2 > asked / (reach.len() + 3) * 3, "{asked} asked, {ran} ran");
     let _ = fs::remove_dir_all(&base);
 }
 

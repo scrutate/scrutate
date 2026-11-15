@@ -371,7 +371,8 @@ without its file, its line number or its armour (`grep -r` and `rg` through `hoo
 name with a colon); and a line too long for `references` to show whole before the window
 around a use is cut from it, so the window never shows a value without its name. The Grep hook
 writes its lines through `hook::redacted`; `hook run` redacts what the search program prints, line
-by line as it streams, and leaves `.scrutate/` out of a `grep` or `rg` it runs: the index and the
+by line as it streams (with colour off, and refusing an `rg` with `--replace` or `--json`, which
+rewrite a line before the redactor can see a secret in it whole), and leaves `.scrutate/` out of a `grep` or `rg` it runs: the index and the
 `tsquery` cache hold the repository's text in binary records, where a secret runs straight into
 the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends. `hook run` decides before the search runs, by file identity (`files::IndexFiles`), so the
 shape of the output (colour, headings, separators, JSON, odd names) cannot matter: it walks what
@@ -382,7 +383,9 @@ under another name, a nested repository's index), or when the walk is too large 
 (over 1,000,000 entries or 5 seconds); `read_code`, `grep_code` and the Grep hook
 refuse such a path the same way. Not covered: a link or a hard link made while the search runs
 (the walk is done before it starts); a hard link to an index file of a repository outside the
-searched tree; and, not the hook's to stop, a command it does not answer (`cat`, `strings` of those files), and the file names `find`
+searched tree; a search that prints only part of a secret (`-o` with a pattern that matches
+inside it), since the redactor sees a line as printed and a piece of a token gives it nothing to
+recognise; and, not the hook's to stop, a command it does not answer (`cat`, `strings` of those files), and the file names `find`
 prints. A path that holds a secret (a file named with a token) is redacted like any
 other text, so that path cannot be opened from the answer.
 
