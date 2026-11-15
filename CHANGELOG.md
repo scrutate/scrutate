@@ -347,6 +347,11 @@ incompatible index by itself, and that is never breaking.
   `Store[]`, `Array<Store>` and `Record<string, Store>`, and a place of a tuple by its number
   (Python `tuple[Other, Store]` and `tuple[Store, ...]`, TypeScript `[Other, Store]`); the undecided note no
   longer speaks of another definition of the name when there is none ([CLI](docs/CLI.md#engine-b)).
+- On Windows the paths scrutate prints or hands to another program have no `\\?\` in front: the
+  index and glob roots it reports, `watch`'s root, `search --also`'s `root`, the binary and project
+  paths `setup` writes, Engine A's paths (a share as `//server/share`, where it printed
+  `//?/UNC/server/share`), and the paths it hands git and the Grep hook. The recent-files ranking
+  of `find` keeps each root in that form and reads the form it kept before.
 - `impact` and `review` run from a subdirectory read a relative `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` from that directory, as git does: they started git at
   the root with the value unchanged, which found no repository or another one.

@@ -221,7 +221,7 @@ impl Session {
             };
             let ready: Box<dyn FnOnce()> = Box::new(|| {
                 if apply {
-                    eprintln!("[scrutate] watching {}", root.display())
+                    eprintln!("[scrutate] watching {}", crate::paths::plain_path(&root).display())
                 }
             });
             // the session's writer lock orders a burst's update with its other writes; the index's
@@ -236,7 +236,7 @@ impl Session {
                 };
                 match r {
                     Err(e) if e.is::<crate::watch::RootReplaced>() => {
-                        eprintln!("[scrutate] {}: root replaced; watching the new tree", root.display());
+                        eprintln!("[scrutate] {}: root replaced; watching the new tree", crate::paths::plain_path(&root).display());
                         match session.upgrade().map(|s| s.reopen()) {
                             Some(Ok(())) => continue,
                             Some(Err(e)) => eprintln!("[scrutate] watching stopped: the new tree could not be opened: {e:#}"),

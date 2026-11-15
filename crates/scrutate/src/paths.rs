@@ -15,6 +15,13 @@ pub fn plain_path(path: &Path) -> Cow<'_, Path> {
     plain_path_on(path, cfg!(windows))
 }
 
+/// The form a root is kept under in state that outlives a process (`frecency.json`): canonical,
+/// and plain, as it is shown.
+pub fn key(root: &Path) -> String {
+    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    plain_path(&canonical).to_string_lossy().into_owned()
+}
+
 /// `plain_path` as it is on Windows (`windows`) or elsewhere.
 pub(crate) fn plain_path_on(path: &Path, windows: bool) -> Cow<'_, Path> {
     match path.to_str().map(|s| (s, plain_on(s, windows))) {

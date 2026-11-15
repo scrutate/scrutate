@@ -33,7 +33,7 @@ impl Scratch {
             fs::create_dir_all(base.join(d)).unwrap();
         }
         let base = canon(base);
-        fs::write(base.join("repo/m.py"), "def needle():\n    return 1\n").unwrap();
+        fs::write(base.join("repo").join("m.py"), "def needle():\n    return 1\n").unwrap();
         Scratch { home: base.join("home"), repo: base.join("repo"), base }
     }
 
@@ -84,11 +84,12 @@ impl Scratch {
     /// The user's file of `agent`.
     fn user_file(&self, agent: &str) -> PathBuf {
         match agent {
+            // one part per join: on Windows a `/` inside one part stays a `/` in a plain path
             "claude" => self.home.join(".claude.json"),
-            "codex" => self.base.join("codex/config.toml"),
-            "opencode" => self.base.join("config/opencode/opencode.json"),
-            "cursor" => self.home.join(".cursor/mcp.json"),
-            _ => self.home.join(".gemini/settings.json"),
+            "codex" => self.base.join("codex").join("config.toml"),
+            "opencode" => self.base.join("config").join("opencode").join("opencode.json"),
+            "cursor" => self.home.join(".cursor").join("mcp.json"),
+            _ => self.home.join(".gemini").join("settings.json"),
         }
     }
 
@@ -171,7 +172,7 @@ fn every_other_byte_and_comment_stays_and_uninstall_restores_the_file() {
     let files: [(&str, PathBuf, &str); 5] = [
         ("claude", s.user_file("claude"), "{\n  \"numStartups\": 3,\n  \"mcpServers\": {\n    \"other\": {\n      \"type\": \"stdio\",\n      \"command\": \"x\",\n      \"args\": []\n    }\n  },\n  \"theme\": \"dark\"\n}"),
         ("codex", s.user_file("codex"), "# my settings\nmodel = \"o4\" # the model\n\n[mcp_servers.other]\n# a server of mine\ncommand = \"y\"\nargs = [\"z\"]\n\n[profiles.fast]\nmodel = \"mini\"\n"),
-        ("opencode", s.base.join("config/opencode/opencode.jsonc"), "// opencode settings\n{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  /* mine */\n  \"mcp\": {\n    \"local-one\": {\"type\": \"local\", \"command\": [\"a\"], \"enabled\": false}, // keep\n  },\n}\n"),
+        ("opencode", s.base.join("config").join("opencode").join("opencode.jsonc"), "// opencode settings\n{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  /* mine */\n  \"mcp\": {\n    \"local-one\": {\"type\": \"local\", \"command\": [\"a\"], \"enabled\": false}, // keep\n  },\n}\n"),
         ("cursor", s.user_file("cursor"), "{\"mcpServers\": {}}"),
         ("gemini", s.user_file("gemini"), "{\n\t\"theme\": \"GitHub\",\n\t\"general\": {\"vimMode\": true}\n}\n"),
     ];
@@ -260,8 +261,8 @@ fn project_files_name_the_repository_and_codex_has_none() {
 #[test]
 fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     let s = Scratch::new("hook");
-    let settings = s.home.join(".claude/settings.json");
-    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let settings = s.home.join(".claude").join("settings.json");
+    let claude_md = s.home.join(".claude").join("CLAUDE.md");
     assert_eq!(s.setup(&["claude"]).0, 0);
     assert!(!settings.exists() && !claude_md.exists(), "no hook and no instructions unless asked");
     let before_settings = "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Bash\",\n        \"hooks\": [{\"type\": \"command\", \"command\": \"echo\"}]\n      }\n    ]\n  },\n  \"model\": \"opus\"\n}\n";
@@ -299,9 +300,9 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     fs::remove_file(&settings).unwrap();
     fs::remove_file(&claude_md).unwrap();
     assert_eq!(s.setup(&["claude", "--project", "--hook", "--instructions"]).0, 0);
-    assert!(s.repo.join(".claude/settings.json").is_file() && s.repo.join("CLAUDE.md").is_file());
+    assert!(s.repo.join(".claude").join("settings.json").is_file() && s.repo.join("CLAUDE.md").is_file());
     assert_eq!(s.setup(&["claude", "--project", "--hook", "--instructions", "--uninstall"]).0, 0);
-    assert!(!s.repo.join(".claude/settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
+    assert!(!s.repo.join(".claude").join("settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
 
     for agent in ["opencode", "cursor", "gemini"] {
         let (code, out, _) = s.setup(&[agent, "--hook", "--dry-run"]);
@@ -342,8 +343,8 @@ fn setup_codex_hook_adds_the_bash_hook_to_its_hooks_file_and_uninstall_takes_it_
 #[test]
 fn a_plain_uninstall_takes_out_the_server_the_hook_and_the_block() {
     let s = Scratch::new("plainuninstall");
-    let settings = s.home.join(".claude/settings.json");
-    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let settings = s.home.join(".claude").join("settings.json");
+    let claude_md = s.home.join(".claude").join("CLAUDE.md");
     let before_settings = "{\n  \"model\": \"opus\"\n}\n";
     let before_md = "# My rules\n";
     s.write(&settings, before_settings);
@@ -368,13 +369,13 @@ fn a_plain_uninstall_takes_out_the_server_the_hook_and_the_block() {
     assert_eq!(fs::read_to_string(&settings).unwrap(), "{\n  \"hooks\": {\n    \"PreToolUse\": []\n  }\n}\n", "only the hook");
     assert_eq!(s.setup(&["claude", "--project", "--hook", "--instructions"]).0, 0);
     assert_eq!(s.setup(&["claude", "--project", "--uninstall"]).0, 0);
-    assert!(!s.repo.join(".claude/settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
+    assert!(!s.repo.join(".claude").join("settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
 }
 
 #[test]
 fn a_marker_quoted_in_prose_is_not_the_block() {
     let s = Scratch::new("markerprose");
-    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let claude_md = s.home.join(".claude").join("CLAUDE.md");
     let before_md = "The setup writes `<!-- scrutate:begin -->` markers.\n\n- rule one\n- rule two\n";
     s.write(&claude_md, before_md);
     let (code, _, err) = s.setup(&["claude", "--instructions"]);
@@ -397,7 +398,7 @@ fn a_marker_quoted_in_prose_is_not_the_block() {
 #[test]
 fn a_block_with_crlf_line_ends_is_the_block() {
     let s = Scratch::new("markercrlf");
-    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let claude_md = s.home.join(".claude").join("CLAUDE.md");
     let before_md = "# Rules\r\n\r\nBe brief.\r\n";
     s.write(&claude_md, before_md);
     assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
@@ -475,7 +476,7 @@ fn the_command_line_written_answers_initialize_and_tools_list() {
         assert!(tools.contains(&"grep_code".to_string()) && tools.contains(&"search_code".to_string()), "{agent}: {tools:?}");
     }
     assert_eq!(s.setup_in(&s.repo, &["cursor", "--project"], "/usr/bin:/bin").0, 0);
-    let argv = command_line("cursor", &fs::read_to_string(s.repo.join(".cursor/mcp.json")).unwrap());
+    let argv = command_line("cursor", &fs::read_to_string(s.repo.join(".cursor").join("mcp.json")).unwrap());
     // a project's entry names its repository, so it serves it from anywhere
     assert!(mcp_tools(&argv, &s.home, &s).contains(&"grep_code".to_string()));
 }
@@ -569,7 +570,7 @@ fn each_installed_agent_lists_the_server() {
     if let Some((gemini, path)) = installed("gemini") {
         assert_eq!(s.setup(&["gemini"]).0, 0);
         // trust is the user's to give: the test gives it for its scratch folder
-        s.write(&s.home.join(".gemini/trustedFolders.json"), &format!("{{\"{}\": \"TRUST_FOLDER\"}}", s.repo.display()));
+        s.write(&s.home.join(".gemini").join("trustedFolders.json"), &format!("{{\"{}\": \"TRUST_FOLDER\"}}", s.repo.display()));
         let listed = run_for(s.command(&gemini, &path).args(["mcp", "list"]), limit).expect("gemini mcp list finishes");
         assert!(listed.contains("scrutate") && listed.contains("Connected"), "{listed}");
     }
@@ -580,7 +581,7 @@ fn each_installed_agent_lists_the_server() {
 #[test]
 fn uninstall_keeps_text_added_after_the_block_on_its_own_line() {
     let s = Scratch::new("after_block");
-    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let claude_md = s.home.join(".claude").join("CLAUDE.md");
     // with and without a line break at the end of the user's text, LF and CRLF
     for before in ["# Notes", "# Notes\n", "# Notes\r\n"] {
         s.write(&claude_md, before);

@@ -2008,10 +2008,10 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    let mut r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), &mut update);
+    let mut r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", crate::paths::plain_path(&root).display()), &mut update);
     // the root's path names another tree: its index is opened (made when it has none), then watched
     while r.as_ref().is_err_and(|e| e.is::<crate::watch::RootReplaced>()) && !stopped() {
-        eprintln!("[scrutate] {}: root replaced; watching the new tree", root.display());
+        eprintln!("[scrutate] {}: root replaced; watching the new tree", crate::paths::plain_path(&root).display());
         session.reopen()?;
         r = crate::watch::run(&root, &stop, || {}, &mut update);
     }

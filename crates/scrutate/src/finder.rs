@@ -183,7 +183,7 @@ fn walk(root: &Path) -> Vec<String> {
 }
 
 fn root_key(root: &Path) -> String {
-    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned()
+    crate::paths::key(root)
 }
 
 fn now() -> f64 {
@@ -214,7 +214,23 @@ struct State {
 impl State {
     /// The state in `file`; an empty one when it is missing or does not parse.
     fn load(file: &Path) -> State {
-        std::fs::read(file).ok().and_then(|b| serde_json::from_slice::<State>(&b).ok()).filter(|s| s.version == 1).unwrap_or_default()
+        let mut s: State = std::fs::read(file).ok().and_then(|b| serde_json::from_slice::<State>(&b).ok()).filter(|s| s.version == 1).unwrap_or_default();
+        s.plain_keys(cfg!(windows));
+        s
+    }
+
+    /// Roots kept in an older form (on Windows the verbatim `\\?\C:\x` that `canonicalize` gives)
+    /// under the form `paths::key` writes now; a file kept under both keeps the later visit.
+    fn plain_keys(&mut self, windows: bool) {
+        for (root, files) in std::mem::take(&mut self.roots) {
+            let to = self.roots.entry(crate::paths::plain_on(&root, windows).into_owned()).or_default();
+            for (path, e) in files {
+                let kept = to.entry(path).or_insert(e);
+                if e.at > kept.at {
+                    *kept = e;
+                }
+            }
+        }
     }
 
     fn frecency(&self, root: &str, path: &str, now: f64) -> f64 {
@@ -268,6 +284,26 @@ mod tests {
 
     fn chars(s: &str) -> Vec<char> {
         s.chars().collect()
+    }
+
+    #[test]
+    fn a_root_kept_in_its_verbatim_form_is_read_under_its_plain_one() {
+        let e = |score: f64, at: f64| Entry { score, at };
+        let state = || {
+            let mut s = State::default();
+            s.roots.insert(r"\\?\C:\repo".into(), [("a.py".to_string(), e(5.0, 10.0)), ("b.py".to_string(), e(1.0, 30.0))].into());
+            s.roots.insert(r"C:\repo".into(), [("a.py".to_string(), e(2.0, 20.0))].into());
+            s
+        };
+        let mut s = state();
+        s.plain_keys(true);
+        assert_eq!(s.roots.keys().collect::<Vec<_>>(), [r"C:\repo"]);
+        let files = &s.roots[r"C:\repo"];
+        assert_eq!((files["a.py"].score, files["a.py"].at), (2.0, 20.0), "the later visit is kept");
+        assert_eq!((files["b.py"].score, files["b.py"].at), (1.0, 30.0));
+        let mut elsewhere = state();
+        elsewhere.plain_keys(false);
+        assert_eq!(elsewhere.roots.len(), 2, "only Windows has the verbatim form");
     }
 
     #[test]
