@@ -871,13 +871,19 @@ fn root_id(root: &Path) -> RootId {
 /// renames (`mv repo repo.old; mv repo.new repo`) leaves it empty between them.
 const ROOT_GONE_AFTER: Duration = Duration::from_secs(2);
 
-fn root_present(root: &Path, id: &RootId) -> Result<()> {
+/// The canonical `root` is still what `given`, the path the watch was started with, names: a
+/// link among them may be pointed at another directory, or dangle for a moment while it is.
+fn root_present(root: &Path, given: &Path, id: &RootId) -> Result<()> {
+    let linked = given != root;
     let t0 = Instant::now();
-    while !root.is_dir() {
+    while !root.is_dir() || linked && !given.is_dir() {
         if t0.elapsed() >= ROOT_GONE_AFTER {
-            anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(root).display());
+            anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(given).display());
         }
         std::thread::sleep(Duration::from_millis(20));
+    }
+    if linked && std::fs::canonicalize(given).is_ok_and(|now| now != root) {
+        return Err(RootReplaced.into());
     }
     if id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id) {
         return Err(RootReplaced.into());
@@ -1017,6 +1023,7 @@ pub fn run_noting(
     on_ready: impl FnOnce(),
     mut on_change: impl FnMut(&Changes) -> Result<()>,
 ) -> Result<()> {
+    let given = root.to_path_buf();
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let id = root_id(&root);
     // a tree that replaced the root has no cookie directory yet
@@ -1027,7 +1034,7 @@ pub fn run_noting(
     #[cfg(target_os = "macos")]
     let Some(mut watcher) = fsevents::Stream::start(&root, tx) else {
         eprintln!("[scrutate] FSEvents could not be loaded or started; checking the tree on a timer instead");
-        return run_timer(&root, stop, on_ready, on_change);
+        return run_timer(&root, &given, stop, on_ready, on_change);
     };
     #[cfg(not(target_os = "macos"))]
     let mut watcher = notify::recommended_watcher(tx).context("start the file watcher")?;
@@ -1059,7 +1066,7 @@ pub fn run_noting(
     // after a pause that doubles up to 30 s, whichever comes first
     let (mut failed, mut retry_at, mut pause) = (false, None::<Instant>, RETRY_FIRST);
     while !stop.load(Ordering::Relaxed) {
-        root_present(&root, &id)?;
+        root_present(&root, &given, &id)?;
         let mut burst = Burst { full: failed, ..Burst::default() };
         let mut wanted = retry_at.is_some_and(|t| Instant::now() >= t);
         for ev in poll.check() {
@@ -1090,7 +1097,7 @@ pub fn run_noting(
                 Err(_) => break,
             }
         }
-        root_present(&root, &id)?;
+        root_present(&root, &given, &id)?;
         let files = if burst.full { None } else { burst.files(&root, &code, &walked) };
         if files.as_ref().is_some_and(|f| f.code.is_empty() && f.text.is_empty()) {
             continue;
@@ -1116,7 +1123,7 @@ pub fn run_noting(
 /// macOS without FSEvents: the index's own incremental check runs on a timer. It compares sizes and
 /// nanosecond times, and the pause grows with what a check costs (about a tenth of the time at most).
 #[cfg(target_os = "macos")]
-fn run_timer(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
+fn run_timer(root: &Path, given: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
     let id = root_id(root);
     on_change(&Changes::All)?;
     on_ready();
@@ -1129,7 +1136,7 @@ fn run_timer(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_cha
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        root_present(root, &id)?;
+        root_present(root, given, &id)?;
         let t1 = Instant::now();
         if let Err(e) = on_change(&Changes::All) {
             eprintln!("[scrutate] update failed: {e:#}");
@@ -1632,11 +1639,11 @@ mod tests {
                 std::fs::rename(new, root).unwrap();
             })
         };
-        let r = root_present(&root, &id);
+        let r = root_present(&root, &root, &id);
         swap.join().unwrap();
         assert!(r.as_ref().is_err_and(|e| e.is::<RootReplaced>()), "{r:?}");
         std::fs::remove_dir_all(&root).unwrap();
-        let r = root_present(&root, &id);
+        let r = root_present(&root, &root, &id);
         assert!(r.is_err_and(|e| e.to_string().contains("is gone")));
         std::fs::remove_dir_all(&old).unwrap();
     }

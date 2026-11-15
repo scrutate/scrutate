@@ -1087,7 +1087,10 @@ segment's vectors are clustered, and leaves the index as it was; a text index up
 ends first. When `PATH` is removed or moved away and nothing takes its place within 2 s, `watch`
 stops with an error (exit 2). When another directory takes its place (moved or copied there, as `mv repo.new repo`
 does, or removed and made again), stderr says `root replaced; watching the new tree`, and `watch`
-opens that tree's index (building it when it has none) and watches it; `serve --watch` and the
+opens that tree's index (building it when it has none) and watches it. A `PATH` that goes through
+a link (a deploy's `current`) is followed the same way when the link is pointed at another
+directory, also through a moment when it names nothing; on Windows a junction is resolved the same
+way, which no test covers there; `serve --watch` and the
 watch of the MCP server, the language server and the Python bindings do the same. Other processes can read and update the same index meanwhile; the indexes' own
 locks order the writers, and stopping the process mid-update leaves the previous state in place.
 

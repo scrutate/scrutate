@@ -1979,48 +1979,54 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
 /// `watch`: update the indexes once the watch is in place, then after every burst of file changes
 /// until Ctrl-C.
 fn watch_command(root: &Path) -> Result<i32> {
-    let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
+    // the path as given, absolute once: a link in it (a deploy's `current`) is followed when it is
+    // pointed at another tree, where the process's own directory stays with the old one
+    let given = std::path::absolute(root).with_context(|| format!("watch {}", root.display()))?;
+    let mut root = std::fs::canonicalize(&given).with_context(|| format!("watch {}", given.display()))?;
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
     // Ctrl-C also ends a wait for another process's write lock
     crate::index::stop_waits_on(Arc::clone(&stop));
     let stopped = || stop.load(Ordering::Relaxed);
-    let session = match Session::open(&root, crate::session::Every::given(None)) {
-        Err(_) if stopped() => return Ok(130),
-        s => s?,
-    };
-    let mut update = |changes: &crate::stores::Changes| -> Result<()> {
-        // Ctrl-C stops an update at its next batch of files
-        let up = session.write(|repo| {
-            repo.set_cancel(Arc::clone(&stop));
-            let up = repo.update_stores(Writer::Watch, changes, false);
-            repo.set_cancel(Arc::default());
-            up
-        })?;
-        let (st, text) = (up.code.unwrap_or_default(), up.text);
-        let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
-        if st.files_changed + st.files_removed + text_changed > 0 {
-            eprintln!(
-                "[scrutate] {} changed, {} removed ({} chunks){}",
-                st.files_changed,
-                st.files_removed,
-                st.chunks,
-                text.map(|t| format!("; text index: {} changed, {} removed", t.files_changed, t.files_removed)).unwrap_or_default()
-            );
+    loop {
+        let session = match Session::open(&root, crate::session::Every::given(None)) {
+            Err(_) if stopped() => return Ok(130),
+            s => s?,
+        };
+        let mut update = |changes: &crate::stores::Changes| -> Result<()> {
+            // Ctrl-C stops an update at its next batch of files
+            let up = session.write(|repo| {
+                repo.set_cancel(Arc::clone(&stop));
+                let up = repo.update_stores(Writer::Watch, changes, false);
+                repo.set_cancel(Arc::default());
+                up
+            })?;
+            let (st, text) = (up.code.unwrap_or_default(), up.text);
+            let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
+            if st.files_changed + st.files_removed + text_changed > 0 {
+                eprintln!(
+                    "[scrutate] {} changed, {} removed ({} chunks){}",
+                    st.files_changed,
+                    st.files_removed,
+                    st.chunks,
+                    text.map(|t| format!("; text index: {} changed, {} removed", t.files_changed, t.files_removed)).unwrap_or_default()
+                );
+            }
+            Ok(())
+        };
+        let r = crate::watch::run(&given, &stop, || eprintln!("[scrutate] watching {}", crate::paths::plain_path(&root).display()), &mut update);
+        if stopped() {
+            return Ok(130);
         }
-        Ok(())
-    };
-    let mut r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", crate::paths::plain_path(&root).display()), &mut update);
-    // the root's path names another tree: its index is opened (made when it has none), then watched
-    while r.as_ref().is_err_and(|e| e.is::<crate::watch::RootReplaced>()) && !stopped() {
-        eprintln!("[scrutate] {}: root replaced; watching the new tree", crate::paths::plain_path(&root).display());
-        session.reopen()?;
-        r = crate::watch::run(&root, &stop, || {}, &mut update);
+        // the given path names another tree: that tree's index is opened (made when it has none)
+        // and watched in its place
+        if r.as_ref().is_err_and(|e| e.is::<crate::watch::RootReplaced>()) {
+            root = std::fs::canonicalize(&given).with_context(|| format!("watch {}", given.display()))?;
+            eprintln!("[scrutate] {}: root replaced; watching the new tree", crate::paths::plain_path(&given).display());
+            continue;
+        }
+        return r.map(|()| 0);
     }
-    if stopped() {
-        return Ok(130);
-    }
-    r.map(|()| 0)
 }
 
 /// `check`: integrity of the database and the segments; with `--files`, re-hash every indexed file.

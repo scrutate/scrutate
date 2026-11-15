@@ -72,9 +72,14 @@ fn start_watch(root: &Path) -> (KillOnDrop, Receiver<String>) {
 
 /// `start_watch` with `git_config` as git's global configuration file.
 fn start_watch_with(root: &Path, git_config: &Path) -> (KillOnDrop, Receiver<String>) {
+    start_watch_in(root, ".", git_config)
+}
+
+/// `watch PATH` started in `dir`.
+fn start_watch_in(dir: &Path, path: &str, git_config: &Path) -> (KillOnDrop, Receiver<String>) {
     let mut child = Command::new(BIN)
-        .args(["watch", "."])
-        .current_dir(root)
+        .args(["watch", path])
+        .current_dir(dir)
         .env("SCRUTATE_WATCH_DEBUG", "1")
         .env("GIT_CONFIG_GLOBAL", git_config)
         .env("XDG_CONFIG_HOME", "/nonexistent")
@@ -218,6 +223,50 @@ fn a_root_replaced_by_a_rename_is_indexed_and_watched_in_its_place() {
     assert!(err.iter().any(|l| l.contains("root replaced; watching the new tree")), "{err:?}");
     assert!(!indexed_in(&old, "gamma_swapped_in"));
     let _ = fs::remove_dir_all(&old);
+}
+
+/// A deploy's `current` link pointed at another release while `watch current` runs, by a new link
+/// renamed over it (`mv -T`), by unlink and link (`ln -sfn`), and through a moment when it names
+/// nothing: the watch follows the link, says so, and indexes the release it names now.
+#[cfg(unix)]
+#[test]
+fn a_watch_through_a_link_follows_the_link_to_its_new_target() {
+    use std::os::unix::fs::symlink;
+    for how in ["renamed_over", "unlinked_and_linked", "dangling_first"] {
+        let r = Repo::new(&format!("linkswap_{how}"));
+        let (v1, v2) = (r.root.join("releases/v1"), r.root.join("releases/v2"));
+        fs::create_dir_all(&v1).unwrap();
+        fs::write(v1.join("a.py"), b"def alpha():\n    return 1\n").unwrap();
+        assert_eq!(run_in(&v1, &["index"]), 0);
+        assert!(Command::new("cp").arg("-a").arg(&v1).arg(&v2).status().unwrap().success());
+        let cur = r.root.join("cur");
+        symlink("releases/v1", &cur).unwrap();
+        let (_child, rx) = start_watch_in(&r.root, "cur", Path::new("/nonexistent"));
+        wait_watching(&rx);
+        match how {
+            "renamed_over" => {
+                symlink("releases/v2", r.root.join("cur.tmp")).unwrap();
+                fs::rename(r.root.join("cur.tmp"), &cur).unwrap();
+            }
+            "unlinked_and_linked" => {
+                fs::remove_file(&cur).unwrap();
+                symlink("releases/v2", &cur).unwrap();
+            }
+            _ => {
+                fs::remove_file(&cur).unwrap();
+                symlink("releases/none", &cur).unwrap();
+                std::thread::sleep(Duration::from_millis(500));
+                fs::remove_file(&cur).unwrap();
+                symlink("releases/v2", &cur).unwrap();
+            }
+        }
+        let name = format!("written_through_{how}");
+        fs::write(cur.join("new.py"), format!("def {name}():\n    return 2\n")).unwrap();
+        wait_for(30, &format!("{how}: the new target to be indexed"), || indexed_in(&v2, &name));
+        let err: Vec<String> = rx.try_iter().collect();
+        assert!(err.iter().any(|l| l.contains("root replaced")), "{how}: {err:?}");
+        assert!(!indexed_in(&v1, &name), "{how}: the old target took the file");
+    }
 }
 
 /// Inotify watches the process holds, from /proc/PID/fdinfo.
