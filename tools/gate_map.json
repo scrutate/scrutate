@@ -243,19 +243,19 @@
   "step": "gate",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  },
- "benchmarks.yml:counts:9f632fc0c0": {
+ "benchmarks.yml:counts:90af16b282": {
   "step": "sudo apt-get -o Acquire::Retries=5 update",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  },
- "benchmarks.yml:counts:338118cfa0": {
+ "benchmarks.yml:counts:ef88fab37a": {
   "step": "chmod +x \"$RUNNER_TEMP\"/bin/*/scrutate",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  },
- "benchmarks.yml:counts:480b1cb779": {
+ "benchmarks.yml:counts:5b12550935": {
   "step": "corpora (pinned revisions)",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  },
- "benchmarks.yml:counts:c7a94cc175": {
+ "benchmarks.yml:counts:cea53ed2e6": {
   "step": "gate",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  },
