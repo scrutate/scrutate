@@ -385,14 +385,18 @@ as before (mode 0700 on Unix).
     `getrlimit(RLIMIT_NOFILE)` into the two 64-bit words of an `rlimit`, read before the fork; and
     a `Command::pre_exec` closure that calls only async-signal-safe functions (`getpid`, `fork`,
     `close` or the `close_range` system call on Linux, `read`, `getppid`, `kill`, `_exit`). Its
-    `fork` is safe because `hook run` has one thread at the spawn (a debug build asserts it from
-    `/proc/self/task` on Linux). The forked watcher closes every descriptor but the pipe's read
-    end, waits for end of file, which comes when `hook run` dies, and sends `SIGKILL` to the
-    program only while the program is still its parent. The two descriptors it made are then
-    taken into `File`s once each. On Windows: `CreateJobObjectW`, `SetInformationJobObject`
-    with a zeroed `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` whose size it passes and
+    `fork`, and the two steps of `pipe` then `fcntl` (not atomic), are safe because `hook run`
+    has one thread there (a debug build asserts it from `/proc/self/task` on Linux). The forked
+    watcher closes every descriptor but the pipe's read end and waits for end of file, which
+    comes when `hook run` dies or drops the write end after the program finished; a read error
+    ends the wait too. It then sends `SIGKILL` to the program only while the program is still its
+    parent, so after a normal finish it kills nothing. The two descriptors it made are then taken
+    into `File`s once each. On Windows: `CreateJobObjectW`, `SetInformationJobObject` with a
+    zeroed `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` whose size it passes and
     `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and `AssignProcessToJobObject` with the child's own
-    handle; the job's handle stays open until the process ends;
+    handle; the job's handle stays open until the process ends. Limit: the child runs for a moment
+    before it is in the job, and the assignment's result is not checked, so if `hook run` dies in
+    that moment, or the assignment fails, the program outlives it;
   - `index.rs` (Windows): the status change time of a file, from `GetFileInformationByName`
     (looked up once with `LoadLibraryW` of the API set `api-ms-win-core-file-l2-1-4` and
     `GetProcAddress`, then transmuted to the signature winbase.h declares, as CPython does) with a
