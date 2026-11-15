@@ -822,8 +822,9 @@ indexing it again: its call costs about what a read of the copy as a repository 
 error and nothing of it is kept. The copy never follows a link out of the package: a linked file
 is copied only when it resolves inside it, a linked directory is skipped, and so are nested
 `node_modules`, `.git` and `.scrutate`. A name or version in a lockfile that is not one of its
-ecosystem's (a `/`, a `..`, a character outside letters, digits and `-._~+`), or a directory that
-resolves outside its store (a `node_modules/NAME` linked elsewhere), is refused by name. The
+ecosystem's (a `/`, a `..`, a character outside letters, digits and `-._~+`), a directory that
+resolves outside the cargo registry or the Go module cache, and a link anywhere from the root down
+to a package in `node_modules` (`node_modules` itself included), are refused by name. The
 repository's index never holds a dependency's files. Answers are redacted as the repository's are
 ([serve](#serve-mcp)). Not read yet: pnpm and Yarn lockfiles, `callees`' `external:` names and
 `search`.

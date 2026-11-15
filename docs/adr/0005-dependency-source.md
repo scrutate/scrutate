@@ -38,9 +38,12 @@ The read boundary, which every rule below keeps:
 
 1. A name and a version from a lockfile must fit its ecosystem's grammar (letters, digits and
    `-._~+`, no `.` or `..` part, an npm scope, a Go module path of such parts, a Go version that
-   starts with `v`). The directory built from them is canonicalized and must stay under its store
-   (`$CARGO_HOME/registry/src`, `node_modules`, `site-packages`, `$GOMODCACHE`). Anything else is
-   refused, by name, before a file is read.
+   starts with `v`). A store outside the repository (`$CARGO_HOME/registry/src`, `$GOMODCACHE`)
+   is the user's: the directory built from them is canonicalized and must stay under it. A store
+   inside the repository (`node_modules`) is the repository's, so it is read through no link: from
+   the root down to the package directory every part must be a directory and none a link, so no
+   link the repository ships can move the store out of it. Anything else is refused, by name,
+   before a file is read.
 2. The copy never follows a link out of the package: a linked file is copied only when it
    resolves inside the package directory, a linked directory is skipped, and a `RECORD` entry is
    read only when its directory resolves inside `site-packages`.

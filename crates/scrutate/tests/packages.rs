@@ -400,3 +400,38 @@ fn a_name_outside_every_lockfile_says_which_lockfiles_were_read() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("serde::NAME") || err.contains("PACKAGE.NAME"), "{err}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_package_reached_through_a_link_in_node_modules_is_refused_and_nothing_is_copied() {
+    let link = |to: &str, at: &Path| std::os::unix::fs::symlink(to, at).unwrap();
+    type Make<'a> = dyn Fn(&Tree) + 'a;
+    let cases: [(&str, &Make<'_>); 3] = [
+        // node_modules itself a link to the directory above the repository
+        ("above", &|t: &Tree| link("..", &t.root.join("node_modules"))),
+        // the package a link out, one level down
+        ("down", &|t: &Tree| {
+            fs::create_dir_all(t.root.join("node_modules")).unwrap();
+            link("../../myapp", &t.root.join("node_modules/myapp"));
+        }),
+        // a chain: node_modules to a directory of the repository that links out
+        ("chain", &|t: &Tree| {
+            fs::create_dir_all(t.root.join("vendor")).unwrap();
+            link("../../myapp", &t.root.join("vendor/myapp"));
+            link("vendor", &t.root.join("node_modules"));
+        }),
+    ];
+    for (name, make) in cases {
+        let t = Tree::new(&format!("npm_link_{name}"));
+        t.npm_lock(r#""node_modules/myapp": {"version": "1.0.0"}"#);
+        let sibling = t.root.parent().unwrap().join("myapp");
+        write(&sibling.join("package.json"), "{\"name\": \"myapp\", \"version\": \"1.0.0\"}");
+        write(&sibling.join("index.js"), "function privateHelper() {\n  return 1;\n}\n");
+        write(&sibling.join("notes.txt"), "private\n");
+        make(&t);
+        let (code, out, err) = t.run(&["symbol", "--deps", "myapp.privateHelper"]);
+        assert_eq!(code, 2, "{name}: {out}{err}");
+        assert!(err.contains("refused") && !out.contains("privateHelper"), "{name}: {out}{err}");
+        assert!(!t.home.join("cache/deps/npm").exists(), "{name}: nothing is copied");
+    }
+}

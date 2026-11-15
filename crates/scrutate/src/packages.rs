@@ -445,6 +445,38 @@ fn refused(l: &Locked, why: &str) -> anyhow::Error {
     anyhow!("refused: {} names {} at {}: {why}", l.lockfile, crate::fmt::echo(&l.name), crate::fmt::echo(&l.version))
 }
 
+/// Whether `m` is a link: a symbolic link, or on Windows any reparse point (a junction too).
+fn is_link(m: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if m.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    m.file_type().is_symlink()
+}
+
+/// `rel` under the repository's `root` (canonical), when every part of it from the root down is a
+/// directory and none is a link: a store the repository holds is read through no link, so none
+/// can move it out of the repository. A link on the way is refused before anything is read.
+fn own_dir(l: &Locked, root: &Path, rel: &Path) -> Result<Option<PathBuf>> {
+    let mut at = root.to_path_buf();
+    for part in rel.components() {
+        let Component::Normal(p) = part else { return Err(refused(l, "its directory leaves the repository")) };
+        at.push(p);
+        let Ok(m) = std::fs::symlink_metadata(&at) else { return Ok(None) };
+        if is_link(&m) {
+            let shown = crate::fmt::echo(&shown_path(root, &at));
+            return Err(refused(l, &format!("{shown} is a link, and a store in the repository is read through none")));
+        }
+        if !m.is_dir() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(at))
+}
+
 /// `dir` canonical, when it stays under `store`.
 fn inside(l: &Locked, store: &Path, dir: &Path) -> Result<Option<PathBuf>> {
     let Ok(store) = std::fs::canonicalize(store) else { return Ok(None) };
@@ -478,8 +510,7 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
             Err(missing(format!("the cargo registry ({})", src.display())))
         }
         Eco::Npm => {
-            let modules = root.join("node_modules");
-            let dir = inside(l, &modules, &modules.join(&l.name))?.ok_or_else(|| missing("node_modules".into()))?;
+            let dir = own_dir(l, root, &Path::new("node_modules").join(&l.name))?.ok_or_else(|| missing("node_modules".into()))?;
             let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap_or_default()).unwrap_or_default();
             match manifest["version"].as_str() {
                 Some(v) if v == l.version => Ok(whole(dir)),
