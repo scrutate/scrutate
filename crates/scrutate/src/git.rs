@@ -256,6 +256,10 @@ impl Git {
         match self.output(&["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])? {
             (true, out, _) => Ok(String::from_utf8_lossy(out.trim_ascii()).into_owned()),
             _ if rev == "HEAD" => bail!("HEAD names no commit yet: commit once, or pass a base revision"),
+            // a ref name holds no `..`, so this is a range: two dots for the three of a merge base
+            _ if rev.contains("..") => {
+                bail!("{} is a range, not a revision: pass a base revision, or A...B (three dots) for the merge base of A and B", echo(rev))
+            }
             _ => bail!("not a revision of this repository: {}", echo(rev)),
         }
     }

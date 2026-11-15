@@ -607,7 +607,8 @@ scrutate impact [--base REV] [--staged] [--depth N] [--json]
 What a change touches, from git's diff. By default: the working tree against `HEAD`, tracked
 files staged or not, plus every untracked file that is not ignored, as a new file. `--base REV`
 compares the working tree with another commit; `--base main...` (three dots) with the merge base
-of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`). `--staged`
+of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`). Two dots
+(`main..feat`) is a range, not a revision: the error says so and points at the three. `--staged`
 takes the staged changes alone, against `HEAD` or `--base`, and no untracked file. The answer has
 three sections, and a fourth when the change has findings, each a line with its count and then one
 line per item:

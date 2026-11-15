@@ -332,6 +332,8 @@ incompatible index by itself, and that is never breaking.
 - `review`'s cut comment keeps the line that says the walk stopped, and its last line names the
   base and head (`--head` when it is not `HEAD`) of the command that prints the whole report, in a
   code span.
+- `impact --base A..B` and `review --base A..B` say a two-dot range is not a revision and point at
+  `A...B` for the merge base, where they said the repository lacked it.
 - A walk stopped at 2,000 callers lists them by distance, path and line, and names no
   `untested-change`, which its partial calls could not decide.
 - `dupes` lists each group's members by path and line, and cuts near pairs at `--limit` after

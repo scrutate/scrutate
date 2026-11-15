@@ -530,3 +530,12 @@ fn the_cut_note_names_the_head_it_reviewed() {
     let md = t.review(&["--base", "base", "--head", "feat", "--depth", "1"]);
     assert!(md.contains("`scrutate review --base base --head feat`"), "{}", &md[md.len() - 300..]);
 }
+
+/// Two dots is a range, a common slip for the merge base's three: the error says which to pass.
+#[test]
+fn a_two_dot_range_is_pointed_at_three_dots() {
+    let (t, _) = base("two_dots");
+    let (code, out, err) = t.run(&["review", "--base", "main..HEAD"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("main..HEAD is a range") && err.contains("A...B"), "{err}");
+}
