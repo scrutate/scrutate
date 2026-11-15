@@ -127,7 +127,7 @@ impl Git {
         if !out.status.success() || out.stdout.trim_ascii() != b"true" {
             let why = first_line(&out.stderr);
             if why.is_empty() || why.contains("not a git repository") {
-                bail!("{} is not in a git repository: impact reads the changes with git", root.display());
+                bail!("{} is not in a git repository: impact reads the changes with git", crate::paths::plain_path(root).display());
             }
             bail!("git: {why}");
         }

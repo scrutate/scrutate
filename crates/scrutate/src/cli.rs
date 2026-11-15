@@ -2185,8 +2185,9 @@ fn indexed_candidates(root: &Path, q: &Query, update: bool, under: Option<&str>)
     if update {
         crate::stores::update(&root, Writer::GrepUpdate, false)?;
     }
-    let ti = crate::textindex::TextIndex::open(&root)?
-        .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text` (or add --update)", root.display()))?;
+    let ti = crate::textindex::TextIndex::open(&root)?.ok_or_else(|| {
+        anyhow::anyhow!("no text index in {}; build it with `scrutate index --text` (or add --update)", crate::paths::plain_path(&root).display())
+    })?;
     let mut files = ti.candidates(&crate::textindex::query_for(q)?, q.pattern.multiline)?;
     if let Some(dir) = under {
         files = files.into_iter().filter_map(|f| f.strip_prefix(dir).and_then(|f| f.strip_prefix('/')).map(String::from)).collect();

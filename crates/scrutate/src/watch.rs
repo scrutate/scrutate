@@ -847,7 +847,7 @@ fn root_id(root: &Path) -> RootId {
 
 fn root_present(root: &Path, id: &RootId) -> Result<()> {
     if !root.is_dir() {
-        anyhow::bail!("{} is gone: the watched directory was removed or moved", root.display());
+        anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(root).display());
     }
     if id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id) {
         return Err(RootReplaced.into());
@@ -899,7 +899,7 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
     rules_order.sort();
     let tree_dirs = order.len();
     order.extend(rules_order);
-    watcher.watch(root, RecursiveMode::NonRecursive).with_context(|| format!("watch {}", root.display()))?;
+    watcher.watch(root, RecursiveMode::NonRecursive).with_context(|| format!("watch {}", crate::paths::plain_path(root).display()))?;
     let (mut first, mut first_rules) = (None, None);
     for (i, d) in order.iter().enumerate().skip(1) {
         if let Err(e) = watcher.watch(d, RecursiveMode::NonRecursive) {
@@ -935,7 +935,7 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
 fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: Option<&Walked>) -> Result<Walked> {
     let now = Walked::new(root, code);
     if old.is_none() {
-        watcher.watch(root, RecursiveMode::Recursive).with_context(|| format!("watch {}", root.display()))?;
+        watcher.watch(root, RecursiveMode::Recursive).with_context(|| format!("watch {}", crate::paths::plain_path(root).display()))?;
     }
     let before = old.map(Walked::watched).unwrap_or_default();
     for d in now.watched().iter().filter(|d| !d.starts_with(root) && !before.contains(*d)) {

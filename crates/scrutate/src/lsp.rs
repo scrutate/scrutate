@@ -390,7 +390,7 @@ impl Folder {
                     let root = self.root.clone();
                     let built = std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
                         if !existed {
-                            log(3, &format!("scrutate: no index in {}; building it", root.display()));
+                            log(3, &format!("scrutate: no index in {}; building it", crate::paths::plain_path(&root).display()));
                         }
                         match session.build() {
                             Ok(st) if !existed || st.files_changed > 0 || st.files_removed > 0 => log(

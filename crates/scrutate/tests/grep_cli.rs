@@ -1663,3 +1663,13 @@ fn a_multiline_count_reads_anchors_against_the_whole_text() {
         assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
     }
 }
+
+#[test]
+fn a_missing_text_index_names_the_root_as_it_is_shown() {
+    // on Windows the canonical root is verbatim (`\\?\C:\x`); the message shows it plain
+    let d = Dir::new("noindex");
+    d.write("a.txt", b"foo\n");
+    let (code, _, err) = d.run(&["grep", "--index", "foo"]);
+    assert_ne!(code, 0, "{err}");
+    assert!(err.contains(&format!("no text index in {};", canon(&d.0).display())), "{err}");
+}
