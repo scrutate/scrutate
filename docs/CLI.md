@@ -939,11 +939,15 @@ Per tool:
 scrutate lsp
 ```
 A language server for editors (JSON-RPC 2.0 over stdin and stdout, `Content-Length` framing).
-The repository is the top of the one holding the editor's first workspace folder
-(`workspaceFolders`, else `rootUri`), found as for a command run in that folder, so the editor
-and a shell there share one index; `--root` when the editor sends no folder. Locations name files
-under the folder as the editor sent it, also when it is reached through a link, so the editor
-finds them among its open files. A folder of another repository is not answered. With no folder and no `--root`, started in the home directory or at
+Each workspace folder (`workspaceFolders`, else `rootUri`) is answered from the index of the
+repository holding it, found as for a command run in that folder, so the editor and a shell there
+share one index, and two folders of one repository share it too; `--root` when the editor sends
+no folder. A request about a document goes to the folder that holds it; `workspace/symbol` asks
+every folder. The first folder's index is opened at `initialize`, the others when a request first
+needs them. The server takes `workspace/didChangeWorkspaceFolders`: an added folder is answered,
+and a removed one's index is closed unless another folder uses it. A file in no folder gets no
+answer. Locations name files under the folder as the editor sent it, also when it is reached
+through a link, so the editor finds them among its open files. With no folder and no `--root`, started in the home directory or at
 a filesystem root with no index, the server builds none and says so in the log. It answers from
 the Engine B index:
 
@@ -951,10 +955,11 @@ the Engine B index:
 |---|---|
 | `textDocument/definition` | the definition the resolver ties the name under the cursor to, the same one `textDocument/references` names (`item.total()` after `item = Order()` is `Order.total`); when the resolver cannot place it, definitions of the name, as `symbol` finds them: first the run of characters around it (`get-user`, `list->vec`, `Foo::Bar`), then the plain word; with a qualifier (`Point.norm`, `a::b`), only the definitions whose qualified name matches, when there are any; definitions in the same file first. The name is taken as the file's language writes it, with or without a receiver before it: `valid?` and `save!` in Ruby and Elixir, `update!` in Julia, `step'` in Haskell, `is.ready` in R, `~Shape` and `operator==` in C++ (a wider name only when the index has it, so `x-y` in Python is still `x` minus `y` and `~mask` is still the bitwise operator). In Rust the name of `r#type` is `type`, with the cursor on either part. A Haskell or Elm function that starts with its type signature is answered at the equation below it |
 | `textDocument/references` | for the same name, the occurrences `refs` resolves to the definition under the cursor, and that definition (left out when `includeDeclaration` is false); when the cursor's occurrence is unresolved, every whole-word occurrence, as `refs --textual` |
-| `workspace/symbol` | symbols whose name contains the query (case and underscores ignored), exact and prefix matches first, at most 200 |
+| `workspace/symbol` | symbols whose name contains the query (case and underscores ignored), exact and prefix matches first, each folder's after the one before, at most 200 in all |
 | `textDocument/documentSymbol` | the `outline` of the file, nested (methods under their class); a definition that starts on the first or last line of another and is not named inside it is its sibling, its range starting at its name (the index keeps lines, not columns) |
 
-It advertises only these four, plus full text sync. Open documents are read from the editor's
+It advertises only these four, plus full text sync and workspace folders with change
+notifications. Open documents are read from the editor's
 text, so an unsaved line still finds the word under the cursor; locations in other files come
 from disk. `didSave` updates the index incrementally in a background thread, so requests keep
 being answered; before a request the index is scanned for changes at most once a second. With no

@@ -255,6 +255,52 @@ fn answers_name_files_under_the_folder_as_the_editor_sent_it() {
     let _ = child.wait();
 }
 
+/// A workspace of several repositories: each folder is answered from its own index, a folder
+/// added later is answered, a removed one is not, and a file in no folder gets no answer.
+#[test]
+fn each_workspace_folder_is_answered_from_its_own_repository() {
+    let r = Repo::new("multi_root");
+    for name in ["a", "b", "c"] {
+        fs::create_dir_all(r.root.join(name).join(".git")).unwrap();
+        r.write(&format!("{name}/lib.py"), &format!("def handler():\n    return '{name}'\n"));
+        r.write(&format!("{name}/app.py"), "from lib import handler\n\n\ndef run():\n    return handler()\n");
+    }
+    let folder = |name: &str| json!({"uri": uri(&r.root.join(name)), "name": name});
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    let init = c.request(
+        "initialize",
+        json!({"processId": null, "rootUri": uri(&r.root.join("a")), "workspaceFolders": [folder("a"), folder("b")], "capabilities": {}}),
+    );
+    c.notify("initialized", json!({}));
+    let at = |name: &str| json!({"textDocument": {"uri": uri(&r.root.join(name).join("app.py"))}, "position": {"line": 4, "character": 12}, "context": {"includeDeclaration": true}});
+    // the files a request names, from the workspace's directory
+    let files = |v: &Value| -> Vec<String> {
+        let mut f: Vec<String> = v["result"].as_array().unwrap_or_else(|| panic!("{v}")).iter().map(|l| real_file(&r.root, l)).collect();
+        f.sort();
+        f.dedup();
+        f
+    };
+    for name in ["a", "b"] {
+        assert_eq!(files(&c.request("textDocument/definition", at(name))), [format!("{name}/lib.py")], "definition in {name}");
+        assert_eq!(files(&c.request("textDocument/references", at(name))), [format!("{name}/app.py"), format!("{name}/lib.py")], "references in {name}");
+    }
+    assert_eq!(init["result"]["capabilities"]["workspace"]["workspaceFolders"], json!({"supported": true, "changeNotifications": true}), "{init}");
+    // c is in no folder yet
+    assert!(c.request("textDocument/definition", at("c"))["result"].is_null());
+    c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder("c")], "removed": [folder("b")]}}));
+    assert_eq!(files(&c.request("textDocument/definition", at("c"))), ["c/lib.py"], "a folder added later is answered");
+    assert!(c.request("textDocument/definition", at("b"))["result"].is_null(), "a removed folder is not answered");
+    let ws = c.request("workspace/symbol", json!({"query": "handler"}));
+    let mut names: Vec<String> = ws["result"].as_array().unwrap_or_else(|| panic!("{ws}")).iter().map(|s| real_file(&r.root, &s["location"])).collect();
+    names.sort();
+    assert_eq!(names, ["a/lib.py", "c/lib.py"], "{ws}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    let _ = child.wait();
+}
+
 #[test]
 fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
     let r = Repo::new("subfolder");
@@ -269,7 +315,7 @@ fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
     let mut child = Command::new(BIN).arg("lsp").current_dir(&sub).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let stderr = child.stderr.take().unwrap();
     let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
-    // the first folder decides; the second, in another repository, is not indexed
+    // each folder is answered from its own repository's index
     let folders = json!([{"uri": uri(&sub), "name": "app"}, {"uri": uri(&other.root), "name": "other"}]);
     c.request("initialize", json!({"processId": null, "rootUri": uri(&sub), "workspaceFolders": folders, "capabilities": {}}));
     c.notify("initialized", json!({}));
@@ -295,8 +341,10 @@ fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
         assert_eq!(syms.len(), 1, "{ws}");
         assert_eq!(real_file(&r.root, &syms[0]["location"]), want, "{ws}");
     }
+    // the second folder, another repository, is answered from its own index
     let ws = c.request("workspace/symbol", json!({"query": "other_fn"}));
-    assert_eq!(ws["result"], json!([]), "{ws}");
+    let syms = ws["result"].as_array().unwrap_or_else(|| panic!("{ws}"));
+    assert_eq!(syms.iter().map(|s| real_file(&other.root, &s["location"])).collect::<Vec<_>>(), ["x.py"], "{ws}");
 
     let outline = c.request("textDocument/documentSymbol", json!({"textDocument": {"uri": file}}));
     let names: Vec<&str> = outline["result"].as_array().unwrap_or_else(|| panic!("{outline}")).iter().map(|s| s["name"].as_str().unwrap()).collect();
@@ -311,7 +359,7 @@ fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
     assert_eq!(log.matches("using the index in").count(), 1, "the root in use, said once: {log}");
     assert!(!sub.join(".scrutate").exists(), "no index in the editor's folder");
     assert!(r.root.join(".scrutate").is_dir(), "the index is at the top");
-    assert!(!other.root.join(".scrutate").exists(), "the second folder is not indexed");
+    assert!(other.root.join(".scrutate").is_dir(), "the second folder has an index of its own");
 }
 
 #[test]
@@ -527,10 +575,10 @@ fn a_document_that_is_not_under_the_root_is_never_read_from_disk() {
         assert!(there.is_null() || there.as_array().is_some_and(|a| a.is_empty()), "{there}");
         assert_eq!(there, ask(&mut c, "nothere.py"));
     }
-    // the same document works once the editor has sent its text
+    // a document in no folder gets no answer, also once the editor has sent its text
     c.notify("textDocument/didOpen", json!({"textDocument": {"uri": outside, "languageId": "python", "version": 1, "text": "secret_word\n"}}));
     let def = c.request("textDocument/definition", json!({"textDocument": {"uri": outside}, "position": {"line": 0, "character": 2}}));
-    assert_eq!(places(&def["result"]).len(), 1, "{def}");
+    assert!(def["result"].is_null(), "{def}");
     c.request("shutdown", Value::Null);
     c.notify("exit", Value::Null);
     drop(c);

@@ -312,18 +312,34 @@ fn split_lines(text: &str) -> Vec<String> {
     text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l).to_string()).collect()
 }
 
-struct Server {
+/// One workspace folder: the index of the repository that holds it, opened when a request or a
+/// document first needs it (the first folder at `initialize`), and the documents the editor has
+/// open in it.
+struct Folder {
+    /// the index's root, canonical
     root: PathBuf,
     /// `root` as the editor named it (a folder reached through a link keeps that name): the files
     /// of an answer are named under it, as the editor has them open
     given: PathBuf,
-    /// `--root` named the root: without a folder from the editor it is used as given
-    root_given: bool,
-    /// None until `initialize`, and when the folder is refused or its index cannot be opened
+    /// the editor's folders this index answers for: two folders of one repository share it
+    named: Vec<PathBuf>,
+    /// None until opened, and when the folder is refused or its index cannot be opened
     session: Option<Arc<Session>>,
-    /// open documents by repository-relative path (by URI when outside the root)
+    opened: bool,
+    /// why no index is built here (the server's own directory, with no folder from the editor)
+    refused: Option<String>,
+    /// open documents by repository-relative path
     docs: HashMap<String, String>,
     saves: Option<mpsc::Sender<()>>,
+}
+
+struct Server {
+    /// `--root`, or the directory the server started in: the folder when the editor names none
+    root: PathBuf,
+    /// `--root` named the root: without a folder from the editor it is used as given
+    root_given: bool,
+    /// the workspace folders, the editor's first folder first
+    folders: Vec<Folder>,
     initialized: bool,
     shutdown: bool,
     /// how long a request waits for the first build before it is answered that the index is
@@ -334,48 +350,35 @@ struct Server {
     waited_out: std::cell::Cell<Option<std::time::Instant>>,
 }
 
+/// Symbols one `workspace/symbol` answer lists at most, over every folder.
+const WORKSPACE_SYMBOLS: usize = 200;
+
 type Reply = std::result::Result<Value, (i64, String)>;
 
-impl Server {
-    fn key(&self, uri: &str) -> String {
-        self.rel(uri).unwrap_or_else(|| uri.to_string())
-    }
-
-    fn rel(&self, uri: &str) -> Option<String> {
-        let p = uri_to_path(uri)?;
-        let slashed = |p: &Path| p.to_string_lossy().replace('\\', "/");
-        if !same_share(&slashed(&p), &slashed(&self.root), cfg!(windows)) {
-            return None;
+impl Folder {
+    /// The folder of the index at `top`, for the editor's folder `named`.
+    fn new(top: PathBuf, named: PathBuf) -> Folder {
+        Folder {
+            root: std::fs::canonicalize(&top).unwrap_or_else(|_| top.clone()),
+            given: top,
+            named: vec![named],
+            session: None,
+            opened: false,
+            refused: None,
+            docs: HashMap::new(),
+            saves: None,
         }
-        crate::ops::repo_rel(&self.root, &p)
     }
 
-    fn lines(&self) -> Lines<'_> {
-        Lines { root: &self.root, given: &self.given, docs: &self.docs, cache: HashMap::new() }
-    }
-
-    fn initialize(&mut self, p: &Value) -> Value {
-        // the first folder decides: files of another repository's folder are not answered
-        let folder =
-            p["workspaceFolders"][0]["uri"].as_str().or(p["rootUri"].as_str()).and_then(uri_to_path).or_else(|| p["rootPath"].as_str().map(PathBuf::from));
-        let from_editor = folder.is_some();
-        let ruled = from_editor || !self.root_given;
-        let folder = folder.unwrap_or_else(|| self.root.clone());
-        let folder = std::path::absolute(&folder).unwrap_or(folder);
-        // the CLI's rule, so the editor and a shell in the same folder share the index at the top
-        let top = ruled.then(|| crate::cli::index_above(&folder)).flatten();
-        if let Some(top) = &top {
-            eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+    /// Open the index and start its first build, once.
+    fn open(&mut self) {
+        if std::mem::replace(&mut self.opened, true) {
+            return;
         }
-        // a folder from the editor is the user's choice; the server's own directory is not
-        let refused = (!from_editor && !self.root_given && top.is_none()).then(|| crate::cli::no_first_build(&folder)).flatten();
-        let root = top.unwrap_or(folder);
-        self.root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
-        self.given = root;
         let existed = crate::index::exists(&self.root);
-        if let Some(why) = refused {
+        if let Some(why) = &self.refused {
             eprintln!("{why}");
-            log(1, &why);
+            log(1, why);
         } else {
             match Session::open_watched(&self.root, Every::given(None)) {
                 Ok(session) => {
@@ -409,17 +412,6 @@ impl Server {
             }
         }
         self.saves = self.save_worker();
-        json!({
-            "capabilities": {
-                "positionEncoding": "utf-16",
-                "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": false}},
-                "definitionProvider": true,
-                "referencesProvider": true,
-                "workspaceSymbolProvider": true,
-                "documentSymbolProvider": true,
-            },
-            "serverInfo": {"name": "scrutate", "version": crate::VERSION},
-        })
     }
 
     /// Saves are indexed by the session's writer, so requests keep reading meanwhile (WAL).
@@ -448,80 +440,21 @@ impl Server {
         Some(tx)
     }
 
-    fn notify(&mut self, method: &str, p: &Value) {
-        let uri = p["textDocument"]["uri"].as_str().unwrap_or("");
-        match method {
-            "textDocument/didOpen" => {
-                let text = p["textDocument"]["text"].as_str().unwrap_or("").to_string();
-                self.docs.insert(self.key(uri), text);
-            }
-            "textDocument/didChange" => {
-                // full sync: the last change holds the whole text
-                if let Some(text) = p["contentChanges"].as_array().and_then(|c| c.last()).and_then(|c| c["text"].as_str()) {
-                    self.docs.insert(self.key(uri), text.to_string());
-                }
-            }
-            "textDocument/didClose" => {
-                self.docs.remove(&self.key(uri));
-            }
-            "textDocument/didSave" => {
-                if let Some(tx) = &self.saves {
-                    let _ = tx.send(());
-                }
-            }
-            _ => {}
-        }
+    fn key(&self, uri: &str) -> String {
+        self.rel(uri).unwrap_or_else(|| uri.to_string())
     }
 
-    fn request(&mut self, method: &str, p: &Value) -> Reply {
-        if method == "initialize" {
-            if self.initialized {
-                return Err((-32600, "already initialized".into()));
-            }
-            self.initialized = true;
-            return Ok(self.initialize(p));
+    fn rel(&self, uri: &str) -> Option<String> {
+        let p = uri_to_path(uri)?;
+        let slashed = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        if !same_share(&slashed(&p), &slashed(&self.root), cfg!(windows)) {
+            return None;
         }
-        if !self.initialized {
-            return Err((-32002, "server not initialized".into()));
-        }
-        if self.shutdown {
-            return Err((-32600, "server is shutting down".into()));
-        }
-        if method == "shutdown" {
-            self.shutdown = true;
-            return Ok(Value::Null);
-        }
-        let session = self.session.clone();
-        // read within a second of a request that waited out the build: queued behind it
-        let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
-        let build_wait = if queued { std::time::Duration::ZERO } else { self.build_wait };
-        let run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
-            let session = session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
-            let never = Arc::new(AtomicBool::new(false));
-            // the one thread that reads requests must not wait out a long first build: a cancel,
-            // a change and shutdown come in behind it; ContentModified asks the editor to ask again
-            if !session.wait_built(&never, Some(build_wait), |_| {}) {
-                self.waited_out.set(Some(std::time::Instant::now()));
-                return Err((-32801, "the index is still being built".to_string()));
-            }
-            // a damaged index is built again and the request answered from the new one
-            session
-                .read(&never, true, |s| {
-                    // a newer scrutate took the index over since it was opened: nothing here can read it
-                    if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
-                        return Err(newer.into());
-                    }
-                    crate::ops::in_snapshot(s, &mut *f)
-                })
-                .map_err(|e| (-32603, format!("{e:#}")))
-        };
-        match method {
-            "textDocument/definition" => run(&mut |s| self.definition(s, p)),
-            "textDocument/references" => run(&mut |s| self.references(s, p)),
-            "textDocument/documentSymbol" => run(&mut |s| self.document_symbols(s, p)),
-            "workspace/symbol" => run(&mut |s| self.workspace_symbols(s, p)),
-            _ => Err((-32601, format!("method not found: {method}"))),
-        }
+        crate::ops::repo_rel(&self.root, &p)
+    }
+
+    fn lines(&self) -> Lines<'_> {
+        Lines { root: &self.root, given: &self.given, docs: &self.docs, cache: HashMap::new() }
     }
 
     /// The line under the cursor and the byte range of the name there: the identifier, widened
@@ -709,6 +642,201 @@ impl Server {
     }
 }
 
+impl Server {
+    /// Add the editor's folder `folder`: the index at the repository top above it, as the CLI
+    /// finds it (`ruled`), or the folder itself. A folder of a repository already here shares its
+    /// index. -> its place in `folders`.
+    fn add_folder(&mut self, folder: PathBuf, ruled: bool, may_refuse: bool) -> usize {
+        let folder = std::path::absolute(&folder).unwrap_or(folder);
+        let top = ruled.then(|| crate::cli::index_above(&folder)).flatten();
+        if let Some(top) = &top {
+            eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+        }
+        // a folder from the editor is the user's choice; the server's own directory is not
+        let refused = (may_refuse && top.is_none()).then(|| crate::cli::no_first_build(&folder)).flatten();
+        let top = top.unwrap_or_else(|| folder.clone());
+        let root = std::fs::canonicalize(&top).unwrap_or_else(|_| top.clone());
+        if let Some(i) = self.folders.iter().position(|f| f.root == root) {
+            self.folders[i].named.push(folder);
+            return i;
+        }
+        let mut f = Folder::new(top, folder);
+        f.refused = refused;
+        self.folders.push(f);
+        self.folders.len() - 1
+    }
+
+    fn initialize(&mut self, p: &Value) -> Value {
+        // every folder the editor sends is answered from the index of its own repository
+        let mut named: Vec<PathBuf> = p["workspaceFolders"].as_array().into_iter().flatten().filter_map(|f| f["uri"].as_str().and_then(uri_to_path)).collect();
+        if named.is_empty() {
+            named.extend(p["rootUri"].as_str().and_then(uri_to_path).or_else(|| p["rootPath"].as_str().map(PathBuf::from)));
+        }
+        let from_editor = !named.is_empty();
+        let ruled = from_editor || !self.root_given;
+        if from_editor {
+            for f in named {
+                self.add_folder(f, ruled, false);
+            }
+        } else {
+            self.add_folder(self.root.clone(), ruled, !self.root_given);
+        }
+        // the first folder is opened now, so its index is built before the first request; the
+        // others when first needed
+        if let Some(f) = self.folders.first_mut() {
+            f.open();
+        }
+        json!({
+            "capabilities": {
+                "positionEncoding": "utf-16",
+                "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": false}},
+                "definitionProvider": true,
+                "referencesProvider": true,
+                "workspaceSymbolProvider": true,
+                "documentSymbolProvider": true,
+                "workspace": {"workspaceFolders": {"supported": true, "changeNotifications": true}},
+            },
+            "serverInfo": {"name": "scrutate", "version": crate::VERSION},
+        })
+    }
+
+    /// The folder a document is in: the deepest one that holds it. None for a document in no
+    /// folder, which is not answered.
+    fn folder_of(&self, uri: &str) -> Option<usize> {
+        self.folders.iter().enumerate().filter(|(_, f)| f.rel(uri).is_some()).max_by_key(|(_, f)| f.root.as_os_str().len()).map(|(i, _)| i)
+    }
+
+    /// `workspace/didChangeWorkspaceFolders`: a removed folder's index is closed when no other
+    /// folder of the editor's uses it, and an added one is answered from its own.
+    fn change_folders(&mut self, event: &Value) {
+        let paths = |key: &str| -> Vec<PathBuf> {
+            event[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f["uri"].as_str().and_then(uri_to_path))
+                .map(|p| std::path::absolute(&p).unwrap_or(p))
+                .collect()
+        };
+        for gone in paths("removed") {
+            for f in &mut self.folders {
+                f.named.retain(|n| *n != gone);
+            }
+        }
+        self.folders.retain(|f| !f.named.is_empty());
+        for added in paths("added") {
+            self.add_folder(added, true, false);
+        }
+    }
+
+    fn notify(&mut self, method: &str, p: &Value) {
+        if method == "workspace/didChangeWorkspaceFolders" {
+            self.change_folders(&p["event"]);
+            return;
+        }
+        let uri = p["textDocument"]["uri"].as_str().unwrap_or("");
+        // a document in no folder is not answered, so its text is not kept
+        let Some(i) = self.folder_of(uri) else { return };
+        let f = &mut self.folders[i];
+        let key = f.key(uri);
+        match method {
+            "textDocument/didOpen" => {
+                let text = p["textDocument"]["text"].as_str().unwrap_or("").to_string();
+                f.docs.insert(key, text);
+            }
+            "textDocument/didChange" => {
+                // full sync: the last change holds the whole text
+                if let Some(text) = p["contentChanges"].as_array().and_then(|c| c.last()).and_then(|c| c["text"].as_str()) {
+                    f.docs.insert(key, text.to_string());
+                }
+            }
+            "textDocument/didClose" => {
+                f.docs.remove(&key);
+            }
+            "textDocument/didSave" => {
+                if let Some(tx) = &f.saves {
+                    let _ = tx.send(());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn request(&mut self, method: &str, p: &Value) -> Reply {
+        if method == "initialize" {
+            if self.initialized {
+                return Err((-32600, "already initialized".into()));
+            }
+            self.initialized = true;
+            return Ok(self.initialize(p));
+        }
+        if !self.initialized {
+            return Err((-32002, "server not initialized".into()));
+        }
+        if self.shutdown {
+            return Err((-32600, "server is shutting down".into()));
+        }
+        if method == "shutdown" {
+            self.shutdown = true;
+            return Ok(Value::Null);
+        }
+        let asked: Vec<usize> = match method {
+            "workspace/symbol" => (0..self.folders.len()).collect(),
+            "textDocument/definition" | "textDocument/references" | "textDocument/documentSymbol" => {
+                match p["textDocument"]["uri"].as_str().and_then(|u| self.folder_of(u)) {
+                    Some(i) => vec![i],
+                    None => return Ok(Value::Null),
+                }
+            }
+            _ => return Err((-32601, format!("method not found: {method}"))),
+        };
+        for &i in &asked {
+            self.folders[i].open();
+        }
+        let mut out = Vec::new();
+        for i in asked {
+            let f = &self.folders[i];
+            let answer = self.run(f, &mut |s| match method {
+                "textDocument/definition" => f.definition(s, p),
+                "textDocument/references" => f.references(s, p),
+                "textDocument/documentSymbol" => f.document_symbols(s, p),
+                _ => f.workspace_symbols(s, p),
+            })?;
+            if method != "workspace/symbol" {
+                return Ok(answer);
+            }
+            out.extend(answer.as_array().into_iter().flatten().cloned());
+        }
+        out.truncate(WORKSPACE_SYMBOLS);
+        Ok(Value::Array(out))
+    }
+
+    /// `f` on a reader of `folder`'s index, once its first build is done.
+    fn run(&self, folder: &Folder, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
+        // read within a second of a request that waited out the build: queued behind it
+        let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
+        let build_wait = if queued { std::time::Duration::ZERO } else { self.build_wait };
+        let session = folder.session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
+        let never = Arc::new(AtomicBool::new(false));
+        // the one thread that reads requests must not wait out a long first build: a cancel,
+        // a change and shutdown come in behind it; ContentModified asks the editor to ask again
+        if !session.wait_built(&never, Some(build_wait), |_| {}) {
+            self.waited_out.set(Some(std::time::Instant::now()));
+            return Err((-32801, "the index is still being built".to_string()));
+        }
+        // a damaged index is built again and the request answered from the new one
+        session
+            .read(&never, true, |s| {
+                // a newer scrutate took the index over since it was opened: nothing here can read it
+                if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
+                    return Err(newer.into());
+                }
+                crate::ops::in_snapshot(s, &mut *f)
+            })
+            .map_err(|e| (-32603, format!("{e:#}")))
+    }
+}
+
 /// Occurrences one references request reads at most.
 const REFERENCES: u64 = 5000;
 
@@ -748,11 +876,8 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     }
     let mut srv = Server {
         root: root.to_path_buf(),
-        given: root.to_path_buf(),
         root_given,
-        session: None,
-        docs: HashMap::new(),
-        saves: None,
+        folders: Vec::new(),
         initialized: false,
         shutdown: false,
         build_wait: crate::session::BUILD_WAIT,
@@ -812,11 +937,8 @@ mod tests {
         session.building();
         let mut srv = Server {
             root: root.clone(),
-            given: root.clone(),
             root_given: true,
-            session: Some(session),
-            docs: HashMap::new(),
-            saves: None,
+            folders: vec![Folder { session: Some(session), opened: true, ..Folder::new(root.clone(), root.clone()) }],
             initialized: true,
             shutdown: false,
             build_wait: std::time::Duration::from_millis(300),
@@ -844,11 +966,8 @@ mod tests {
         session.building();
         let mut srv = Server {
             root: root.clone(),
-            given: root.clone(),
             root_given: true,
-            session: Some(session),
-            docs: HashMap::new(),
-            saves: None,
+            folders: vec![Folder { session: Some(session), opened: true, ..Folder::new(root.clone(), root.clone()) }],
             initialized: true,
             shutdown: false,
             build_wait: std::time::Duration::from_secs(2),
