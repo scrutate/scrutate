@@ -54,6 +54,9 @@ pub const HISTORY_MAX: usize = 50;
 pub const HISTORY_DEFINITIONS: usize = 10;
 /// The oldest git whose `log -L` the history is read with.
 pub const HISTORY_GIT: (u32, u32) = (2, 25);
+/// How long one definition's history may take: `git log -L` walks its file's whole past.
+pub const HISTORY_SECONDS: u64 = 5;
+const HISTORY_STOPPED: &str = "history lookup stopped after 5 s on a long history; `git commit-graph write --reachable` makes it fast";
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
 /// the 10,000 at which Codex cuts a tool result and Claude Code warns.
 pub const AGENT_BYTES: usize = 24_000;
@@ -1179,15 +1182,19 @@ pub struct History {
 }
 
 impl History {
-    /// `history:` and a line a commit, or the note.
+    /// `history:` and a line a commit, then the note.
     fn lines(&self) -> Vec<String> {
-        match self.note {
-            Some(note) => vec![format!("(history: {note})")],
-            None if self.commits.is_empty() => vec!["(history: no commit changed these lines)".to_string()],
-            None => std::iter::once("history:".to_string())
-                .chain(self.commits.iter().map(|c| format!("  {} {} {}", c.id.get(..12).unwrap_or(&c.id), c.date, shown(&c.subject))))
-                .collect(),
+        let mut out = Vec::new();
+        if !self.commits.is_empty() {
+            out.push("history:".to_string());
+            out.extend(self.commits.iter().map(|c| format!("  {} {} {}", c.id.get(..12).unwrap_or(&c.id), c.date, shown(&c.subject))));
         }
+        match self.note {
+            Some(note) => out.push(format!("(history: {note})")),
+            None if self.commits.is_empty() => out.push("(history: no commit changed these lines)".to_string()),
+            None => {}
+        }
+        out
     }
 }
 
@@ -1226,8 +1233,9 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
         Err(e) => return none(e.to_string()),
     }
     let one = |r: &ChunkRow| match git.at_head(&r.path, r.start, r.end) {
-        Ok(crate::git::AtHead::Lines(a, b)) => match git.line_log(&r.path, a, b, n) {
-            Ok(commits) => History { commits, note: None },
+        Ok(crate::git::AtHead::Lines(a, b)) => match git.line_log(&r.path, a, b, n, std::time::Duration::from_secs(HISTORY_SECONDS)) {
+            Ok((commits, false)) => History { commits, note: None },
+            Ok((commits, true)) => History { commits, note: Some(HISTORY_STOPPED) },
             Err(_) => History { commits: Vec::new(), note: Some("git could not follow these lines") },
         },
         Ok(crate::git::AtHead::Changed) => History { commits: Vec::new(), note: Some("changed since HEAD") },
@@ -2187,7 +2195,7 @@ impl Answer {
                                 Brief::text(format!("  {}-{}  {code}", m.start, m.end))
                             }));
                             if let Some(h) = histories.as_ref().and_then(|h| h.each.get(i)) {
-                                out.extend(h.lines().into_iter().skip(1).map(Brief::text));
+                                out.extend(h.lines().into_iter().filter(|l| l != "history:").map(Brief::text));
                             }
                             out
                         })

@@ -233,12 +233,14 @@ impl Git {
     }
 
     /// The commits, newest first and at most `n`, that changed lines `start` to `end` of `path` (from
-    /// the index root) as HEAD holds them; `git log -L` follows those lines through renames.
-    pub(crate) fn line_log(&self, path: &str, start: i64, end: i64, n: usize) -> Result<Vec<Commit>> {
+    /// the index root) as HEAD holds them; `git log -L` follows those lines through renames. It walks
+    /// the file's whole history, so git is stopped at `limit`: then the answer is the commits it had
+    /// printed, the newest, and `true`.
+    pub(crate) fn line_log(&self, path: &str, start: i64, end: i64, n: usize, limit: std::time::Duration) -> Result<(Vec<Commit>, bool)> {
         // the path is all that follows the range's colon, so a colon or a dash in it reads as itself
         let range = format!("{start},{end}:{}", plain(path));
         let n = n.to_string();
-        let out = self.run(&[
+        let args = [
             "--literal-pathspecs",
             "log",
             "--no-color",
@@ -251,15 +253,63 @@ impl Git {
             &n,
             "--date=short",
             "--format=%x01%H%x00%ad%x00%s",
-        ])?;
-        Ok(out
+        ];
+        let (out, status, why) = self.bounded(&args, limit)?;
+        let stopped = status.is_none();
+        if status.is_some_and(|s| !s.success()) {
+            bail!("git log: {why}");
+        }
+        // a stopped git may have printed part of a line
+        let whole = if stopped { out.iter().rposition(|&b| b == b'\n').map_or(&out[..0], |i| &out[..i]) } else { &out[..] };
+        let commits = whole
             .split(|&b| b == b'\n')
             .filter_map(|line| line.strip_prefix(b"\x01"))
             .filter_map(|line| {
                 let mut parts = line.splitn(3, |&b| b == 0).map(|p| String::from_utf8_lossy(p).into_owned());
                 Some(Commit { id: parts.next()?, date: parts.next()?, subject: parts.next().unwrap_or_default() })
             })
-            .collect())
+            .collect();
+        Ok((commits, stopped))
+    }
+
+    /// git with `args`, stopped once it has run for `limit`: its output so far, its exit status
+    /// (none when stopped) and the first line of its errors.
+    fn bounded(&self, args: &[&str], limit: std::time::Duration) -> Result<(Vec<u8>, Option<std::process::ExitStatus>, String)> {
+        /// Kills and reaps git on every way out, an early return and a panic too.
+        struct Reap(std::process::Child);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Reap(self.command(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(not_run)?);
+        let mut stdout = child.0.stdout.take().ok_or_else(|| anyhow!("git: no output"))?;
+        let mut stderr = child.0.stderr.take().ok_or_else(|| anyhow!("git: no error output"))?;
+        let reader = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let _ = stdout.read_to_end(&mut out);
+            out
+        });
+        let errors = std::thread::spawn(move || {
+            let mut err = Vec::new();
+            let _ = stderr.read_to_end(&mut err);
+            err
+        });
+        let deadline = std::time::Instant::now() + limit;
+        let status = loop {
+            if let Some(s) = child.0.try_wait()? {
+                break Some(s);
+            }
+            if std::time::Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        drop(child);
+        let out = reader.join().unwrap_or_default();
+        let why = first_line(&errors.join().unwrap_or_default());
+        Ok((out, status, why))
     }
 
     /// Where lines `start` to `end` of the working tree's `path` are in HEAD's copy of the file.
@@ -599,18 +649,19 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         commit_file(&root, "new.py", "def f(x):\n    return x + 1\n\n\ndef g(y):\n    return y * 2\n", "edit g");
         commit_file(&root, "new.py", "def f(x):\n    return x + 2\n\n\ndef g(y):\n    return y * 2\n", "edit f again");
         let git = Git::new(&root).unwrap();
-        let subjects = |start, end, n| git.line_log("new.py", start, end, n).unwrap().into_iter().map(|c| c.subject).collect::<Vec<_>>();
+        let long = std::time::Duration::from_secs(60);
+        let subjects = |start, end, n| git.line_log("new.py", start, end, n, long).unwrap().0.into_iter().map(|c| c.subject).collect::<Vec<_>>();
         assert_eq!(subjects(1, 2, 10), ["edit f again", "edit f", "add f and g"]);
         assert_eq!(subjects(5, 6, 10), ["edit g", "add f and g"]);
         assert_eq!(subjects(1, 2, 1), ["edit f again"]);
-        let c = &git.line_log("new.py", 1, 2, 1).unwrap()[0];
+        let c = &git.line_log("new.py", 1, 2, 1, long).unwrap().0[0];
         assert!(c.id.len() == 40 && c.id.bytes().all(|b| b.is_ascii_hexdigit()), "{}", c.id);
         assert!(c.date.len() == 10 && c.date.as_bytes()[4] == b'-', "{}", c.date);
         // a path git could read as a range, an option or pathspec magic; Windows names hold no colon
         let odd: &[&str] = if cfg!(windows) { &["-x.py"] } else { &["a:b.py", "-x.py", ":(top)m.py"] };
         for &odd in odd {
             commit_file(&root, odd, "def h():\n    return 1\n", &format!("add {odd}"));
-            assert_eq!(git.line_log(odd, 1, 2, 10).unwrap().into_iter().map(|c| c.subject).collect::<Vec<_>>(), [format!("add {odd}")]);
+            assert_eq!(git.line_log(odd, 1, 2, 10, long).unwrap().0.into_iter().map(|c| c.subject).collect::<Vec<_>>(), [format!("add {odd}")]);
         }
     }
 

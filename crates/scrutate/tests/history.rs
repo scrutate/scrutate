@@ -171,3 +171,39 @@ fn read_code_takes_history_and_gives_the_same_list() {
     let (_, v) = call(json!({"symbol": "f"}));
     assert!(v["result"]["definitions"][0].get("history").is_none());
 }
+
+/// A git that prints one commit for `log -L` and then hangs: the lookup stops at its bound, shows
+/// what git had printed, and says how to make it fast.
+#[cfg(unix)]
+#[test]
+fn a_history_lookup_stops_at_its_bound_and_says_how_to_make_it_fast() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = shaped("slow");
+    let real = String::from_utf8(Command::new("sh").args(["-c", "command -v git"]).output().unwrap().stdout).unwrap().trim().to_string();
+    let bin = t.root.with_extension("bin");
+    let _ = fs::remove_dir_all(&bin);
+    fs::create_dir_all(&bin).unwrap();
+    let fake = bin.join("git");
+    fs::write(&fake, format!("#!/bin/sh\ncase \" $* \" in *\" log \"*) printf '\\001%040d\\000%s\\000%s\\n' 0 2026-01-01 'the newest'; exec sleep 60;; esac\nexec '{real}' \"$@\"\n")).unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let started = std::time::Instant::now();
+    let out = Command::new(BIN)
+        .args(["--root", t.root.to_str().unwrap(), "read", "--symbol", "f", "--history", "--json"])
+        .current_dir(&t.root)
+        .envs(GIT_ENV)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let took = started.elapsed();
+    let _ = fs::remove_dir_all(&bin);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let def = &v["result"]["definitions"][0];
+    assert_eq!(subjects(def), ["the newest"], "{def}");
+    let note = def["history_note"].as_str().unwrap_or_default();
+    assert!(note.contains("stopped after 5 s") && note.contains("git commit-graph write --reachable"), "{def}");
+}
