@@ -18,7 +18,7 @@ use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::name_key;
 
-pub const SCHEMA_VERSION: u32 = 16;
+pub const SCHEMA_VERSION: u32 = 17;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
@@ -3507,6 +3507,18 @@ mod tests {
 
     /// A check another binary recorded says nothing of the schema work this one does: an open by
     /// a binary whose schema differs checks once, then trusts its own record.
+    #[test]
+    fn the_schema_sql_and_its_version_change_together() {
+        // an index of another shape under the same version is opened as current, and its writes
+        // fail: a change of the SQL raises SCHEMA_VERSION and sets this hash
+        let hash = format!("{:x}", <sha1::Sha1 as sha1::Digest>::digest([super::SCHEMA, super::ART_INDEX, super::ART_COLUMN].concat()));
+        assert_eq!(
+            (super::SCHEMA_VERSION, hash.as_str()),
+            (17, "709ebea109ea8f1c611ac2deded8c478cd57b6ff"),
+            "the schema SQL changed: raise SCHEMA_VERSION and set this hash"
+        );
+    }
+
     #[test]
     fn a_check_recorded_by_another_schema_is_checked_again_once() {
         let root = checked_repo("schema_mark");
