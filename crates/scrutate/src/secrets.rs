@@ -38,7 +38,10 @@ struct Rule {
     kind: &'static str,
     /// where the rule comes from: the upstream rule, or `scrutate` for one of its own
     source: &'static str,
-    re: Regex,
+    /// the pattern, compiled the first time a text holds one of the keywords: a hook call pays only
+    /// for the rules its text can match
+    pattern: String,
+    re: std::sync::OnceLock<Regex>,
     /// the capture group that is the secret
     group: usize,
     /// dropped when the secret's Shannon entropy is at or below this, as gitleaks drops it
@@ -81,7 +84,13 @@ fn rule(
     keywords: &'static [&'static str],
     keep: fn(&str, &str, &str) -> bool,
 ) -> Rule {
-    Rule { kind, source, re: Regex::new(re).unwrap_or_else(|e| panic!("{kind}: {e}")), group, entropy, keywords, keep }
+    Rule { kind, source, pattern: re.to_string(), re: std::sync::OnceLock::new(), group, entropy, keywords, keep }
+}
+
+impl Rule {
+    fn regex(&self) -> &Regex {
+        self.re.get_or_init(|| Regex::new(&self.pattern).unwrap_or_else(|e| panic!("{}: {e}", self.kind)))
+    }
 }
 
 static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
@@ -603,7 +612,7 @@ impl Redactor {
             wanted[starts.partition_point(|&s| s <= m.pattern().as_usize()) - 1] = true;
         }
         for (r, _) in RULES.iter().zip(&wanted).filter(|(_, &w)| w) {
-            for c in r.re.captures_iter(seen) {
+            for c in r.regex().captures_iter(seen) {
                 let Some(g) = c.get(r.group) else { continue };
                 if c.name("ann").is_some_and(|a| a.len() > TYPED_MAX) {
                     continue;
@@ -1457,6 +1466,15 @@ mod tests {
         }
     }
 
+    /// Each rule's pattern compiles: they are built on first use, so a broken one would wait for its
+    /// keyword.
+    #[test]
+    fn every_rule_compiles() {
+        for rule in RULES.iter() {
+            rule.regex();
+        }
+    }
+
     /// The page as assembled is read again, so a mark must not be taken for a secret twice.
     #[test]
     fn a_mark_is_not_redacted_again() {
@@ -1525,6 +1543,16 @@ mod tests {
         let t0 = std::time::Instant::now();
         LazyLock::force(&RULES);
         LazyLock::force(&PREFILTER);
+        let start = t0.elapsed().as_secs_f64() * 1000.0;
+        let t1 = std::time::Instant::now();
+        let mut r = Redactor::default();
+        let mut lines: Vec<String> = page.lines().map(str::to_string).collect();
+        r.redact_shown(&mut lines, 0, usize::MAX);
+        let first = t1.elapsed().as_secs_f64() * 1000.0;
+        let built = RULES.iter().filter(|r| r.re.get().is_some()).count();
+        for rule in RULES.iter() {
+            rule.regex();
+        }
         for re in [
             &NOT_SECRET_NAMES,
             &IDENTIFIER,
@@ -1541,7 +1569,11 @@ mod tests {
         ] {
             LazyLock::force(re);
         }
-        println!("building the detectors, once a process: {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        println!(
+            "building the detectors, once a process: {start:.1} ms before a text; the first page {first:.1} ms, building {built} of {} rules; {:.1} ms with every one built",
+            RULES.len(),
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         let mut times: Vec<f64> = (0..101)
             .map(|_| {
                 let t0 = std::time::Instant::now();

@@ -507,10 +507,13 @@ kept as secrets.
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
 it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,
 `private-key` 37): the private keys are the test keys the kernel ships, and the other 162, 0.037
-per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files, none (a test holds it there). Building the detectors costs about 5 ms
-once a process on an Apple M3 Pro and 19 ms on an 8-vCPU x86 server (4.8 to 5.2 ms and 18.4 to
-18.9 ms in three runs each, load 1.4 on the server), and redacting a 24,000-byte page 0.26 ms and
-0.82 ms (medians of 101 runs).
+per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files,
+none (a test holds it there). A rule's regex is built the first time a text holds one of its
+keywords, so a process pays for the rules its answers need: about 0.3 ms before any text, and
+about 1 ms more for a 24,000-byte page of this repository's source, which needs 3 of the 31 rules,
+on an Apple M3 Pro and on a 16-vCPU x86 server (0.2 to 0.4 ms and 0.9 to 1.5 ms in three runs
+each, load 9 to 18). A text that needs every rule pays what building them all costs, 7 to 9 ms
+and 10 to 13 ms. Redacting the page then takes 0.29 ms and 0.36 to 0.46 ms (medians of 101 runs).
 
 `tests/secrets.rs` plants three secrets of each kind (a `.env`, private keys with a last line
 shorter than any rule for base64 alone, a typed Rust constant, a line too long to show whole and a
