@@ -131,7 +131,8 @@ Checks, at both ends:
   time), the version, the index schema and content revisions, the model signatures, every
   `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
   when all match its own.
-- A request is one line of at most 1 MB, read within 2 seconds; at most 16 connections at once, a
+- A request is one line of at most 1 MB, read within 2 seconds (and the command line gives a
+  session 2 seconds to take it); at most 16 connections at once, a
   further one closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`), an answer slower
   than 60 s, a closed connection or any error makes the command line do the work itself.
 

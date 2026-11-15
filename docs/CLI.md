@@ -852,7 +852,9 @@ do the work (another build of scrutate, another `SCRUTATE_*` setting, another ro
 socket), the command does the work itself and says nothing;
 `SCRUTATE_SESSION_DEBUG=1` says why on stderr, and `SCRUTATE_NO_SESSION=1` turns the use off. A
 command waits 20 ms for the server's greeting (a server stopped in a terminal costs no more);
-`SCRUTATE_SESSION_WAIT_MS` sets another wait for a machine too busy to greet in time. Of two
+`SCRUTATE_SESSION_WAIT_MS` sets another wait for a machine too busy to greet in time. A server
+that takes no request for 2 s once it greeted (stopped or stuck, with a request longer than the
+socket holds) is given up as well. Of two
 servers on one root, the first offers the socket.
 
 - Every tool but `reindex` is marked read-only (`readOnlyHint`), and all as staying on this

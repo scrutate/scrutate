@@ -751,7 +751,8 @@ mod unix {
     }
     /// How long the command line waits for an answer before it does the work itself.
     const ANSWER: Duration = Duration::from_secs(60);
-    /// How long a session waits for a request after its greeting.
+    /// How long a session waits for a request after its greeting, and a command line for the
+    /// session to take it.
     const REQUEST: Duration = Duration::from_secs(2);
     const MAX_REQUEST: u64 = 1 << 20;
     /// Connections served at once; one more is closed, and its command line does the work.
@@ -980,7 +981,9 @@ mod unix {
             return Err(format!("the session differs: {theirs:?} where this is {me:?}"));
         }
         let mut w = &conn;
-        writeln!(w, "{}", serde_json::to_string(request).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        // a session that stops reading leaves a request over the socket's buffer unwritten
+        conn.set_write_timeout(Some(REQUEST)).map_err(|e| e.to_string())?;
+        writeln!(w, "{}", serde_json::to_string(request).map_err(|e| e.to_string())?).map_err(|e| format!("request not taken: {e}"))?;
         conn.set_read_timeout(Some(ANSWER)).map_err(|e| e.to_string())?;
         line.clear();
         r.read_line(&mut line).map_err(|e| format!("no answer: {e}"))?;

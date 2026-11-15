@@ -298,6 +298,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
+  does the work itself, where a `serve` stopped or stuck at that point and a request over the
+  socket's buffer (a long search with several `--alt`) left the call waiting for good.
 - The language server answers definition and references in the spelling of the request's
   document when the editor names one repository in two ways (two folders, one through a link, or
   a file named through one), where every answer named the first folder's spelling.

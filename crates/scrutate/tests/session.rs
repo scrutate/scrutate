@@ -362,6 +362,67 @@ fn a_socket_nobody_listens_on_or_that_is_no_socket_is_passed_over() {
     assert_eq!(fs::read_to_string(r.socket()).unwrap(), "not a socket");
 }
 
+/// A session that greets and then reads nothing holds no call whose request is longer than the
+/// socket takes: the command line gives it up and does the work itself.
+#[cfg(unix)]
+#[test]
+fn a_session_that_reads_no_request_is_given_up_and_the_call_does_its_own_work() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let r = Repo::new("reads_nothing");
+    let server = Server::start(&r.root);
+    // a real session's greeting for this root and build, replayed by a listener that never reads
+    let hello = {
+        let c = UnixStream::connect(r.socket()).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut line = String::new();
+        BufReader::new(&c).read_line(&mut line).unwrap();
+        line
+    };
+    server.stop();
+    let _ = fs::remove_file(r.socket());
+    let listener = UnixListener::bind(r.socket()).unwrap();
+    fs::set_permissions(r.socket(), fs::Permissions::from_mode(0o600)).unwrap();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for mut c in listener.incoming().flatten() {
+            let _ = c.write_all(hello.as_bytes());
+            held.push(c);
+        }
+    });
+    // eight alternatives of 100,000 bytes: a request well over the socket's send buffer
+    let long = "x".repeat(100_000);
+    let mut args = vec!["search", "point"];
+    for _ in 0..8 {
+        args.extend(["--alt", long.as_str()]);
+    }
+    let want = r.fresh(&args);
+    let mut child = Command::new(BIN)
+        .args(&args)
+        .current_dir(&r.root)
+        .env("SCRUTATE_ROOT", ".")
+        .env("SCRUTATE_SESSION_DEBUG", "1")
+        .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let t0 = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if t0.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            panic!("the call still waits on a session that reads nothing");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = child.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("request not taken"), "{said}");
+    let got = (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned());
+    assert_eq!((got.0, got.1.as_str()), (want.0, want.1.as_str()));
+}
+
 #[test]
 fn a_second_server_on_the_root_leaves_the_first_ones_socket_alone_and_an_exit_removes_it() {
     let r = Repo::new("two");
