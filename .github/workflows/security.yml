@@ -1,6 +1,7 @@
 # Security checks for every push to main, every pull request and once a week, so a new advisory
 # or a new zizmor audit shows up without a code change: cargo deny against deny.toml, zizmor on
-# the workflows and the action, and the count of `unsafe` against docs/SECURITY.md.
+# the workflows and the action, the count of `unsafe` against docs/SECURITY.md, and gitleaks over
+# the tree against .gitleaks.toml.
 name: security
 on:
   push:
@@ -62,3 +63,19 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 tools/unsafe_count.py
+  gitleaks:
+    name: gitleaks over the tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # the release archive, checked against the SHA-256 gitleaks publishes for it
+      - run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - run: '"$RUNNER_TEMP/gitleaks" dir . --no-banner --redact --config .gitleaks.toml'

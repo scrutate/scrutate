@@ -54,6 +54,7 @@ cargo test --release -p scrutate-ignore           # the vendored walker's own te
 cargo audit
 cargo deny check                                  # advisories, licences, bans and sources (deny.toml)
 python3 tools/unsafe_count.py                     # each file's `unsafe` count matches docs/SECURITY.md
+gitleaks dir . --no-banner --redact --config .gitleaks.toml   # no secret in the tree (gitleaks 8.30.1)
 ruff check --select F .                           # pyflakes over every Python file (ruff from python/constraints.txt)
 cd python && SCRUTATE_BIN=../target/release/scrutate python -m pytest -q   # training code, benchmark builders (+ bindings if installed)
 python bench/quality.py target/release/scrutate   # ranking quality (MRR@10, hit@5) not below bench/quality/floor.json
