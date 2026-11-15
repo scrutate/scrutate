@@ -845,7 +845,8 @@ cache: whole, to a temporary name, then renamed into place, so two writers lose 
 mix two; a file that does not decode in full is no file, and above 64 MB in all the least recently
 used go first. On Guava `callers size` costs 1.4 s of CPU on a first run (19.2 billion
 instructions), 0.43 s (6.1 billion) from what was kept, where asking about the 400 likeliest sites
-cost 0.6 s (8.3 billion).
+cost 0.6 s (8.3 billion). Keying them by the index lookups a run made, in place of the data version, was tried and
+not taken ([ADR 0010](adr/0010-kept-answers-keyed-by-their-lookups.md)).
 
 `impact` (`impact.rs`) is an operation like the others, so it scans first and pages and prints as
 they do. It reads the diff through `git.rs`, which runs `git` in the root, the one program Engine B
