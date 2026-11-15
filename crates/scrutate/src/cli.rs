@@ -2471,7 +2471,6 @@ fn broken_pipe(e: &anyhow::Error) -> bool {
     e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
 }
 
-/// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
 /// As ripgrep: a search of the current directory, no path given, that searched no file says so
 /// and exits 2, since a filter left out every file. A path given and searched in vain is a plain 1.
 fn searched_nothing(stats: &instant::Stats, f: &Files, indexed: bool) -> bool {
@@ -2482,6 +2481,7 @@ fn searched_nothing(stats: &instant::Stats, f: &Files, indexed: bool) -> bool {
     none
 }
 
+/// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
 fn warn_failures(stats: &instant::Stats) {
     for f in &stats.failures {
         diagnostic("warning", f);
