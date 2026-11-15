@@ -2240,4 +2240,29 @@ fn dupes_cut_near_pairs_after_ordering_them() {
     );
     assert_eq!(dupe_paths(&r, &["--threshold", "0.75"]), [["p2a.py", "p2b.py"], ["p1a.py", "p1b.py"]]);
     assert_eq!(dupe_paths(&r, &["--threshold", "0.75", "--limit", "1"]), [["p2a.py", "p2b.py"]]);
+    // three pairs alike in size and similarity: the tie goes by path, also after churn put p1's
+    // chunk ids last
+    let tied = |name: &str, tag: &str, changed: &[usize]| {
+        let rows: String =
+            (0..20).map(|k| format!("    total = total + {}_{tag}_{}(item)\n", if changed.contains(&k) { "other" } else { "step" }, word(k))).collect();
+        format!("def {name}(item):\n    total = 0\n{rows}    return total\n")
+    };
+    let files: Vec<(String, String)> = [("p1", "ka"), ("p2", "kb"), ("p3", "kc")]
+        .iter()
+        .flat_map(|(p, tag)| [("a", &[][..]), ("b", &[9][..])].map(|(side, changed)| (format!("{p}_{side}.py"), tied(&format!("{p}_{side}"), tag, changed))))
+        .collect();
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let fresh = Repo::new("dupes_tied_fresh", &files);
+    let churned = Repo::new("dupes_tied_churned", &files);
+    for name in ["p1_a.py", "p1_b.py"] {
+        fs::remove_file(churned.root.join(name)).unwrap();
+    }
+    churned.index();
+    for (name, text) in &files[..2] {
+        fs::write(churned.root.join(name), text).unwrap();
+    }
+    churned.index();
+    let args = ["--threshold", "0.75", "--min-tokens", "10", "--limit", "1"];
+    assert_eq!(dupe_paths(&fresh, &args), [["p1_a.py", "p1_b.py"]]);
+    assert_eq!(dupe_paths(&churned, &args), [["p1_a.py", "p1_b.py"]], "an index brought up to date cuts as a fresh one");
 }
