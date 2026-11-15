@@ -3684,7 +3684,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
     /// A read that saves an edit while another process reads an older snapshot does not wait for
-    /// that snapshot to cut the log; a later update cuts it.
+    /// that snapshot to cut the log; a later update cuts it. The wait is measured against the same
+    /// update with no reader, so a loaded machine slows both alike.
     #[test]
     fn a_read_that_saves_an_edit_does_not_wait_on_another_reader_to_cut_the_log() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_cut_reader_{}", std::process::id()));
@@ -3693,15 +3694,19 @@ mod tests {
         std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
         let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
+        let save = |ix: &mut super::Index, body: &str| {
+            std::fs::write(root.join("a.py"), format!("def alpha(x):\n    return {body}\n")).unwrap();
+            let t = std::time::Instant::now();
+            assert_eq!(ix.update_paths(&["a.py".into()], false).unwrap().files_changed, 1, "the edit is saved");
+            t.elapsed()
+        };
+        let alone = save(&mut ix, "x - 1");
         let other = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
         other.execute_batch("BEGIN").unwrap();
         let _: i64 = other.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap();
-        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
-        let t = std::time::Instant::now();
-        let st = ix.update_paths(&["a.py".into()], false).unwrap();
-        let took = t.elapsed();
-        assert_eq!(st.files_changed, 1, "the edit is saved");
-        assert!(took < std::time::Duration::from_millis(300), "waited {took:?}");
+        let took = save(&mut ix, "x + 1");
+        // waiting for the reader would add a whole second
+        assert!(took < alone + std::time::Duration::from_millis(600), "waited {took:?}, {alone:?} with no reader");
         assert!(ix.log_left, "the reader kept the log from being cut");
         other.execute_batch("COMMIT").unwrap();
         ix.update(false).unwrap();
@@ -4109,7 +4114,8 @@ mod tests {
     }
 
     /// An update does not wait for every thread of the pool to free its word caches: a thread
-    /// busy with another call's search would hold it as long as that search runs.
+    /// busy with another call's search would hold it as long as that search runs. The wait is
+    /// measured against the same update with every thread free.
     #[test]
     fn an_update_does_not_wait_for_a_busy_thread_to_free_its_caches() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_busy_pool_{}", std::process::id()));
@@ -4122,6 +4128,15 @@ mod tests {
             ix.update(false).unwrap();
             ix
         });
+        let mut save = |body: &str| {
+            std::fs::write(root.join("a.py"), format!("def alpha(x):\n    return {body}\n")).unwrap();
+            pool.install(|| {
+                let t = std::time::Instant::now();
+                ix.update_paths(&["a.py".into()], false).unwrap();
+                t.elapsed()
+            })
+        };
+        let alone = save("x - 1");
         // another call's search keeps one thread of the pool busy
         let (busy, release) = std::sync::mpsc::channel::<()>();
         let (started, running) = std::sync::mpsc::channel::<()>();
@@ -4130,16 +4145,13 @@ mod tests {
             let _ = release.recv_timeout(std::time::Duration::from_secs(3));
         });
         running.recv().unwrap();
-        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
-        let took = pool.install(|| {
-            let t = std::time::Instant::now();
-            ix.update_paths(&["a.py".into()], false).unwrap();
-            t.elapsed()
-        });
+        let took = save("x + 1");
         let _ = busy.send(());
+        drop(save);
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
-        assert!(took < std::time::Duration::from_millis(300), "waited {took:?}");
+        // waiting for the busy thread would add up to its 3 s
+        assert!(took < alone + std::time::Duration::from_millis(1500), "waited {took:?}, {alone:?} with every thread free");
     }
 
     /// The word caches a thread has not freed yet map a word to its stem and an identifier to
