@@ -67,7 +67,8 @@ incompatible index by itself, and that is never breaking.
   linguist's `vendor.yml`. A name only vendored code defines, searched for as itself, keeps its
   place. A directory the root manifest builds as the
   project's own package (Cargo workspace members and path dependencies, a `go.mod` replace
-  into the repository, npm, Yarn and pnpm workspaces) is not vendored. Every JSON item whose
+  into the repository, npm, Yarn and pnpm workspaces) is not vendored, unless a workspace glob
+  with `!` takes it out again (`'!vendor/x'`). Every JSON item whose
   `path` is vendored code, in any answer, has `"vendored": true`, and so does every text line
   whose location names such a path: `[function, vendored]` after a location with its kind,
   `(vendored)` at the end of any other line. A mark never shares a line with a file's text: a

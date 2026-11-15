@@ -353,7 +353,8 @@ impl Vendored {
 
 /// The directories (globs allowed) a root manifest declares as the repository's own packages:
 /// Cargo workspace members and path dependencies, Go `replace` targets in the repository, npm,
-/// Yarn and pnpm workspaces.
+/// Yarn and pnpm workspaces. A workspace glob that starts with `!` is kept with its `!`: it takes
+/// its directories out again (`owns`).
 pub fn own_package_dirs(manifest: &str, text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     match manifest {
@@ -393,13 +394,16 @@ pub fn own_package_dirs(manifest: &str, text: &str) -> Vec<String> {
         _ => {}
     }
     out.iter()
-        .filter(|d| !d.starts_with('!'))
-        .map(|d| d.trim_start_matches("./").trim_end_matches('/').to_string())
-        .filter(|d| !d.is_empty() && !d.starts_with(".."))
+        .filter_map(|d| {
+            let (not, d) = d.strip_prefix('!').map_or(("", d.as_str()), |d| ("!", d));
+            let d = d.trim_start_matches("./").trim_end_matches('/');
+            (!d.is_empty() && !d.starts_with("..")).then(|| format!("{not}{d}"))
+        })
         .collect()
 }
 
-/// Whether `path` lies in one of `dirs`, whose parts may hold `*` (within a part) or be `**`.
+/// Whether `path` lies in one of `dirs`, whose parts may hold `*` (within a part) or be `**`, and
+/// in none of the `!` ones (`packages: ['vendor/**', '!vendor/x']` leaves `vendor/x` out).
 fn owns(dirs: &[String], path: &str) -> bool {
     let path = path.replace('\\', "/");
     let parts: Vec<&str> = path.split('/').collect();
@@ -414,7 +418,8 @@ fn owns(dirs: &[String], path: &str) -> bool {
             Some((p, rest)) => parts.split_first().is_some_and(|(first, more)| glob(p, first) && under(rest, more, glob)),
         }
     }
-    dirs.iter().any(|d| under(&d.split('/').collect::<Vec<_>>(), &parts, &glob))
+    let matches = |d: &str| under(&d.split('/').collect::<Vec<_>>(), &parts, &glob);
+    dirs.iter().any(|d| !d.starts_with('!') && matches(d)) && !dirs.iter().filter_map(|d| d.strip_prefix('!')).any(matches)
 }
 
 const TEST_PARTS: &[&str] = &["test", "tests", "testing", "__tests__", "spec", "specs", "e2e", "fixtures", "mocks"];
@@ -573,6 +578,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A workspace that takes a directory out with `!` leaves that directory vendored.
+    #[test]
+    fn a_directory_a_workspace_takes_out_with_a_bang_is_vendored() {
+        let root = std::env::temp_dir().join(format!("scrutate_vendored_bang_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - 'vendor/**'\n  - '!vendor/x'\n").unwrap();
+        let v = Vendored::of(&root);
+        assert!(!v.is("vendor/y/a.js"), "a package of the workspace is the repository's own");
+        assert!(v.is("vendor/x/a.js"), "the directory the workspace takes out is vendored");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_root_manifest_names_the_directories_the_repository_builds_as_its_own() {
         let cargo = "[workspace]\nmembers = [\"crates/*\", \"./vendor/own/\"]\n\n[dependencies]\nshim = { path = \"third_party/shim\" }\nfar = { path = \"../far\" }\nreg = \"1\"\n";
@@ -580,7 +598,12 @@ mod tests {
         let go = "module m\nreplace a => ./vendor/a\nreplace (\n\tb v1 => ./third_party/b/\n\tc => example.com/c v2\n)\n";
         assert_eq!(own_package_dirs("go.mod", go), ["vendor/a", "third_party/b"]);
         assert_eq!(own_package_dirs("package.json", r#"{"workspaces": {"packages": ["vendor/*"]}}"#), ["vendor/*"]);
-        assert_eq!(own_package_dirs("pnpm-workspace.yaml", "packages:\n  - 'vendor/**'\n  - \"!vendor/x\"\nother:\n  - no\n"), ["vendor/**"]);
+        assert_eq!(own_package_dirs("pnpm-workspace.yaml", "packages:\n  - 'vendor/**'\n  - \"!vendor/x\"\nother:\n  - no\n"), ["vendor/**", "!vendor/x"]);
+        assert_eq!(own_package_dirs("package.json", r#"{"workspaces": ["vendor/*", "!./vendor/x/"]}"#), ["vendor/*", "!vendor/x"]);
+        // a `!` glob takes its directories out of the workspace
+        let ws = ["vendor/**".to_string(), "!vendor/x".to_string()];
+        assert!(owns(&ws, "vendor/y/a.js") && !owns(&ws, "vendor/x/a.js") && !owns(&ws, "vendor/x/deep/b.js"));
+        assert!(!owns(&["!vendor/x".to_string()], "vendor/y/a.js"), "a `!` glob alone owns nothing");
         assert!(own_package_dirs("Cargo.toml", "not toml [").is_empty());
         let dirs = ["vendor/own".to_string(), "third_party/*".to_string(), "pods/**".to_string()];
         for (path, yes) in [
