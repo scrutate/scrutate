@@ -29,7 +29,7 @@ pub struct SemanticModel {
 }
 
 /// An int8 table with one float32 scale per row: value = code * scale. The codes are read where
-/// the model lies (built in, or mapped), not copied into each process.
+/// the model lies (built in, or the model file's bytes read once), not copied again.
 struct Table {
     q: crate::npy::Npy,
     scale: Vec<f32>,
@@ -47,10 +47,13 @@ fn sublog(c: u32) -> f64 {
 }
 
 impl SemanticModel {
+    /// The model file read whole, not mapped: a resident process would die by SIGBUS if the user
+    /// replaced the file in place under the map.
     pub fn load(path: &Path) -> Result<SemanticModel> {
-        let file = std::fs::File::open(path).with_context(|| format!("load semantic model {}", path.display()))?;
-        let mapped = crate::npy::map(&file, path).with_context(|| format!("load semantic model {}", path.display()))?;
-        load_npz_shared(std::sync::Arc::new(mapped)).and_then(Self::from_arrays).with_context(|| format!("load semantic model {}", path.display()))
+        let bytes = std::fs::read(path).with_context(|| format!("load semantic model {}", path.display()))?;
+        load_npz_shared(std::sync::Arc::new(crate::npy::Backing::Owned(bytes)))
+            .and_then(Self::from_arrays)
+            .with_context(|| format!("load semantic model {}", path.display()))
     }
 
     pub fn from_bytes(bytes: &'static [u8]) -> Result<SemanticModel> {
@@ -208,6 +211,20 @@ impl SemanticModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A model file the user names may be replaced in place (`cp new.npz m.npz`) under a running
+    /// `serve`: a model loaded from it must not read the file again.
+    #[test]
+    fn a_model_file_cut_to_nothing_after_the_load_leaves_the_model_whole() {
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("models/semantic.npz");
+        let path = std::env::temp_dir().join(format!("scrutate_semantic_cut_after_load_{}.npz", std::process::id()));
+        std::fs::copy(&bundled, &path).unwrap();
+        let m = SemanticModel::load(&path).unwrap();
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+        m.warm();
+        assert!(m.encode_query(&["open".to_string(), "file".to_string()]).is_some());
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn a_model_whose_tables_disagree_in_size_is_refused() {

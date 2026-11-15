@@ -314,7 +314,7 @@ pub fn load_npz_bytes(bytes: &[u8]) -> Result<Vec<(String, Npy)>> {
     Ok(out)
 }
 
-/// `load_npz_bytes` of an archive that stays in memory (built in, or mapped): a stored member is
+/// `load_npz_bytes` of an archive that stays in memory (built in, or read whole): a stored member is
 /// read where it lies, not copied; a deflated one is inflated.
 pub(crate) fn load_npz_shared(src: std::sync::Arc<Backing>) -> Result<Vec<(String, Npy)>> {
     let mut out = Vec::new();

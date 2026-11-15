@@ -490,7 +490,8 @@ as before (mode 0700 on Unix).
 - **Memory-mapped files can change underneath a reader** if another process rewrites a segment in
   place. scrutate never does (temp dir + rename; deletion only after the manifest no longer
   references them), so this needs an external actor; on Windows a mapped file cannot be deleted
-  and GC retries later.
+  and GC retries later. A file the user names (a `SCRUTATE_SEMANTIC` model) is read whole, never
+  mapped: replacing it in place under a running process would end that process with SIGBUS.
 - **Index privacy on Windows**: `.scrutate/` inherits the repository directory's permissions there,
   so a file whose own permissions are narrower than its directory's has its chunks readable by
   whoever can read the repository directory. On Unix the directory is the owner's alone (above).

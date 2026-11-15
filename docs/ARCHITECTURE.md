@@ -1012,8 +1012,9 @@ and runs clippy on the native build without `pcre2`, on every push.
 `semantic.npz` (7.6 MB: code-word vocabulary tables and projections, the two word tables as int8
 codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; the semantic model's stored int8 tables are read
-where they lie (in the binary, or in the mapped `SCRUTATE_SEMANTIC` file), not copied into each
-process; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
+where they lie (in the binary, or in the bytes of the `SCRUTATE_SEMANTIC` file, read whole once and
+never mapped, so replacing that file under a running `serve` cannot end it with SIGBUS), not
+copied again; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
 point at other files or `none` (a vector model file with the float16 tables of revision 1 is an
 error that names the file). `models.rs` holds them as one model set, with the feature list the
 ranker reads (`FEATURES`) and the model revision. Each part loads on first use, once per process,
