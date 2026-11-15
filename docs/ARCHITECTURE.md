@@ -442,9 +442,11 @@ NFC with final sigma folded.
     constants or fields, written in the transaction of every change of the chunks, so reading
     the statistics needs no count of millions of rows (a second on the Linux tree). The damage
     count runs once per state: a passing one is recorded in `.scrutate/checked` (one line per
-    check) with the database file, the data version, `chunks_at` and the live count it found, so
-    an index written before `chunks_at` held that count is counted once too. A row deleted by hand outside scrutate keeps
-    the version, and the record is trusted then as the `quick_check` record is;
+    check) with the database's `quick_check` mark (its file's stat, change time included, the data
+    version and the schema), `chunks_at` and the live count it found, and only while the log is
+    cut, since folding a log in changes the file. So a row deleted by hand outside scrutate,
+    which leaves the version as it was, changes the file and is counted again, and an index
+    written before `chunks_at` held the live count is counted once too;
   - **cancellation**: an update checks a cancel flag between batches of 256 files and rolls back;
     a panic inside an update rolls back at once, and the next update clears a transaction left
     open;

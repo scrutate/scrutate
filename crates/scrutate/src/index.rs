@@ -65,6 +65,8 @@ CREATE INDEX IF NOT EXISTS artifacts_kept ON artifacts(used) WHERE kept IS NOT N
 ";
 /// Made once the `files` table has the `art` column, which an index of an older schema lacks.
 const ART_INDEX: &str = "CREATE INDEX IF NOT EXISTS files_art ON files(art) WHERE art IS NOT NULL;";
+/// The column `add_art` adds to a `files` table an older schema made without it.
+const ART_COLUMN: &str = "ALTER TABLE files ADD COLUMN art BLOB";
 /// Artifacts no file names are kept up to a quarter of the database's size, and at least this.
 pub const KEPT_MIN_BYTES: i64 = 4 << 20;
 
@@ -851,7 +853,7 @@ fn check_mark(db_path: &Path, ver: &str) -> String {
         Err(_) => "empty".to_string(),
     };
     // the SQL a trusted open skips: an in-place layout change (as `add_art`'s) adds its SQL here
-    let schema = Sha1::digest([SCHEMA, ART_INDEX].concat());
+    let schema = Sha1::digest([SCHEMA, ART_INDEX, ART_COLUMN].concat());
     format!("{} | {} | {ver} | schema {SCHEMA_VERSION} {:x}\n", stat(db_path), stat(&wal), schema)
 }
 
@@ -1177,7 +1179,7 @@ fn add_art(db: &Connection) -> rusqlite::Result<()> {
     }
     let has = |db: &Connection| db.prepare("SELECT 1 FROM pragma_table_info('files') WHERE name='art'").and_then(|mut q| q.exists([]));
     if !has(db)? {
-        if let Err(e) = retry_busy(|| db.execute_batch("ALTER TABLE files ADD COLUMN art BLOB")) {
+        if let Err(e) = retry_busy(|| db.execute_batch(ART_COLUMN)) {
             if !has(db)? {
                 return Err(e);
             }
@@ -1793,7 +1795,9 @@ impl Index {
             // the counts the writer recorded for this version, and the damage check (counting
             // millions of chunks costs a second) once per state of the database
             let at: Option<String> = self.db.query_row("SELECT value FROM meta WHERE key='chunks_at'", [], |r| r.get(0)).optional()?;
-            let counts_key = |at: Option<&str>| format!("{:?} {ver} {}", file_id(&self.dir.join("index.db")), at.unwrap_or(""));
+            // the state is the quick_check mark's (the file's stat, change time included, and the
+            // data version), so a row deleted by hand is counted again
+            let counts_key = |at: Option<&str>| format!("{} {}", check_mark(&self.dir.join("index.db"), &ver).trim_end(), at.unwrap_or(""));
             // the record holds the state counted and its count of live chunks: an index written
             // before `chunks_at` had that count is counted once, then read from the record
             let recorded = passed_state(&self.dir, "counts")
@@ -1814,8 +1818,10 @@ impl Index {
                     if lost {
                         return Err(Damaged("the chunks table lost rows").into());
                     }
-                    if at_ver.as_deref() == Some(ver.as_str()) {
-                        // a read-only index directory is counted again next time
+                    // a state is recorded only with the log cut: folding a log in changes the file,
+                    // and a read-only index directory is counted again next time
+                    let log_cut = std::fs::metadata(self.dir.join("index.db-wal")).map_or(true, |m| m.len() == 0);
+                    if at_ver.as_deref() == Some(ver.as_str()) && log_cut {
                         record_pass(&self.dir, "counts", &format!("{} {n_live}", counts_key(at.as_deref())));
                     }
                     n_live
@@ -3386,32 +3392,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A chunk row deleted by hand leaves meta as it was, but not the database file: the next
+    /// read counts again and finds the loss.
+    #[test]
+    fn a_chunk_row_deleted_by_hand_is_found_by_the_next_count() {
+        let root = checked_repo("counts_by_hand");
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        ix.lex().unwrap();
+        drop(ix);
+        let db = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+        assert_eq!(db.execute("DELETE FROM chunks WHERE id = (SELECT MIN(id) FROM chunks)", []).unwrap(), 1);
+        drop(db);
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        let e = ix.lex().map(|_| ()).expect_err("the lost row is reported");
+        assert!(format!("{e:#}").contains("lost rows"), "{e:#}");
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn the_chunks_are_counted_once_per_state_of_the_database() {
         let root = checked_repo("counts");
         let counts = || super::CHUNK_COUNTS.with(|c| c.get());
-        let c0 = counts();
+        // a fresh process's read: (how many times it counted, the chunks alive)
+        let read = || {
+            let c = counts();
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            let alive = ix.lex().unwrap().n_alive;
+            (counts() - c, alive)
+        };
         let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
-        ix.lex().unwrap();
-        assert_eq!(counts(), c0 + 1, "the first read of this state counts, once");
         drop(ix);
-        // a fresh process, the same state: the writer's counts, no count
-        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
-        ix.lex().unwrap();
-        assert_eq!(counts(), c0 + 1, "the same state is not counted again");
+        // the first read of a state counts it, once its log is cut; every later one reads the record
+        assert_eq!(read().0, 1, "the first read of this state counts");
+        assert_eq!(read().0, 0, "the same state is not counted again");
+        assert_eq!(read().0, 0);
         // a change of the chunks is a new state: counted once, and what died is not alive
         std::fs::remove_file(root.join("m3.py")).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
+        let live = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |r| r.get::<_, i64>(0)).unwrap() as usize;
         drop(ix);
-        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
-        let alive = ix.lex().unwrap().n_alive;
-        assert_eq!(counts(), c0 + 2, "a new state is counted");
-        assert_eq!(alive, ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |r| r.get::<_, i64>(0)).unwrap() as usize);
-        drop(ix);
-        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
-        assert_eq!(ix.lex().unwrap().n_alive, alive, "the recorded count stands for the deleted chunk too");
-        assert_eq!(counts(), c0 + 2);
+        assert_eq!(read(), (1, live), "a new state is counted");
+        assert_eq!(read(), (0, live), "the recorded count stands for the deleted chunk too");
         let _ = std::fs::remove_dir_all(&root);
     }
 
