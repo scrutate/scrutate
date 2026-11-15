@@ -1157,6 +1157,19 @@ thread_local! {
     /// The wait each of this thread's lock attempts was given: "cut" for a log cut, "begin" and
     /// "compact" for a write lock that must not wait.
     pub static LOCK_WAITS: std::cell::RefCell<Vec<(&'static str, Duration)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Set: the next update leaves its segments for a test to compact.
+    pub static NO_COMPACT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a test asked the next update to leave its segments uncompacted (`NO_COMPACT`).
+#[cfg(test)]
+fn skip_compact() -> bool {
+    NO_COMPACT.with(|c| c.replace(false))
+}
+
+#[cfg(not(test))]
+fn skip_compact() -> bool {
+    false
 }
 
 /// Whether this process has opened an index, the code index or the text index, so a panic may
@@ -2096,7 +2109,7 @@ impl Index {
                 f();
             }
             // the update is committed: a merge that fails leaves more segments, not a wrong index
-            match self.compact(wait) {
+            match if skip_compact() { Ok(true) } else { self.compact(wait) } {
                 Err(e) if error_is_corruption(&e) => return Err(e),
                 Err(e) => {
                     eprintln!("[scrutate] compaction failed ({e:#}); the update is saved, the next one merges again");
@@ -3550,6 +3563,40 @@ mod tests {
     #[test]
     fn a_content_hash_is_the_sha1_of_the_bytes_in_lowercase_hex() {
         assert_eq!(super::content_hash(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+    }
+
+    /// A compaction waits for another process's write lock as long as an update does, past the
+    /// limit `retry_busy` keeps (2 s in a test build, 30 s otherwise), and then merges.
+    #[test]
+    fn a_compaction_waits_for_a_writer_past_the_busy_limit() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_compact_wait_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        std::fs::write(root.join("b.py"), "def beta(x):\n    return x\n").unwrap();
+        super::NO_COMPACT.with(|c| c.set(true));
+        ix.update(false).unwrap();
+        assert_eq!(ix.segments().len(), 2, "two segments for the compaction to merge");
+        let db = root.join(".scrutate/index.db");
+        let (held, release) = (std::sync::mpsc::channel::<()>(), std::sync::mpsc::channel::<()>());
+        let writer = std::thread::spawn(move || {
+            let other = rusqlite::Connection::open(&db).unwrap();
+            other.execute_batch("BEGIN IMMEDIATE").unwrap();
+            held.0.send(()).unwrap();
+            let _ = release.1.recv_timeout(std::time::Duration::from_secs(3));
+            other.execute_batch("COMMIT").unwrap();
+        });
+        held.1.recv().unwrap();
+        let t = std::time::Instant::now();
+        ix.compact(true).unwrap();
+        assert!(t.elapsed() > super::BUSY, "the compaction waited for the writer: {:?}", t.elapsed());
+        assert_eq!(ix.segments().len(), 1, "and merged once it could");
+        drop(release.0);
+        writer.join().unwrap();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn checked_repo(name: &str) -> std::path::PathBuf {
