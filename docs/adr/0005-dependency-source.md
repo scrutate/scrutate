@@ -30,7 +30,11 @@ and `read_code` with `scope: "deps"`, answer from a dependency (`packages.rs`):
   directory is inside the root, and is refused when it is outside.
 - The package is copied once into the user cache, `deps/ECO/NAME@VERSION/src`, and indexed there
   once, with no vectors. The copy is made in a temporary directory and renamed into place, so another
-  process never reads half of one; a second repository at the same version reads the same copy.
+  process never reads half of one. A copy from the user's own stores (the cargo registry, the Go
+  module cache) is shared: a second repository at the same version reads it. A copy from a store
+  the repository holds (`node_modules`, `.venv`) is keyed by the repository too
+  (`NAME@VERSION+ROOT`, a hash of its canonical root), so what one repository installed is never
+  read for another.
   The repository's index is never touched.
 - Answers name the installed files, not the copy, so the agent can open them with its own tools.
 
@@ -58,12 +62,13 @@ The read boundary, which every rule below keeps:
 - An agent reads the API it calls at the version it runs, offline, with no hosted service.
 - The read boundary grows by exactly the packages the lockfiles name, in those four stores, at
   the locked versions ([Security](../SECURITY.md#dependency-source)).
-- A copy is keyed by name and version alone. A package edited in place after its copy was made
-  (a debug print in `node_modules`) is answered as it was copied, until the cache entry is
-  removed. Two repositories whose installs of the same version differ get the first one's copy.
+- A package edited in place after its copy was made (a debug print in `node_modules`) is
+  answered as it was copied, until the cache entry is removed. A repository cannot plant what
+  another is told its dependency says: its `node_modules` and `.venv` fill only its own entries,
+  and the shared stores are the user's, written by cargo and go.
 - The first call for a package pays for the copy and its index. A copy never changes once made,
   so it is indexed once and later calls read that index as it is, with no look at its files. A
-  second repository at the same version neither copies nor indexes: its call costs no more than
+  second repository at the same crate or module version neither copies nor indexes: its call costs no more than
   1.5 times a read of the cached copy as a repository of its own (`bench/deps_acceptance.py`,
   0.020 s against 0.017 s for serde 1.0.219 on the 32-core build box). A large package (TypeScript's compiler, an SDK of thousands of files) can be
   over the cap and is then not answered at all.

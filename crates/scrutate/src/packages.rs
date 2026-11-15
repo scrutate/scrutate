@@ -657,12 +657,20 @@ fn copy(l: &Locked, inst: &Installed, to: &Path, (max_files, max_bytes): (usize,
 
 /// The cached copy of `l` (its `src` directory), made on first use: copied into a temporary
 /// directory and renamed into place, so a reader never sees half a copy.
-fn cached(l: &Locked, inst: &Installed, caps: (usize, u64)) -> Result<PathBuf> {
+/// A copy from a store the repository holds (`node_modules`, `.venv`) is keyed by the repository
+/// too, so what one repository installed is never read for another; a copy from a user's store
+/// (the cargo registry, the Go module cache) is shared by every repository at that version.
+fn cached(l: &Locked, inst: &Installed, caps: (usize, u64), root: &Path) -> Result<PathBuf> {
     let eco = cache_dir()?.join("deps").join(l.eco.key());
+    let own = || {
+        let k = crate::tscache::hash(&[root.to_string_lossy().as_bytes()]);
+        k[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
     let key = match l.eco {
         Eco::Go => format!("{}@{}", go_escaped(&l.name).replace('/', "+"), go_escaped(&l.version)),
-        Eco::Python => format!("{}@{}", normalized(&l.name), l.version),
-        _ => format!("{}@{}", l.name.replace('/', "+"), l.version),
+        Eco::Cargo => format!("{}@{}", l.name, l.version),
+        Eco::Python => format!("{}@{}+{}", normalized(&l.name), l.version, own()),
+        Eco::Npm => format!("{}@{}+{}", l.name.replace('/', "+"), l.version, own()),
     };
     let entry = eco.join(key);
     if entry.join("done").is_file() {
@@ -788,7 +796,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
         }
         From::Store => {
             let inst = installed(&root, &l)?;
-            let src = cached(&l, &inst, (MAX_FILES, MAX_BYTES))?;
+            let src = cached(&l, &inst, (MAX_FILES, MAX_BYTES), &root)?;
             let mut repo = crate::Repo::open_with(&src, crate::models::ModelSet::none())?;
             // a copy never changes once made, so it is indexed once and never looked at again
             let indexed = src.with_file_name("indexed");
@@ -849,13 +857,13 @@ mod tests {
         let inst = Installed { base: dir.clone(), dir, files: None };
         let l = Locked { eco: Eco::Cargo, name: "p".into(), version: "1.0.0".into(), lockfile: "Cargo.lock", from: From::Store };
         std::env::set_var("SCRUTATE_CACHE_DIR", top.join("cache"));
-        let e = cached(&l, &inst, (4, 1 << 20)).unwrap_err().to_string();
+        let e = cached(&l, &inst, (4, 1 << 20), &top).unwrap_err().to_string();
         assert!(e.contains("cap of 4 files"), "{e}");
-        let e = cached(&l, &inst, (100, 20)).unwrap_err().to_string();
+        let e = cached(&l, &inst, (100, 20), &top).unwrap_err().to_string();
         assert!(e.contains("cap"), "{e}");
         // nothing half made is left to be taken for a copy
         assert_eq!(std::fs::read_dir(top.join("cache/deps/cargo")).unwrap().count(), 0);
-        let src = cached(&l, &inst, (5, 1 << 20)).unwrap();
+        let src = cached(&l, &inst, (5, 1 << 20), &top).unwrap();
         assert_eq!(std::fs::read_dir(src.join("src")).unwrap().count(), 5);
         std::env::remove_var("SCRUTATE_CACHE_DIR");
         let _ = std::fs::remove_dir_all(&top);

@@ -818,8 +818,11 @@ copied to `deps/ECO/NAME@VERSION/src` in the user cache (`SCRUTATE_CACHE_DIR`, e
 `$XDG_CACHE_HOME/scrutate`, `~/Library/Caches/scrutate` on macOS, `%LOCALAPPDATA%\scrutate` on
 Windows, `~/.cache/scrutate` elsewhere; directories of mode 0700), into a temporary directory
 renamed into place, and indexed there once, without vectors: later calls read that index as it
-is. Another repository that pins the same version reads the same copy, neither copying nor
-indexing it again: its call costs about what a read of the copy as a repository of its own costs. A copy holds at most 20,000 files and 256 MiB; a larger package is an
+is. A copy from the cargo registry or the Go module cache is shared: another repository that pins
+the same version reads it, neither copying nor indexing it again, and its call costs about what a
+read of the copy as a repository of its own costs. A copy from `node_modules` or `.venv` is the
+repository's own (`deps/ECO/NAME@VERSION+ROOT`, a hash of its root): another repository makes its
+own. A copy holds at most 20,000 files and 256 MiB; a larger package is an
 error and nothing of it is kept. The copy never follows a link out of the package: a linked file
 is copied only when it resolves inside it, a linked directory is skipped, and so are nested
 `node_modules`, `.git` and `.scrutate`. A name or version in a lockfile that is not one of its

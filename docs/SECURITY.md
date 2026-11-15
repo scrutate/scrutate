@@ -555,8 +555,11 @@ connects to a share a lockfile names. The package is copied to the user cache
 (`deps/` under `SCRUTATE_CACHE_DIR` or the platform's cache directory, mode 0700 on Unix): a
 linked file is copied only when it resolves inside the package, a linked directory is never
 followed, and a copy over 20,000 files or 256 MiB is refused with nothing kept. Its answers are
-redacted as the repository's are. A copy is keyed by name and version, so a package edited in
-place after it was copied is answered as it was ([ADR 0005](adr/0005-dependency-source.md)).
+redacted as the repository's are. A copy from a store the repository holds (`node_modules`,
+`.venv`) is keyed by that repository too, so what one repository installed is never read for
+another; only copies from the user's own stores (the cargo registry, the Go module cache) are
+shared. A package edited in place after it was copied is answered as it was
+([ADR 0005](adr/0005-dependency-source.md)).
 Tests: `tests/packages.rs` (`../../x` and the like as a name and a version in each lockfile, a
 link to a file outside the package and a package directory that is a link out of
 `node_modules`, path dependencies inside and outside), and a planted secret in a dependency in

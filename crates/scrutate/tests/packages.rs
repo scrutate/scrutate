@@ -135,6 +135,14 @@ fn toml_text(s: &str) -> String {
     s.replace('\\', "\\\\")
 }
 
+/// The copy of `pkg` (`name@version`) in the cache, under whatever repository key it has.
+#[cfg(unix)]
+fn copy_of(home: &Path, eco: &str, pkg: &str) -> PathBuf {
+    let dir = home.join("cache/deps").join(eco);
+    let found = fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).find(|p| p.file_name().unwrap().to_string_lossy().starts_with(pkg));
+    found.unwrap_or_else(|| panic!("no copy of {pkg} in {}", dir.display())).join("src")
+}
+
 fn write(p: &Path, text: &str) {
     fs::create_dir_all(p.parent().unwrap()).unwrap();
     fs::write(p, text).unwrap();
@@ -353,7 +361,7 @@ fn a_link_out_of_the_package_is_never_followed() {
     let (code, out, err) = t.run(&["symbol", "--deps", "evil.stolenKey"]);
     assert_ne!(code, 0, "{out}{err}");
     assert!(!out.contains("outside-the-package") && !out.contains("stolenKey"), "{out}");
-    let copy = t.home.join("cache/deps/npm/evil@1.0.0/src");
+    let copy = copy_of(&t.home, "npm", "evil@1.0.0");
     assert!(copy.join("index.js").exists() && copy.join("alias.js").is_file());
     assert!(!copy.join("key.js").exists() && !copy.join("ssh").exists());
     // a package directory that is itself a link out of node_modules is refused
@@ -469,7 +477,7 @@ fn a_site_packages_or_a_package_file_reached_through_a_link_is_never_read() {
     assert_eq!(code, 0, "{out}{err}");
     let (code, out, _) = t.run(&["symbol", "--deps", "--exact", "requests.stolen"]);
     assert_eq!(code, 1, "{out}");
-    let copy = t.home.join("cache/deps/python/requests@2.32.3/src/requests");
+    let copy = copy_of(&t.home, "python", "requests@2.32.3").join("requests");
     assert!(copy.join("api.py").is_file() && !copy.join("keys.py").exists() && !copy.join("more").exists() && !copy.join("borrowed.py").exists());
 }
 
@@ -534,4 +542,24 @@ fn a_path_dependency_that_names_a_drive_a_share_or_a_root_is_refused_by_its_text
         assert_eq!(code, 2, "{dir}: {out}{err}");
         assert!(err.contains("refused") && err.contains("a drive, a share or a root"), "{dir}: {err}");
     }
+}
+
+#[test]
+fn a_copy_from_a_repository_s_own_store_is_never_read_for_another_repository() {
+    let t = Tree::new("own_store");
+    t.npm_lock(r#""node_modules/left": {"version": "1.0.0"}"#);
+    t.npm("left", "1.0.0", "index.js", "function pad() {\n  return 'planted';\n}\n");
+    let (code, out, err) = t.run(&["read", "--deps", "--symbol", "left.pad"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("planted"), "{out}");
+    // another repository with the same package at the same version, as the registry has it
+    let other = t.home.parent().unwrap().join("other");
+    fs::create_dir_all(other.join(".git")).unwrap();
+    fs::copy(t.root.join("package-lock.json"), other.join("package-lock.json")).unwrap();
+    write(&other.join("node_modules/left/package.json"), "{\"name\": \"left\", \"version\": \"1.0.0\"}");
+    write(&other.join("node_modules/left/index.js"), "function pad() {\n  return 'real';\n}\n");
+    let (code, out, err) = t.run_in(&other, &["read", "--deps", "--symbol", "left.pad"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("real") && !out.contains("planted"), "{out}");
+    assert_eq!(fs::read_dir(t.home.join("cache/deps/npm")).unwrap().count(), 2);
 }
