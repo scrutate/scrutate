@@ -165,6 +165,10 @@ incompatible index by itself, and that is never breaking.
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- `grep --max-results N` with after-context (`-A`, `-C`) prints the context of the Nth match
+  before it stops, as `-m N` does, where it stopped at the match; a match inside that context
+  prints as a context line, so the output still holds N matches
+  ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep` prints a CRLF line with its `\r`, matched and context lines alike, in streamed, sorted
   (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
   dropped the `\r`; `--json` and MCP text still carry no line end

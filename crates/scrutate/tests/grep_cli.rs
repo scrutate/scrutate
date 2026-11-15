@@ -1741,3 +1741,17 @@ fn a_crlf_line_keeps_its_carriage_return_in_sorted_and_cut_output() {
     assert_eq!(raw(&["grep", "-n", "--sort", "-A1", "foo", "."]), b"./a.txt:1:foo one\r\n./a.txt-2-bar\r\n./a.txt:3:foo two\r\n");
     assert_eq!(raw(&["grep", "-n", "--max-bytes", "1000", "foo", "a.txt"]), b"1:foo one\r\n3:foo two\r\n");
 }
+
+/// `--max-results N -A M` prints the M lines after the Nth match before it stops, a match among
+/// them as context, so it stays N matches; sorted or not, the same lines.
+#[test]
+fn max_results_keeps_the_trailing_context_of_its_last_match() {
+    let d = Dir::new("maxresults_after");
+    d.write("a.txt", b"foo 1\nx\nfoo 2\nfoo 3\ny\nz\n");
+    for sort in [&[][..], &["--sort"][..]] {
+        let (_, out, _) = d.run(&[&["grep"][..], sort, &["--max-results", "3", "-A", "1", "foo", "a.txt"]].concat());
+        assert_eq!(out, "1:foo 1\n2-x\n3:foo 2\n4:foo 3\n5-y\n", "{sort:?}");
+        let (_, out, _) = d.run(&[&["grep"][..], sort, &["--max-results", "1", "-A", "2", "foo", "a.txt"]].concat());
+        assert_eq!(out, "1:foo 1\n2-x\n3-foo 2\n", "{sort:?}");
+    }
+}

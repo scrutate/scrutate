@@ -1553,6 +1553,10 @@ struct Collector<'a> {
     text_spans: bool,
     stats_matches: &'a AtomicU64,
     max_results: Option<u64>,
+    /// lines of after-context the query asks for
+    after: usize,
+    /// after the last match `max_results` allows: the after-context lines still to print
+    tail: Option<usize>,
     matched: bool,
     stop: &'a Stop,
     matcher: &'a AnyMatcher,
@@ -1695,6 +1699,10 @@ impl<'a> Sink for Collector<'a> {
     type Error = std::io::Error;
 
     fn matched(&mut self, _s: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, std::io::Error> {
+        if self.tail.is_some() {
+            // past the last match allowed: a match in its after-context is one more context line
+            return self.context_line(mat.bytes(), mat.line_number());
+        }
         let bytes = mat.bytes();
         if self.count_each {
             // as ripgrep counts: not an empty match at the end of a file with no line end
@@ -1710,29 +1718,7 @@ impl<'a> Sink for Collector<'a> {
     }
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
-        if self.convert && self.binary_at.is_some() {
-            // as ripgrep: a context line past a NUL byte ends the output, `finish` writes the note
-            return Ok(false);
-        }
-        let bytes = ctx.bytes();
-        let line = self.shown(bytes);
-        if self.plain.is_some() {
-            let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
-            let number = if self.numbered { ctx.line_number().unwrap_or(0) + self.line_base } else { 0 };
-            format_plain(&mut self.out, name, number, line, true);
-            return Ok(true);
-        }
-        let text = lossy(line);
-        let raw = raw_of(self.raw.as_deref(), self.raw_text(bytes, line, matches!(text, std::borrow::Cow::Owned(_))));
-        self.push(Record::Context(Line {
-            path: Arc::clone(&self.path),
-            raw,
-            line: ctx.line_number().unwrap_or(0) + self.line_base,
-            column: 0,
-            text: text.into_owned(),
-            spans: Vec::new(),
-        }));
-        Ok(true)
+        self.context_line(ctx.bytes(), ctx.line_number())
     }
 
     fn context_break(&mut self, _s: &Searcher) -> Result<bool, std::io::Error> {
@@ -1853,11 +1839,8 @@ impl Collector<'_> {
                 p.write(&self.out, std::mem::take(&mut self.first), self.stop);
                 self.out.clear();
             }
-            if let Some(max) = self.max_results {
-                if n >= max {
-                    self.stop.set();
-                    return Ok(false);
-                }
+            if self.max_results.is_some_and(|max| n >= max) {
+                return Ok(self.last_match());
             }
             return Ok(true);
         }
@@ -1877,13 +1860,52 @@ impl Collector<'_> {
         self.matched = true;
         let line = number.unwrap_or(0) + self.line_base;
         self.push(Record::Match(Line { path: Arc::clone(&self.path), raw, line, column, text, spans }));
-        if let Some(max) = self.max_results {
-            if n >= max {
-                self.stop.set();
-                return Ok(false);
-            }
+        if self.max_results.is_some_and(|max| n >= max) {
+            return Ok(self.last_match());
         }
         Ok(true)
+    }
+
+    /// The match `max_results` allows last is in: every search stops, and this one goes on for
+    /// its after-context alone.
+    fn last_match(&mut self) -> bool {
+        self.stop.set();
+        self.tail = (self.after > 0).then_some(self.after);
+        self.tail.is_some()
+    }
+
+    /// A context line, `number` the searcher's line number; in the tail after the last match
+    /// allowed, the search ends with the tail's last line.
+    fn context_line(&mut self, bytes: &[u8], number: Option<u64>) -> Result<bool, std::io::Error> {
+        if self.convert && self.binary_at.is_some() {
+            // as ripgrep: a context line past a NUL byte ends the output, `finish` writes the note
+            return Ok(false);
+        }
+        let more = match self.tail.as_mut() {
+            Some(left) => {
+                *left -= 1;
+                *left > 0
+            }
+            None => true,
+        };
+        let line = self.shown(bytes);
+        if self.plain.is_some() {
+            let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
+            let number = if self.numbered { number.unwrap_or(0) + self.line_base } else { 0 };
+            format_plain(&mut self.out, name, number, line, true);
+            return Ok(more);
+        }
+        let text = lossy(line);
+        let raw = raw_of(self.raw.as_deref(), self.raw_text(bytes, line, matches!(text, std::borrow::Cow::Owned(_))));
+        self.push(Record::Context(Line {
+            path: Arc::clone(&self.path),
+            raw,
+            line: number.unwrap_or(0) + self.line_base,
+            column: 0,
+            text: text.into_owned(),
+            spans: Vec::new(),
+        }));
+        Ok(more)
     }
 
     /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
@@ -2239,6 +2261,8 @@ impl<'a> Run<'a> {
             text_spans: o.text_spans,
             stats_matches: &self.c.matches,
             max_results: o.max_results,
+            after: o.after,
+            tail: None,
             matched: false,
             stop: self.stop,
             matcher: self.matcher,
@@ -3080,9 +3104,21 @@ fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit
     keyed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path().cmp(b.1.path())).then(a.1.order().cmp(&b.1.order())));
     let cap = n.unwrap_or(u64::MAX);
     let (mut left, mut files_matched, mut last) = (cap, 0u64, None::<Arc<str>>);
+    // the file and the last line of the after-context of the last match the cut takes
+    let mut tail: Option<(Arc<str>, u64)> = None;
     for (_, mut r) in keyed {
         if left == 0 {
-            break;
+            // that after-context, a match in it as context, so the answer keeps `n` matches
+            let Some((path, end)) = &tail else { break };
+            let (Record::Context(l) | Record::Match(l)) = &r else { break };
+            if l.path != *path || l.line > *end {
+                break;
+            }
+            if let Record::Match(l) = r {
+                r = Record::Context(Line { column: 0, spans: Vec::new(), ..l });
+            }
+            on_hit(r);
+            continue;
         }
         let take = match &mut r {
             Record::Match(_) | Record::File { .. } => 1,
@@ -3098,6 +3134,9 @@ fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit
                 files_matched += 1;
                 last = Some(Arc::clone(r.path()));
             }
+        }
+        if let (0, Record::Match(l)) = (left, &r) {
+            tail = (s.q.after > 0).then(|| (Arc::clone(&l.path), l.line + s.q.after as u64));
         }
         on_hit(r);
     }
