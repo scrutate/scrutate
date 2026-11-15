@@ -1096,6 +1096,19 @@ fn a_named_file_with_a_nul_byte_is_searched_as_ripgrep_searches_it() {
 }
 
 #[test]
+fn a_utf_16_file_whose_last_byte_has_no_pair_prints_its_u_fffd_whole() {
+    // ripgrep 15.2.0 reading this file (not mapping it) prints its U+FFFD cut to its first byte
+    // under -v -U with a pattern that can match a line break; scrutate prints it whole every way
+    let d = Dir::new("oddutf16");
+    d.write("dir2/A.TXT", b"\xff\xfe bad \r\n");
+    let want = "dir2/A.TXT:1:\u{6220}\u{6461}\u{0d20}\u{fffd}\n";
+    for args in [&["-v", "-U", "x\\ny"][..], &["-v", "-U", "x"], &["--sort", "-v", "-U", "x\\ny"], &["-v", "x"]] {
+        let (code, out, err) = d.run(&[&["grep", "-n"][..], args].concat());
+        assert_eq!((code, out.as_str()), (0, want), "{args:?} {err}");
+    }
+}
+
+#[test]
 fn a_context_group_a_nul_ends_keeps_its_separator_in_sorted_output() {
     // the next match's context lines start at the NUL: ripgrep prints the group's `--`, then stops
     let d = Dir::new("nulbreak");

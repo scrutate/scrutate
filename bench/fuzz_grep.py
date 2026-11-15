@@ -48,7 +48,7 @@ IGN = ["*.log", "sub/", "/a.txt", "!keep.log", "**/tmp", "*.tmp", "dir*/", "b?.t
 def line():
     return " ".join(rnd.choice(WORDS) for _ in range(rnd.randint(0, 5)))
 
-STATE = {"nul": set()}
+STATE = {"nul": set(), "odd16": set()}
 
 
 def make():
@@ -102,12 +102,24 @@ def make():
         except OSError:
             pass
     # by what is on disk: where case does not tell names apart, A.TXT and a.txt are one file
-    STATE["nul"] = set()
+    STATE["nul"], STATE["odd16"] = set(), set()
     for d, _, names in os.walk(WORK):
         for n in names:
             p = os.path.join(d, n)
-            if os.path.isfile(p) and b"\0" in open(p, "rb").read():
-                STATE["nul"].add(os.path.relpath(p, WORK))
+            if os.path.isfile(p):
+                data = open(p, "rb").read()
+                if b"\0" in data:
+                    STATE["nul"].add(os.path.relpath(p, WORK))
+                if odd_utf16(data):
+                    STATE["odd16"].add(os.path.relpath(p, WORK))
+
+
+def odd_utf16(data):
+    """UTF-16 behind its byte-order mark with a last byte that has no pair, which decodes to U+FFFD.
+    ripgrep reading such a file (not mapping it) under -v -U with a pattern that can match a line
+    break prints that U+FFFD cut to its first byte, `\xef`, a defect of its own; scrutate prints it
+    whole, as ripgrep does when it maps the file."""
+    return data[:2] in (b"\xff\xfe", b"\xfe\xff") and len(data) % 2 == 1
 
 def pattern():
     w = [x for x in WORDS if x and x.isalnum()]
@@ -200,7 +212,22 @@ def run(tool, a):
     out = p.stdout.decode("utf-8", "surrogateescape").split("\n")
     out = out[:-1] if out and out[-1] == "" else out
     lines = [l[2:] if l.startswith("./") else l for l in out]
+    if tool == "rg" and STATE["odd16"]:
+        lines = [mend(l, a) for l in lines]
     return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr
+
+def mend(l, a):
+    """`l`, a line ripgrep printed for `a`, with its cut U+FFFD read as the whole one where the line
+    is of a file `odd_utf16` marked. ripgrep 15.2.0's defect: remove this once a release prints
+    the whole U+FFFD for `rg --no-mmap -v -U 'x\\ny'` on FF FE ` bad \\r\\n`."""
+    global mended
+    named = [x for x in a if x in STATE["odd16"]]
+    own = any(l.startswith((f + ":", f + "-")) for f in STATE["odd16"]) or (named == a[-1:] and "-H" not in a)
+    if own and l.endswith("\udcef"):
+        mended += 1
+        return l[:-1] + "\ufffd"
+    return l
+
 
 def in_nul_file(l):
     return any(l == f or l.startswith((f + ":", f + "-")) for f in STATE["nul"])
@@ -210,7 +237,7 @@ def only(x, y):
     left.subtract(Counter(y))
     return [l for l, c in left.items() if c > 0]
 
-t0, n, compared, nonempty, diffs, known, kinds = time.time(), 0, 0, 0, 0, 0, {}
+t0, n, compared, nonempty, diffs, known, kinds, mended = time.time(), 0, 0, 0, 0, 0, {}, 0
 CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuzz_grep_cases.json")
 
 
@@ -220,7 +247,7 @@ def load(case):
     os.makedirs(WORK)
     for d in case["dirs"]:
         os.makedirs(os.path.join(WORK, d), exist_ok=True)
-    STATE["nul"] = set()
+    STATE["nul"], STATE["odd16"] = set(), set()
     for rel, b64 in case["files"].items():
         data = base64.b64decode(b64)
         os.makedirs(os.path.dirname(os.path.join(WORK, rel)) or WORK, exist_ok=True)
@@ -228,6 +255,8 @@ def load(case):
             f.write(data)
         if b"\0" in data:
             STATE["nul"].add(rel)
+        if odd_utf16(data):
+            STATE["odd16"].add(rel)
 
 
 def compare(a, label=None):
@@ -282,7 +311,7 @@ while time.time() - t0 < SECONDS:
         if "--sort" not in a:
             compare(["--sort", *a])
 shutil.rmtree(WORK, ignore_errors=True)
-print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
+print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte, {mended} lines of ripgrep's mended (`mend`)" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
 if not diffs:
     shutil.rmtree(HERE, ignore_errors=True)
 if not nonempty:
