@@ -540,7 +540,9 @@ packages the root's lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, `po
 `go.mod`) name, in four stores (`$CARGO_HOME/registry/src`, the root's `node_modules`, `.venv`'s
 `site-packages`, `$GOMODCACHE`), at the locked versions, and nothing more. A lockfile is
 untrusted: a name or version that is not one of its ecosystem's (a `/`, a `..`, a character
-outside letters, digits and `-._~+`) is refused by name. A store outside the repository (the cargo
+outside letters, digits and `-._~+`) is refused by name, and what an answer or an error shows of a
+lockfile has either passed that check or is escaped, so no control character of it reaches a
+terminal. A store outside the repository (the cargo
 registry, the Go module cache) is the user's: the directory built from a name is canonicalized and
 refused when it resolves outside it. A store inside the repository (`node_modules`, `.venv`'s
 `site-packages`) is read through no link: every directory from the root down to the package must

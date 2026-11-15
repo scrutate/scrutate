@@ -472,3 +472,55 @@ fn a_site_packages_or_a_package_file_reached_through_a_link_is_never_read() {
     let copy = t.home.join("cache/deps/python/requests@2.32.3/src/requests");
     assert!(copy.join("api.py").is_file() && !copy.join("keys.py").exists() && !copy.join("more").exists() && !copy.join("borrowed.py").exists());
 }
+
+#[test]
+fn lockfile_text_reaches_no_answer_or_error_unescaped() {
+    let (esc, bel) = ('\u{1b}', '\u{7}');
+    let raw = |out: &str, err: &str| out.contains(esc) || out.contains(bel) || err.contains(esc) || err.contains(bel);
+    let bad = r"1.0\u001b[2J\u0007";
+    let cases: Vec<(&str, &str, String, &str)> = vec![
+        (
+            "cargo",
+            "Cargo.lock",
+            format!("version = 4\n\n[[package]]\nname = \"ok\"\nversion = \"{bad}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"),
+            "ok::leak",
+        ),
+        ("npm", "package-lock.json", format!(r#"{{"lockfileVersion": 3, "packages": {{"node_modules/ok": {{"version": "{bad}"}}}}}}"#), "ok.leak"),
+        (
+            "uv",
+            "uv.lock",
+            format!("version = 1\n\n[[package]]\nname = \"ok\"\nversion = \"{bad}\"\nsource = {{ registry = \"https://pypi.org/simple\" }}\n"),
+            "ok.leak",
+        ),
+        ("poetry", "poetry.lock", format!("[[package]]\nname = \"ok\"\nversion = \"{bad}\"\n"), "ok.leak"),
+        ("go", "go.mod", format!("module m\n\nrequire example.com/ok v1.0.0{esc}[2J{bel}\n"), "ok.Leak"),
+        // a source this does not read, named by the lockfile
+        (
+            "uv-source",
+            "uv.lock",
+            format!("version = 1\n\n[[package]]\nname = \"ok\"\nversion = \"1.0.0\"\nsource = {{ \"{esc}]0;x{bel}\" = \"y\" }}\n"),
+            "ok.leak",
+        ),
+        // a path dependency whose directory holds them
+        (
+            "npm-link",
+            "package-lock.json",
+            r#"{"lockfileVersion": 3, "packages": {"node_modules/ok": {"resolved": "x\u001b[2J/\u0007", "link": true}}}"#.to_string(),
+            "ok.leak",
+        ),
+        // two modules a name could be, one named with escapes
+        (
+            "go-two",
+            "go.mod",
+            format!("module m\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tevil.example/{esc}[2J{esc}]0;PWNED{bel}/gin v1.0.0\n)\n"),
+            "gin.Default",
+        ),
+    ];
+    for (name, file, text, query) in cases {
+        let t = Tree::new(&format!("raw_{name}"));
+        t.write(file, &text);
+        let (code, out, err) = t.run(&["symbol", "--deps", query]);
+        assert_ne!(code, 0, "{name}: {out}{err}");
+        assert!(!raw(&out, &err), "{name}: {out:?} {err:?}");
+    }
+}

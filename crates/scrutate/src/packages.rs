@@ -440,13 +440,28 @@ fn split<'n>(root: &Path, name: &'n str) -> Result<(Locked, &'n str)> {
         let start = &name[..at];
         let hits: Vec<&Locked> = names.iter().filter(|(n, _)| n.iter().any(|n| n == start)).map(|(_, l)| *l).collect();
         let Some(first) = hits.first() else { continue };
+        let echo = crate::fmt::echo;
         if let Some(other) = hits.iter().find(|l| l.eco != first.eco || l.name != first.name) {
-            bail!("{start} names two packages, {} in {} and {} in {}: --deps cannot tell which", first.name, first.lockfile, other.name, other.lockfile);
+            bail!(
+                "{} names two packages, {} in {} and {} in {}: --deps cannot tell which",
+                echo(start),
+                echo(&first.name),
+                first.lockfile,
+                echo(&other.name),
+                other.lockfile
+            );
+        }
+        // what a lockfile names is shown and used only when it is one of its ecosystem's
+        if !valid_name(first.eco, &first.name) {
+            return Err(refused(first, "that is no package name"));
+        }
+        if !first.version.is_empty() && !valid_version(first.eco, &first.version) {
+            return Err(refused(first, "that is no version"));
         }
         let rest = &name[(at + len).min(name.len())..];
         if rest.is_empty() {
             let sep = if first.eco == Eco::Cargo { "::" } else { "." };
-            bail!("name a definition of {start}: {start}{sep}NAME (--deps takes PACKAGE.NAME)");
+            bail!("name a definition of {}: {}{sep}NAME (--deps takes PACKAGE.NAME)", echo(start), echo(start));
         }
         return Ok(((*first).clone(), rest));
     }
@@ -744,7 +759,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
     let root = std::fs::canonicalize(&s.ix.root).unwrap_or_else(|_| s.ix.root.clone());
     let (l, rest) = split(&root, name)?;
     match &l.from {
-        From::Other(how) => bail!("{} {} comes from {how}, which --deps does not read", l.name, l.version),
+        From::Other(how) => bail!("{} {} comes from {}, which --deps does not read", l.name, l.version, crate::fmt::echo(how)),
         From::Path(dir) => {
             let dir = dir.trim_start_matches("./").trim_end_matches('/');
             let full = std::fs::canonicalize(root.join(dir)).ok().filter(|d| d.starts_with(&root));
