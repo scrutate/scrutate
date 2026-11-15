@@ -230,6 +230,27 @@ fn the_program_dies_when_hook_run_is_killed() {
 }
 
 #[test]
+fn a_program_ends_its_answer_when_hook_run_holds_descriptors_past_1024() {
+    let r = Repo::new("many_fds");
+    r.write("a.txt", "foo\n");
+    // hook run starts with descriptors 3 to 1100 open, so its own pipes take numbers past them
+    let script =
+        format!("ulimit -n 2048 2>/dev/null || exit 0; for i in $(seq 3 1100); do eval \"exec $i</dev/null\"; done; exec {BIN} hook run -- grep foo a.txt");
+    let mut child = Command::new("bash").arg("-c").arg(&script).current_dir(&r.root).stdout(Stdio::piped()).spawn().unwrap();
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(20) {
+            let _ = child.kill();
+            panic!("hook run waited on a descriptor the watcher kept");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty() || String::from_utf8_lossy(&out.stdout).contains("foo"));
+}
+
+#[test]
 fn a_long_answer_stops_at_the_budget_and_a_piped_one_streams_whole() {
     if !has_rg() {
         return;

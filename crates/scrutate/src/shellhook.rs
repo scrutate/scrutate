@@ -464,6 +464,9 @@ fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
         fn getppid() -> i32;
         fn kill(pid: i32, sig: i32) -> i32;
         fn _exit(code: i32) -> !;
+        fn getrlimit(resource: i32, rlim: *mut [u64; 2]) -> i32;
+        #[cfg(target_os = "linux")]
+        fn syscall(n: i64, ...) -> i64;
     }
     const F_SETFD: i32 = 2;
     const FD_CLOEXEC: i32 = 1;
@@ -479,6 +482,15 @@ fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
         fcntl(fds[1], F_SETFD, FD_CLOEXEC);
     }
     let (r, w) = (fds[0], fds[1]);
+    // the highest descriptor number open files can have here, read before the fork
+    const RLIMIT_NOFILE: i32 = if cfg!(target_os = "linux") { 7 } else { 8 };
+    let mut lim = [0u64; 2];
+    // SAFETY: getrlimit fills the two words of an rlimit
+    let bound = if unsafe { getrlimit(RLIMIT_NOFILE, &mut lim) } == 0 { lim[0].min(1 << 20) as i32 } else { 1 << 16 };
+    // fork inside pre_exec is safe only while hook run has one thread at the spawn: glibc's fork
+    // takes the malloc and atfork locks, which a second thread could hold
+    #[cfg(target_os = "linux")]
+    debug_assert_eq!(std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(1), 1, "hook run spawns with one thread");
     // SAFETY: between fork and exec the closure calls only async-signal-safe functions
     unsafe {
         c.pre_exec(move || {
@@ -487,10 +499,20 @@ fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
                 0 => {
                     // no file but the pipe's read end, not even the program's output: its reader
                     // must see that end (the spawn's own pipes are still open here, no exec closes them)
-                    for fd in 0..1024 {
-                        if fd != r {
-                            close(fd);
+                    #[cfg(target_os = "linux")]
+                    {
+                        const SYS_CLOSE_RANGE: i64 = 436;
+                        let low = syscall(SYS_CLOSE_RANGE, 0u32, (r - 1) as u32, 0u32);
+                        let high = syscall(SYS_CLOSE_RANGE, (r + 1) as u32, u32::MAX, 0u32);
+                        if low != 0 || high != 0 {
+                            for fd in (0..bound.max(r + 1)).filter(|&fd| fd != r) {
+                                close(fd);
+                            }
                         }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    for fd in (0..bound.max(r + 1)).filter(|&fd| fd != r) {
+                        close(fd);
                     }
                     let mut b = 0u8;
                     while read(r, (&raw mut b).cast(), 1) > 0 {}
