@@ -613,6 +613,7 @@ fn impact_rewrites_no_index_and_runs_no_clean_filter() {
 
 /// git 2.44 and later can be told not to fetch an object it lacks: (major, minor) of the git on
 /// PATH.
+#[cfg(unix)]
 fn git_version() -> (u32, u32) {
     let out = Command::new("git").arg("--version").output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
