@@ -259,6 +259,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callees` of a function whose every callee is outside the repository no longer prints
+  `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
 - `review`'s comment puts a renamed file's old path in a code span, as every other path: a name
   such as `x<!--.py` hid the rest of the comment, and `@name` notified a user.
@@ -269,12 +271,12 @@ incompatible index by itself, and that is never breaking.
 - `impact` and `review` read the diff with git's plumbing (`diff-index`, `diff-tree`), which never
   writes `.git/index`, and with every filter driver emptied, so a touched file no longer has git
   rewrite the index (holding `index.lock` against your own `git add`) or run a clean filter such as
-  Git LFS's ([Security](docs/SECURITY.md#running-git)).
+  Git LFS's ([Security](docs/SECURITY.md#running-git)). `read --history` reads a file's uncommitted
+  edits the same way, and every git call goes through one builder that runs only commands that
+  read.
 - `impact` and `review` fetch nothing in a partial clone: a blob the base needs and the clone lacks
   is an error that says to fetch it first, where git fetched it from the remote, writing
   `.git/objects` and running the remote's upload program (git 2.44 and later).
-- `callees` of a function whose every callee is outside the repository no longer prints
-  `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - The language server names the files of its answers under the folder as the editor sent it, also
   when that folder is reached through a link (macOS `/tmp` and `/var/folders`, a linked `~/code`),
   where it named them under the resolved path and the editor opened a second tab of an open file

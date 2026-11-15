@@ -265,3 +265,23 @@ fn a_shallow_clone_marks_where_its_history_is_cut() {
     let text = t.ok(&["read", "--symbol", "g", "--history"]);
     assert!(text.contains("(history cut here: shallow clone)") && !text.contains(" edit f again"), "{text}");
 }
+
+/// A definition with uncommitted edits is looked up in HEAD's copy without git rewriting
+/// .git/index or running the clean filter the configuration names.
+#[test]
+fn a_history_lookup_rewrites_no_index_and_runs_no_clean_filter() {
+    let t = shaped("no_filter");
+    t.write(".gitattributes", "*.py filter=logged\n");
+    t.git(&["config", "filter.logged.clean", "sh -c 'echo ran >> .git/filter.log; cat'"]);
+    t.git(&["add", "-A"]);
+    t.git(&["commit", "-q", "-m", "filtered"]);
+    let log = t.root.join(".git/filter.log");
+    let _ = fs::remove_file(&log);
+    // a line added above g moves it, so the lookup reads the file's diff against HEAD
+    t.write("new.py", "# moved\ndef f(x):\n    return x + 2\n\n\ndef g(y):\n    return y * 2\n");
+    let index = fs::read(t.root.join(".git/index")).unwrap();
+    let v = t.json(&["read", "--symbol", "g", "--history"]);
+    assert!(v["definitions"][0]["history"].as_array().is_some_and(|h| !h.is_empty()), "{v}");
+    assert!(fs::read(t.root.join(".git/index")).unwrap() == index, ".git/index was rewritten");
+    assert!(!log.exists(), "the clean filter ran {} times", fs::read_to_string(&log).unwrap_or_default().lines().count());
+}

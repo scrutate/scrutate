@@ -817,11 +817,12 @@ modes and blob ids, the same with `-p -U0` for the changed lines of each side, `
 --others --exclude-standard` for untracked files, `git rev-parse` and `git merge-base` for the
 base commit, and one `git cat-file --batch` for the base copies (and, with `--staged`, the staged
 copies). `read --history` reads a definition's commits through it too: `git log -L
-start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first found there through `git diff
--U0 HEAD -- path` when the file has uncommitted edits (`Git::at_head`); in a shallow clone the
+start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first found there through `git
+diff-index -p -U0 HEAD -- path` when the file has uncommitted edits (`Git::at_head`); in a shallow clone the
 commits the history stops at (`Git::shallow_boundaries`) are marked as the cut, never as a change.
-The diff is plumbing, which never refreshes the index, and every filter driver the configuration
-names is emptied for it (`Git::no_filters`); every call passes `--no-optional-locks`,
+Every call goes through `Git::command`, the one place git starts (`tests/git_spawns.rs` holds the
+code to it): it runs only commands that read (`READS`; a diff is plumbing, which never refreshes
+the index), empties every filter driver the configuration names (`Git::no_filters`), and passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff`, `--no-textconv` and `GIT_NO_LAZY_FETCH=1` (no fetch in
 a partial clone), so git writes nothing and starts no helper of its own; a revision is checked
 before it is passed (none starts with `-`) and resolved to

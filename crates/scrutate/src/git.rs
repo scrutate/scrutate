@@ -33,15 +33,22 @@ pub(crate) struct Entry {
     pub(crate) new_lines: Vec<(i64, i64)>,
 }
 
-/// The `git` program run in the repository. Nothing it runs writes, or starts a program of the
-/// configuration's: no optional locks, no file system monitor, no external diff or text
-/// conversion, a diff that never refreshes the index (`diff-index`, `diff-tree`), no clean or
-/// process filter, and no fetch of an object a partial clone lacks. A revision is checked before it is passed, so it never reaches git as an
-/// option.
+/// The `git` program run in the repository, every call through `command`. Nothing it runs
+/// writes, or starts a program of the configuration's: no optional locks, no file system monitor,
+/// no external diff or text conversion, only commands that read (a diff by `diff-index` or
+/// `diff-tree`, which never refresh the index), no clean or process filter, and no fetch of an
+/// object a partial clone lacks. A revision is checked before it is passed, so it never reaches
+/// git as an option.
 pub(crate) struct Git {
     dir: PathBuf,
     env: Env,
+    /// `no_filters`, read once
+    filters: std::sync::OnceLock<Vec<String>>,
 }
+
+/// The git commands `Git` runs: each only reads. A porcelain `diff` or `status` refreshes the
+/// index and writes it back.
+const READS: [&str; 9] = ["--version", "rev-parse", "merge-base", "config", "ls-files", "cat-file", "diff-index", "diff-tree", "log"];
 
 /// What git gets of the environment.
 enum Env {
@@ -99,7 +106,7 @@ impl Git {
     }
 
     fn overriding(root: &Path, set: Vec<(String, String)>) -> Result<Git> {
-        Git::checked(Git { dir: plain_dir(root), env: Env::Own(set) }, root)
+        Git::checked(Git { dir: plain_dir(root), env: Env::Own(set), filters: Default::default() }, root)
     }
 
     /// As `new`, with git given these of `PASSED_ENV` and no GIT_* variable of this process; any
@@ -109,11 +116,11 @@ impl Git {
         if let Some((name, _)) = env.iter().find(|(name, _)| !PASSED_ENV.contains(&name.as_str())) {
             bail!("{} cannot be handed to git: only {} can", echo(name), PASSED_ENV.join(", "));
         }
-        Git::checked(Git { dir: plain_dir(root), env: Env::Given(env.to_vec()) }, root)
+        Git::checked(Git { dir: plain_dir(root), env: Env::Given(env.to_vec()), filters: Default::default() }, root)
     }
 
     fn checked(git: Git, root: &Path) -> Result<Git> {
-        let out = git.command(&["rev-parse", "--is-inside-work-tree"]).output().map_err(not_run)?;
+        let out = git.command(&["rev-parse", "--is-inside-work-tree"])?.output().map_err(not_run)?;
         if !out.status.success() || out.stdout.trim_ascii() != b"true" {
             let why = first_line(&out.stderr);
             if why.is_empty() || why.contains("not a git repository") {
@@ -124,7 +131,27 @@ impl Git {
         Ok(git)
     }
 
-    fn command(&self, args: &[&str]) -> Command {
+    /// The one way git starts (`tests/git_spawns.rs` keeps it so): a command of `READS`, with
+    /// every filter driver emptied, on the contract of `raw`.
+    fn command(&self, args: &[&str]) -> Result<Command> {
+        let verb = verb(args);
+        if !READS.contains(&verb) {
+            bail!("git {verb} is no command scrutate runs: it may write the repository");
+        }
+        let filters = match self.filters.get() {
+            Some(f) => f,
+            None => {
+                let f = self.no_filters()?;
+                self.filters.get_or_init(|| f)
+            }
+        };
+        let all: Vec<&str> = filters.iter().map(String::as_str).chain(args.iter().copied()).collect();
+        Ok(self.raw(&all))
+    }
+
+    /// git with `args`: no optional locks, no file system monitor, no fetch, and the environment
+    /// `env` gives. Only `command`, and `no_filters` under it, call this.
+    fn raw(&self, args: &[&str]) -> Command {
         let mut c = Command::new("git");
         c.current_dir(&self.dir).args(["--no-optional-locks", "-c", "core.fsmonitor=false"]).args(args).stdin(Stdio::null());
         match &self.env {
@@ -152,7 +179,7 @@ impl Git {
 
     /// (exited with 0, standard output, standard error)
     fn output(&self, args: &[&str]) -> Result<(bool, Vec<u8>, String)> {
-        let out = self.command(args).output().map_err(not_run)?;
+        let out = self.command(args)?.output().map_err(not_run)?;
         Ok((out.status.success(), out.stdout, first_line(&out.stderr)))
     }
 
@@ -192,7 +219,7 @@ impl Git {
     /// The files that differ from `base`, with their changed lines, and the untracked files.
     pub(crate) fn diff(&self, base: &str, new: &New) -> Result<Vec<Entry>> {
         // plumbing, which never refreshes the index and so never writes it back
-        let mut common = self.no_filters()?;
+        let mut common: Vec<String> = Vec::new();
         common.push(if matches!(new, New::Commit(_)) { "diff-tree" } else { "diff-index" }.to_string());
         common.extend(["-r", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-M", "--src-prefix=a/", "--dst-prefix=b/"].map(String::from));
         let with = |more: &[&str]| -> Vec<String> {
@@ -304,7 +331,7 @@ impl Git {
                 let _ = self.0.wait();
             }
         }
-        let mut child = Reap(self.command(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(not_run)?);
+        let mut child = Reap(self.command(args)?.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(not_run)?);
         let mut stdout = child.0.stdout.take().ok_or_else(|| anyhow!("git: no output"))?;
         let mut stderr = child.0.stderr.take().ok_or_else(|| anyhow!("git: no error output"))?;
         let reader = std::thread::spawn(move || {
@@ -339,7 +366,8 @@ impl Git {
         if !self.output(&["cat-file", "-e", &format!("HEAD:./{path}")])?.0 {
             return Ok(AtHead::Absent);
         }
-        let patch = self.run(&["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-U0", "HEAD", "--", &path])?;
+        let patch =
+            self.run(&["--literal-pathspecs", "diff-index", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-U0", "HEAD", "--", &path])?;
         let mut shift = 0;
         for (old_count, new_start, new_count) in hunks(&patch) {
             // with no new lines, the hunk takes lines out between new_start and the line after it
@@ -362,7 +390,7 @@ impl Git {
     /// the working tree runs no clean or process filter (git-lfs's among them). A file such a
     /// filter would turn back into its committed text is compared as it is on disk.
     fn no_filters(&self) -> Result<Vec<String>> {
-        let (_, out, _) = self.output(&["config", "-z", "--get-regexp", r"^filter\."])?;
+        let out = self.raw(&["config", "-z", "--get-regexp", r"^filter\."]).output().map_err(not_run)?.stdout;
         let mut names = BTreeSet::new();
         for entry in out.split(|&b| b == 0) {
             let key = String::from_utf8_lossy(entry.split(|&b| b == b'\n').next().unwrap_or_default()).into_owned();
@@ -390,7 +418,7 @@ impl Git {
         if ids.is_empty() {
             return Ok(out);
         }
-        let mut child = self.command(&["cat-file", "--batch"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(not_run)?;
+        let mut child = self.command(&["cat-file", "--batch"])?.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(not_run)?;
         let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("git cat-file: no input"))?;
         let asked: String = ids.iter().map(|id| format!("{id}\n")).collect();
         // written beside the read, so a full pipe on either side does not stop both
@@ -609,13 +637,17 @@ fn not_run(e: std::io::Error) -> anyhow::Error {
     }
 }
 
-/// The git command `args` run, past the `-c` options in front of it.
+/// The git command `args` run, past the options in front of it (`-c` and its setting,
+/// `--literal-pathspecs`); `--version` is one.
 fn verb<'a>(args: &[&'a str]) -> &'a str {
     let mut i = 0;
-    while args.get(i) == Some(&"-c") {
-        i += 2;
+    loop {
+        match args.get(i).copied() {
+            Some("-c") => i += 2,
+            Some(a) if a.starts_with("--") && a != "--version" => i += 1,
+            other => return other.unwrap_or_default(),
+        }
     }
-    args.get(i).copied().unwrap_or_default()
 }
 
 fn first_line(b: &[u8]) -> String {
@@ -811,8 +843,12 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         repo(&root);
         let dir = root.join(".git");
         let git = Git::with_env(&root, &env(&[("GIT_DIR", &dir)])).unwrap();
-        let got: BTreeMap<String, Option<String>> =
-            git.command(&["status"]).get_envs().map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()))).collect();
+        let got: BTreeMap<String, Option<String>> = git
+            .command(&["rev-parse"])
+            .unwrap()
+            .get_envs()
+            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned())))
+            .collect();
         let own = std::env::vars().map(|(n, _)| n).filter(|n| n.to_ascii_uppercase().starts_with("GIT_"));
         let mut want: BTreeMap<String, Option<String>> = SIX.iter().map(|n| n.to_string()).chain(own).map(|n| (n, None)).collect();
         want.insert("GIT_DIR".into(), Some(dir.to_string_lossy().into_owned()));
@@ -820,13 +856,28 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         assert_eq!(got, want);
         let own: BTreeMap<String, Option<String>> = Git::new(&root)
             .unwrap()
-            .command(&["status"])
+            .command(&["rev-parse"])
+            .unwrap()
             .get_envs()
             .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned())))
             .collect();
         let mut want: BTreeMap<String, Option<String>> = own_env().into_iter().map(|(n, v)| (n, Some(v))).collect();
         want.insert("GIT_NO_LAZY_FETCH".into(), Some("1".into()));
         assert_eq!(own, want);
+    }
+
+    #[test]
+    fn git_runs_only_commands_that_read() {
+        let root = scratch("reads");
+        repo(&root);
+        let git = Git::new(&root).unwrap();
+        for args in [&["diff", "HEAD"][..], &["status"], &["-c", "a.b=c", "diff"], &["--literal-pathspecs", "add", "x"], &["commit"]] {
+            let e = git.command(args).err().unwrap_or_else(|| panic!("{args:?} ran")).to_string();
+            assert!(e.contains("is no command scrutate runs"), "{e}");
+        }
+        for args in [&["--version"][..], &["--literal-pathspecs", "log", "-1"], &["diff-index", "HEAD"], &["config", "--list"]] {
+            assert!(git.command(args).is_ok(), "{args:?}");
+        }
     }
 
     #[test]

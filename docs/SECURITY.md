@@ -73,12 +73,14 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 `impact` and `review` run the `git` program found on `PATH` (on Windows the current directory is
 not searched first) in the root: `rev-parse`, `merge-base`, `config --get-regexp`, `diff-index`
 (`diff-tree` between two commits; raw and `-U0`), `ls-files --others` and one `cat-file --batch`.
-`read --history` runs `--version`, `rev-parse --is-shallow-repository` (and in a shallow clone
-`rev-parse --git-path shallow`, whose file of commit ids it reads), `cat-file -e`, `diff -U0 HEAD`
-with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of an indexed
+`read --history` runs `--version`, `config --get-regexp`, `rev-parse --is-shallow-repository` (and in a shallow clone
+`rev-parse --git-path shallow`, whose file of commit ids it reads), `cat-file -e`, `diff-index -p
+-U0 HEAD` with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of an indexed
 file, never a path the caller writes: inside `-L start,end:path`, `HEAD:./path` and after `--`, a
 path that starts with `-` or holds a colon reads as a path. Nothing in the repository names this
-program or its arguments. Every call only reads: `--no-optional-locks` (git writes no index file),
+program or its arguments. Every call goes through one builder, `Git::command`, which runs only
+these commands and refuses any other (`tests/git_spawns.rs` fails on a git started anywhere else),
+and every call only reads: `--no-optional-locks` (git writes no index file),
 the diff by plumbing that never refreshes the index (`git diff` writes `.git/index` back when a
 file's stat changed, holding `index.lock` against your own `git add` meanwhile), `-c
 core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and `--no-textconv` (no
