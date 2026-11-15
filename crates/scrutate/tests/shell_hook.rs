@@ -80,7 +80,6 @@ fn by_file(out: &str) -> BTreeMap<String, Vec<String>> {
 #[test]
 fn a_rewritten_search_prints_what_ripgrep_prints() {
     if !have_rg() {
-        eprintln!("skipped: no rg on PATH");
         return;
     }
     let r = Repo::new("parity");
@@ -411,7 +410,6 @@ fn hook_run_by_hand_runs_only_a_read_only_rg_grep_or_find() {
 #[test]
 fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
     if !have_rg() {
-        eprintln!("skipped: no rg on PATH");
         return;
     }
     let r = Repo::new("corpus");

@@ -47,8 +47,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
-      # the tests that compare with ripgrep (the Grep and shell hooks, grep_cli) run on every runner;
-      # SCRUTATE_TEST_NEEDS_RG fails them if rg is missing instead of skipping
+      # the tests that run or compare with ripgrep (the Grep and shell hooks, grep_cli, secrets) run on
+      # every runner; SCRUTATE_TEST_NEEDS_RG fails them if rg is missing instead of skipping
       - name: ripgrep 15.2.0 for the tests that compare with it
         run: bash tools/ci_ripgrep.sh
       # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
