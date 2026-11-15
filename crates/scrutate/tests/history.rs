@@ -301,6 +301,19 @@ fn a_partial_clone_gives_the_history_note_impact_gives() {
     assert!(!marker.exists(), "the history fetched from the remote: {v}");
     let note = v["definitions"][0]["history_note"].as_str().unwrap_or_else(|| panic!("{v}"));
     assert_eq!(note, "this partial clone lacks objects that git log needs: fetch them first (`git fetch`, or `git backfill`)", "{v}");
+    // the promisor mark read as git reads a boolean: `no` makes it no partial clone, and a bare
+    // key is true
+    let note = |t: &Tree| t.json(&["read", "--symbol", "f", "--history"])["definitions"][0]["history_note"].as_str().unwrap_or_default().to_string();
+    // a git that also names the promisor remote in extensions.partialClone would still read a clone
+    let _ = Command::new("git").args(["config", "--unset-all", "extensions.partialclone"]).current_dir(&t.root).envs(GIT_ENV).status();
+    t.git(&["config", "remote.origin.promisor", "no"]);
+    assert_eq!(note(&t), "git could not follow these lines");
+    let config = t.root.join(".git/config");
+    let text = fs::read_to_string(&config).unwrap();
+    assert!(text.contains("\tpromisor = no\n"), "{text}");
+    fs::write(&config, text.replace("\tpromisor = no\n", "\tpromisor\n")).unwrap();
+    assert!(note(&t).starts_with("this partial clone lacks objects that git log needs"), "a bare promisor key");
+    assert!(!marker.exists(), "the history fetched from the remote");
 }
 
 /// A definition with uncommitted edits is looked up in HEAD's copy without git rewriting

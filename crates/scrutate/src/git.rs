@@ -399,10 +399,13 @@ impl Git {
 
     /// Whether this repository is a partial clone, which may lack objects by design.
     fn partial_clone(&self) -> bool {
-        // older git names the promisor remote in extensions.partialClone, newer only marks the remote
-        self.output(&["config", "--get-regexp", r"^(extensions\.partialclone|remote\..*\.promisor)$"]).is_ok_and(|(ok, out, _)| {
-            ok && String::from_utf8_lossy(&out).lines().any(|l| l.split_once(' ').is_some_and(|(_, v)| !v.eq_ignore_ascii_case("false")))
-        })
+        let any_set = |args: &[&str]| {
+            self.output(args)
+                .is_ok_and(|(ok, out, _)| ok && String::from_utf8_lossy(&out).lines().any(|l| l.split_once(' ').is_some_and(|(_, v)| v != "false")))
+        };
+        // older git names the promisor remote in extensions.partialClone, newer only marks the
+        // remote; that mark is a boolean as git reads one (`no`, a bare key)
+        any_set(&["config", "--get-regexp", r"^extensions\.partialclone$"]) || any_set(&["config", "--type=bool", "--get-regexp", r"^remote\..*\.promisor$"])
     }
 
     /// git with `args`, stopped once it has run for `limit`: its output so far, its exit status
