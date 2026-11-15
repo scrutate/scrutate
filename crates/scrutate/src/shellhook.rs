@@ -859,27 +859,32 @@ fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
     }
 }
 
-/// On Windows: the child is in a job that ends with `hook run`'s last handle to it.
+/// On Windows: `hook run` itself, or `child` when given, goes into a job that ends with `hook
+/// run`'s last handle to it; a program started after `hook run` went in is in the job from its
+/// first instruction. -> the job, when the process went in.
 #[cfg(windows)]
-fn die_with_us_windows(child: &std::process::Child) {
+fn die_with_us_windows(child: Option<&std::process::Child>) -> Option<*mut std::ffi::c_void> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    // SAFETY: a job this function makes, given the child's own handle; the job's handle is kept
-    // to the end of the process, which closes it
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: a job this function makes, given this process's pseudo handle or the child's own
+    // handle; the job's handle is kept to the end of the process, which closes it
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job.is_null() {
-            return;
+            return None;
         }
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
-        if SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info as *const _ as *const std::ffi::c_void, size) != 0 {
-            AssignProcessToJobObject(job, child.as_raw_handle() as _);
+        if SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info as *const _ as *const std::ffi::c_void, size) == 0 {
+            return None;
         }
+        let process = child.map_or_else(|| GetCurrentProcess(), |c| c.as_raw_handle() as _);
+        (AssignProcessToJobObject(job, process) != 0).then_some(job)
     }
 }
 
@@ -1078,6 +1083,8 @@ pub fn run_main(args: &[String]) -> i32 {
     };
     #[cfg(unix)]
     let mut pipe = die_with_us(&mut c);
+    #[cfg(windows)]
+    let in_job = die_with_us_windows(None).is_some();
     let child = match c.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -1091,8 +1098,11 @@ pub fn run_main(args: &[String]) -> i32 {
         drop(r);
         w
     });
+    // a job that refuses this process (one it is in already may) still takes the child
     #[cfg(windows)]
-    die_with_us_windows(&child);
+    if !in_job {
+        die_with_us_windows(Some(&child));
+    }
     let budget = std::env::var("SCRUTATE_MAX_BYTES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(crate::ops::AGENT_BYTES, |n| n.clamp(1_000, 1_000_000));
     let (code, read, sent) = stream(child, (!piped).then_some(budget), &index);
     let _ = crate::hook::count_bash(&session, read, sent);
@@ -1102,6 +1112,34 @@ pub fn run_main(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_a_program_hook_run_starts_is_in_its_job_before_its_first_instruction() {
+        const NAME: &str = "shellhook::tests::on_windows_a_program_hook_run_starts_is_in_its_job_before_its_first_instruction";
+        // the job takes this whole process, so the check runs in a process of its own
+        if std::env::var_os("SCRUTATE_TEST_JOB").is_none() {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--test-threads=1"])
+                .env("SCRUTATE_TEST_JOB", "1")
+                .output()
+                .unwrap();
+            let said = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+            return;
+        }
+        use std::os::windows::{io::AsRawHandle, process::CommandExt};
+        use windows_sys::Win32::System::{JobObjects::IsProcessInJob, Threading::CREATE_SUSPENDED};
+        let job = die_with_us_windows(None).expect("hook run goes into a job");
+        // started suspended: the program has run no instruction yet
+        let mut child = std::process::Command::new("cmd").args(["/c", "exit"]).creation_flags(CREATE_SUSPENDED).spawn().unwrap();
+        let mut inside = 0;
+        // SAFETY: the child's own handle and the job's, both open
+        let asked = unsafe { IsProcessInJob(child.as_raw_handle() as _, job, &mut inside) };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(asked != 0 && inside != 0, "the program started outside hook run's job");
+    }
 
     fn w(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()

@@ -524,10 +524,13 @@ on Unix).
     parent, so after a normal finish it kills nothing. The two descriptors it made are then taken
     into `File`s once each. On Windows: `CreateJobObjectW`, `SetInformationJobObject` with a
     zeroed `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` whose size it passes and
-    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and `AssignProcessToJobObject` with the child's own
-    handle; the job's handle stays open until the process ends. Limit: the child runs for a moment
-    before it is in the job, and the assignment's result is not checked, so if `hook run` dies in
-    that moment, or the assignment fails, the program outlives it;
+    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and `AssignProcessToJobObject` with `hook run`'s own
+    pseudo handle from `GetCurrentProcess` before it starts the program, so the program is in the
+    job from its first instruction; the job's handle stays open until the process ends. When
+    any of these fails (a job `hook run` is in already may refuse it), a second job takes the
+    child's own handle once it started. Limit: in that case only, the child runs for a moment
+    before it is in the job, and if `hook run` dies in that moment, or this assignment fails too,
+    the program outlives it. A Windows test asks `IsProcessInJob` of a program it started suspended;
   - `index.rs` (Windows): the status change time of a file, from `GetFileInformationByName`
     (looked up once with `LoadLibraryW` of the API set `api-ms-win-core-file-l2-1-4` and
     `GetProcAddress`, then transmuted to the signature winbase.h declares, as CPython does) with a
@@ -605,7 +608,7 @@ on Unix).
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
   | `crates/scrutate/src/session.rs` | 5 |
-  | `crates/scrutate/src/shellhook.rs` | 4 |
+  | `crates/scrutate/src/shellhook.rs` | 5 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 25 |

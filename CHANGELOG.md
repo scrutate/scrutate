@@ -308,6 +308,9 @@ incompatible index by itself, and that is never breaking.
 - An idle `serve` or `lsp` lets go of the index segments another process
   replaced within 5 s, where it kept the deleted files mapped, their disk space held, until its
   next call.
+- On Windows `hook run` goes into its job before it starts the program, so the program is in the
+  job from its first instruction and cannot outlive `hook run` killed in the moment after the
+  start; the child is put in a job after its start only when `hook run` cannot go in itself.
 - `tsquery --rewrite --write` leaves alone, and names, a file reached through a link to a
   directory of the root (`dl/b.py`, or `dl` named, with `dl` a link to `real`), where it wrote the
   file the link leads to; a link was already left alone only as the file itself
