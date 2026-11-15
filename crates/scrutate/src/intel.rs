@@ -295,12 +295,17 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
         let (x, y) = (&place[&a], &place[&b]);
         x.0 == y.0 && x.2 <= y.3 && y.2 <= x.3
     };
+    // by path and line, never by chunk id, which follows the index's history
+    let by_place = |a: &usize, b: &usize| {
+        let (x, y) = (&place[a], &place[b]);
+        (&x.0, x.2, x.3, &x.1).cmp(&(&y.0, y.2, y.3, &y.1))
+    };
 
     let mut out: Vec<DupGroup> = Vec::new();
     let mut in_exact: HashMap<usize, u64> = HashMap::new();
     for (&key, members) in exact.iter().filter(|(_, m)| m.len() > 1) {
         let mut ms: Vec<usize> = members.clone();
-        ms.sort();
+        ms.sort_by(by_place);
         ms.dedup_by(|b, a| overlap(*a, *b));
         if ms.len() < 2 {
             continue;
@@ -310,7 +315,7 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
     }
     for members in same_words.values().filter(|m| near_on && m.len() > 1) {
         let mut ms: Vec<usize> = members.clone();
-        ms.sort();
+        ms.sort_by(by_place);
         ms.dedup_by(|b, a| overlap(*a, *b));
         if ms.len() < 2 || ms.iter().all(|i| in_exact.contains_key(i) && in_exact.get(i) == in_exact.get(&ms[0])) {
             continue;
@@ -347,9 +352,10 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
             }
         }
     }
-    near.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    for (jac, i, j) in near.into_iter().take(limit) {
+    // every pair goes to the one sort below, so `limit` cuts them in the answer's order
+    for (jac, i, j) in near {
         let tokens = (rows[i].1.ntok as usize).min(rows[j].1.ntok as usize);
+        let (i, j) = if by_place(&i, &j).is_le() { (i, j) } else { (j, i) };
         out.push(DupGroup { kind: "near", similarity: jac, tokens, members: vec![member(i), member(j)] });
     }
     // members last: the exact groups come from a hash map, and a cut must not depend on its order
@@ -402,11 +408,12 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
         }
         sets.push(sh);
     }
+    let by_place = |a: &usize, b: &usize| (&rows[*a].1, rows[*a].3, rows[*a].4, &rows[*a].2).cmp(&(&rows[*b].1, rows[*b].3, rows[*b].4, &rows[*b].2));
     let mut out: Vec<DupGroup> = Vec::new();
     let mut in_exact: HashMap<usize, u64> = HashMap::new();
     for (&key, members) in exact.iter().filter(|(_, m)| m.len() > 1) {
         let mut ms: Vec<usize> = members.clone();
-        ms.sort();
+        ms.sort_by(by_place);
         ms.dedup_by(|b, a| rows[*a].1 == rows[*b].1 && rows[*a].3 <= rows[*b].4 && rows[*b].3 <= rows[*a].4);
         if ms.len() < 2 {
             continue;
@@ -422,7 +429,7 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
     // a threshold of 1 asks for exact duplicates only
     for members in same_words.values().filter(|m| threshold < 1.0 && m.len() > 1) {
         let mut ms: Vec<usize> = members.clone();
-        ms.sort();
+        ms.sort_by(by_place);
         ms.dedup_by(|b, a| rows[*a].1 == rows[*b].1 && rows[*a].3 <= rows[*b].4 && rows[*b].3 <= rows[*a].4);
         // one text for all of them is the exact group above
         if ms.len() < 2 || ms.iter().all(|i| in_exact.contains_key(i) && in_exact.get(i) == in_exact.get(&ms[0])) {
@@ -457,8 +464,8 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
             }
         }
     }
-    near.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    for (jac, i, j) in near.into_iter().take(limit) {
+    for (jac, i, j) in near {
+        let (i, j) = if by_place(&i, &j).is_le() { (i, j) } else { (j, i) };
         out.push(DupGroup {
             kind: "near",
             similarity: jac,

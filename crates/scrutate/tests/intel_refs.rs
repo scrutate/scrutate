@@ -2194,3 +2194,48 @@ fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override
         assert_eq!(ref_lines(&r, "size", &at(7)), [at(11), at(16), at(7)], "{ext}");
     }
 }
+
+/// The paths of each group `dupes --json` gives, in its order.
+fn dupe_paths(r: &Repo, args: &[&str]) -> Vec<Vec<String>> {
+    let (code, out, err) = r.exec(&[&["dupes", "--json"], args].concat());
+    assert!(code == 0, "{out}{err}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    v["result"].as_array().unwrap().iter().map(|g| g["members"].as_array().unwrap().iter().map(|m| m[0].as_str().unwrap().to_string()).collect()).collect()
+}
+
+/// An index brought up to date answers as a fresh one of the same tree: a group lists its members
+/// by path and line, whichever file the index read first.
+#[test]
+fn dupes_list_members_by_path_whatever_order_the_index_grew_in() {
+    let body = |name: &str| {
+        format!(
+            "def {name}(items):\n    total = 0\n    for item in items:\n        if item.value > 100 and item.flag and item.ready:\n            total = total + item.value\n        else:\n            total = total + 1\n    return total\n"
+        )
+    };
+    let r = Repo::new("dupes_grown", &[("b.py", &body("second"))]);
+    fs::write(r.root.join("a.py"), body("first")).unwrap();
+    r.index();
+    assert_eq!(dupe_paths(&r, &["--min-tokens", "10"]), [["a.py", "b.py"]]);
+}
+
+/// A near pair with more tokens comes first, and `--limit` cuts the list in that order: a pair
+/// more alike but shorter does not push it out.
+#[test]
+fn dupes_cut_near_pairs_after_ordering_them() {
+    let body = |name: &str, lines: usize, changed: &[usize]| {
+        let rows: String =
+            (0..lines).map(|k| format!("    total = total + {}_{name}_{k}(item)\n", if changed.contains(&k) { "other" } else { "step" })).collect();
+        format!("def {name}(item):\n    total = 0\n{rows}    return total\n")
+    };
+    let r = Repo::new(
+        "dupes_cut",
+        &[
+            ("p1a.py", &body("short", 20, &[])),
+            ("p1b.py", &body("short", 20, &[9]).replace("def short", "def short_copy")),
+            ("p2a.py", &body("long", 60, &[])),
+            ("p2b.py", &body("long", 60, &[3, 10, 17, 24, 31, 38, 45, 52]).replace("def long", "def long_copy")),
+        ],
+    );
+    assert_eq!(dupe_paths(&r, &["--threshold", "0.75"]), [["p2a.py", "p2b.py"], ["p1a.py", "p1b.py"]]);
+    assert_eq!(dupe_paths(&r, &["--threshold", "0.75", "--limit", "1"]), [["p2a.py", "p2b.py"]]);
+}
