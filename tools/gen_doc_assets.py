@@ -1260,6 +1260,22 @@ def check_content_revision(problems):
                                 f"crates/scrutate/src/index.rs declares CONTENT_REVISION = {code}")
 
 
+def platform_problems(install, readiness):
+    """RELEASE_READINESS.md's verdict names every platform INSTALL.md marks supported: the verdict
+    once kept three after INSTALL.md had six."""
+    rows = re.findall(r"^\| ([^|(]+?) (?:\([^|]*\) )?\|.*\| \*\*supported\*\* \|", install, re.M)
+    verdict = re.search(r"\*\*Verdict:(.*?)\n\n", readiness, re.S)
+    if not rows or not verdict:
+        return ["docs/INSTALL.md or docs/RELEASE_READINESS.md: no platform table or no verdict to compare"]
+    said = " ".join(verdict.group(1).split())
+    return [f"docs/RELEASE_READINESS.md: the verdict does not name {p}, which docs/INSTALL.md supports" for p in rows if p not in said]
+
+
+def check_platforms(problems):
+    with open(os.path.join(ROOT, "docs", "INSTALL.md"), encoding="utf-8") as f, open(os.path.join(ROOT, "docs", "RELEASE_READINESS.md"), encoding="utf-8") as g:
+        problems.extend(platform_problems(f.read(), g.read()))
+
+
 def changelog_bullets(text):
     """(line, release, heading, bullet text) of each CHANGELOG bullet, its wrapped lines joined:
     the `## ` release and the `### ` heading it is under."""
@@ -1357,6 +1373,7 @@ def main():
                 text = f.read()
         check_links(path, text, problems)
     check_content_revision(problems)
+    check_platforms(problems)
     check_changelog(problems)
     for path in PAGES:
         text = files.get(path)

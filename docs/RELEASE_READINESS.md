@@ -9,9 +9,11 @@
 
 <!-- End of head. -->
 
-**Verdict: 0.1.0 is a verified first release for developer use on the platforms INSTALL.md
-declares (macOS arm64, Linux aarch64, Linux x86_64). It is not declared production-ready for
-mission-critical environments**, whose criteria are not all met (below).
+**Verdict: 0.1.0 is a verified first release for developer use on the six platforms INSTALL.md
+supports (macOS arm64, macOS x86_64, Linux aarch64, Linux x86_64, Windows x86_64 and Windows
+ARM64). It is not declared production-ready for mission-critical environments**, whose criteria
+are not all met (below). Still unproven until the release workflow has run once: the release
+archives for Intel macOS and Windows have never been built.
 Every PASS refers to a test, benchmark or audit output here.
 
 ## What the release gates say (mission section 10)
@@ -27,7 +29,7 @@ Every PASS refers to a test, benchmark or audit output here.
 | Functioning, tested code-intelligence foundation | **met**: 61 + 13 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
 | Automated tests | **met**: 122 Rust tests, Python tests of the training code and benchmark builders, bindings tests on four or five interpreters per platform, pinned ranking features, a ranking quality floor, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
-| Verified builds for declared supported platforms | **met for the declared platforms**; others are not declared |
+| Verified builds for declared supported platforms | **met on all six**: three built and tested here, three on GitHub's runners (INSTALL.md) |
 | Security assessment | **met as a self-assessment** with fuzzing; no independent audit |
 | Professional documentation | **met** |
 | Installation instructions | **met** |
@@ -117,7 +119,7 @@ search engines, each one the first user or CI run would hit:
 
 ## Recommendation
 
-Use 0.1.0 for development on macOS arm64 and Linux, where both engines are verified and the
-results reproduce from this repository. Before calling it production-ready: release archives and
+Use 0.1.0 for development on any of the six supported platforms; macOS arm64 and Linux are also
+where the benchmarks ran and the results reproduce from this repository. Before calling it production-ready: release archives and
 wheels built by the release workflow and installed on Windows and Intel macOS, an independent
 security review, and the benchmarks repeated on dedicated hardware.
