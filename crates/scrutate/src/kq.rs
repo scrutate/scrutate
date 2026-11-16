@@ -58,6 +58,14 @@ pub(crate) enum Change {
     Directory(PathBuf),
 }
 
+impl Change {
+    pub(crate) fn path(&self) -> &Path {
+        match self {
+            Change::Modified(p) | Change::Created(p) | Change::Removed(p) | Change::Directory(p) => p,
+        }
+    }
+}
+
 /// What a directory entry is: a name that keeps its place but changes kind is a change too.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -267,7 +275,8 @@ impl Registry {
             self.add(probe, false)?;
             std::fs::write(probe, b"probe").map_err(|_| Off::Probe)?;
             let notes = self.drain_raw()?;
-            let i = self.by_path[probe];
+            // gone under us: no proof either way, so no kqueue
+            let Some(&i) = self.by_path.get(probe) else { return Err(Off::Probe) };
             if notes.iter().any(|&(j, f)| j == i && f & (libc::NOTE_WRITE | libc::NOTE_EXTEND) != 0) {
                 Ok(())
             } else {

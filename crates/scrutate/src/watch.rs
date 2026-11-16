@@ -379,6 +379,9 @@ struct Shared {
     /// a rebuild a read asked for runs
     #[cfg(target_os = "macos")]
     kq_rebuilding: AtomicBool,
+    /// a rule file changed since the last build began: the next builds whatever its directories
+    #[cfg(target_os = "macos")]
+    kq_forced: AtomicBool,
     /// a test's change to the tree between a kqueue's listing and its watches
     #[cfg(all(test, target_os = "macos"))]
     kq_between: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -410,6 +413,27 @@ fn kq_dirs(root: &Path, walked: &Walked) -> Vec<(PathBuf, u64)> {
         .collect();
     dirs.sort();
     dirs
+}
+
+/// What the kqueue watches of a directory's entries: what the repository's or the text index's
+/// walk lists there (its ignore rules, not its size or language limits, so a file that grows
+/// past a limit keeps its note), and every rule file, whose edit changes that.
+#[cfg(target_os = "macos")]
+fn kq_keeps<'a>(root: &'a Path, code: &'a CodeWalk, walked: &'a Walked) -> impl Fn(&Path) -> bool + 'a {
+    let listed: std::cell::RefCell<HashMap<PathBuf, Listing>> = Default::default();
+    move |p: &Path| {
+        if walked.sets_rules(root, p) {
+            return true;
+        }
+        let Some(dir) = p.parent() else { return false };
+        // a directory the walk behind these rules has not entered yet (made since): keep it all
+        if !walked.holds(dir) {
+            return true;
+        }
+        let mut listed = listed.borrow_mut();
+        let l = listed.entry(dir.to_path_buf()).or_insert_with(|| Listing::of(dir, code, walked));
+        l.repo.contains(p) || l.text.contains(p)
+    }
 }
 
 #[derive(Default)]
@@ -497,6 +521,8 @@ impl Notes {
             kq_budget: AtomicU64::new(0),
             #[cfg(target_os = "macos")]
             kq_rebuilding: AtomicBool::new(false),
+            #[cfg(target_os = "macos")]
+            kq_forced: AtomicBool::new(false),
             #[cfg(all(test, target_os = "macos"))]
             kq_between: Mutex::new(None),
         }))
@@ -505,7 +531,10 @@ impl Notes {
     /// Set a new kqueue up for the tree as it is now, on a thread of its own (a read found a
     /// directory that came or went); the one in place watches on until the swap.
     #[cfg(target_os = "macos")]
-    fn kq_rebuild(&self) {
+    fn kq_rebuild(&self, force: bool) {
+        if force {
+            self.0.kq_forced.store(true, Ordering::Release);
+        }
         if self.0.kq_rebuilding.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -516,15 +545,18 @@ impl Notes {
             for _ in 0..KQ_BUILDS {
                 // the directory events noted before the listing began are the ones its kqueue covers
                 let began = notes.dirs();
-                let dirs = kq_dirs(&notes.0.root, &Walked::new(&notes.0.root, &notes.0.code));
+                // a rule file changed: which files the walk lists may have, with the same directories
+                let forced = notes.0.kq_forced.swap(false, Ordering::AcqRel);
+                let walked = Walked::new(&notes.0.root, &notes.0.code);
+                let dirs = kq_dirs(&notes.0.root, &walked);
                 // a directory no walk enters (an ignored one) came or went: the watches stay as
                 // they are, and a build begun before this one is stale
-                if matches!(&*lock(&notes.0.kq), Kq::Ready(_, old) if *old == dirs) {
+                if !forced && matches!(&*lock(&notes.0.kq), Kq::Ready(_, old) if *old == dirs) {
                     let mut n = lock(&notes.0.noted);
                     n.dirs_walked = n.dirs_walked.max(began);
                     break;
                 }
-                if !notes.kq_build(epoch, dirs) {
+                if !notes.kq_build(epoch, dirs, &walked) && !notes.0.kq_forced.load(Ordering::Acquire) {
                     break;
                 }
                 epoch = notes.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
@@ -542,7 +574,7 @@ impl Notes {
     /// read until a walk is applied looks at the tree whatever the refresh interval; with one
     /// before, only the new directories need that walk, which the interval may hold back.
     #[cfg(target_os = "macos")]
-    fn kq_build(&self, epoch: u64, dirs: Vec<(PathBuf, u64)>) -> bool {
+    fn kq_build(&self, epoch: u64, dirs: Vec<(PathBuf, u64)>, walked: &Walked) -> bool {
         let t0 = Instant::now();
         let built = (|| -> std::result::Result<(crate::kq::Registry, bool), crate::kq::Off> {
             let budget = match self.0.kq_budget.load(Ordering::Relaxed) {
@@ -551,13 +583,14 @@ impl Notes {
             };
             let mut reg = crate::kq::Registry::new(&self.0.root, budget)?;
             let _ = std::fs::create_dir_all(&self.0.cookies);
-            reg.probe(&self.0.cookies.join(format!("{}probe", self.0.prefix)))?;
+            // a probe of its own: two builds at once (a read's and the watch's) must not share one
+            reg.probe(&self.0.cookies.join(format!("{}probe{epoch}", self.0.prefix)))?;
             let paths: Vec<PathBuf> = dirs.iter().map(|(d, _)| d.clone()).collect();
             #[cfg(test)]
             if let Some(f) = lock(&self.0.kq_between).take() {
                 f();
             }
-            reg.add_tree(&paths, &|_| true)?;
+            reg.add_tree(&paths, &kq_keeps(&self.0.root, &self.0.code, walked))?;
             // a directory made in a parent before that parent was watched is in its listing with
             // no watch of its own, and no note will name it: the tree's directories listed again
             // tell whether one came while this was built
@@ -580,7 +613,7 @@ impl Notes {
             eprintln!("[scrutate] kqueue: {} watches in {:.1} ms", reg.watches(), t0.elapsed().as_secs_f64() * 1000.0);
         }
         let carried = match std::mem::replace(&mut *kq, Kq::Ready(reg, dirs)) {
-            Kq::Ready(mut old, _) => old.drain(&|_| true).ok(),
+            Kq::Ready(mut old, _) => old.drain(&kq_keeps(&self.0.root, &self.0.code, walked)).ok(),
             Kq::Off(_) => None,
         };
         drop(kq);
@@ -629,12 +662,14 @@ impl Notes {
     /// (a directory came or went, a watch was refused). Either way but the first, the read looks.
     #[cfg(target_os = "macos")]
     fn kq_drained(&self) -> std::result::Result<Option<&'static str>, &'static str> {
+        let walked = lock(&self.0.noted).walked.clone();
+        let walked = walked.unwrap_or_else(|| Arc::new(Walked::new(&self.0.root, &self.0.code)));
         let mut kq = lock(&self.0.kq);
         let reg = match &mut *kq {
             Kq::Ready(reg, _) => reg,
             Kq::Off(why) => return Ok(Some(why)),
         };
-        let changes = match reg.drain(&|_| true) {
+        let changes = match reg.drain(&kq_keeps(&self.0.root, &self.0.code, &walked)) {
             Ok(c) => c,
             Err(off) => {
                 *kq = Kq::Off(off.why());
@@ -645,9 +680,10 @@ impl Notes {
         // a directory that came or went is an event the burst rules weigh, as on Linux; the new
         // kqueue for the tree as it is now is built beside this one, once that event is noted
         let moved = changes.iter().any(|c| matches!(c, crate::kq::Change::Directory(_)));
+        let rules = changes.iter().any(|c| walked.sets_rules(&self.0.root, c.path()));
         self.kq_note(changes);
-        if moved {
-            self.kq_rebuild();
+        if moved || rules {
+            self.kq_rebuild(rules);
         }
         Ok(None)
     }
@@ -756,8 +792,8 @@ impl Notes {
             let dirs = kq_dirs(&self.0.root, walked);
             if !matches!(&*lock(&self.0.kq), Kq::Ready(_, now) if *now == dirs) {
                 let epoch = self.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
-                if self.kq_build(epoch, dirs) {
-                    self.kq_rebuild();
+                if self.kq_build(epoch, dirs, walked) {
+                    self.kq_rebuild(false);
                 }
             }
         }
@@ -786,12 +822,22 @@ impl Notes {
         *lock(&self.0.kq_between) = Some(Box::new(f));
     }
 
+    /// The kqueue's watches now, none while it is off.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn kq_watches(&self) -> usize {
+        match &*lock(&self.0.kq) {
+            Kq::Ready(reg, _) => reg.watches(),
+            Kq::Off(_) => 0,
+        }
+    }
+
     /// Set the kqueue up now, on this thread; whether it is in place after.
     #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn kq_in_place_now(&self) -> bool {
         let epoch = self.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        if self.kq_build(epoch, kq_dirs(&self.0.root, &Walked::new(&self.0.root, &self.0.code))) {
-            self.kq_rebuild();
+        let walked = Walked::new(&self.0.root, &self.0.code);
+        if self.kq_build(epoch, kq_dirs(&self.0.root, &walked), &walked) {
+            self.kq_rebuild(false);
         }
         matches!(*lock(&self.0.kq), Kq::Ready(..))
     }

@@ -2956,6 +2956,30 @@ mod tests {
         s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty())
     }
 
+    /// Files the walk's ignore rules leave out take no kqueue watch; an ignore-file edit that
+    /// takes them back reaches the index, and a write in one after it is seen.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ignored_files_take_no_kqueue_watch_until_a_rule_takes_them_back() {
+        let (root, s) = kqueue_in_place("kq_ignored");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "skip_*.py\n").unwrap();
+        for i in 0..20 {
+            std::fs::write(root.join(format!("src/skip_{i}.py")), format!("def skipped_{i}():\n    return {i}\n")).unwrap();
+        }
+        watching_by_kqueue(&s);
+        let watches = s.notes().unwrap().kq_watches();
+        assert!(watches < 20, "{watches} kqueue watches for a tree of 2 directories and 3 files the walk lists");
+        assert!(!found(&s, "skipped_3"));
+        std::fs::write(root.join(".gitignore"), "").unwrap();
+        assert!(found(&s, "skipped_3"), "a file the rule no longer leaves out");
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(root.join("src/skip_3.py"), "def skipped_again():\n    return 3\n").unwrap();
+        assert!(found(&s, "skipped_again"), "a write in it after");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A file the user cannot read leaves the kqueue in place for the rest of the tree, and is
     /// seen once it can be read.
     #[cfg(target_os = "macos")]

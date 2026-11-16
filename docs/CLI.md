@@ -932,7 +932,7 @@ ReadDirectoryChangesW on Windows) names them, `--watch` or not: the call writes 
 `.scrutate/cookies/` and waits for its event, so every file written before the call started is
 named, then it looks at the named files alone (one `stat` each) and indexes those that changed.
 On macOS a cookie proves nothing (FSEvents can give a write a later event than a cookie made
-after the write returned), so the server watches every file and directory of the tree through a
+after the write returned), so the server watches every file and directory the walk lists (its ignore rules leave the rest out, so an ignored build output takes no descriptor) through a
 kqueue instead, whose notes the system posts inside the call that makes the change; a call reads
 them at once, with no wait, and looks at the files they name. Until those watches are in place
 (at the start, after a directory came or went), for a tree with more files and directories

@@ -306,7 +306,7 @@ incompatible index by itself, and that is never breaking.
   each call looks only at the files the watch says changed since the last call, one `stat` each,
   where it looked at every file of the tree: a cookie file the call writes and waits for keeps
   every write made before the call in its answer. On macOS, where FSEvents can give a write a
-  later event than a cookie made after it, the server watches every file and directory through a
+  later event than a cookie made after it, the server watches every file and directory its walk lists (an ignored build output takes no watch) through a
   kqueue instead, whose notes the system posts inside the call that makes the change: a call reads
   them at once and looks at the files they name (on 14,520 files, `find_symbol` through the server
   takes 5.8 ms where a look at the tree took 108 ms). While those watches are not in place, for a
