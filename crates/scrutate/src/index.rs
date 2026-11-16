@@ -5113,4 +5113,93 @@ mod tests {
         assert!(held <= super::TREE_CACHE_BYTES, "{held}");
         assert!(peak <= super::TREE_CACHE_BYTES, "peak {peak}");
     }
+
+    /// A clear (`clear_in_place`, as `index --force` falls back to, and the rebuild an open does
+    /// for an index of another schema) while another handle has the segments mapped, as a reader
+    /// mid-search does. On Linux, and on the Windows versions of the CI runners, the clear removes
+    /// a mapped segment's directory too. On Windows a third pass holds a file of one old segment
+    /// open without delete sharing, so that directory cannot be removed: the clear still succeeds,
+    /// the next build skips that name when it is the next one, `check` names that directory alone,
+    /// and once the handle is closed and the directory is old the sweep removes it.
+    #[test]
+    fn a_clear_while_another_handle_maps_a_segment_keeps_the_reader_whole_and_leaves_the_rest_to_the_sweep() {
+        fn age(dir: &std::path::Path, by: std::time::Duration) {
+            let mut o = std::fs::File::options();
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                // FILE_WRITE_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS: a directory's times
+                o.access_mode(0x100).custom_flags(0x0200_0000);
+            }
+            #[cfg(not(windows))]
+            o.read(true);
+            o.open(dir).unwrap().set_modified(std::time::SystemTime::now() - by).unwrap();
+        }
+        let mut passes = vec![("clear_in_place", false), ("rebuild on open", false)];
+        if cfg!(windows) {
+            passes.push(("clear_in_place, a segment file held without delete sharing", true));
+        }
+        for (k, (how, forced)) in passes.into_iter().enumerate() {
+            let root = std::env::temp_dir().join(format!("scrutate_ix_clear_mapped_{}_{k}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+            let mut b = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            b.update(false).unwrap();
+            let old = b.segments();
+            assert!(!old.is_empty(), "{how}");
+            let mut reader = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            assert_eq!(reader.lex().unwrap().segs.len(), old.len(), "{how}: the reader maps every segment");
+            #[cfg(windows)]
+            let held = forced.then(|| {
+                use std::os::windows::fs::OpenOptionsExt;
+                let dir = b.seg_dir.join(&old[0]);
+                let file = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).find(|p| p.is_file()).unwrap();
+                // FILE_SHARE_READ alone: no one may delete it while this handle is open
+                std::fs::File::options().read(true).share_mode(1).open(file).unwrap()
+            });
+            if how != "rebuild on open" {
+                b.clear_in_place().unwrap();
+            } else {
+                b.set_meta("schema_version", &(super::SCHEMA_VERSION - 1).to_string()).unwrap();
+                drop(b);
+                b = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            }
+            assert_eq!(b.segments(), Vec::<String>::new(), "{how}: the clear lists no segment");
+            if forced {
+                // the next build's first name is the held directory's, as after a writer stopped
+                // before COMMIT: it must skip that name
+                let n: i64 = old[0][1..].parse().unwrap();
+                b.set_meta("seg_counter", &(n - 1).to_string()).unwrap();
+            }
+            for seg in &reader.lex.as_ref().unwrap().segs {
+                seg.validate_deep().unwrap_or_else(|e| panic!("{how}: the reader's mapping broke: {e}"));
+            }
+            b.update(false).unwrap();
+            let new = b.segments();
+            assert!(!new.is_empty() && new.iter().all(|n| !old.contains(n)), "{how}: the build takes a free name: {old:?} then {new:?}");
+            let mut left: Vec<String> = old.iter().filter(|n| b.seg_dir.join(n).exists()).cloned().collect();
+            left.sort();
+            eprintln!("{how}: directories left by the clear while mapped: {left:?}");
+            let mut unlisted: Vec<String> = b.check(false).unwrap().unlisted.into_iter().map(|u| u.name).collect();
+            unlisted.sort();
+            assert_eq!(unlisted, left, "{how}: check names each leftover, and only those");
+            if forced {
+                assert_eq!(left, [old[0].clone()], "{how}: the held directory stays, and only it");
+            }
+            drop(reader);
+            #[cfg(windows)]
+            drop(held);
+            for n in &left {
+                age(&b.seg_dir.join(n), std::time::Duration::from_secs(super::GC_AGE_S + 60));
+            }
+            std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 2\n").unwrap();
+            b.update(false).unwrap();
+            assert!(old.iter().all(|n| !b.seg_dir.join(n).exists()), "{how}: the sweep removes what the clear left");
+            assert_eq!(b.check(false).unwrap().unlisted.len(), 0, "{how}");
+            assert_eq!(b.check(false).unwrap().problems, Vec::<String>::new(), "{how}");
+            drop(b);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 }
