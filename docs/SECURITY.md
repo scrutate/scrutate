@@ -359,7 +359,7 @@ followed: with `O_NOFOLLOW` on Linux and macOS (`openat`, `renameat`), and on Wi
 directory handle), where a directory that is a junction or link is refused. The temporary file,
 the check and the rename are relative to the file's directory handle. A directory swapped for a
 link or junction after the plan starts, the root and its ancestors included, therefore cannot send
-a read, the write or a temporary file outside the root. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
+a read, the write or a temporary file outside the root. The template is text: nothing in it is run. No MCP tool rewrites; the one MCP tool that writes a source file is `edit_symbol`, offered only by a server started with `serve --allow-edits` ([Verified symbol edits](#verified-symbol-edits)).
 Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, a
 directory swapped for a link after the read, the root swapped for one after the plan, the diff
 mode writing nothing, and on Windows the same with junctions) and `rewrite::tests` on Windows (each
