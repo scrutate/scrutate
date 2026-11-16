@@ -73,6 +73,24 @@ The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`:
 locked `notify` and `notify-types` need. A `ci.yml` job runs `cargo check` with it, so a dependency update
 that raises it fails there. README.md and docs/INSTALL.md name it too.
 
+Moving the pinned toolchain or the edition (done once, edition 2024 and 1.100.0): two commits,
+the edition on the old pin first, then the pin, and neither may need a hand edit. For an
+edition, `cargo fix --edition` in every configuration that compiles different code (both feature
+sets, no default features, Windows with and without extra-langs, wasi, the Python bindings,
+`fuzz/`, and on a Mac for what only macOS compiles: `kq.rs`, FSEvents). `cargo clippy --fix` in
+the default and extra-langs builds, windows-gnu and the Python bindings, and on a Mac after the
+edition flip, since the let chains it writes need the new edition; `clippy -D warnings` in the
+rest (`cargo check` for `fuzz/`), and wasi is built under `-D warnings`. Then rustfmt, CI's clippy
+command clean on Linux and on a Mac, `tools/unsafe_count.py` with docs/SECURITY.md's table set,
+`cargo +1.91 check`, and `Cargo.lock` and the resolver unchanged. Before it lands, check that
+the diff adds no `FIXME` (cargo fix writes one above each `set_var` it wraps; the call goes
+instead, and `tests/statics.rs` allows the environment to be written in two files only), that
+every drop-order and `if let` site the lints name only frees memory or an error, and that each
+`+ use<..>` cargo fix writes keeps the old capture. Then the full gate and CI on every runner,
+and `tools/repro_docker.sh` on the new pin: the hash it gives goes in docs/SECURITY.md's
+reproducible-builds row and TRACEABILITY.md R-6.11 with its date and rustc line. A measurement
+taken under the old pin keeps its version.
+
 | Raise by one, after a release | When |
 |---|---|
 | `CONTENT_REVISION` in `crates/scrutate/src/index.rs` (in the index's `meta` as `content_rev`) | `langs.rs`, `parse.rs` or `text.rs` changes: an index of the older parsing rules reads every file again |
