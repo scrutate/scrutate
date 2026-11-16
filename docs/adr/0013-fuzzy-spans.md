@@ -81,8 +81,8 @@ Measured with cachegrind on the AWS build box, on the Linux tree's `kernel/` wit
   rows' ratios to the earliest-end-and-carry build pay for: 1.1554 and 1.1391. Of the 472.7 M on
   the `return` row, 162.3 M is allocation: the list of units per line, the list of starts per
   gap and the two columns of each forward run.
-- For a literal longer than one machine word the backward scan is Myers' recurrence over all of
-  its words: about 3,400 instructions per byte of the line per pass at 4,096 characters. On a
+- For a literal longer than 128 characters (past the one 128-bit word) the backward scan is
+  Myers' recurrence over its 64-bit blocks: about 3,400 instructions per byte of the line per pass at 4,096 characters. On a
   205 KB line that costs 6,782 instructions per byte beyond `-c` for 50 copies of the pattern
   with one edit each (`-c` 55.0 M, `--json` 1,444 M, at N 1 and 2 alike), and 6,407 (N 1) to
   9,562 (N 2) for one exact copy in noise. The forward band stays at 2c + 1 positions a

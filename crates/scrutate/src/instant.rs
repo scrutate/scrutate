@@ -531,7 +531,7 @@ pub(crate) fn word_at(line: &[u8], i: usize) -> bool {
     c.is_some_and(|c| regex_syntax::try_is_word_character(c).unwrap_or_else(|_| crate::ident::is_continue(c)))
 }
 
-/// Myers' recurrence on 64-bit blocks, for patterns longer than one machine word: the addition
+/// Myers' recurrence on 64-bit blocks, for patterns longer than 128 characters: the addition
 /// and the two shifts carry from block to block (Hyyrö 2003).
 #[derive(Clone)]
 struct Blocks {

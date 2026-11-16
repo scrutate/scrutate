@@ -36,7 +36,8 @@ command line calls use cannot carry one to a running server (one without the fla
   it is now. A file that changed since the hash was taken is refused, with its current hash and
   nothing written, so an agent always looks at the current text before it writes.
 - Before anything is written the new file is parsed with the file's language and checked: no
-  parse error or missing node inside the replaced range that the old text did not have; one
+  parse error or missing node inside the replaced range that the old text did not have, and no
+  more of them in the file than before; one
   definition of the same name and kind where the old one began; every other definition of the
   file still there, in order: one around the edited definition (the class of a method) by name
   and kind, every other one by name, kind and text, wherever its lines are; one nested in the
@@ -46,7 +47,8 @@ command line calls use cannot carry one to a running server (one without the fla
   check that failed.
 - The edit replaces the definition's lines whole, so a definition that shares its first or last
   line with other code that is not a comment (another definition, a statement) is refused before
-  any of that, a dry run too; a comment on those lines that ends on them is the definition's, as
+  any of that, a dry run too. A node that holds the definition alone on its lines (an `export`
+  before a function) is the definition's; a comment on those lines that ends on them is the definition's, as
   `read_code` shows its lines, and is replaced with it: whole lines are what keep the check of the other definitions complete, since none of them
   can then lie on a replaced line unless it is nested in the definition.
 - The write goes through the structural rewrite's writer (`rewrite.rs`): the file is opened by

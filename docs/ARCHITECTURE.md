@@ -1015,7 +1015,9 @@ outermost of overlapping matches, and checks that the text parses where it chang
 after. `Plan::diff` prints the hunks from the known edit positions (no line diff is computed), and
 `Plan::write` writes each file whole to a temporary file beside it and renames it over the original
 only while the original still holds the bytes read. No index is touched: the next lookup finds the
-file's new stat and reads it. The MCP server has no tool for it.
+file's new stat and reads it. The MCP server has no tool for the rewrite; its `edit_symbol`
+(only under `serve --allow-edits`, ADR 0009) writes one checked definition through the same
+`Plan::write`.
 
 ## Unified layer (`ops.rs`, `lib.rs`, `cli.rs`, `mcp.rs`, `crates/scrutate-py`)
 
@@ -1034,7 +1036,11 @@ drops the candidates it does not admit as their rows load, before features and t
 widens the exact pool while fewer than `k` pass; symbol reads more definitions until enough pass; refs hands Engine A a walk
 narrowed to the files the globs and types can admit (`Compiled::walk`), then keeps the
 occurrences in the files the filter admits, each under its definition, and a definition outside
-the filter that heads some is marked so (`Resolved::outside`).
+the filter that heads some is marked so (`Resolved::outside`). With kinds, an occurrence counts only
+once it resolves to a definition of a kept kind. When no definition of the name has a kept kind,
+refs answers at once and says so; otherwise the search reads on until it has read every occurrence
+or resolved 10,000 (`REFS_KIND_RESOLVE_MAX`, or `max_results` when that is larger), keeps those of
+the kept kinds, cuts to `max_results`, and says when the bound left it short.
 
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
 the repository is small enough to index on the spot; otherwise identifier grep. `grep --index`
@@ -1044,7 +1050,7 @@ sends an Engine A query through the text index. Both engines stay independently 
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one text
 form and one JSON form. The CLI's index commands (`read` among them) and ranked search, the MCP
-server's nineteen tools, `batch` and the Python bindings parse into operations, run them through
+server's nineteen tools (twenty with `serve --allow-edits`), `batch` and the Python bindings parse into operations, run them through
 `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their own), and render answers; none has
 a default or output format of its own (they had drifted: three different limits for `callers`,
 references textual in one and resolved in another). The JSON form leaves in one envelope
@@ -1091,7 +1097,8 @@ wait. A cancelled call sets the flag the index update checks between batches, so
 the scan before a read rolls back there.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its client hints (`readOnlyHint`,
-`openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`, server
+`destructiveHint`, `idempotentHint`, `openWorldHint`; under `--short-tools` a read-only tool carries
+only `readOnlyHint` and `openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`, server
 instructions, and the protocol loop, which serves two eras on one pipe: the `initialize` handshake
 of the revisions up to 2025-11-25, and revision 2026-07-28, where each request names its version in
 `_meta` and nothing is remembered between requests. Each tool call runs on its own thread, so the
