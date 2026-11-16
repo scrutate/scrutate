@@ -315,6 +315,26 @@ fn distributions_that_share_a_namespace_package_are_each_reached_by_their_first_
 }
 
 #[test]
+fn distributions_that_share_a_pkgutil_namespace_are_each_reached_by_their_own_package() {
+    // the pkgutil and pkg_resources style: every distribution ships the same ns/__init__.py
+    let t = Tree::new("uv_pkgutil_namespace");
+    t.uv_lock(&[("zope-interface", "7.1.1"), ("zope-event", "5.0")]);
+    let ns = "__import__('pkg_resources').declare_namespace(__name__)\n";
+    t.wheel("zope-interface", "7.1.1", &[("zope/__init__.py", ns), ("zope/interface/__init__.py", "class Interface:\n    pass\n")]);
+    t.wheel("zope-event", "5.0", &[("zope/__init__.py", ns), ("zope/event/__init__.py", "def notify(event):\n    return event\n")]);
+    let (code, out, err) = t.run(&["symbol", "--deps", "zope.interface.Interface"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("zope-interface 7.1.1 (uv.lock)") && out.contains("site-packages/zope/interface/__init__.py:1-2"), "{out}");
+    let (code, out, err) = t.run(&["symbol", "--deps", "zope.event.notify"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("zope-event 5.0 (uv.lock)") && out.contains("site-packages/zope/event/__init__.py:1-2"), "{out}");
+    // `zope` alone still names both
+    let (code, _, err) = t.run(&["symbol", "--deps", "zope.notify"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("names two packages"), "{err}");
+}
+
+#[test]
 fn a_poetry_package_missing_from_the_venv_says_poetry_keeps_its_environment_elsewhere() {
     let t = Tree::new("poetry_no_venv");
     t.write(

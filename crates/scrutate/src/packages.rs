@@ -340,9 +340,12 @@ impl Dist {
     /// The names it is imported by: the first part of each file outside its metadata, and under a
     /// namespace package (a directory with no `__init__.py`, which several distributions share,
     /// as google-auth and protobuf share `google`, and google-cloud-core and google-cloud-storage
-    /// `google.cloud`) each part on down to the first package with one (`google.cloud.storage`).
-    fn tops(&self) -> Vec<String> {
-        let inits: std::collections::HashSet<&str> = self.files.iter().filter_map(|f| f.strip_suffix("/__init__.py")).collect();
+    /// `google.cloud`; or one whose `__init__.py` more than one distribution ships, `shared`, the
+    /// pkgutil style of zope and backports) each part on down to the first package of its own
+    /// (`google.cloud.storage`, `zope.interface`).
+    fn tops(&self, shared: &std::collections::HashSet<String>) -> Vec<String> {
+        let inits: std::collections::HashSet<&str> =
+            self.files.iter().filter_map(|f| f.strip_suffix("/__init__.py")).filter(|d| !shared.contains(*d)).collect();
         let module = |t: &str| t.strip_suffix(".py").unwrap_or(t).to_string();
         let mut out: Vec<String> = Vec::new();
         for f in &self.files {
@@ -453,7 +456,14 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
             names
         }
         Eco::Python => {
-            let mine: Vec<String> = dists.iter().filter(|d| normalized(&d.name) == normalized(&l.name)).flat_map(Dist::tops).collect();
+            // a package directory whose __init__.py two distributions ship is a namespace
+            let mut ships: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for d in dists {
+                let own: std::collections::HashSet<&str> = d.files.iter().filter_map(|f| f.strip_suffix("/__init__.py")).collect();
+                own.into_iter().for_each(|dir| *ships.entry(dir).or_default() += 1);
+            }
+            let shared: std::collections::HashSet<String> = ships.into_iter().filter(|(_, n)| *n > 1).map(|(d, _)| d.to_string()).collect();
+            let mine: Vec<String> = dists.iter().filter(|d| normalized(&d.name) == normalized(&l.name)).flat_map(|d| d.tops(&shared)).collect();
             if mine.is_empty() { vec![normalized(&l.name).replace('-', "_")] } else { mine }
         }
     }

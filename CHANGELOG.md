@@ -405,6 +405,9 @@ incompatible index by itself, and that is never breaking.
   nothing printed as if it held no match; met in a walk it is one note with the count and the
   first names, a `skipped` record in `--json` and `skipped` in the `structural_search` envelope
   ([CLI](docs/CLI.md)).
+- `--deps` reaches each distribution under a pkgutil-style namespace (`zope.interface`,
+  `backports.tarfile`) by its own package, where two distributions that both ship the same
+  `ns/__init__.py` made every name under it "names two packages" ([CLI](docs/CLI.md#--deps-a-dependency-at-its-locked-version)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it
