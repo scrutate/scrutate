@@ -521,7 +521,7 @@ fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Lo
             "{name} is locked at {listed}, and the repository's own packages depend on {} directly: --deps cannot tell which; `cargo tree -i {name}` shows what pulls in each",
             if mine.is_empty() { "neither" } else { "more than one" }
         ),
-        Eco::Python if used.is_empty() => Err(anyhow!("{name} {listed} are not in .venv: run {}", first.eco.sync(first.lockfile))),
+        Eco::Python if used.is_empty() => Err(not_in_venv(first, &name, &listed)),
         Eco::Python => bail!(
             "{name} is locked at {listed} but .venv has {}: run {}",
             used.iter().map(|v| echo(v)).collect::<Vec<_>>().join(" and "),
@@ -561,6 +561,20 @@ struct Installed {
     base: PathBuf,
     /// the files to copy, relative to `base` (Python: its RECORD); none: every file under `dir`
     files: Option<Vec<String>>,
+}
+
+/// The error for a Python package `.venv` lacks. poetry keeps its environment under its cache
+/// directory unless the project has a `.venv` or sets `virtualenvs.in-project`, so a poetry user
+/// is told how to have it in `.venv`, which is where --deps reads.
+fn not_in_venv(l: &Locked, name: &str, versions: &str) -> anyhow::Error {
+    let are = if versions.contains(" and ") { "are" } else { "is" };
+    let sync = l.eco.sync(l.lockfile);
+    if l.lockfile == "poetry.lock" {
+        return anyhow!(
+            "{name} {versions} {are} not in .venv, where --deps reads, and poetry keeps its environment under its cache directory unless the project has a .venv or sets virtualenvs.in-project: run `poetry config virtualenvs.in-project true --local`, remove the environment `poetry env info --path` names, then {sync}"
+        );
+    }
+    anyhow!("{name} {versions} {are} not in .venv: run {sync}")
 }
 
 fn refused(l: &Locked, why: &str) -> anyhow::Error {
@@ -650,7 +664,7 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
             let Some(d) = mine.iter().find(|d| d.version == l.version) else {
                 return match mine.first() {
                     Some(d) => bail!("{} is locked at {} but .venv has {}: run {}", l.name, l.version, crate::fmt::echo(&d.version), l.eco.sync(l.lockfile)),
-                    None => Err(missing(".venv".into())),
+                    None => Err(not_in_venv(l, &l.name, &l.version)),
                 };
             };
             let site = std::fs::canonicalize(&d.site)?;

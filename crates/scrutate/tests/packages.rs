@@ -315,6 +315,26 @@ fn distributions_that_share_a_namespace_package_are_each_reached_by_their_first_
 }
 
 #[test]
+fn a_poetry_package_missing_from_the_venv_says_poetry_keeps_its_environment_elsewhere() {
+    let t = Tree::new("poetry_no_venv");
+    t.write(
+        "poetry.lock",
+        "[[package]]\nname = \"requests\"\nversion = \"2.32.3\"\ndescription = \"\"\noptional = false\n\n[metadata]\nlock-version = \"2.0\"\n",
+    );
+    t.write("main.py", "import requests\n");
+    let (code, out, err) = t.run(&["symbol", "--deps", "requests.get"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("requests 2.32.3 is not in .venv"), "{err}");
+    assert!(err.contains("virtualenvs.in-project") && err.contains("poetry env info --path") && err.contains("poetry install --sync"), "{err}");
+    // uv puts its environment in .venv, so its users are told only to sync
+    let t = Tree::new("uv_no_venv");
+    t.uv_lock(&[("requests", "2.32.3")]);
+    let (code, _, err) = t.run(&["symbol", "--deps", "requests.get"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("requests 2.32.3 is not in .venv: run uv sync") && !err.contains("virtualenvs"), "{err}");
+}
+
+#[test]
 fn a_go_module_is_read_from_the_module_cache_at_the_version_go_mod_requires() {
     let t = Tree::new("go");
     t.go_mod("require (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tgithub.com/BurntSushi/toml v1.4.0 // indirect\n)");
