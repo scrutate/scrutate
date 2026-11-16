@@ -611,7 +611,7 @@
   "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
- "release.yml:vsix:ca95b46abf": {
+ "release.yml:vsix:61559580bb": {
   "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
@@ -683,7 +683,7 @@
   "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
- "release.yml:marketplace:cd4d284adb": {
+ "release.yml:marketplace:d678fec20f": {
   "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
@@ -699,7 +699,7 @@
   "step": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
- "release.yml:openvsx:bc9a4a2b26": {
+ "release.yml:openvsx:69b37fec9b": {
   "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
