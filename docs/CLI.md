@@ -797,8 +797,10 @@ installed. `PACKAGE` is the package as the code imports it, `.` or `::` before t
 its last part, a major version suffix `/v2` skipped; the last part also without a `.v3` suffix or a
 `go-` prefix, as the code names the package: `yaml.Unmarshal` for gopkg.in/yaml.v3, `sqlite3.Open`
 for github.com/mattn/go-sqlite3; when that name is two modules', a direct requirement comes before
-an `// indirect` one, which no package of the repository imports, then the module whose last part
-is the name as written: `yaml` is sigs.k8s.io/yaml beside an indirect gopkg.in/yaml.v3). The longest start of the name that is a
+an `// indirect` one, which no package of the repository imports, and of two direct ones the one
+the repository's own Go files import (`yaml` is sigs.k8s.io/yaml beside an indirect
+gopkg.in/yaml.v3); when its files import both or neither, the answer is an error that names both,
+and the full import path still answers, `gopkg.in/yaml.v3.Unmarshal`). The longest start of the name that is a
 locked package is the package. The rest is looked up as `symbol` and `read` look up a name, then
 by its last part (`de::Deserialize` finds `Deserialize`). In a Go module or a Python package, the
 definitions in the package's own directory come first (a Go package is the directory at its

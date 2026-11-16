@@ -385,24 +385,53 @@ fn a_go_module_is_read_from_the_module_cache_at_the_version_go_mod_requires() {
 }
 
 #[test]
-fn of_two_go_modules_one_package_name_names_the_direct_requirement_then_the_one_named_so() {
-    // both declare `package yaml`; the repository's code imports a direct requirement only
+fn of_two_go_modules_one_package_name_names_the_direct_requirement_the_repository_imports() {
+    // both declare `package yaml`; the repository's code imports a direct requirement only, and a
+    // Go file imports one `yaml` at most (two are `yaml redeclared`)
     let modules = |t: &Tree| {
-        t.store("gomod/sigs.k8s.io/yaml@v1.4.0/yaml.go", "package yaml\n\nfunc Marshal(o any) ([]byte, error) {\n\treturn nil, nil\n}\n");
-        t.store("gomod/gopkg.in/yaml.v3@v3.0.1/yaml.go", "package yaml\n\nfunc Marshal(in any) (out []byte, err error) {\n\treturn nil, nil\n}\n");
+        t.store("gomod/sigs.k8s.io/yaml@v1.4.0/yaml.go", "package yaml\n\nfunc Unmarshal(y []byte, o any) error {\n\treturn nil\n}\n");
+        t.store("gomod/gopkg.in/yaml.v3@v3.0.1/yaml.go", "package yaml\n\nfunc Unmarshal(in []byte, out any) (err error) {\n\treturn nil\n}\n");
     };
-    for (name, require, want) in [
-        ("direct_k8s", "require (\n\tsigs.k8s.io/yaml v1.4.0\n\tgopkg.in/yaml.v3 v3.0.1 // indirect\n)", "sigs.k8s.io/yaml v1.4.0 (go.mod)"),
-        ("direct_v3", "require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tsigs.k8s.io/yaml v1.4.0 // indirect\n)", "gopkg.in/yaml.v3 v3.0.1 (go.mod)"),
-        // both direct: the module whose last part is `yaml` as written
-        ("both_direct", "require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tsigs.k8s.io/yaml v1.4.0\n)", "sigs.k8s.io/yaml v1.4.0 (go.mod)"),
+    let imports = |path: &str| format!("package main\n\nimport \"{path}\"\n\nfunc main() {{ _ = yaml.Unmarshal }}\n");
+    let both = "require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tsigs.k8s.io/yaml v1.4.0\n)";
+    for (name, require, files, want) in [
+        ("direct_k8s", "require (\n\tsigs.k8s.io/yaml v1.4.0\n\tgopkg.in/yaml.v3 v3.0.1 // indirect\n)", vec![], "sigs.k8s.io/yaml v1.4.0 (go.mod)"),
+        ("direct_v3", "require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tsigs.k8s.io/yaml v1.4.0 // indirect\n)", vec![], "gopkg.in/yaml.v3 v3.0.1 (go.mod)"),
+        // both direct: the one the repository's Go files import, though the other's last part is `yaml`
+        ("both_v3_imported", both, vec![("main.go", imports("gopkg.in/yaml.v3"))], "gopkg.in/yaml.v3 v3.0.1 (go.mod)"),
+        ("both_k8s_imported", both, vec![("main.go", imports("sigs.k8s.io/yaml"))], "sigs.k8s.io/yaml v1.4.0 (go.mod)"),
     ] {
         let t = Tree::new(&format!("go_yaml_{name}"));
         t.go_mod(require);
+        for (f, text) in &files {
+            t.write(f, text);
+        }
         modules(&t);
-        let (code, out, err) = t.run(&["symbol", "--deps", "yaml.Marshal"]);
+        let (code, out, err) = t.run(&["symbol", "--deps", "yaml.Unmarshal"]);
         assert_eq!(code, 0, "{name}: {out}{err}");
         assert!(out.contains(want), "{name}: {out}");
+    }
+    // both direct and both imported (in two packages), or neither: refused, naming both, never a guess
+    for (name, files, which) in [
+        ("both_imported", vec![("main.go", imports("sigs.k8s.io/yaml")), ("cmd/b/b.go", imports("gopkg.in/yaml.v3"))], "more than one"),
+        ("neither_imported", vec![], "neither"),
+    ] {
+        let t = Tree::new(&format!("go_yaml_{name}"));
+        t.go_mod(both);
+        for (f, text) in &files {
+            t.write(f, text);
+        }
+        modules(&t);
+        let (code, out, err) = t.run(&["symbol", "--deps", "yaml.Unmarshal"]);
+        assert_eq!(code, 2, "{name}: {out}{err}");
+        assert!(
+            err.contains("gopkg.in/yaml.v3") && err.contains("sigs.k8s.io/yaml") && err.contains(which) && err.contains("by its import path"),
+            "{name}: {err}"
+        );
+        // the full import path still answers
+        let (code, out, err) = t.run(&["symbol", "--deps", "gopkg.in/yaml.v3.Unmarshal"]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains("gopkg.in/yaml.v3 v3.0.1 (go.mod)"), "{name}: {out}");
     }
     let t = Tree::new("go_toml_pair");
     t.go_mod("require (\n\tgithub.com/BurntSushi/toml v1.4.0\n\tgithub.com/pelletier/go-toml/v2 v2.2.3 // indirect\n)");

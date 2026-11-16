@@ -465,7 +465,7 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
 
 /// The package `name` starts with and the rest of it: the longest start that is a locked package's
 /// import name, before a `.` or `::`.
-fn split<'n>(root: &Path, name: &'n str) -> Result<(Locked, &'n str)> {
+fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Result<(Locked, &'n str)> {
     let (all, read) = locked(root);
     if read.is_empty() {
         bail!("no lockfile at the root ({}): --deps reads the version a lockfile pins", LOCKFILES.join(", "));
@@ -478,15 +478,29 @@ fn split<'n>(root: &Path, name: &'n str) -> Result<(Locked, &'n str)> {
     for (at, len) in cuts {
         let start = &name[..at];
         let mut hits: Vec<&Locked> = names.iter().filter(|(n, _)| n.iter().any(|n| n == start)).map(|(_, l)| *l).collect();
-        if hits.iter().all(|l| l.eco == Eco::Go) {
+        if hits.iter().all(|l| l.eco == Eco::Go) && hits.iter().any(|l| l.name != hits[0].name) {
             // the repository's code imports only its direct requirements (an `// indirect` one
-            // only a dependency imports); of those, a module whose path or last part is `start`
-            // as written comes before one that is `start` only once a `.vN` or `go-` is cut
+            // only a dependency imports); of two direct ones, the one its own Go files import, as
+            // Go takes one name for one import in a file (`yaml redeclared` for two)
             if hits.iter().any(|l| !l.indirect) {
                 hits.retain(|l| !l.indirect);
             }
-            if hits.iter().any(|l| l.name == start || go_last(&l.name) == start) {
-                hits.retain(|l| l.name == start || go_last(&l.name) == start);
+            let mut modules: Vec<&str> = hits.iter().map(|l| l.name.as_str()).collect();
+            modules.dedup();
+            if modules.len() > 1 {
+                let mine: Vec<&str> = modules.iter().copied().filter(|m| imported(m)).collect();
+                let [one] = mine[..] else {
+                    let echo = crate::fmt::echo;
+                    bail!(
+                        "{} names {} modules go.mod requires, {}, and the repository's Go files import {}: --deps cannot tell which; name the module by its import path ({}.NAME)",
+                        echo(start),
+                        modules.len(),
+                        modules.iter().map(|m| echo(m)).collect::<Vec<_>>().join(" and "),
+                        if mine.is_empty() { "neither" } else { "more than one" },
+                        echo(modules[0])
+                    );
+                };
+                hits.retain(|l| l.name == one);
             }
         }
         let Some(first) = hits.first() else { continue };
@@ -1014,7 +1028,12 @@ fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, l
 /// The answer to `symbol --deps` (`read`: `read --symbol --deps`).
 pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) -> Result<Answer> {
     let root = std::fs::canonicalize(&s.ix.root).unwrap_or_else(|_| s.ix.root.clone());
-    let (l, rest) = split(&root, name)?;
+    // whether a Go file of the repository's own, outside its vendor directory, imports `module`
+    let imported = |module: &str| {
+        let rows = s.ix.imports_holding(module).unwrap_or_default();
+        rows.iter().any(|(p, m)| m.trim_matches(['"', '`']) == module && p.ends_with(".go") && !p.starts_with("vendor/"))
+    };
+    let (l, rest) = split(&root, name, &imported)?;
     let start = name[..name.len() - rest.len()].trim_end_matches(['.', ':']);
     match &l.from {
         From::Other(how) => bail!("{} {} comes from {}, which --deps does not read", l.name, l.version, crate::fmt::echo(how)),
