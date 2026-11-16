@@ -417,13 +417,17 @@ spelling. A definition name longer than 200 bytes is still a symbol when it hold
 
 ### Files the index leaves out
 
-The code index reads a source file of up to 1 MB (1,000,000 bytes) that is text and parses; it
-leaves out a larger one, and one that is not text or could not be parsed, and records why. `grep`
-and the text index have no such bound, and `read` reads any file by its lines. Where an answer
-from the code index depends on a left-out file, it says so, as a note line and, in `--json` and
-the MCP tools' envelope, a `not_indexed` field (`reason`, `count`, and for a file over 1 MB the
-first twenty `paths`): `index`, `check` and `stats` always (`1 file over 1 MB is not in the
-index: big.py`, past twenty `and N more`); a lookup (`symbol`, `search`, `find`, `callers`,
+The code index reads a source file of up to 1 MB (1,000,000 bytes) that is text and parses. Its
+walk first leaves out data and generated files by name (`.csv`, `.tsv`, `.log`, minified `.min.js`
+and `.min.css`, source maps, lockfiles and the like), whatever their size; of the rest it leaves
+out a text file over 1 MB ("over 1 MB": a 3 MB `.json` or `.txt` is one), and a file that is not
+text at any size (a NUL byte in its first 4 KiB, as `.npz` weights have) or could not be parsed
+("not text or could not be parsed"), and records why. `grep` and the text index have no such
+bound, and `read` reads any text file by its lines. Where an answer from the code index depends on
+a left-out file, it says so, as a note line and, in `--json` and the MCP tools' envelope, a
+`not_indexed` field (`reason`, `count`, the first twenty `paths`): `index`, `check` and `stats`
+name both reasons (`1 file over 1 MB is not in the index: big.py`, past twenty `and N more`);
+the rest speak of "over 1 MB" alone, which is what a smaller copy would fix: a lookup (`symbol`, `search`, `find`, `callers`,
 `callees`, `refs`, `read --symbol`, `outline`, `path`) after an empty answer, and whenever a path,
 glob or file it is given names a left-out file (`big.py is not in the index (over 1 MB): read it
 by lines, or search it with grep`); `dupes`, `dead` and `map` always, as they claim the whole

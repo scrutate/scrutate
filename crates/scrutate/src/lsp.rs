@@ -921,7 +921,7 @@ impl Server {
                     return Err(newer.into());
                 }
                 let v = crate::ops::in_snapshot(s, &mut *f)?;
-                Ok((v, s.ix.not_indexed(), named.and_then(|r| s.ix.not_indexed_reason(r))))
+                Ok((v, s.ix.not_indexed().over_bound(), named.and_then(|r| s.ix.not_indexed_reason(r))))
             })
             .map_err(|e| (-32603, format!("{e:#}")))?;
         if let Some(note) = pending.note() {

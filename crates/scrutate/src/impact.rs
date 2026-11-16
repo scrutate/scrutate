@@ -545,14 +545,21 @@ impl Builder<'_> {
                 "edited"
             };
             // a copy over the bound has no definitions to read: the file says why
-            let size = match (from_index, e.new.is_some()) {
-                (true, _) => std::fs::metadata(ix.root.join(&path)).map_or(0, |m| m.len()),
-                (false, true) => blob(&e.new_blob).len() as u64,
-                (false, false) => blob(&e.old_blob).len() as u64,
+            // a text copy over the bound: one that is not text is no source the index would read
+            let copy = |b: &[u8]| (b.len() as u64, crate::index::head_reads_as_text(b));
+            let (size, text) = match (from_index, e.new.is_some()) {
+                (true, _) => {
+                    let mut head = Vec::new();
+                    let read = std::fs::File::open(ix.root.join(&path)).and_then(|f| std::io::Read::read_to_end(&mut std::io::Read::take(f, 4096), &mut head));
+                    (std::fs::metadata(ix.root.join(&path)).map_or(0, |m| m.len()), read.is_err() || crate::index::head_reads_as_text(&head))
+                }
+                (false, true) => copy(blob(&e.new_blob)),
+                (false, false) => copy(blob(&e.old_blob)),
             };
             let pushed = self.changed.len();
             self.push(Hit { path, kind: "file".into(), ..Hit::default() }, status);
             if size > crate::index::MAX_FILE_BYTES
+                && text
                 && let Some(c) = self.changed.get_mut(pushed)
             {
                 c.not_indexed = Some("over 1 MB");

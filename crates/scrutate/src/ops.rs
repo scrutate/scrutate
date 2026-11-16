@@ -915,17 +915,13 @@ impl Answer {
 /// `a` found nothing, as `noted` says it for a lookup; `show` spells a path of that index as the
 /// answer spells its paths.
 pub fn noted_under(ix: &crate::index::Index, a: Answer, prefix: &str, show: &dyn Fn(&str) -> String) -> Answer {
-    let ni = ix.not_indexed();
+    let ni = ix.not_indexed().over_bound();
     let under = |p: &str| prefix.is_empty() || p.starts_with(&format!("{prefix}/"));
-    if !a.is_empty() || ni.is_empty() || !ni.first.iter().any(|p| under(p)) && ni.other == 0 {
+    if !a.is_empty() || !ni.first.iter().any(|p| under(p)) {
         return a;
     }
     let first: Vec<String> = ni.first.iter().filter(|p| under(p)).map(|p| show(p)).collect();
-    let ni =
-        crate::index::NotIndexed { over: if prefix.is_empty() { ni.over } else { first.len() }, first, other: if prefix.is_empty() { ni.other } else { 0 } };
-    if ni.is_empty() {
-        return a;
-    }
+    let ni = crate::index::NotIndexed { over: if prefix.is_empty() { ni.over } else { first.len() }, first, ..Default::default() };
     Answer::Noted(Box::new(Noted { lines: ni.lines(), field: ni.json() }), Box::new(a))
 }
 
@@ -970,10 +966,12 @@ fn not_indexed_lines(ix: &crate::index::Index, op: &Op, empty: bool) -> Option<(
         Op::Dupes { .. } | Op::Dead { .. } | Op::Map { .. } => true,
         _ => return None,
     };
-    let ni = ix.not_indexed();
-    if ni.is_empty() {
+    let all = ix.not_indexed();
+    if all.is_empty() {
         return None;
     }
+    // a lookup or a listing speaks of the text files over the bound; a file it names, of either
+    let ni = all.over_bound();
     let left = |p: &str, why: &str| format!("{} is not in the index ({why}): read it by lines, or search it with grep", echo(p));
     let mut lines: Vec<String> = op.named_paths().iter().filter_map(|p| ix.not_indexed_reason(p).map(|why| left(p, why))).collect();
     if let Op::Scoped { filter, .. } = op

@@ -231,3 +231,61 @@ fn a_dependency_s_answer_says_what_its_own_index_leaves_out() {
     assert!(field(&c.structured).as_array().is_some_and(|a| a[0]["reason"] == "over 1 MB"), "{}", c.structured);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// The reason is decided by the file's content first: a file that is not text (by the index's
+/// own test, a NUL in its first 4 KiB) is "not text" at any size and is never in a lookup's note;
+/// "over 1 MB" is only a text file. This repository's own binaries, a large random one and a
+/// text file with a NUL near its start are each named under "not text" in index, check and
+/// stats, and the lookups name only the large source file.
+#[test]
+fn a_binary_file_is_not_text_at_any_size_and_only_large_source_is_over_the_bound() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("not_indexed_binary_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    // this repository's own five, as they are in it
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut own = vec![here.join("models/semantic.npz"), here.join("models/ranker.npz")];
+    own.extend(fs::read_dir(here.join("../../fuzz/regressions/npy")).unwrap().flatten().map(|e| e.path()));
+    assert_eq!(own.len(), 5, "{own:?}");
+    fs::create_dir_all(root.join("own")).unwrap();
+    for p in &own {
+        fs::copy(p, root.join("own").join(p.file_name().unwrap())).unwrap();
+    }
+    // 3 MB of random bytes, a 1.2 MB source file, a 2 MB text file with a NUL in its first 4 KiB
+    let mut seed = 7u64;
+    let random: Vec<u8> = (0..3_000_000)
+        .map(|_| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 56) as u8
+        })
+        .collect();
+    fs::write(root.join("weights.npz"), &random).unwrap();
+    fs::write(root.join("large.py"), format!("def large_marker():\n    return 1\n\n\n{}", "x = 1  #\n".repeat(133_000))).unwrap();
+    let mut nul = format!("note = 1\n{}", "y = 2  #\n".repeat(222_300)).into_bytes();
+    nul[100] = 0;
+    fs::write(root.join("nul.txt"), nul).unwrap();
+    fs::write(root.join("small.py"), "def small_marker():\n    return 1\n").unwrap();
+    git(&root, &["init", "-q"]);
+    let root = canon(&root);
+    run(&root, &["index"]);
+    let over = "1 file over 1 MB is not in the index: large.py";
+    let binaries = ["nul.txt", "own/crash-", "own/ranker.npz", "own/semantic.npz", "weights.npz"];
+    // lookups and listings speak of the source file alone
+    for args in [&["symbol", "zz_no_such_name"][..], &["callers", "zz_no_such_name"], &["dupes"], &["dead"], &["map"]] {
+        let (_, out, err) = run(&root, args);
+        let all = format!("{out}{err}");
+        assert!(all.contains(over) && !all.contains("not text") && !binaries.iter().any(|b| all.contains(b)), "{args:?}:\n{all}");
+    }
+    let v: Value = serde_json::from_str(&run(&root, &["symbol", "zz_no_such_name", "--json"]).1).unwrap();
+    assert_eq!(field(&v), json!([{"reason": "over 1 MB", "count": 1, "paths": ["large.py"]}]), "{v}");
+    // index, check and stats name every one of the seven under its reason
+    let (_, out, _) = run(&root, &["check"]);
+    assert!(out.contains(&format!("note: {over}")), "{out}");
+    let line = out.lines().find(|l| l.contains("(not text or could not be parsed)")).unwrap_or_else(|| panic!("{out}"));
+    assert!(line.starts_with("note: 7 files are not in the index: ") && binaries.iter().all(|b| line.contains(b)), "{line}");
+    let stats: Value = serde_json::from_str(&run(&root, &["stats"]).1).unwrap();
+    let reasons = field(&stats);
+    assert_eq!(reasons[0], json!({"reason": "over 1 MB", "count": 1, "paths": ["large.py"]}), "{stats}");
+    assert!(reasons[1]["reason"] == "not text or could not be parsed" && reasons[1]["count"] == 7, "{stats}");
+    let _ = fs::remove_dir_all(&root);
+}
