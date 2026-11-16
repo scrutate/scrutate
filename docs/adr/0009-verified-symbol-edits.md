@@ -50,7 +50,7 @@ command line calls use cannot carry one to a running server (one without the fla
   root, a link, a file under `.git/` or `.scrutate/` at any depth (by name under every spelling
   git's own rules take for its directory, which the index skips too, and by file identity with
   the root's own, so a link to either counts), and a file the index does not hold are refused. A
-  dry run writes nothing in the repository, not even a temporary file. The file's line endings are kept: `new_text` written with `\n` takes the file's `\r\n`.
+  dry run writes nothing in the repository, not even a temporary file. The file's line endings are kept: `new_text` written with `\n` takes the `\r\n` of the lines it replaces, judged by the definition's first line, so one `\r\n` line elsewhere in a `\n` file changes nothing.
 - The answer names the definition's new lines and the file's new hash. The index sees the
   edit at the next call, as it sees any write to the tree.
 

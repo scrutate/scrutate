@@ -478,3 +478,27 @@ fn a_file_with_the_temporary_name_is_left_alone_and_the_edit_refused() {
     assert_eq!(s.file(&tmp), "the user's own file\n");
     assert_eq!(s.file("a.py"), PY);
 }
+
+/// The new text takes the line ending of the lines it replaces: one CRLF line elsewhere in an LF
+/// file makes the edited definition no CRLF, and a CRLF file's edit is all CRLF.
+#[test]
+fn the_edit_takes_the_line_ending_of_the_lines_it_replaces() {
+    let lf = "def first():\n    return 1\n\n\ndef second():\r\n    return 2\n";
+    let crlf = "def first():\r\n    return 1\r\n\r\n\r\ndef second():\r\n    return 2\r\n";
+    // a CRLF file whose last line, the edited definition, has no line ending
+    let last = "def a():\r\n    return 1\r\n\r\n\r\ndef first(): return 2";
+    let cases = [
+        ("lf.py", lf, lf.replace("return 1", "return 9")),
+        ("crlf.py", crlf, crlf.replace("return 1", "return 9")),
+        ("last.py", last, "def a():\r\n    return 1\r\n\r\n\r\ndef first():\r\n    return 9\r\n".to_string()),
+    ];
+    for (file, text, want) in cases {
+        let mut s = Server::start(&format!("eol_{}", file.replace('.', "_")), &[(file, text)], &["--allow-edits"]);
+        let new_text = "def first():\n    return 9\n";
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": "first", "path": file, "new_text": new_text}));
+        assert!(!err, "{file}: {dry}");
+        let (out, err) = s.call("edit_symbol", json!({"symbol": "first", "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        assert!(!err, "{file}: {out}");
+        assert_eq!(s.file(file), want, "{file}");
+    }
+}

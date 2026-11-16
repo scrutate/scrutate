@@ -162,7 +162,11 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
             bail!("{} shares a line with other code ({rel}:{line}): edit_symbol replaces whole lines; nothing written", target.qualname);
         }
     }
-    let eol = if old.contains("\r\n") { "\r\n" } else { "\n" };
+    // the line ending of the lines it replaces, whatever another line of the file has; a last
+    // line with no ending takes the line before it
+    let first = old[a..b].split_inclusive('\n').next().unwrap_or("");
+    let crlf = if first.ends_with('\n') { first.ends_with("\r\n") } else { old[..a].ends_with("\r\n") };
+    let eol = if crlf { "\r\n" } else { "\n" };
     let mut repl = new_text.strip_prefix('\u{feff}').unwrap_or(new_text).replace("\r\n", "\n");
     if eol == "\r\n" {
         repl = repl.replace('\n', "\r\n");

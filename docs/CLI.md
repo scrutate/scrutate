@@ -1142,7 +1142,8 @@ replaces whole lines; nothing written`. A comment after the definition on its la
 (`function f() {...} // end`) belongs to the definition, as `read_code` shows it, and is replaced
 with it; the dry run's diff shows it. The definitions nested in it may change. A definition's
 range is the index's, its attributes and comment block included, so `new_text` replaces them
-too. The new text takes the file's line endings (`\r\n` stays `\r\n`), and the rest of the
+too. The new text takes the line ending of the definition's first line (`\r\n` stays `\r\n`,
+and one `\r\n` line elsewhere in a `\n` file changes nothing), and the rest of the
 file is written byte for byte as it was. The file is written as `tsquery --rewrite --write`
 writes one: opened through its directory with no link on the way, its bytes checked to still be
 the ones read, then a new file in the same directory renamed over it, its permissions kept. A
