@@ -455,6 +455,8 @@ pub(crate) struct Parsed {
     /// the tree was dropped for passing `MAX_DEPTH`
     deep: bool,
     bindings: Vec<Binding>,
+    /// what a node of the tree is counted at (`node_bytes`)
+    node_bytes: usize,
 }
 
 impl Drop for Parsed {
@@ -467,16 +469,31 @@ impl Drop for Parsed {
 
 impl Parsed {
     /// What the store counts for it: the text, the bytes kept beside it, and the tree by its
-    /// nodes, each `NODE_BYTES`.
+    /// nodes, each counted at its grammar's `node_bytes`.
     fn weight(&self) -> usize {
         let nodes = self.tree.as_ref().map_or(0, |t| t.root_node().descendant_count());
-        self.src.len() + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8) + nodes * NODE_BYTES
+        self.src.len() + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8) + nodes * self.node_bytes
     }
 }
 
-/// The memory a kept file takes per node of its tree beyond its text, as `tests/parsed_memory.rs`
-/// measures it on Linux: 88 bytes for C, 104 to 106 for Rust, whose imports add more.
-const NODE_BYTES: usize = 110;
+/// An estimate of the memory a kept tree takes per node beyond its text: the heavier of a real
+/// corpus and generated expression-heavy code, measured on Linux with
+/// `tests/parsed_memory_by_grammar.rs` (ADR 4 has the table). A grammar not measured counts as
+/// the heaviest; measure a grammar again when its version changes.
+fn node_bytes(grammar: &str) -> usize {
+    match grammar {
+        "csharp" => 168,
+        "php" => 149,
+        "rust" => 131,
+        "python" => 116,
+        "java" => 115,
+        "javascript" | "typescript" | "tsx" => 113,
+        "go" => 104,
+        "c" => 97,
+        "cpp" => 90,
+        _ => 168,
+    }
+}
 
 /// A store filled with the files `paths` of `ix`'s root, for a test of the memory a full store
 /// takes; dropped, it frees them.
@@ -1153,7 +1170,8 @@ fn parse_text(path: &str, src: String, raw: Raw) -> Parsed {
         _ => (false, Vec::new()),
     };
     let tree = tree.filter(|_| !deep);
-    Parsed { lang, src, raw, tree, deep, bindings }
+    let node_bytes = spec.map_or(0, |s| node_bytes(s.id));
+    Parsed { lang, src, raw, tree, deep, bindings, node_bytes }
 }
 
 /// Whether `tree` is too deep to read, and else the bindings the resolver takes from it.
@@ -3575,7 +3593,9 @@ mod tests {
     /// The store drops the least recently used files to stay under its cap.
     #[test]
     fn the_parsed_store_stays_under_its_cap() {
-        let file = |text: &str| std::sync::Arc::new(Parsed { lang: None, src: text.to_string(), raw: None, tree: None, deep: false, bindings: Vec::new() });
+        let file = |text: &str| {
+            std::sync::Arc::new(Parsed { lang: None, src: text.to_string(), raw: None, tree: None, deep: false, bindings: Vec::new(), node_bytes: 0 })
+        };
         let key = |p: &str| (std::path::PathBuf::from("/r"), p.to_string());
         let mut store = ParsedStore::new(10);
         store.put(key("a"), "1".into(), file("aaaa"));

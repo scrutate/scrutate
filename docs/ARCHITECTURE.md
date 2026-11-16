@@ -859,8 +859,8 @@ One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolve
 `rdeps` and the language server's definition and references requests each open one `Names` per
 request and ask what the occurrence at a place refers to; no other module builds a resolver.
 Within a request a file is read once while the request's set of loaded files holds it, however
-many of its call sites are asked about; the set holds at most 256 MiB of weight (`LOADED_CAP`,
-weighed as ADR 4's store weighs) and drops the least recently used, so with that store the
+many of its call sites are asked about; the set holds at most 256 MiB of weight (`LOADED_CAP`;
+a file's text, imports and definitions, and its parse as ADR 4's store weighs it) and drops the least recently used, so with that store the
 resolver holds at most 512 MiB of weight, plus 32 MiB for the two memos below and the file in
 use. Beside the set, a request keeps, by path, what it learned of each file it read (definitions
 and imports, used while the file's bytes keep the hash they had) and the instantiations each class

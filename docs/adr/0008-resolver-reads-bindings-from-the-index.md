@@ -25,7 +25,7 @@ Where the time went (a build with phase timers, and `perf`):
 Two causes. For a C name with nothing in front, the resolver walks the files the use's file
 includes, up to 64, and loaded each one by parsing it, though that walk reads only a file's
 definitions (from the index) and its `#include` lines. And `Resolver` kept every loaded file,
-tree included, until the request ended; a tree takes about 110 bytes a node in memory
+tree included, until the request ended; a tree takes 90 to 170 bytes a node in memory, by its grammar
 ([ADR 4](0004-parsed-files-kept-across-requests.md)), so a request that touches thousands of
 files held gigabytes.
 
@@ -51,8 +51,9 @@ which this item first proposed, would not have moved these numbers.
    does not hold: the file is parsed at once, as before. The same bytes give the same tree and the
    same bindings, so every answer is what a parse gives.
 3. **A bounded set of loaded files per request.** `Resolver` holds the files it loaded least
-   recently used first under `LOADED_CAP` (256 MiB): their text, their bindings and the parses
-   they hold, weighed as the store weighs them. The set drops files when one is loaded, when one
+   recently used first under `LOADED_CAP` (256 MiB): their text, their bindings (64 bytes each),
+   their definitions (160 bytes each and their names) and the parses they hold, a parse weighed as
+   the store weighs it. The set drops files when one is loaded, when one
    is found in it, and when a file in it makes its tree, sparing the file in use. A file dropped
    from the set is loaded again when asked for again. What the resolver holds is bounded by
    `PARSED_CAP` plus `LOADED_CAP` of weight, plus the two memos below (16 MiB each) and the one
