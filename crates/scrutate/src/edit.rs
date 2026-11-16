@@ -216,10 +216,17 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
         bail!("{} names {} definitions ({}): pass path, or one location, to pick the one to edit", crate::fmt::echo(symbol), at.len(), at.join(", "));
     }
     let row = &found[0].0;
-    // a file's module chunk or a window can carry a name (`int a = 1;` on line 1 names C's module
-    // chunk) but is no definition
+    // a module (a file's top level, a namespace) or a window can carry a name, as `int a = 1;` on
+    // line 1 names C's module chunk, but is no definition
     if matches!(row.kind.as_str(), "module" | "window") {
-        bail!("no definition matches {}", crate::fmt::echo(symbol));
+        bail!(
+            "{} names a {} ({}:{}-{}), not a definition: a module (a file's top level or a namespace) or a window is not edited; edit_symbol replaces one definition, so name one inside it; nothing written",
+            crate::fmt::echo(symbol),
+            row.kind,
+            crate::fmt::shown(&row.path),
+            row.start,
+            row.end
+        );
     }
     let rel = row.path.clone();
     if let Some(top) = guarded(&s.ix.root, &rel) {

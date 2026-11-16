@@ -380,7 +380,7 @@ Constants are symbols of kind `constant`:
 |---|---|
 | Rust | `const` and `static` at file level, in a `mod` block or in an `impl` or trait body. |
 | Go | package-level `const` and `var`. |
-| JavaScript and TypeScript | a top-level `const` that is not a function (exported or not); in a class body, a TypeScript `static readonly` field and a JavaScript `static` field named in capitals (`static MAX = 1`). |
+| JavaScript and TypeScript | a top-level `const` that is not a function (exported or not); in a class body, a TypeScript `static readonly` field and a JavaScript `static` field named in capitals (`static MAX = 1`). A `let` or `var` is not indexed. |
 | TypeScript | enum members. |
 | Java | `static final` fields, enum constants and the fields of an interface. |
 | Python | an assignment to a name in capitals at module level or in a class body, and each such name of a tuple or list target (`A, B = 1, 2`, `[A, B] = 1, 2`). |
@@ -1157,7 +1157,10 @@ on: no environment variable or configuration file does, so a repository cannot.
 
 `edit_symbol` replaces one whole definition with `new_text`. `symbol` names it as `read_code`
 takes one (a name, `Class.method`, a location), and `path` keeps the ones in one file; a name
-with more than one definition is an error that lists their locations. A call is a dry run unless
+with more than one definition is an error that lists their locations. A module (a file's top
+level or a C++ namespace, `[module] N` in `read_code`) and a window are not edit targets: a name
+that matches one is refused with its kind and lines (`N names a module (b.cpp:1-3), not a
+definition`); name a definition inside it. A call is a dry run unless
 it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewrite` form) and
 `hash:`, 16 hex digits of the file's content hash. `apply: true` writes only with that `hash`,
 and only while the file still has it: a file changed since is refused with its current hash and

@@ -610,8 +610,21 @@ fn a_constant_on_the_first_line_is_edited() {
     let text = "int a = 1;\n\nint f(void) { return a; }\n";
     let mut s = Server::start("first_global_c", &[("a.c", text)], &["--allow-edits"]);
     let (out, err) = s.call("edit_symbol", json!({"symbol": "a", "path": "a.c", "new_text": "int a = 2;\n"}));
-    assert!(err && out.contains("no definition matches a"), "{out}");
+    assert!(err && out.contains("a names a module (a.c:1-2), not a definition"), "{out}");
     assert_eq!(s.file("a.c"), text);
+}
+
+/// A C++ namespace is a module, as `read_code` names it: `edit_symbol` refuses it as one, not as a
+/// name nothing matches, and the file stays as it was.
+#[test]
+fn a_namespace_is_refused_as_a_module() {
+    let text = "namespace N {\nint f() { return 1; }\n}\n";
+    let mut s = Server::start("namespace_module", &[("b.cpp", text)], &["--allow-edits"]);
+    let (read, _) = s.call("read_code", json!({"symbol": "N"}));
+    assert!(read.contains("[module] N"), "{read}");
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "N", "path": "b.cpp", "new_text": "namespace N {\nint f() { return 2; }\n}\n"}));
+    assert!(err && out.contains("N names a module (b.cpp:1-3), not a definition") && out.contains("name one inside it"), "{out}");
+    assert_eq!(s.file("b.cpp"), text);
 }
 
 /// A type that ends in `};` is edited: the `;` the grammar leaves outside the definition (beside
