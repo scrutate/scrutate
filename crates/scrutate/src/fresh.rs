@@ -93,6 +93,14 @@ impl Watching {
     pub fn run(&self, _: &Path, _: &std::sync::atomic::AtomicBool, _: impl FnOnce(), _: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
         match *self {}
     }
+
+    pub(crate) fn go_on_from(&self, _: Token) {
+        match *self {}
+    }
+
+    pub(crate) fn now(&self) -> Token {
+        match *self {}
+    }
 }
 
 /// The freshness a session of `root` (canonical) reads with, and the watch that feeds it: a

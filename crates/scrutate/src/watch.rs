@@ -496,6 +496,18 @@ fn cookie_prefix(pid: u32, n: u64) -> String {
 }
 
 impl Notes {
+    /// Its tokens go on after `t`, the newest token of the notes it takes over from, so a read
+    /// that applies one of those late stands before every change these note.
+    pub(crate) fn go_on_from(&self, t: Token) {
+        let mut n = lock(&self.0.noted);
+        n.r#gen = n.r#gen.max(t.get());
+    }
+
+    /// The token that stands for now.
+    pub(crate) fn now(&self) -> Token {
+        Token::at(lock(&self.0.noted).r#gen)
+    }
+
     /// Notes for the watch of `root` (canonical), with its cookie directory made and emptied.
     pub fn new(root: &Path) -> Notes {
         static NOTES: AtomicU64 = AtomicU64::new(0);

@@ -322,9 +322,15 @@ impl Session {
                 #[cfg(not(any(unix, windows)))]
                 let _ = at;
             }
-            if self.notes().is_some() {
+            if let Some(old) = self.notes() {
                 let (fresh, notes) = crate::fresh::for_session(&now);
-                *write(&self.fresh) = fresh;
+                // with the reads' freshness held, no read takes an old token past this one: a read
+                // that applies an old token late then stands before the new notes' first change
+                let mut held = write(&self.fresh);
+                if let Some(new) = &notes {
+                    new.go_on_from(old.now());
+                }
+                *held = fresh;
                 *write(&self.notes) = notes;
             }
         }
@@ -2385,6 +2391,84 @@ mod tests {
         assert!(s.reopen().unwrap());
         assert!(s.run_scanned_for(&op, Some(&old)).is_none(), "the old tree's call ran on the new tree's reader");
         assert!(s.run_scanned_for(&op, Some(&s.root())).is_some(), "the new tree's call");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A session opened through a link reads the tree the link names now: grep_code and textual
+    /// references find every file of the new tree after the link is pointed at it, after it is
+    /// pointed back, and after another tree is renamed in under the same path, though a look of
+    /// the old tree was kept and both trees have a text index.
+    #[cfg(unix)]
+    #[test]
+    fn grep_code_and_references_follow_the_root_to_its_new_tree() {
+        let base = std::env::temp_dir().join(format!("scrutate_session_relinked_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let tree = |dir: &str, word: &str, n: usize| {
+            let at = base.join(dir);
+            std::fs::create_dir_all(at.join(".git")).unwrap();
+            for i in 0..n {
+                std::fs::write(at.join(format!("{word}{i}.py")), format!("def {word}{i}():\n    return 'needle_{word}'\n")).unwrap();
+            }
+            let mut repo = crate::stores::Repo::open(&at).unwrap();
+            repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
+        };
+        tree("v1", "one", 40);
+        tree("v2", "two", 30);
+        tree("v3", "three", 20);
+        let cur = base.join("cur");
+        std::os::unix::fs::symlink("v1", &cur).unwrap();
+        let s = Arc::new(Session::open_watched(&cur, Every::given(None)).unwrap());
+        s.watch(false).unwrap();
+        let settings = crate::mcp::Settings::new(None);
+        let files = |tool: &str, word: &str| -> usize {
+            let args = if tool == "grep_code" {
+                serde_json::json!({"pattern": format!("needle_{word}")})
+            } else {
+                serde_json::json!({"name": format!("needle_{word}"), "textual": true})
+            };
+            let text = crate::mcp::call_tool(&s, tool, &args, &settings, &Arc::default()).text;
+            let named = regex::Regex::new(&format!(r"\b{word}\d+\.py")).unwrap();
+            named.find_iter(&text).map(|m| m.as_str().to_string()).collect::<std::collections::HashSet<_>>().len()
+        };
+        // a step's answers once the session has caught up with it, or what it says after 20 s
+        let settled = |want: &[(&str, &str, usize)]| {
+            let t0 = Instant::now();
+            loop {
+                let got: Vec<usize> = want.iter().map(|(tool, word, _)| files(tool, word)).collect();
+                if got.iter().zip(want).all(|(g, w)| *g == w.2) || t0.elapsed() > Duration::from_secs(20) {
+                    return got;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        };
+        let relink = |to: &str| {
+            std::os::unix::fs::symlink(to, base.join("cur.tmp")).unwrap();
+            std::fs::rename(base.join("cur.tmp"), &cur).unwrap();
+        };
+        let all = |word: &'static str, n: usize, gone: &'static str| [("grep_code", word, n), ("references", word, n), ("grep_code", gone, 0)];
+        let t0 = Instant::now();
+        while !read(&s.fresh).watching() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let want = all("one", 40, "two");
+        assert_eq!(settled(&want), [40, 40, 0], "v1, the look kept");
+        relink("v2");
+        let want = all("two", 30, "one");
+        assert_eq!(settled(&want), [30, 30, 0], "the link pointed at v2");
+        // a change in the new tree reaches the reads through the new tree's watch
+        std::fs::write(base.join("v2/two30.py"), "def two30():\n    return 'needle_two'\n").unwrap();
+        let want = all("two", 31, "one");
+        assert_eq!(settled(&want), [31, 31, 0], "a file made in v2 after the link moved");
+        relink("v1");
+        let want = all("one", 40, "two");
+        assert_eq!(settled(&want), [40, 40, 0], "the link pointed back at v1");
+        // the same path, another tree: v1 renamed away and v3 renamed in its place
+        std::fs::rename(base.join("v1"), base.join("v1.old")).unwrap();
+        std::fs::rename(base.join("v3"), base.join("v1")).unwrap();
+        let want = all("three", 20, "one");
+        assert_eq!(settled(&want), [20, 20, 0], "another tree renamed in under the same path");
+        drop(s);
         let _ = std::fs::remove_dir_all(base);
     }
 

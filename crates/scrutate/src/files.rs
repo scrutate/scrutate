@@ -871,19 +871,21 @@ thread_local! {
     pub static CLIMBS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// A session's look of the tree (`look(root, false)`), kept up to date with each change set its
-/// watch gives: None until a read needs one, and again after a change set of every file.
-pub type KeptLook = Arc<std::sync::Mutex<Option<Arc<Vec<Found>>>>>;
+/// A session's look of the tree (`look(root, false)`) with the root it was taken of, kept up to
+/// date with each change set its watch gives: None until a read needs one, and again after a
+/// change set of every file.
+pub type KeptLook = Arc<std::sync::Mutex<Option<(PathBuf, Arc<Vec<Found>>)>>>;
 
-/// `look(root, false)` as it is now: the kept one when there is one, else a look, which is kept.
+/// `look(root, false)` as it is now: the kept one when it is of `root`, else a look, which is
+/// kept. A reader of the tree a session's root named before still reads its own tree.
 pub fn looked(root: &Path, kept: Option<&KeptLook>) -> anyhow::Result<Arc<Vec<Found>>> {
     let Some(kept) = kept else { return Ok(Arc::new(look(root, false)?)) };
     let mut k = kept.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(f) = k.as_ref() {
+    if let Some((_, f)) = k.as_ref().filter(|(r, _)| r == root) {
         return Ok(Arc::clone(f));
     }
     let f = Arc::new(look(root, false)?);
-    *k = Some(Arc::clone(&f));
+    *k = Some((root.to_path_buf(), Arc::clone(&f)));
     Ok(f)
 }
 
@@ -895,7 +897,11 @@ pub fn patch_look(root: &Path, kept: &KeptLook, changes: &crate::stores::Changes
         *k = None;
         return;
     };
-    let Some(list) = k.as_mut() else { return };
+    // a look of another tree than the one the change set is of says nothing of it
+    if k.as_ref().is_some_and(|(r, _)| r != root) {
+        *k = None;
+    }
+    let Some((_, list)) = k.as_mut() else { return };
     let named: std::collections::BTreeSet<&String> = n.code.iter().chain(&n.text).chain(&n.repo).collect();
     if named.is_empty() {
         return;
@@ -1028,6 +1034,32 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+    /// A kept look is of the root it was taken of: a read of another root (the tree a session's
+    /// link names now, while a read of the old one is still out) neither takes it nor is patched
+    /// into it, and looks at its own tree.
+    #[test]
+    fn a_kept_look_serves_only_the_root_it_was_taken_of() {
+        let base = std::env::temp_dir().join(format!("scrutate_kept_root_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for (dir, file) in [("a", "one.py"), ("b", "two.py")] {
+            std::fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+            std::fs::write(base.join(dir).join(file), "x = 1\n").unwrap();
+        }
+        let (a, b) = (base.join("a"), base.join("b"));
+        let paths = |v: &[super::Found]| v.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
+        let kept = super::KeptLook::default();
+        assert_eq!(paths(&super::looked(&a, Some(&kept)).unwrap()), ["one.py"]);
+        assert_eq!(paths(&super::looked(&b, Some(&kept)).unwrap()), ["two.py"], "b read a's kept look");
+        // a change set of b's tree leaves no look of a in place
+        assert_eq!(paths(&super::looked(&a, Some(&kept)).unwrap()), ["one.py"]);
+        let named = crate::stores::Named { code: Vec::new(), text: Vec::new(), repo: vec!["three.py".to_string()] };
+        std::fs::write(b.join("three.py"), "x = 3\n").unwrap();
+        super::patch_look(&b, &kept, &crate::stores::Changes::Named(named));
+        assert!(kept.lock().unwrap().as_ref().is_none_or(|(r, _)| r == &b), "b's change set patched a's look");
+        assert_eq!(paths(&super::looked(&b, Some(&kept)).unwrap()), ["three.py", "two.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// A file only the repository's walk lists (hidden, so the text walk leaves it out, and in no
     /// index: a `.lock`) joins a kept look when a change set names it, as a fresh look finds it.
     #[test]
