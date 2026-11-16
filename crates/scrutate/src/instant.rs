@@ -3902,9 +3902,11 @@ mod tests {
             many.push(others.join(format!("o{i}.txt")));
             std::fs::write(many.last().unwrap(), "needle\n").unwrap();
         }
+        // either side of the line between the two (crate::files::FEW_ROOTS, 16)
+        let (at, past) = (many[..16].to_vec(), many[..17].to_vec());
         let o = query("needle", Mode::Literal);
         let m = policy::tests::Given::new(11, Some(5), &WARM_LINUX, Some(8));
-        for roots in [vec![root.clone()], many] {
+        for roots in [vec![root.clone()], at, past, many] {
             for f in [
                 Files { threads: 8, ..Files::walk(roots.clone()) },
                 Files { threads: 1, ..Files::walk(roots.clone()) },
