@@ -378,7 +378,7 @@ incompatible index by itself, and that is never breaking.
 - The Bash hook reads `rg --sort path PATTERN DIR` as ripgrep does, where it took `path` for the
   pattern and answered another search with exit 0; `--sort none` and the last `--sort` given are
   honoured, and `--sortr` or an order other than path runs `rg` itself
-  ([CLI](docs/CLI.md#bash-hook)).
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - `callees` of a function whose every callee is outside the repository no longer prints
   `(no results)` above the `external:` list, in the CLI and in either MCP form.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.

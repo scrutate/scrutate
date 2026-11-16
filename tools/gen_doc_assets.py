@@ -19,6 +19,7 @@ import argparse
 import ast
 import os
 import re
+import subprocess
 import sys
 from xml.sax.saxutils import escape
 
@@ -1147,6 +1148,22 @@ def check_links(path, text, problems):
                 problems.append(f"{path}:{n + 1}: #{anchor}: no such heading")
 
 
+def linked_files():
+    """The Markdown files whose links and anchors must resolve: the hub, every document with a head,
+    and every other tracked .md (README.md, CHANGELOG.md, CONTRIBUTING.md, the integrations'
+    READMEs), less the local working notes under docs/research and docs/superpowers."""
+    out = [HUB] + [d[1] for d in headed()]
+    try:
+        git = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True)
+    except OSError as e:
+        raise SystemExit(f"the link check reads the tracked Markdown files with git ls-files: {e}")
+    if git.returncode != 0:
+        # outside a checkout (a git archive tree) the list would shrink to the documents above, unseen
+        raise SystemExit(f"the link check reads the tracked Markdown files with git ls-files, which failed: {git.stderr.strip()}")
+    tracked = git.stdout.split()
+    return out + sorted(f for f in tracked if f not in out and not f.startswith(("docs/research/", "docs/superpowers/")))
+
+
 def check_content_revision(problems):
     """RELEASING.md and the CHANGELOG's Unreleased section name the content revision index.rs
     declares, wherever they state one: the number has drifted twice behind the code."""
@@ -1253,7 +1270,7 @@ def main():
         p = f"docs/{name}"
         if (name.endswith(".md") or name.endswith(".html")) and p not in listed and p != HUB:
             problems.append(f"{p}: not on the hub (add it to DOCS)")
-    for path in [HUB] + [d[1] for d in headed()]:
+    for path in linked_files():
         text = files.get(path)
         if text is None:
             with open(os.path.join(ROOT, path), encoding="utf-8") as f:
