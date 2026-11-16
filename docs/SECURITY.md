@@ -359,7 +359,9 @@ goes through that handle and the directories opened from it one name at a time, 
 followed: with `O_NOFOLLOW` on Linux and macOS (`openat`, `renameat`), and on Windows with
 `FILE_OPEN_REPARSE_POINT` (`NtCreateFile` and a `FileRenameInformation` rename relative to the
 directory handle), where a directory that is a junction or link is refused. The temporary file,
-the check and the rename are relative to the file's directory handle. A directory swapped for a
+the check and the rename are relative to the file's directory handle. The temporary file is made
+new, never opened when its name is taken: a file already of that name is left as it is, and the
+write of that file is refused with its name. A directory swapped for a
 link or junction after the plan starts, the root and its ancestors included, therefore cannot send
 a read, the write or a temporary file outside the root. The template is text: nothing in it is run. No MCP tool rewrites; the one MCP tool that writes a source file is `edit_symbol`, offered only by a server started with `serve --allow-edits` ([Verified symbol edits](#verified-symbol-edits)).
 Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, a

@@ -525,8 +525,16 @@ fn write_one(root: &Dir, f: &FileChange) -> Result<(), String> {
     let dir = root.below(parent).map_err(|e| e.to_string())?;
     let perm = dir.regular(name).map_err(|e| e.to_string())?.ok_or("not a regular file")?;
     let tmp = format!(".{}.scrutate-{}.tmp", name.to_string_lossy(), std::process::id());
+    // a file already of that name is not this write's: it is never opened, and never removed
+    let mut out = match dir.create_new(&tmp) {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let at = parent.join(&tmp).to_string_lossy().replace('\\', "/");
+            return Err(format!("{} is there already and is not this write's", crate::fmt::echo(&at)));
+        }
+        Err(e) => return Err(e.to_string()),
+    };
     let written = (|| -> std::io::Result<bool> {
-        let mut out = dir.create_new(&tmp)?;
         out.write_all(&f.new)?;
         out.set_permissions(perm)?;
         out.sync_all()?;

@@ -411,3 +411,18 @@ fn a_junction_out_of_the_root_is_never_written() {
     assert_eq!(outside.read("o/x.py"), "print(secret)\n");
     fs::remove_dir(t.root.join("o")).unwrap();
 }
+
+/// A file already named as the write's temporary file is never opened or removed: the write is
+/// refused, names it, and leaves it and the file it would have written as they were.
+#[test]
+fn a_file_with_the_temporary_name_is_left_alone_and_the_write_refused() {
+    let t = Tree::new("tmp_taken");
+    t.write("a.py", "print(x)\n");
+    let tmp = format!(".a.py.scrutate-{}.tmp", std::process::id());
+    t.write(&tmp, "the user's own file\n");
+    let plan = scrutate::rewrite::plan("python", PRINT, "log$args", std::slice::from_ref(&t.root), &t.root).unwrap();
+    let left = plan.write();
+    assert!(left[0].as_deref().is_some_and(|w| w.contains(&tmp) && w.ends_with("left alone")), "{left:?}");
+    assert_eq!(t.read(&tmp), "the user's own file\n");
+    assert_eq!(t.read("a.py"), "print(x)\n");
+}

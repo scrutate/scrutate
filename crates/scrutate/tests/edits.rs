@@ -462,3 +462,19 @@ fn an_edit_keeps_the_byte_order_mark_and_never_doubles_it() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// A file already named as the edit's temporary file is never opened or removed: the edit is
+/// refused, names it, and leaves it and the edited file as they were.
+#[test]
+fn a_file_with_the_temporary_name_is_left_alone_and_the_edit_refused() {
+    let mut s = Server::start("tmp_taken", &[("a.py", PY)], &["--allow-edits"]);
+    let tmp = format!(".a.py.scrutate-{}.tmp", s.child.id());
+    fs::write(s.root.join(&tmp), "the user's own file\n").unwrap();
+    let new_text = "def first():\n    return 9\n";
+    let (dry, err) = s.call("edit_symbol", json!({"symbol": "first", "path": "a.py", "new_text": new_text}));
+    assert!(!err, "{dry}");
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "first", "path": "a.py", "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+    assert!(err && out.contains(&tmp), "{out}");
+    assert_eq!(s.file(&tmp), "the user's own file\n");
+    assert_eq!(s.file("a.py"), PY);
+}
