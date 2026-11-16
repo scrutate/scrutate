@@ -350,6 +350,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Plain `impact` refuses a file a merge left in conflict ("is unmerged: finish the merge before
+  asking what it changes", exit 2), as `impact --staged` did, where it named the conflict-marked
+  text as an edit.
 - A directory named as git's or scrutate's own under another spelling (`.GIT`, `.Git.`,
   `.Scrutate`, the short name `git~1`), which a case-insensitive file system such as APFS or NTFS
   takes for `.git` or `.scrutate`, is no longer indexed, nor searched by `grep_code` and the

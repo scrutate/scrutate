@@ -383,6 +383,33 @@ fn impact_takes_time_in_proportion_to_the_change() {
     assert!(large < small * 8, "1,000 edited definitions took {small:?}, 4,000 took {large:?}");
 }
 
+/// A file with unmerged changes (a merge stopped at a conflict) is refused in the working tree as
+/// it is staged: its conflict markers are no change to name.
+#[test]
+fn a_file_left_unmerged_by_a_conflict_is_refused() {
+    let t = chain("unmerged");
+    t.git(&["checkout", "-q", "-b", "side"]);
+    t.write("lib/core.py", "def deepest(x):\n    return x + 2\n\n\ndef spare(x):\n    return x\n");
+    t.commit("side");
+    t.git(&["checkout", "-q", "main"]);
+    t.write("lib/core.py", "def deepest(x):\n    return x + 3\n\n\ndef spare(x):\n    return x\n");
+    t.commit("main");
+    let merged = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "merge", "-q", "side"])
+        .current_dir(&t.root)
+        .envs(GIT_ENV)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "the merge did not stop at a conflict");
+    assert!(t.git(&["ls-files", "-u"]).lines().count() == 3, "lib/core.py is not in its three stages");
+    for args in [&[][..], &["--staged"][..]] {
+        let (code, out, err) = t.run(&[&["impact"], args].concat());
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert!(err.contains("lib/core.py is unmerged: finish the merge before asking what it changes"), "{args:?}: {err}");
+    }
+}
+
 #[test]
 fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
     let t = chain("deletednamesake");

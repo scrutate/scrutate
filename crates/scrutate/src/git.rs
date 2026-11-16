@@ -322,6 +322,13 @@ impl Git {
             v.push("--".into());
             v
         };
+        // the working tree's diff reports a file stopped at a conflict as edited, not as unmerged
+        if matches!(new, New::Tree) {
+            let unmerged = self.run(&["ls-files", "-u", "-z"])?;
+            if let Some(path) = unmerged.split(|&b| b == 0).find_map(|e| e.splitn(2, |&b| b == b'\t').nth(1)) {
+                bail!("{} is unmerged: finish the merge before asking what it changes", echo(&String::from_utf8_lossy(path)));
+            }
+        }
         let raw = self.run(&with(&["--raw", "-z", "--no-abbrev"]).iter().map(String::as_str).collect::<Vec<_>>())?;
         let patch = self.run(&with(&["-p", "-U0", "--inter-hunk-context=0"]).iter().map(String::as_str).collect::<Vec<_>>())?;
         let mut entries = raw_entries(&raw)?;
