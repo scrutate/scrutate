@@ -486,9 +486,10 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
     }
 }
 
-/// The package `name` starts with and the rest of it: the longest start that is a locked package's
-/// import name, before a `.` or `::`.
-fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Result<(Locked, &'n str)> {
+/// The package `name` starts with, the rest of it, and the package's directory inside it ("" for
+/// its root): the longest start that is a locked package's import name, before a `.` or `::`; for
+/// Go also a package in a module's subdirectory, by its import path or its name.
+fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Result<(Locked, &'n str, String)> {
     let (all, read) = locked(root);
     if read.is_empty() {
         bail!("no lockfile at the root ({}): --deps reads the version a lockfile pins", LOCKFILES.join(", "));
@@ -498,6 +499,7 @@ fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Res
     let mut cuts: Vec<(usize, usize)> = name.match_indices("::").map(|(i, _)| (i, 2)).chain(name.match_indices('.').map(|(i, _)| (i, 1))).collect();
     cuts.push((name.len(), 0));
     cuts.sort_by_key(|c| std::cmp::Reverse(c.0));
+    let mut missed = None;
     for (at, len) in cuts {
         let start = &name[..at];
         let mut hits: Vec<&Locked> = names.iter().filter(|(n, _)| n.iter().any(|n| n == start)).map(|(_, l)| *l).collect();
@@ -526,6 +528,14 @@ fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Res
                 hits.retain(|l| l.imported_as.as_deref().unwrap_or(&l.name) == one);
             }
         }
+        let mut sub = String::new();
+        if hits.is_empty()
+            && at < name.len()
+            && let Some((l, dir)) = go_subpackage(root, &all, start, &mut missed)?
+        {
+            hits.push(l);
+            sub = dir;
+        }
         let Some(first) = hits.first() else { continue };
         let echo = crate::fmt::echo;
         if let Some(other) = hits.iter().find(|l| l.eco != first.eco || l.name != first.name) {
@@ -539,21 +549,145 @@ fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Res
             );
         }
         let first = chosen(root, &hits, &dists)?;
-        // what a lockfile names is shown and used only when it is one of its ecosystem's
-        if !valid_name(first.eco, &first.name) {
-            return Err(refused(first, "that is no package name"));
-        }
-        if !first.version.is_empty() && !valid_version(first.eco, &first.version) {
-            return Err(refused(first, "that is no version"));
-        }
+        valid(first)?;
         let rest = &name[(at + len).min(name.len())..];
         if rest.is_empty() {
             let sep = if first.eco == Eco::Cargo { "::" } else { "." };
             bail!("name a definition of {}: {}{sep}NAME (--deps takes PACKAGE.NAME)", echo(start), echo(start));
         }
-        return Ok((first.clone(), rest));
+        return Ok((first.clone(), rest, sub));
     }
-    bail!("no package of {} names {}: --deps takes PACKAGE.NAME, PACKAGE as the code imports it", read.join(", "), crate::fmt::echo(name))
+    let hint = "--deps takes PACKAGE.NAME, PACKAGE as the code imports it";
+    if let Some(missed) = missed {
+        bail!("{missed}: {hint}");
+    }
+    let mut absent = 0;
+    if let Some((package, rest)) = name.split_once('.')
+        && !rest.is_empty()
+        && !package.is_empty()
+        && !package.starts_with(|c: char| c.is_ascii_digit())
+        && package.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        // the repository's code imports only its direct requirements
+        let go: Vec<&Locked> = all.iter().filter(|l| l.eco == Eco::Go).collect();
+        let direct: Vec<&Locked> = if go.iter().any(|l| !l.indirect) { go.into_iter().filter(|l| !l.indirect).collect() } else { go };
+        let mut found: Vec<(&Locked, String)> = Vec::new();
+        for l in direct {
+            match go_module_dir(root, l) {
+                Ok(Some(dir)) => found.extend(go_dirs_named(&dir, package).into_iter().map(|sub| (l, sub))),
+                _ => absent += 1,
+            }
+        }
+        let path = |(l, sub): &(&Locked, String)| format!("{}/{sub}", l.imported_as.as_deref().unwrap_or(&l.name));
+        if found.len() > 1 {
+            let mine: Vec<(&Locked, String)> = found.iter().filter(|f| imported(&path(f))).cloned().collect();
+            if mine.len() == 1 {
+                found = mine;
+            } else {
+                let echo = crate::fmt::echo;
+                let paths: Vec<String> = found.iter().map(path).collect();
+                bail!(
+                    "{} names {} packages of modules go.mod requires, {}, and the repository's Go files import {}: --deps cannot tell which; name the package by its import path ({}.NAME)",
+                    echo(package),
+                    paths.len(),
+                    paths.iter().map(|p| echo(p)).collect::<Vec<_>>().join(" and "),
+                    if mine.is_empty() { "neither" } else { "more than one" },
+                    echo(&paths[0])
+                );
+            }
+        }
+        if let Some((l, sub)) = found.pop() {
+            valid(l)?;
+            return Ok((l.clone(), rest, sub));
+        }
+    }
+    let unread =
+        if absent > 0 { format!("; {absent} of the modules go.mod requires are not in the Go module cache: run go mod download") } else { String::new() };
+    bail!("no package of {} names {}: {hint}{unread}", read.join(", "), crate::fmt::echo(name))
+}
+
+/// What a lockfile names is shown and used only when it is one of its ecosystem's.
+fn valid(l: &Locked) -> Result<()> {
+    if !valid_name(l.eco, &l.name) {
+        return Err(refused(l, "that is no package name"));
+    }
+    if !l.version.is_empty() && !valid_version(l.eco, &l.version) {
+        return Err(refused(l, "that is no version"));
+    }
+    Ok(())
+}
+
+/// A Go module's directory: the module cache's copy, or the directory a `replace` names inside the
+/// repository (None when it names a drive, a share or a root, or leaves the repository).
+fn go_module_dir(root: &Path, l: &Locked) -> Result<Option<PathBuf>> {
+    match &l.from {
+        From::Store => installed(root, l).map(|i| Some(i.dir)),
+        From::Path(d) if !names_a_root(d) => Ok(std::fs::canonicalize(root.join(d.trim_start_matches("./"))).ok().filter(|f| f.starts_with(root))),
+        From::Path(_) | From::Other(_) => Ok(None),
+    }
+}
+
+/// The Go package at import path `start` in a subdirectory of a locked module: the module with
+/// the longest path that `start` starts with, and the directory after it, when the module has a
+/// package there. A module without one is kept in `missed` for the error.
+fn go_subpackage<'l>(root: &Path, all: &'l [Locked], start: &str, missed: &mut Option<String>) -> Result<Option<(&'l Locked, String)>> {
+    let path = |l: &'l Locked| l.imported_as.as_deref().unwrap_or(&l.name);
+    let under = |l: &&'l Locked| l.eco == Eco::Go && start.strip_prefix(path(l)).is_some_and(|s| s.starts_with('/'));
+    let Some(l) = all.iter().filter(under).max_by_key(|l| path(l).len()) else { return Ok(None) };
+    let sub = &start[path(l).len() + 1..];
+    if !sub.split('/').all(|p| plain_part(p) && !p.starts_with('.')) {
+        return Ok(None);
+    }
+    let Some(dir) = go_module_dir(root, l)? else { return Ok(None) };
+    if inside(l, &dir, &dir.join(sub))?.is_some_and(|d| go_package(&d).is_some()) {
+        return Ok(Some((l, sub.to_string())));
+    }
+    let echo = crate::fmt::echo;
+    missed.get_or_insert_with(|| format!("{} {} has no package {}", echo(path(l)), echo(&l.version), echo(sub)));
+    Ok(None)
+}
+
+/// The package clause of a Go package's directory: that of its first Go file, not a test's.
+fn go_package(dir: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| p.to_str().is_some_and(|n| n.ends_with(".go") && !n.ends_with("_test.go")))
+        .collect();
+    files.sort();
+    let file = std::fs::File::open(files.first()?).ok()?;
+    std::io::BufReader::new(file).lines().map_while(Result::ok).take(200).find_map(|l| l.trim().strip_prefix("package ").map(|p| p.trim().to_string()))
+}
+
+/// The directories under a Go module's `dir` named `package` whose package clause is that name,
+/// relative to it: none under `internal`, which only the module's own code imports, and none Go
+/// leaves out of a module (`testdata`, `vendor`, `.` and `_` names, another module's directory).
+fn go_dirs_named(dir: &Path, package: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut todo = vec![(dir.to_path_buf(), String::new())];
+    while let Some((at, rel)) = todo.pop() {
+        for e in std::fs::read_dir(&at).into_iter().flatten().flatten() {
+            let Ok(m) = e.metadata() else { continue };
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !m.is_dir() || is_link(&m) || name.starts_with(['.', '_']) || ["testdata", "vendor", "internal"].contains(&name.as_str()) {
+                continue;
+            }
+            let path = e.path();
+            if path.join("go.mod").is_file() {
+                continue;
+            }
+            let sub = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            if name == package && go_package(&path).as_deref() == Some(package) {
+                found.push(sub.clone());
+            }
+            todo.push((path, sub));
+        }
+    }
+    found.sort();
+    found
 }
 
 /// The one of `hits`, one package that may be locked at several versions, that the repository
@@ -1044,6 +1178,25 @@ fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, l
     Ok(a)
 }
 
+/// Judged by its text alone: a path that names a drive, a share or a root is never looked at
+/// (Windows would connect to a share).
+fn names_a_root(d: &str) -> bool {
+    d.contains(['\\', ':']) || d.starts_with('/') || Path::new(d).components().any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+}
+
+/// `a` with only what is under the directory `dir` ("" keeps all).
+fn keep_under(a: &mut Answer, dir: &str) {
+    if dir.is_empty() {
+        return;
+    }
+    let under = |p: &str| p.starts_with(&format!("{dir}/"));
+    match a {
+        Answer::Hits { hits, .. } => hits.retain(|h| under(&h.path)),
+        Answer::Definitions(defs, ..) => defs.retain(|d| under(&d.0.path)),
+        _ => {}
+    }
+}
+
 /// The answer to `symbol --deps` (`read`: `read --symbol --deps`).
 pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) -> Result<Answer> {
     let root = std::fs::canonicalize(&s.ix.root).unwrap_or_else(|_| s.ix.root.clone());
@@ -1052,16 +1205,21 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
         let rows = s.ix.imports_holding(module).unwrap_or_default();
         rows.iter().any(|(p, m)| m.trim_matches(['"', '`']) == module && p.ends_with(".go") && !p.starts_with("vendor/"))
     };
-    let (l, rest) = split(&root, name, &imported)?;
+    let (l, rest, sub) = split(&root, name, &imported)?;
+    let joined = |a: &str| {
+        if a.is_empty() {
+            sub.clone()
+        } else if sub.is_empty() {
+            a.to_string()
+        } else {
+            format!("{a}/{sub}")
+        }
+    };
     let start = name[..name.len() - rest.len()].trim_end_matches(['.', ':']);
     match &l.from {
         From::Other(how) => bail!("{} {} comes from {}, which --deps does not read", l.name, l.version, crate::fmt::echo(how)),
         From::Path(dir) => {
-            // judged by its text first: a drive or a share is never looked at (Windows would connect)
-            let named = |d: &str| {
-                d.contains(['\\', ':']) || d.starts_with('/') || Path::new(d).components().any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
-            };
-            if named(dir) {
+            if names_a_root(dir) {
                 return Err(refused(&l, &format!("its path dependency {} names a drive, a share or a root", crate::fmt::echo(dir))));
             }
             let dir = dir.trim_start_matches("./").trim_end_matches('/');
@@ -1069,16 +1227,9 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
             let Some(full) = full else {
                 bail!("{} is {} in {}, outside the repository: refused", l.name, crate::fmt::echo(dir), l.lockfile);
             };
-            let prefix = shown_path(&root, &full);
+            let prefix = joined(&shown_path(&root, &full));
             let mut a = ordered(&mut |op| crate::ops::run_in(s, op), rest, read, limit, exact, package_dir(&l, start, &prefix))?;
-            if !prefix.is_empty() {
-                let under = |p: &str| p.starts_with(&format!("{prefix}/"));
-                match &mut a {
-                    Answer::Hits { hits, .. } => hits.retain(|h| under(&h.path)),
-                    Answer::Definitions(defs, ..) => defs.retain(|d| under(&d.0.path)),
-                    _ => {}
-                }
-            }
+            keep_under(&mut a, &prefix);
             let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: prefix, local: true };
             Ok(Answer::Package(Box::new(note), Box::new(a)))
         }
@@ -1092,9 +1243,11 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
                 repo.update(false)?;
                 std::fs::write(&indexed, "")?;
             }
-            let mut a = ordered(&mut |op| repo.run_as_is(op), rest, read, limit, exact, package_dir(&l, start, ""))?;
+            let mut a = ordered(&mut |op| repo.run_as_is(op), rest, read, limit, exact, package_dir(&l, start, &sub))?;
+            keep_under(&mut a, &sub);
             repath(&mut a, |p| shown_path(&root, &inst.base.join(p)));
-            let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: shown_path(&root, &inst.dir), local: false };
+            let dir = if sub.is_empty() { inst.dir.clone() } else { inst.dir.join(&sub) };
+            let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: shown_path(&root, &dir), local: false };
             Ok(Answer::Package(Box::new(note), Box::new(a)))
         }
     }

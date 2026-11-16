@@ -828,7 +828,17 @@ an `// indirect` one, which no package of the repository imports, and of two dir
 the repository's own Go files import (`yaml` is sigs.k8s.io/yaml beside an indirect
 gopkg.in/yaml.v3); when its files import both or neither, the answer is an error that names both,
 and the full import path still answers, `gopkg.in/yaml.v3.Unmarshal`). The longest start of the name that is a
-locked package is the package. The rest is looked up as `symbol` and `read` look up a name, then
+locked package is the package. A Go package in a module's subdirectory is named by its import path,
+`go.uber.org/mock/gomock.NewController` (the module whose path, after a `replace` the path go.mod
+requires, is the longest the import path starts with, and the directory after it, which must hold
+Go files), or by its name alone, `gomock.NewController`, when one direct requirement has a
+directory of that name whose package clause is that name; of two, the one the repository's own Go
+files import, else an error that names both import paths. The import path names the directory
+and the package clause the name the code writes, so a package whose clause is not its directory's
+name is found by its import path only. A dependency's `internal` package answers by its import
+path (the dependency's own code imports it), never by its name, which the repository cannot
+import; `testdata`, `vendor` and another module's directories are no package. The answer keeps to
+that directory and the ones under it. The rest is looked up as `symbol` and `read` look up a name, then
 by its last part (`de::Deserialize` finds `Deserialize`). In a Go module or a Python package, the
 definitions in the package's own directory come first (a Go package is the directory at its
 import path: `yaml.Marshal` lists sigs.k8s.io/yaml's root `yaml.go` before its vendored

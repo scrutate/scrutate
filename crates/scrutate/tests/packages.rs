@@ -691,6 +691,125 @@ fn a_go_module_replaced_by_a_fork_of_another_name_is_found_by_the_path_the_code_
 }
 
 #[test]
+fn a_go_package_in_a_module_s_subdirectory_is_found_by_its_name_and_its_import_path() {
+    let t = Tree::new("go_subdir");
+    t.go_mod(
+        "require (\n\tgo.uber.org/mock v0.4.0\n\tgithub.com/stretchr/testify v1.9.0\n\tgolang.org/x/sync v0.7.0\n\tgithub.com/a/kit v1.0.0\n\tgithub.com/x/y v1.0.0\n\tgithub.com/x/y/v2 v2.1.0\n)\n\nreplace github.com/a/kit => github.com/b/kit-fork v1.1.0",
+    );
+    let m = "gomod/go.uber.org/mock@v0.4.0";
+    t.store(&format!("{m}/gomock/controller.go"), "package gomock\n\nfunc NewController(t TestReporter) *Controller {\n\treturn &Controller{}\n}\n");
+    // the same name in another package of the module stays out of the answer
+    t.store(&format!("{m}/mockgen/model/model.go"), "package model\n\nfunc NewController() {}\n");
+    t.store(
+        "gomod/github.com/stretchr/testify@v1.9.0/assert/assertions.go",
+        "package assert\n\nfunc Equal(t TestingT, expected, actual any) bool {\n\treturn true\n}\n",
+    );
+    t.store(
+        "gomod/github.com/stretchr/testify@v1.9.0/require/require.go",
+        "package require\n\nfunc Equal(t TestingT, expected, actual any) {\n\tif !assert.Equal(t, expected, actual) {\n\t}\n}\n",
+    );
+    t.store(
+        "gomod/golang.org/x/sync@v0.7.0/errgroup/errgroup.go",
+        "package errgroup\n\nfunc WithContext(ctx context.Context) (*Group, context.Context) {\n\treturn nil, ctx\n}\n",
+    );
+    t.store("gomod/github.com/b/kit-fork@v1.1.0/log/log.go", "package log\n\nfunc NewLogfmtLogger(w io.Writer) Logger {\n\treturn nil\n}\n");
+    t.store("gomod/github.com/x/y@v1.0.0/sub/sub.go", "package sub\n\nfunc Version() int {\n\treturn 1\n}\n");
+    t.store("gomod/github.com/x/y/v2@v2.1.0/sub/sub.go", "package sub\n\nfunc Version() int {\n\treturn 2\n}\n");
+    for (name, want) in [
+        ("gomock.NewController", "mock@v0.4.0/gomock/controller.go:3-5"),
+        ("go.uber.org/mock/gomock.NewController", "mock@v0.4.0/gomock/controller.go:3-5"),
+        ("assert.Equal", "testify@v1.9.0/assert/assertions.go:3-5"),
+        ("require.Equal", "testify@v1.9.0/require/require.go:3-6"),
+        ("github.com/stretchr/testify/require.Equal", "testify@v1.9.0/require/require.go:3-6"),
+        ("errgroup.WithContext", "sync@v0.7.0/errgroup/errgroup.go:3-5"),
+        ("golang.org/x/sync/errgroup.WithContext", "sync@v0.7.0/errgroup/errgroup.go:3-5"),
+        // a replace and a subdirectory together: the path the code imports, the fork's files
+        ("github.com/a/kit/log.NewLogfmtLogger", "kit-fork@v1.1.0/log/log.go:3-5"),
+        ("log.NewLogfmtLogger", "kit-fork@v1.1.0/log/log.go:3-5"),
+        // a major version's module path is the longest that the import path starts with
+        ("github.com/x/y/v2/sub.Version", "y/v2@v2.1.0/sub/sub.go:3-5"),
+        ("github.com/x/y/sub.Version", "y@v1.0.0/sub/sub.go:3-5"),
+    ] {
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains(want) && !out.contains("mockgen"), "{name}: {out}");
+    }
+    let (code, out, err) = t.run(&["read", "--deps", "--symbol", "gomock.NewController"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("go.uber.org/mock v0.4.0 (go.mod)") && out.contains("return &Controller{}") && !out.contains("mockgen"), "{out}");
+    for v in t.batch(&[
+        serde_json::json!({"op": "find_symbol", "name": "gomock.NewController", "scope": "deps"}),
+        serde_json::json!({"op": "find_symbol", "name": "github.com/stretchr/testify/assert.Equal", "scope": "deps"}),
+        serde_json::json!({"op": "read_code", "symbol": "errgroup.WithContext", "scope": "deps"}),
+    ]) {
+        let r = v["result"].to_string();
+        assert!(
+            v.get("error").is_none() && (r.contains("gomock/controller.go") || r.contains("assert/assertions.go") || r.contains("errgroup/errgroup.go")),
+            "{v}"
+        );
+    }
+    // `sub` is in both y modules, and the repository's Go files import neither
+    let (code, _, err) = t.run(&["symbol", "--deps", "sub.Version"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("github.com/x/y/sub") && err.contains("github.com/x/y/v2/sub") && err.contains("by its import path"), "{err}");
+}
+
+#[test]
+fn of_two_go_packages_of_one_name_the_one_the_repository_imports_is_read_and_others_are_refused_by_what_go_allows() {
+    let t = Tree::new("go_subdir_two");
+    t.go_mod("require (\n\tgo.uber.org/mock v0.4.0\n\tgithub.com/golang/mock v1.6.0\n)");
+    t.store("gomod/go.uber.org/mock@v0.4.0/gomock/controller.go", "package gomock\n\nfunc NewController(t TestReporter) *Controller {\n\treturn nil\n}\n");
+    t.store(
+        "gomod/github.com/golang/mock@v1.6.0/gomock/controller.go",
+        "package gomock\n\nfunc NewController(t TestReporter) *Controller {\n\treturn nil\n}\n",
+    );
+    // a dependency's internal package: the repository cannot import it
+    t.store("gomod/go.uber.org/mock@v0.4.0/internal/hidden/hidden.go", "package hidden\n\nfunc Secret() {}\n");
+    // a directory whose package clause is another name
+    t.store("gomod/go.uber.org/mock@v0.4.0/sample/concurrent/mock.go", "package mock_concurrent\n\nfunc NewMockMath() {}\n");
+    let (code, _, err) = t.run(&["symbol", "--deps", "gomock.NewController"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("go.uber.org/mock/gomock")
+            && err.contains("github.com/golang/mock/gomock")
+            && err.contains("neither")
+            && err.contains("by its import path"),
+        "{err}"
+    );
+    for (name, want) in [("go.uber.org/mock/gomock.NewController", "mock@v0.4.0/gomock"), ("github.com/golang/mock/gomock.NewController", "mock@v1.6.0/gomock")]
+    {
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains(want), "{name}: {out}");
+    }
+    // a directory the module has no package in is named as such
+    let (code, _, err) = t.run(&["symbol", "--deps", "go.uber.org/mock/gomok.NewController"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("go.uber.org/mock v0.4.0") && err.contains("gomok") && err.contains("no package"), "{err}");
+    // internal: by its import path it answers (the dependency's own code imports it); by its
+    // name alone never, as the repository cannot import it
+    let (code, out, err) = t.run(&["symbol", "--deps", "go.uber.org/mock/internal/hidden.Secret"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("internal/hidden/hidden.go:3"), "{out}");
+    let (code, _, err) = t.run(&["symbol", "--deps", "hidden.Secret"]);
+    assert_eq!(code, 2, "{err}");
+    // the import path names the directory, the package clause the name the code writes
+    let (code, out, err) = t.run(&["symbol", "--deps", "go.uber.org/mock/sample/concurrent.NewMockMath"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("sample/concurrent/mock.go:3"), "{out}");
+    // by a name alone, a directory of that name whose clause is that name: neither of these
+    for name in ["mock_concurrent.NewMockMath", "concurrent.NewMockMath"] {
+        let (code, _, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 2, "{name}: {err}");
+    }
+    // the repository imports one: that one, as Go takes one name for one import in a file
+    t.write("main.go", "package main\n\nimport \"github.com/golang/mock/gomock\"\n\nfunc main() { gomock.NewController(nil) }\n");
+    let (code, out, err) = t.run(&["symbol", "--deps", "gomock.NewController"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("github.com/golang/mock v1.6.0 (go.mod)") && out.contains("mock@v1.6.0/gomock/controller.go:3-5"), "{out}");
+}
+
+#[test]
 fn a_name_outside_every_lockfile_says_which_lockfiles_were_read() {
     let t = Tree::new("unknown");
     t.cargo_lock(&[("serde", "1.0.200")]);
