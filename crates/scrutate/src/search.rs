@@ -765,15 +765,27 @@ impl Searcher {
     /// last, for a name written as a path, a top-level definition of its last part
     /// (`crate::util::helper` finds `helper`).
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
+        self.find_symbol_where(name, limit, None)
+    }
+
+    /// `find_symbol`, keeping only the definitions `keep` admits, before `limit` cuts.
+    pub fn find_symbol_where(&self, name: &str, limit: usize, keep: Option<&dyn Fn(&ChunkRow) -> bool>) -> Result<Vec<Hit>> {
         // a Rust raw identifier `r#type` is indexed as `type`
         let name = name.trim();
         let unraw = name.strip_prefix("r#").unwrap_or(name).replace("::r#", "::").replace(".r#", ".");
         let typed = unraw.as_str();
         let d = dotted(typed);
         let d = d.trim_start_matches('.');
-        let mut out = self.symbol_rows(typed, limit)?;
+        let rows = |n: &str| -> Result<Vec<Hit>> {
+            let found = match keep {
+                Some(keep) => self.ix.symbols_named_where(n, limit, keep)?,
+                None => self.ix.symbols_named(n, limit)?,
+            };
+            Ok(found.iter().map(|r| Hit::from_row(r, true)).collect())
+        };
+        let mut out = rows(typed)?;
         if out.is_empty() && d != typed {
-            out = self.symbol_rows(d, limit)?;
+            out = rows(d)?;
         }
         let q = name_key(&plain(d));
         let Some((_, last)) = q.rsplit_once('.') else { return Ok(out) };
@@ -793,8 +805,11 @@ impl Searcher {
                 owned
             }
         };
-        for id in ids.into_iter().take(limit.saturating_sub(out.len())) {
-            if let Some(r) = self.ix.chunk(id)? {
+        for id in ids {
+            if out.len() >= limit {
+                break;
+            }
+            if let Some(r) = self.ix.chunk(id)?.filter(|r| keep.is_none_or(|keep| keep(r))) {
                 out.push(Hit::from_row(&r, true));
             }
         }

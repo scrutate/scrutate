@@ -115,7 +115,7 @@ const FILTER_PARAMS: [(&str, &str); 4] = [
     ("globs", "keep the files these globs match, as grep -g (`!` excludes)"),
     ("types", "keep the files of these types, as grep -t (`!` excludes)"),
     ("langs", "keep the files parsed as these languages"),
-    ("kinds", "keep the definitions of these kinds (function, class, method, ...)"),
+    ("kinds", "keep the definitions of these kinds (function, class, method, ...); every filter narrows before limit or max_results counts"),
 ];
 
 fn tool_table() -> Value {

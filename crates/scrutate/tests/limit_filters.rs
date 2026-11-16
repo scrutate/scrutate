@@ -170,3 +170,40 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
     assert!(broken.is_empty(), "{}", broken.join("\n"));
     let _ = fs::remove_dir_all(&base);
 }
+
+/// A kind narrows the name lookup itself: a method `a0` indexed after 101,000 functions `a0` is
+/// found by `symbol a0 --kind method`, where the read stopped at its first 100,000 definitions and
+/// answered "(no results)". Heavy (about a minute): run with `--ignored`.
+#[test]
+#[ignore = "heavy: indexes 101,000 definitions of one name"]
+fn a_kind_finds_a_definition_past_100000_of_the_name() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_kind_bound_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("a")).unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    for i in 0..1010 {
+        let body: String = (0..100).map(|k| format!("def a0():\n    return {}\n\n\n", i * 100 + k)).collect();
+        fs::write(root.join(format!("a/f{i}.py")), body).unwrap();
+    }
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    run(&["index"]);
+    fs::create_dir_all(root.join("zz")).unwrap();
+    fs::write(root.join("zz/last.py"), "class C:\n    def a0(self):\n        return 1\n").unwrap();
+    run(&["index"]);
+    let text = run(&["symbol", "a0", "--kind", "method"]);
+    assert!(text.contains("zz/last.py"), "{text}");
+    let json = run(&["symbol", "a0", "--kind", "method", "--json"]);
+    assert!(json.contains("zz/last.py"), "{json}");
+    let _ = fs::remove_dir_all(&root);
+}

@@ -334,7 +334,9 @@ An unknown type, language or kind is an error that says where the names are list
 returns `-k` results whenever that many pass: a filter that keeps an eighth of the files or the
 definitions or fewer draws the lexical and semantic candidates from those alone, and a broader
 one filters a first search's candidates, then draws them from what it keeps when too few pass. A
-kind no definition has, or a filter that keeps no file, answers at once. `symbol` reads more definitions until `--limit` pass. `refs`
+kind no definition has, or a filter that keeps no file, answers at once. `symbol`'s filters narrow inside the name lookup, so `--limit` counts only what they keep; when
+no definition has the name, the near matches are ranked before the filters see them, so they are
+read again until `--limit` pass, up to 100,000, and an answer stopped there says so. `refs`
 walks only the files the globs and types (or, with no type, the languages' file names) admit, so
 `--max-results` counts only those; its file filters pick each occurrence by its own file, and a
 definition outside them heads the occurrences they keep, marked `(outside the filter)`

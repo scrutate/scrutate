@@ -1414,8 +1414,26 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
 
 /// Most definitions a filtered symbol lookup reads before the filter, however few it keeps.
 const SCOPED_SYMBOLS_MAX: usize = 100_000;
+/// What a filtered `symbol` answer says when its read of near matches stopped at the bound.
+const SCOPED_SYMBOLS_STOP: &str = "100,000 near matches were read before the filter: narrow the name";
 /// The most occurrences `references` with kinds reads to find max_results of them.
-const SCOPED_REFS_MAX: u64 = 100_000;
+const SCOPED_REFS_MAX: usize = 100_000;
+
+/// `fetch(n)` with `n` from `start` growing four times a round, until `done(answer, n)` or `n`
+/// reaches `max`. -> (the last answer, whether `max` ended the read before `done`)
+fn read_until<T>(start: usize, max: usize, mut fetch: impl FnMut(usize) -> Result<T>, done: impl Fn(&T, usize) -> bool) -> Result<(T, bool)> {
+    let mut n = start.clamp(1, max.max(1));
+    loop {
+        let got = fetch(n)?;
+        if done(&got, n) {
+            return Ok((got, false));
+        }
+        if n >= max {
+            return Ok((got, true));
+        }
+        n = n.saturating_mul(4).min(max);
+    }
+}
 
 /// A search, symbol or refs answer keeping what `f` admits.
 fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<Answer> {
@@ -1427,31 +1445,30 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
             Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
         }
         Op::Symbol { name, limit, exact } => {
-            // the lookup cuts before the filter sees its rows, so it reads more until enough pass
             let want = limit.saturating_add(1);
-            let read = |s: &mut Searcher, near: bool| -> Result<Vec<Hit>> {
-                let mut n = want;
-                loop {
-                    let got: Vec<Hit> = if near {
-                        let ranked = crate::symmatch::ranked(&s.ix, name, n)?;
-                        ranked.into_iter().map(|(r, how)| Hit { matched: Some(how.as_str()), ..Hit::from_row(&r, true) }).collect()
-                    } else {
-                        targets(s, name, n, false)?
-                    };
-                    let short = got.len() < n;
-                    let kept: Vec<Hit> = got.into_iter().filter(|h| f.admits(&h.path, &h.kind)).collect();
-                    if kept.len() >= want || short || n >= SCOPED_SYMBOLS_MAX {
-                        return Ok(kept);
-                    }
-                    n = n.saturating_mul(4).min(SCOPED_SYMBOLS_MAX);
-                }
+            let keep = |path: &str, kind: &str| f.admits(path, kind);
+            // the filter narrows inside the lookup, before any limit cuts
+            let mut kept: Vec<Hit> = match crate::intel::location(name) {
+                Some(_) => targets(s, name, want, false)?.into_iter().filter(|h| keep(&h.path, &h.kind)).collect(),
+                None => s.find_symbol_where(name, want, Some(&|r: &ChunkRow| keep(&r.path, &r.kind)))?,
             };
-            let mut kept = read(s, false)?;
-            // as without filters: no definition of the name, then the near matches the filter keeps
+            let mut bounded = false;
+            // as without filters: no definition of the name, then the near matches the filter keeps;
+            // they are ranked before the filter sees them, so they are read again until enough pass
             if kept.is_empty() && !exact && crate::intel::location(name).is_none() {
-                kept = read(s, true)?;
+                let near = |n: usize| -> Result<Vec<Hit>> {
+                    let ranked = crate::symmatch::ranked(&s.ix, name, n)?;
+                    Ok(ranked.into_iter().map(|(r, how)| Hit { matched: Some(how.as_str()), ..Hit::from_row(&r, true) }).collect())
+                };
+                let passing = |got: &Vec<Hit>| got.iter().filter(|h| keep(&h.path, &h.kind)).count();
+                let (got, at_bound) = read_until(want, SCOPED_SYMBOLS_MAX, near, |got, n| passing(got) >= want || got.len() < n)?;
+                kept = got.into_iter().filter(|h| keep(&h.path, &h.kind)).collect();
+                bounded = at_bound;
             }
-            let (hits, stopped) = cut(kept, *limit, RAISE_LIMIT);
+            let (hits, mut stopped) = cut(kept, *limit, RAISE_LIMIT);
+            if bounded && stopped.is_none() {
+                stopped = Some(Stop { at: hits.len(), how: SCOPED_SYMBOLS_STOP });
+            }
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Refs { textual: true, .. } if f.has_kinds() => bail!("textual references have no definition kind: leave out the kinds, or the textual flag"),
@@ -1467,13 +1484,11 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
                 let ids: std::collections::HashSet<i64> = refs.definitions.iter().filter(|d| f.admits_kind(&d.kind)).map(|d| d.id).collect();
                 refs.occurrences.iter().filter(|o| f.admits_path(&o.path) && matches!(o.resolution, Ok((id, _)) if ids.contains(&id))).count() as u64
             };
-            let mut read = *max_results;
-            let mut refs = loop {
-                let refs = Names::new(s)?.references_in(name, read, Some(f))?;
-                if !f.has_kinds() || !refs.truncated || read >= SCOPED_REFS_MAX || kept(&refs) > *max_results {
-                    break refs;
-                }
-                read = read.saturating_mul(4).min(SCOPED_REFS_MAX);
+            let fetch = |n: usize| Names::new(s)?.references_in(name, n as u64, Some(f));
+            let (mut refs, at_bound) = if f.has_kinds() {
+                read_until(*max_results as usize, SCOPED_REFS_MAX, fetch, |refs, _| !refs.truncated || kept(refs) > *max_results)?
+            } else {
+                (fetch(*max_results as usize)?, false)
             };
             // the definition --def names is found whatever the file filters keep
             let only = match def {
@@ -1487,6 +1502,9 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
                 refs.occurrences.truncate(*max_results as usize);
                 refs.truncated = true;
             }
+            // the read stopped at its bound with occurrences left: the answer says so, and why
+            refs.truncated |= at_bound;
+            refs.bounded = at_bound && refs.occurrences.len() < *max_results as usize;
             let used: std::collections::HashSet<i64> = refs.occurrences.iter().filter_map(|o| o.resolution.as_ref().ok().map(|r| r.0)).collect();
             refs.definitions.retain(|d| by_kind.contains(&d.id) && (f.admits_path(&d.path) || used.contains(&d.id) || only == Some(d.id)));
             refs.outside = refs.definitions.iter().filter(|d| !f.admits_path(&d.path)).map(|d| d.id).collect();
@@ -1541,6 +1559,19 @@ fn joined(a: String, b: String) -> String {
         (true, _) => b,
         (_, true) => a,
         _ => format!("{a}\n{b}"),
+    }
+}
+
+/// What a `references` answer with kinds says when its search read up to its bound.
+pub const REFS_BOUND_STOP: &str =
+    "100,000 occurrences were read before the kind filter, and fewer than max_results were of its kinds: narrow the name or the files";
+
+/// The closing line of a resolved `references` answer: its bound, else its max_results cut.
+fn resolved_stop(refs: &crate::resolve::Resolved, max_results: u64) -> String {
+    if refs.bounded {
+        format!("({REFS_BOUND_STOP})")
+    } else {
+        stopped_at(refs.truncated, max_results)
     }
 }
 
@@ -2288,7 +2319,8 @@ impl Answer {
         let nothing = |sentence: String| Parts { head: sentence, ..Parts::default() };
         let hits_brief = |hits: &[Hit]| Some(hits.iter().map(|h| vec![Brief::at(&h.path, h.start, h.end, &named(hit_name(h)))]).collect());
         match self {
-            Answer::Hits { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
+            // an empty answer a bounded read stopped says that it stopped
+            Answer::Hits { hits, stopped, .. } if hits.is_empty() => Parts { tail: stop_line(*stopped, "results"), ..nothing("(no results)".to_string()) },
             Answer::Hits { hits, words, snippet, stopped } => Parts {
                 items: hit_blocks(hits, words, *snippet, false),
                 tail: stop_line(*stopped, "results"),
@@ -2487,9 +2519,12 @@ impl Answer {
                     }
                 }
             }
-            Answer::Resolved { .. } if self.is_empty() => nothing("(no results)".to_string()),
+            // an empty answer whose search stopped says that it stopped
+            Answer::Resolved { refs, max_results, .. } if self.is_empty() => {
+                Parts { tail: resolved_stop(refs, *max_results), ..nothing("(no results)".to_string()) }
+            }
             Answer::Resolved { refs, only, max_results, .. } => Parts {
-                tail: stopped_at(refs.truncated, *max_results),
+                tail: resolved_stop(refs, *max_results),
                 brief: Some(resolved_brief(refs, *only)),
                 ..lines(crate::resolve::resolved_text(refs, *only), "lines")
             },
@@ -2801,7 +2836,7 @@ impl Answer {
     pub fn stop_note(&self) -> String {
         match self {
             Answer::Refs { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
-            Answer::Resolved { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
+            Answer::Resolved { refs, max_results, .. } => resolved_stop(refs, *max_results),
             Answer::Impact(i) => i.stop_line(),
             _ => self.stopped().map(|s| stop_line(Some(s), self.parts().noun)).unwrap_or_default(),
         }
@@ -2899,6 +2934,9 @@ impl Answer {
                     }).collect::<Vec<_>>(),
                     "truncated": refs.truncated,
                 });
+                if refs.bounded {
+                    v["stopped_reason"] = json!(REFS_BOUND_STOP);
+                }
                 if only.is_none() {
                     v["unresolved"] = refs
                         .unresolved()
@@ -2961,6 +2999,59 @@ impl Answer {
 
 #[cfg(test)]
 mod tests {
+
+    /// A read that grows until enough of it passes ends when it does, when a read comes back short,
+    /// or at its bound, and says which.
+    #[test]
+    fn a_bounded_read_says_when_its_bound_ended_it() {
+        // every tenth row passes; enough is three
+        let rows = |n: usize| -> Result<Vec<usize>> { Ok((0..n.min(1000)).collect()) };
+        let done = |got: &Vec<usize>, n: usize| got.iter().filter(|x| *x % 10 == 0).count() >= 3 || got.len() < n;
+        assert!(!read_until(1, 100, rows, done).unwrap().1);
+        let (got, at_bound) = read_until(1, 16, rows, done).unwrap();
+        assert!(at_bound && got.len() == 16, "{at_bound} {}", got.len());
+        let few = |n: usize| -> Result<Vec<usize>> { Ok((0..n.min(5)).collect()) };
+        assert!(!read_until(1, 16, few, done).unwrap().1);
+    }
+
+    /// A references answer whose kind filter read up to its bound says that, not "raise
+    /// max_results", in text and JSON, an empty one too; a plain cut keeps the max_results line.
+    #[test]
+    fn a_references_answer_stopped_at_its_bound_says_why() {
+        let answer = |bounded: bool| Answer::Resolved {
+            name: "a0".into(),
+            refs: crate::resolve::Resolved { truncated: true, bounded, ..Default::default() },
+            only: None,
+            max_results: 5,
+        };
+        let a = answer(true);
+        assert!(a.text().contains(REFS_BOUND_STOP) && !a.text().contains("raise max_results"), "{}", a.text());
+        assert_eq!(a.json()["stopped_reason"], json!(REFS_BOUND_STOP));
+        let a = answer(false);
+        assert!(a.text().contains("raise max_results") && !a.text().contains(REFS_BOUND_STOP), "{}", a.text());
+        assert!(a.json()["stopped_reason"].is_null());
+    }
+
+    /// A symbol answer stopped at the bound says so in text and JSON, an empty one too.
+    #[test]
+    fn a_symbol_answer_stopped_at_the_bound_says_so() {
+        for hits in [
+            Vec::new(),
+            vec![crate::search::Hit {
+                path: "a.py".into(),
+                name: "a0".into(),
+                qualname: "a0".into(),
+                kind: "function".into(),
+                start: 1,
+                end: 2,
+                ..Default::default()
+            }],
+        ] {
+            let a = Answer::Hits { hits, words: Vec::new(), snippet: true, stopped: Some(Stop { at: 0, how: SCOPED_SYMBOLS_STOP }) };
+            assert!(a.text().contains(SCOPED_SYMBOLS_STOP), "{}", a.text());
+            assert!(!a.envelope(std::path::Path::new("/r"))["stopped_at"].is_null());
+        }
+    }
     use super::*;
 
     #[test]

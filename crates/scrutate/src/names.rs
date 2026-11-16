@@ -227,7 +227,7 @@ impl<'a> Names<'a> {
                 }
             }
         }
-        Ok(Resolved { definitions, occurrences, truncated, notes, first_overload, outside: Default::default() })
+        Ok(Resolved { definitions, occurrences, truncated, bounded: false, notes, first_overload, outside: Default::default() })
     }
 
     /// The one decision about the site of `spelled` at 1-based `line`, 0-based byte `col` of

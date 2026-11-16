@@ -3141,6 +3141,33 @@ impl Index {
         Ok(rows)
     }
 
+    /// `symbols_named`, keeping only the rows `keep` admits: they are read in order until `limit`
+    /// pass, so a filter narrows before the limit cuts, however many rows it leaves out. With no
+    /// filter `symbols_named` is cheaper: its LIMIT lets the sort keep only the first rows.
+    pub fn symbols_named_where(&self, name: &str, limit: usize, keep: &dyn Fn(&ChunkRow) -> bool) -> Result<Vec<ChunkRow>> {
+        let key = name_key(name);
+        let last = name_key(name.rsplit('.').next().unwrap_or(name));
+        // the tail filter must run in the query, before a row is kept
+        let mut st = self.db.prepare_cached(&format!(
+            "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
+             AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?2 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
+             {}",
+            symbol_order("?3")
+        ))?;
+        let typed_last = name.rsplit('.').next().unwrap_or(name);
+        let mut out = Vec::new();
+        for row in st.query_map(params![key, last, typed_last], ChunkRow::from_row)? {
+            let row = row?;
+            if keep(&row) {
+                out.push(row);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Each distinct name key `pick` keeps, until it has kept `limit`, from the names `sql` lists
     /// (best first) for `args`: the candidates are read one by one, so none is cut before it is seen.
     fn names_until(&self, sql: &str, args: &[&dyn rusqlite::ToSql], limit: usize, mut pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {

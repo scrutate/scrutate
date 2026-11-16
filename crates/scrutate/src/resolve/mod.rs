@@ -2948,11 +2948,15 @@ impl Occurrence {
     }
 }
 
+#[derive(Default)]
 pub struct Resolved {
     /// definitions named `name`, plus any other definition an occurrence resolved to
     pub definitions: Vec<ChunkRow>,
     pub occurrences: Vec<Occurrence>,
     pub truncated: bool,
+    /// a filter applied after the search (a kind) read up to its bound and found fewer than
+    /// max_results it keeps: raising max_results below the bound changes nothing
+    pub bounded: bool,
     /// files whose search stopped at a NUL byte, each with what the search said: a use after
     /// that byte is not among the occurrences
     pub notes: Vec<(String, String)>,
