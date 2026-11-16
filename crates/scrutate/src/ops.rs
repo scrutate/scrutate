@@ -1437,7 +1437,9 @@ pub(crate) fn grow_until<T>(
     mut fetch: impl FnMut(usize) -> Result<T>,
     done: impl Fn(&T, usize) -> bool,
 ) -> Result<(T, bool)> {
-    let mut n = start.clamp(1, max.max(1));
+    // the bound never sits below what the caller asked for
+    let max = max.max(start);
+    let mut n = start.max(1);
     loop {
         let got = fetch(n)?;
         if done(&got, n) {
@@ -3035,6 +3037,33 @@ mod tests {
         assert!(at_bound && got.len() == 16, "{at_bound} {}", got.len());
         let few = |n: usize| -> Result<Vec<usize>> { Ok((0..n.min(5)).collect()) };
         assert!(!read_until(1, 16, few, done).unwrap().1);
+        // a start above the bound is read whole: the bound never cuts what was asked for
+        let asked = std::cell::Cell::new(0);
+        let (got, at_bound) = read_until(
+            200,
+            16,
+            |n| {
+                asked.set(asked.get().max(n));
+                rows(n)
+            },
+            done,
+        )
+        .unwrap();
+        assert!(!at_bound && asked.get() == 200 && got.len() == 200, "{at_bound} {}", asked.get());
+        // the same for the filtered search's widening (factor 8, bound 64)
+        let asked = std::cell::Cell::new(0);
+        let (_, at_bound) = grow_until(
+            100,
+            8,
+            64,
+            |n| {
+                asked.set(asked.get().max(n));
+                rows(n)
+            },
+            done,
+        )
+        .unwrap();
+        assert!(!at_bound && asked.get() == 100, "{at_bound} {}", asked.get());
         // the filtered search's widening: 1, 8, 64, then its bound
         let (got, at_bound) = grow_until(1, 8, 16, rows, done).unwrap();
         assert!(at_bound && got.len() == 16, "{at_bound} {}", got.len());
