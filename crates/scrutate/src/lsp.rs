@@ -947,7 +947,7 @@ impl Server {
         if let Some((rel, why)) = named
             && files.insert(rel.to_string())
         {
-            log(2, &format!("scrutate: {rel} is not in the index ({why}): read it by lines, or search it with grep"));
+            log(2, &format!("scrutate: {}", crate::index::left_out_sentence(rel, why)));
         }
     }
 }

@@ -412,8 +412,8 @@ incompatible index by itself, and that is never breaking.
 - A source file the code index leaves out (over 1 MB, or not text or could not be parsed) is said
   wherever an answer depends on it, where `symbol`, `callers`, `read --symbol`, `dupes` and the
   rest answered as if it held nothing: `index`, `check` and `stats` name it, a lookup that found
-  nothing or names it says why it is not in the index and what reads it, `dupes`, `dead` and
-  `map` always say it, `refs` labels an occurrence in it as in a file that is not indexed where
+  nothing or names it says why it is not in the index and, for a text file, what reads it,
+  `dupes`, `dead` and `map` always say it, `refs` labels an occurrence in it as in a file that is not indexed where
   it said "not an identifier", and `impact` and `review` list it as not indexed; `--json` and the
   MCP tools carry a `not_indexed` field ([CLI](docs/CLI.md#files-the-index-leaves-out)).
 - `tsquery` and `tsquery --rewrite` say a source file over 1 MB, which they do not search: named

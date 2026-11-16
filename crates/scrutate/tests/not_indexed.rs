@@ -278,6 +278,16 @@ fn a_binary_file_is_not_text_at_any_size_and_only_large_source_is_over_the_bound
     }
     let v: Value = serde_json::from_str(&run(&root, &["symbol", "zz_no_such_name", "--json"]).1).unwrap();
     assert_eq!(field(&v), json!([{"reason": "over 1 MB", "count": 1, "paths": ["large.py"]}]), "{v}");
+    // a named file gets its reason, and what reads it only when it is text
+    let (_, out, err) = run(&root, &["outline", "own/semantic.npz"]);
+    let all = format!("{out}{err}");
+    assert!(
+        all.contains("own/semantic.npz is not in the index (not text or could not be parsed)")
+            && !all.contains("semantic.npz is not in the index (not text or could not be parsed): read"),
+        "{all}"
+    );
+    let (_, out, err) = run(&root, &["outline", "large.py"]);
+    assert!(format!("{out}{err}").contains("large.py is not in the index (over 1 MB): read it by lines, or search it with grep"), "{out}{err}");
     // index, check and stats name every one of the seven under its reason
     let (_, out, _) = run(&root, &["check"]);
     assert!(out.contains(&format!("note: {over}")), "{out}");

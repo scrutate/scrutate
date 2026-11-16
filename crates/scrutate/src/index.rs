@@ -103,25 +103,34 @@ pub fn head_reads_as_text(head: &[u8]) -> bool {
     decode_source(&head[..head.len().min(4096)]).is_some()
 }
 
-/// Whether the file `rel` of `root`, as its row last saw it (`size`, `mtime`), reads as text: its
-/// first 4 KiB looked at once per process for that stat. A file that cannot be read now keeps
-/// the reason its size gives.
-fn reads_as_text(root: &Path, rel: &str, size: i64, mtime: i64) -> bool {
-    // a file and the stat its row saw: whether its first bytes read as text
-    type Heads = HashMap<(PathBuf, i64, i64), bool>;
-    static HEADS: std::sync::LazyLock<std::sync::Mutex<Heads>> = std::sync::LazyLock::new(Default::default);
-    let full = root.join(rel);
-    let key = (full.clone(), size, mtime);
-    if let Some(&t) = HEADS.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
-        return t;
-    }
+/// What a lookup says of a file it names that the index leaves out: for a text file, what reads it.
+pub fn left_out_sentence(shown: &str, why: &str) -> String {
+    let what = if why == "over 1 MB" { ": read it by lines, or search it with grep" } else { "" };
+    format!("{shown} is not in the index ({why}){what}")
+}
+
+/// Per root, per path of a row over the bound: the size and mtime that row saw, and whether the
+/// file's first 4 KiB then read as text. Each note keeps only its root's current such rows.
+type Heads = HashMap<PathBuf, HashMap<String, (i64, i64, bool)>>;
+static HEADS: std::sync::LazyLock<std::sync::Mutex<Heads>> = std::sync::LazyLock::new(Default::default);
+
+fn heads() -> std::sync::MutexGuard<'static, Heads> {
+    HEADS.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Whether the file `rel` of `root` reads as text now; one that cannot be read keeps the reason
+/// its size gives.
+fn head_is_text(root: &Path, rel: &str) -> bool {
     let mut head = Vec::with_capacity(4096);
-    let text = match std::fs::File::open(&full).and_then(|f| std::io::Read::read_to_end(&mut std::io::Read::take(f, 4096), &mut head)) {
+    match std::fs::File::open(root.join(rel)).and_then(|f| std::io::Read::read_to_end(&mut std::io::Read::take(f, 4096), &mut head)) {
         Ok(_) => head_reads_as_text(&head),
         Err(_) => true,
-    };
-    HEADS.lock().unwrap_or_else(|p| p.into_inner()).insert(key, text);
-    text
+    }
+}
+
+#[cfg(test)]
+fn heads_held(root: &Path) -> usize {
+    heads().get(root).map_or(0, |m| m.len())
 }
 
 /// Source bytes of the syntax trees an open index keeps for incremental reparsing (the trees
@@ -3554,9 +3563,19 @@ impl Index {
             let mut q = self.db.prepare_cached("SELECT path, size, mtime_ns FROM files WHERE hash = 'SKIP' ORDER BY path")?;
             q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect()
         };
+        let mut seen = heads().remove(&self.root).unwrap_or_default();
+        let mut kept = HashMap::new();
         let mut ni = NotIndexed::default();
         for (path, size, mtime) in rows().unwrap_or_default() {
-            if size > MAX_FILE_BYTES as i64 && reads_as_text(&self.root, &path, size, mtime) {
+            let text = size > MAX_FILE_BYTES as i64 && {
+                let text = match seen.remove(&path) {
+                    Some((s, m, t)) if (s, m) == (size, mtime) => t,
+                    _ => head_is_text(&self.root, &path),
+                };
+                kept.insert(path.clone(), (size, mtime, text));
+                text
+            };
+            if text {
                 ni.over += 1;
                 if ni.first.len() < NOT_INDEXED_NAMED {
                     ni.first.push(path);
@@ -3567,6 +3586,9 @@ impl Index {
                     ni.other_first.push(path);
                 }
             }
+        }
+        if !kept.is_empty() {
+            heads().insert(self.root.clone(), kept);
         }
         ni
     }
@@ -3579,7 +3601,15 @@ impl Index {
             .ok()?
             .query_row([rel], |r| Ok((r.get(0)?, r.get(1)?)))
             .ok()?;
-        Some(if size > MAX_FILE_BYTES as i64 && reads_as_text(&self.root, rel, size, mtime) { "over 1 MB" } else { "not text or could not be parsed" })
+        let text = size > MAX_FILE_BYTES as i64 && {
+            let known = heads().get(&self.root).and_then(|m| m.get(rel)).filter(|e| (e.0, e.1) == (size, mtime)).map(|e| e.2);
+            known.unwrap_or_else(|| {
+                let text = head_is_text(&self.root, rel);
+                heads().entry(self.root.clone()).or_default().insert(rel.to_string(), (size, mtime, text));
+                text
+            })
+        };
+        Some(if text { "over 1 MB" } else { "not text or could not be parsed" })
     }
 
     /// The indexed files, the skipped ones aside, in table order.
@@ -3839,6 +3869,39 @@ fn past(prefix: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The note's cache of whether a file over the bound reads as text holds each root's current
+    /// rows alone: 300 rewrites of one file leave one entry, a removed file none, and two roots in
+    /// one process keep their own.
+    #[test]
+    fn the_text_test_cache_holds_only_the_rows_over_the_bound_there_are_now() {
+        let tree = |name: &str| {
+            let root = std::env::temp_dir().join(format!("scrutate_ix_heads_{name}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("big.py"), format!("def big():\n    return 1\n{}", "x = 1  #\n".repeat(120_000))).unwrap();
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            ix.update(false).unwrap();
+            (root, ix)
+        };
+        let ((a, mut ix_a), (b, ix_b)) = (tree("a"), tree("b"));
+        assert_eq!(ix_b.not_indexed().over, 1);
+        let start = std::time::SystemTime::now() - std::time::Duration::from_secs(10_000);
+        for i in 0..300 {
+            let big = std::fs::File::options().write(true).open(a.join("big.py")).unwrap();
+            big.set_modified(start + std::time::Duration::from_secs(i)).unwrap();
+            ix_a.update(false).unwrap();
+            assert_eq!(ix_a.not_indexed().over, 1, "rewrite {i}");
+        }
+        assert_eq!((super::heads_held(&ix_a.root), super::heads_held(&ix_b.root)), (1, 1));
+        std::fs::remove_file(a.join("big.py")).unwrap();
+        ix_a.update(false).unwrap();
+        assert!(ix_a.not_indexed().is_empty());
+        assert_eq!((super::heads_held(&ix_a.root), super::heads_held(&ix_b.root)), (0, 1));
+        assert_eq!(ix_b.not_indexed_reason("big.py"), Some("over 1 MB"));
+        drop((ix_a, ix_b));
+        let _ = (std::fs::remove_dir_all(&a), std::fs::remove_dir_all(&b));
+    }
+
     /// An index records each file's hash in this form: the same hex under every sha1 release.
     #[test]
     fn a_content_hash_is_the_sha1_of_the_bytes_in_lowercase_hex() {

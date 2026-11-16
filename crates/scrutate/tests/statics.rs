@@ -28,7 +28,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("index.rs", "READ", "SCRUTATE_PROFILE timing totals for the process"),
     ("index.rs", "LOOKUP", "SCRUTATE_PROFILE timing totals for the process"),
     ("index.rs", "SAID", "a warning said once per process"),
-    ("index.rs", "HEADS", "keyed by file and the stat its row saw: whether its first 4 KiB read as text"),
+    ("index.rs", "HEADS", "keyed by root: each note keeps only that root's current rows over the bound"),
     ("index.rs", "FOUND", "Windows' GetFileInformationByName, looked up once per process"),
     ("index.rs", "BEFORE_CHUNKS", "per thread, a test hook"),
     ("index.rs", "AFTER_LANGUAGES", "per thread, a test hook"),

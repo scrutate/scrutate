@@ -430,7 +430,7 @@ name both reasons (`1 file over 1 MB is not in the index: big.py`, past twenty `
 the rest speak of "over 1 MB" alone, which is what a smaller copy would fix: a lookup (`symbol`, `search`, `find`, `callers`,
 `callees`, `refs`, `read --symbol`, `outline`, `path`) after an empty answer, and whenever a path,
 glob or file it is given names a left-out file (`big.py is not in the index (over 1 MB): read it
-by lines, or search it with grep`); `dupes`, `dead` and `map` always, as they claim the whole
+by lines, or search it with grep`, and for a file that is not text the reason alone); `dupes`, `dead` and `map` always, as they claim the whole
 repository. `refs` labels an occurrence in such a file `in a file that is not indexed (over 1 MB)`
 and keeps it among the unresolved; `impact` and `review` list a changed one as `big.py [file]
 (edited; not indexed: over 1 MB)`. A repository with no left-out file gets every answer as before.

@@ -972,7 +972,7 @@ fn not_indexed_lines(ix: &crate::index::Index, op: &Op, empty: bool) -> Option<(
     }
     // a lookup or a listing speaks of the text files over the bound; a file it names, of either
     let ni = all.over_bound();
-    let left = |p: &str, why: &str| format!("{} is not in the index ({why}): read it by lines, or search it with grep", echo(p));
+    let left = |p: &str, why: &str| crate::index::left_out_sentence(&echo(p), why);
     let mut lines: Vec<String> = op.named_paths().iter().filter_map(|p| ix.not_indexed_reason(p).map(|why| left(p, why))).collect();
     if let Op::Scoped { filter, .. } = op
         && let Ok(f) = filter.compile(&ix.root)
