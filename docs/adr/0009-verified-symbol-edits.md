@@ -38,7 +38,11 @@ command line calls use cannot carry one to a running server (one without the fla
 - Before anything is written the new file is parsed with the file's language and checked: no
   parse error or missing node inside the replaced range that the old text did not have; one
   definition of the same name and kind where the old one began; every other definition of the
-  file still there by name and kind, in order. An edit that fails a check is refused with the
+  file still there, in order: one around the edited definition (the class of a method) by name
+  and kind, every other one by name, kind and text, wherever its lines are; one nested in the
+  edited definition may change. A definition declared together with it (`const a = 1, b = 2`,
+  one declaration for both) is refused, as is one whose extent the parse does not give when
+  another definition starts or ends on its lines. An edit that fails a check is refused with the
   check that failed.
 - The edit replaces the definition's lines whole, so a definition that shares its first or last
   line with other code that is not a comment (another definition, a statement) is refused before

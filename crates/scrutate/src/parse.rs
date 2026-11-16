@@ -32,6 +32,8 @@ pub struct Chunk {
     pub(crate) lazy: Option<Lazy>,
     /// the lines of the documentation above the definition (1-based, inclusive), not indexed
     pub(crate) doc_lines: Option<(i64, i64)>,
+    /// where a definition a grammar found lies in its source, its text's start to its node's end
+    pub(crate) span: Option<(usize, usize)>,
 }
 
 /// Source ranges of a definition's text and body (start bytes, their shared end, the line cap).
@@ -47,7 +49,7 @@ impl Chunk {
     /// Where the definition lies in its source, its text's start to its node's end, when a grammar
     /// gave it.
     pub(crate) fn bytes(&self) -> Option<(usize, usize)> {
-        self.lazy.map(|l| (l.text, l.end))
+        self.span
     }
 
     /// Cuts `text` and `body` from `src`, the file's chunks in their order and from one `budget`.
@@ -1729,6 +1731,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
                 calls: module_calls,
                 lazy: None,
                 doc_lines: None,
+                span: None,
             },
         );
     }
@@ -1990,6 +1993,9 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 if let Some(l) = chunks[i].lazy.as_mut() {
                     l.end = node.end_byte();
                 }
+                if let Some(sp) = chunks[i].span.as_mut() {
+                    sp.1 = node.end_byte();
+                }
                 def_stack.push(i);
             } else {
                 chunks.push(Chunk {
@@ -2002,6 +2008,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                     doc,
                     lazy: Some(Lazy { text: text_start, body: body_start, end: node.end_byte(), lines: cap }),
                     doc_lines,
+                    span: Some((text_start, node.end_byte())),
                     ..Default::default()
                 });
                 if let (true, Some((_, siblings))) = (spec.id == "asm" && t == "label", ancestors.last()) {
@@ -2038,6 +2045,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                     end: last_row(shown) + 1,
                     text: text.clone(),
                     doc: doc.clone(),
+                    span: Some((shown.start_byte(), shown.end_byte())),
                     ..Default::default()
                 });
             }
@@ -2517,6 +2525,7 @@ fn line_chunks(
             calls: BTreeSet::new(),
             lazy: None,
             doc_lines,
+            span: None,
         });
     }
     out

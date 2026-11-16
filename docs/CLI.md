@@ -1143,7 +1143,9 @@ nothing written. Before it writes, the new file is parsed with its language and 
 refused, with the reason, when it adds a parse error or a missing node; when the new text does
 not define the same name and kind where the old definition began (an edit never renames); when
 it defines another definition beside it (the body twice, a second function); or when a
-definition outside it is gone or moved. The edit replaces the definition's lines whole, so one
+definition outside it is gone, moved or changed: one around it (the class of a method) keeps its
+name and kind, every other one its text too. A definition declared together with another
+(`const a = 1, b = 2`, `var a, b = 1, 2`) is refused, the declaration holding both. The edit replaces the definition's lines whole, so one
 that shares its first or last line with other code that is not a comment (another definition, a
 statement before or after it) is refused, a dry run too: `NAME shares a line with other code that
 is not a comment (PATH:LINE): edit_symbol replaces whole lines; nothing written`. A comment before

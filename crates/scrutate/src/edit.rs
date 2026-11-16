@@ -84,6 +84,46 @@ fn defs(path: &str, source: &str) -> Vec<Def> {
         .collect()
 }
 
+/// Where `d` lies against `t`: inside it, around it, or apart from it; by their bytes, else their lines.
+#[derive(Clone, Copy, PartialEq)]
+enum Place {
+    Inside,
+    Around,
+    Apart,
+}
+
+fn place(d: &Def, t: &Def) -> Place {
+    let (lo, hi, tlo, thi) = match (d.bytes, t.bytes) {
+        (Some(x), Some(y)) => (x.0, x.1, y.0, y.1),
+        _ => (d.start as usize, d.end as usize, t.start as usize, t.end as usize),
+    };
+    if lo >= tlo && hi <= thi {
+        Place::Inside
+    } else if lo <= tlo && hi >= thi {
+        Place::Around
+    } else {
+        Place::Apart
+    }
+}
+
+/// The definitions of `defs` outside `t`, in order, as an edit must keep them: one around it by
+/// name and kind, one apart from it by its text too. (name, kind, text, first line)
+fn outside_of<'a>(defs: &'a [Def], src: &str, t: &Def) -> Vec<(&'a str, &'static str, Option<String>, i64)> {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let text = |d: &Def| match d.bytes {
+        Some((x, y)) => src[x..y].to_string(),
+        None => lines[(d.start as usize - 1).min(lines.len())..(d.end as usize).min(lines.len())].concat(),
+    };
+    defs.iter()
+        .filter(|d| *d != t)
+        .filter_map(|d| match place(d, t) {
+            Place::Inside => None,
+            Place::Around => Some((d.qualname.as_str(), d.kind, None, d.start)),
+            Place::Apart => Some((d.qualname.as_str(), d.kind, Some(text(d)), d.start)),
+        })
+        .collect()
+}
+
 /// The error and missing nodes of a tree, and the line of the first.
 fn errors(root: tree_sitter::Node) -> (usize, usize) {
     let (mut n, mut first) = (0, usize::MAX);
@@ -179,6 +219,31 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&(spec.language)())?;
     let Some(t0) = parser.parse(&old, None) else { bail!("{rel} did not parse") };
+    // where it is not known what on the lines is the target's, any other definition there refuses
+    // the edit; one declared with it (`const a = 1, b = 2`) shares its text and cannot be edited alone
+    match target.bytes {
+        None => {
+            let on = |l: i64| l >= target.start && l <= target.end;
+            if let Some(d) = before.iter().find(|d| **d != target && (on(d.start) || on(d.end))) {
+                bail!(
+                    "{} shares its lines with {} ({}) at line {}, and where it ends on them is not known: edit_symbol replaces whole lines; nothing written",
+                    target.qualname,
+                    d.qualname,
+                    d.kind,
+                    d.start
+                );
+            }
+        }
+        Some(t) => {
+            if let Some(d) = before.iter().find(|d| **d != target && d.bytes == Some(t)) {
+                bail!(
+                    "{} is declared together with {}: edit_symbol replaces one definition, and the declaration holds both; nothing written",
+                    target.qualname,
+                    d.qualname
+                );
+            }
+        }
+    }
     // whole lines are replaced, so other code on the first or the last of them would go with them;
     // a comment there is the definition's, as read_code shows its lines
     if let Some((from, to)) = target.bytes.map(|r| wrapped(t0.root_node(), r, (a, b))) {
@@ -210,12 +275,9 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     if in_span || e1.0 > e0.0 {
         bail!("the new text does not parse: an error at line {} of the edited file; nothing written", e1.1);
     }
-    // one definition of the same name and kind where the old one began, the rest as they were
+    // one definition of the same name and kind where the old one began, every other one as it was
     let new_end = target.start + (repl.matches('\n').count() as i64).max(1) - 1;
     let after = defs(&rel, &new);
-    let outside = |d: &Def, (lo, hi): (i64, i64)| d.start < lo || d.start > hi;
-    let kept: Vec<(&str, &str)> = before.iter().filter(|d| outside(d, (target.start, target.end))).map(|d| (d.qualname.as_str(), d.kind)).collect();
-    let now_kept: Vec<(&str, &str)> = after.iter().filter(|d| outside(d, (target.start, new_end))).map(|d| (d.qualname.as_str(), d.kind)).collect();
     let Some(edited) = after.iter().find(|d| d.start == target.start && d.qualname == target.qualname && d.kind == target.kind) else {
         bail!(
             "the new text does not define {} ({}) where it began, at line {}: edit_symbol replaces a definition and never renames it; nothing written",
@@ -224,18 +286,22 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
             target.start
         );
     };
-    let beside: Vec<String> = after
-        .iter()
-        .filter(|d| !outside(d, (target.start, new_end)) && *d != edited && !(d.start > edited.start && d.end <= edited.end))
-        .map(|d| format!("{} ({}) at line {}", d.qualname, d.kind, d.start))
-        .collect();
-    if !beside.is_empty() {
-        bail!("the new text defines more than {}: {}; edit_symbol replaces one definition; nothing written", target.qualname, beside.join(", "));
-    }
-    if kept != now_kept {
-        let gone: Vec<&str> = kept.iter().filter(|k| !now_kept.contains(k)).map(|k| k.0).collect();
+    let kept = outside_of(&before, &old, &target);
+    let now_kept = outside_of(&after, &new, edited);
+    let key = |k: &(&str, &'static str, Option<String>, i64)| (k.0.to_string(), k.1, k.2.clone());
+    if kept.iter().map(key).ne(now_kept.iter().map(key)) {
+        let (kept_keys, now_keys): (Vec<_>, Vec<_>) = (kept.iter().map(key).collect(), now_kept.iter().map(key).collect());
+        let beside: Vec<String> = now_kept
+            .iter()
+            .filter(|k| k.3 >= target.start && k.3 <= new_end && !kept_keys.contains(&key(k)))
+            .map(|k| format!("{} ({}) at line {}", k.0, k.1, k.3))
+            .collect();
+        if !beside.is_empty() {
+            bail!("the new text defines more than {}: {}; edit_symbol replaces one definition; nothing written", target.qualname, beside.join(", "));
+        }
+        let gone: Vec<&str> = kept.iter().filter(|k| !now_keys.contains(&key(k))).map(|k| k.0).collect();
         let what = if gone.is_empty() { "their order".to_string() } else { gone.join(", ") };
-        bail!("the edit changes the definitions around {} (gone or moved: {what}); nothing written", target.qualname);
+        bail!("the edit changes the definitions around {} (gone, moved or changed: {what}); nothing written", target.qualname);
     }
     let plan = one.plan(new.clone().into_bytes(), span);
     let diff = plan.diff();
