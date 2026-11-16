@@ -282,6 +282,38 @@ fn a_long_answer_stops_at_the_budget_and_a_piped_one_streams_whole() {
 }
 
 #[test]
+fn a_piped_answer_ends_when_its_reader_exits_early() {
+    let r = Repo::new("early_reader");
+    // far more than a pipe holds, so the program blocks on a full pipe once head is gone
+    let lines: String = (0..200_000).map(|i| format!("foo line {i}\n")).collect();
+    r.write("big.txt", &lines);
+    let cmd = format!("'{BIN}' hook run --piped -- grep foo big.txt | head -1");
+    use std::os::unix::process::CommandExt;
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(&cmd)
+        .current_dir(&r.root)
+        .env("SCRUTATE_REDACT", "off")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(10) {
+            // the whole group: sh, hook run and its program, so a failed run leaves nothing behind
+            let _ = Command::new("kill").args(["-KILL", &format!("-{}", child.id())]).status();
+            let _ = child.wait();
+            panic!("hook run waited on a program whose output nobody reads");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "foo line 0\n");
+}
+
+#[test]
 fn a_glob_that_expands_to_a_flag_that_runs_a_program_is_refused_when_it_runs() {
     let r = Repo::new("glob_flag");
     r.write("a.txt", "foo\n");

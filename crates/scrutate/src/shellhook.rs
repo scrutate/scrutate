@@ -1060,6 +1060,9 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
             match send(o, &mut sent) {
                 Ok(()) => {}
                 Err(over) => {
+                    // the reader is gone or the budget is spent: left running, the program fills
+                    // the pipe and the wait below never ends
+                    let _ = child.kill();
                     cut = over;
                     done = true;
                     break;
@@ -1068,7 +1071,6 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         }
     }
     if cut {
-        let _ = child.kill();
         let note = "[scrutate] output cut here: narrow the search, or pass a path\n";
         let _ = so.write_all(note.as_bytes());
         sent += note.len();
