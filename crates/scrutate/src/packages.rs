@@ -338,21 +338,27 @@ struct Dist {
 
 impl Dist {
     /// The names it is imported by: the first part of each file outside its metadata, and under a
-    /// namespace package (a first part with no `__init__.py`, which several distributions share,
-    /// as google-auth and protobuf share `google`) the first two parts too.
+    /// namespace package (a directory with no `__init__.py`, which several distributions share,
+    /// as google-auth and protobuf share `google`, and google-cloud-core and google-cloud-storage
+    /// `google.cloud`) each part on down to the first package with one (`google.cloud.storage`).
     fn tops(&self) -> Vec<String> {
-        let inits: std::collections::HashSet<&str> = self.files.iter().filter_map(|f| f.strip_suffix("/__init__.py")).filter(|t| !t.contains('/')).collect();
+        let inits: std::collections::HashSet<&str> = self.files.iter().filter_map(|f| f.strip_suffix("/__init__.py")).collect();
         let module = |t: &str| t.strip_suffix(".py").unwrap_or(t).to_string();
-        let mut out: Vec<String> = self
-            .files
-            .iter()
-            .flat_map(|f| {
-                let mut parts = f.split('/');
-                let top = parts.next().filter(|t| !t.ends_with(".dist-info") && !t.ends_with(".data") && *t != "__pycache__" && *t != "..");
-                let below = parts.next().filter(|s| top.is_some_and(|t| !inits.contains(t)) && *s != "__pycache__");
-                top.map(module).into_iter().chain(below.zip(top).map(|(s, t)| format!("{t}.{}", module(s))))
-            })
-            .collect();
+        let mut out: Vec<String> = Vec::new();
+        for f in &self.files {
+            let parts: Vec<&str> = f.split('/').collect();
+            let Some(top) = parts.first().filter(|t| !t.ends_with(".dist-info") && !t.ends_with(".data") && **t != "__pycache__" && **t != "..") else {
+                continue;
+            };
+            let mut name = module(top);
+            out.push(name.clone());
+            let mut depth = 1;
+            while depth < parts.len() && parts[depth] != "__pycache__" && !inits.contains(parts[..depth].join("/").as_str()) {
+                name = format!("{name}.{}", module(parts[depth]));
+                out.push(name.clone());
+                depth += 1;
+            }
+        }
         out.sort();
         out.dedup();
         out

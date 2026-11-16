@@ -335,6 +335,39 @@ fn a_poetry_package_missing_from_the_venv_says_poetry_keeps_its_environment_else
 }
 
 #[test]
+fn distributions_under_a_namespace_two_levels_deep_are_each_reached_by_their_own_package() {
+    // as the wheels ship them: google/ and google/cloud/ (azure/ and azure/storage/) hold no __init__.py
+    let t = Tree::new("uv_namespace_deep");
+    t.uv_lock(&[("google-cloud-core", "2.8.0"), ("google-cloud-storage", "3.17.1"), ("azure-storage-blob", "12.31.1"), ("azure-storage-queue", "12.18.1")]);
+    t.wheel("google-cloud-core", "2.8.0", &[("google/cloud/client/__init__.py", "class Client:\n    pass\n")]);
+    t.wheel(
+        "google-cloud-storage",
+        "3.17.1",
+        &[
+            ("google/cloud/storage/__init__.py", "from google.cloud.storage.client import Client\n"),
+            ("google/cloud/storage/client.py", "class Client:\n    project = None\n"),
+        ],
+    );
+    t.wheel("azure-storage-blob", "12.31.1", &[("azure/storage/blob/__init__.py", "class BlobClient:\n    pass\n")]);
+    t.wheel("azure-storage-queue", "12.18.1", &[("azure/storage/queue/__init__.py", "class QueueClient:\n    pass\n")]);
+    for (name, package, file) in [
+        ("google.cloud.storage.Client", "google-cloud-storage 3.17.1", "google/cloud/storage/client.py:1-2"),
+        ("google.cloud.storage.client.Client", "google-cloud-storage 3.17.1", "google/cloud/storage/client.py:1-2"),
+        ("google.cloud.client.Client", "google-cloud-core 2.8.0", "google/cloud/client/__init__.py:1-2"),
+        ("azure.storage.blob.BlobClient", "azure-storage-blob 12.31.1", "azure/storage/blob/__init__.py:1-2"),
+        ("azure.storage.queue.QueueClient", "azure-storage-queue 12.18.1", "azure/storage/queue/__init__.py:1-2"),
+    ] {
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains(package) && out.contains(file), "{name}: {out}");
+    }
+    // the shared namespace alone still names two packages
+    let (code, _, err) = t.run(&["symbol", "--deps", "google.cloud.Client"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("google.cloud names two packages"), "{err}");
+}
+
+#[test]
 fn a_go_module_is_read_from_the_module_cache_at_the_version_go_mod_requires() {
     let t = Tree::new("go");
     t.go_mod("require (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tgithub.com/BurntSushi/toml v1.4.0 // indirect\n)");
