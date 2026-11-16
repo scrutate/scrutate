@@ -1697,6 +1697,7 @@ pub fn run() -> Result<i32> {
             }
             let plan = crate::rewrite::plan(&lang, &query, &template, &paths, &cli.root)?;
             plan.skipped.iter().for_each(|s| diagnostic("warning", s));
+            plan.not_searched.iter().for_each(|s| diagnostic("note", s));
             let mut left = plan.left.clone();
             let mut w = std::io::BufWriter::new(std::io::stdout().lock());
             if write {
@@ -1752,7 +1753,7 @@ pub fn run() -> Result<i32> {
             let mut seen = 0usize;
             let (count, cancel) = (crate::index::FileCount::default(), std::sync::atomic::AtomicBool::new(false));
             let watch = crate::intel::Watch { count: &count, cancel: &cancel };
-            let n = crate::intel::tsquery_each(&lang, &query, &paths, true, limit.saturating_add(1), cache_root, watch, &mut |c| {
+            let (n, large) = crate::intel::tsquery_each(&lang, &query, &paths, true, limit.saturating_add(1), cache_root, watch, &mut |c| {
                 seen += 1;
                 if err.is_some() || seen > limit {
                     return;
@@ -1785,13 +1786,23 @@ pub fn run() -> Result<i32> {
                     err = writeln!(w, "{note}").err();
                 }
             }
+            // a file named over the size bound has no known match: said, and exit 2; those a walk
+            // met are one note, and a `skipped` record in JSON
+            if json && !large.is_empty() && err.is_none() {
+                err = writeln!(w, "{}", serde_json::json!({"type": "skipped", "why": "over 1 MB", "paths": large.iter().map(|t| &t.path).collect::<Vec<_>>()}))
+                    .err();
+            }
             if let Some(e) = err
                 && e.kind() != std::io::ErrorKind::BrokenPipe
             {
                 return Err(e.into());
             }
             let _ = w.flush();
-            Ok(if missing {
+            large.iter().filter(|t| t.named).for_each(|t| diagnostic("warning", &t.alone()));
+            if let Some(note) = crate::intel::TooLarge::walked_note(&large) {
+                diagnostic("note", &note);
+            }
+            Ok(if missing || large.iter().any(|t| t.named) {
                 2
             } else if n == 0 {
                 1

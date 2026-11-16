@@ -825,7 +825,8 @@ pub enum Answer {
     },
     Similar(Vec<(Hit, f32, f32)>),
     Dupes(Vec<DupGroup>, Option<Stop>),
-    Captures(Vec<Capture>, Option<Stop>),
+    /// and the files of the language left out for their size
+    Captures(Vec<Capture>, Option<Stop>, Vec<crate::intel::TooLarge>),
     Map(Vec<crate::repomap::MapFile>),
     Path(Box<crate::names::CallPath>),
     Dead(crate::dead::Dead),
@@ -1027,7 +1028,7 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Dupes(groups, stopped)
         }
         Op::Tsquery { lang, query, limit } => {
-            let caps = crate::intel::tsquery(
+            let (caps, large) = crate::intel::tsquery(
                 lang,
                 query,
                 std::slice::from_ref(&s.ix.root),
@@ -1036,7 +1037,7 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 crate::intel::Watch { count: &s.ix.count, cancel: &s.cancel },
             )?;
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
-            Answer::Captures(caps, stopped)
+            Answer::Captures(caps, stopped, large)
         }
         Op::Map { path } => {
             let path = path.as_deref().map(|p| repo_path(s, p)).filter(|p| !p.is_empty() && p != ".");
@@ -2111,7 +2112,7 @@ impl Answer {
             },
             Answer::Similar(v) => v.is_empty(),
             Answer::Dupes(v, _) => v.is_empty(),
-            Answer::Captures(v, _) => v.is_empty(),
+            Answer::Captures(v, ..) => v.is_empty(),
             Answer::Map(files) => files.is_empty(),
             Answer::Path(p) => !p.found,
             Answer::Dead(d) => d.dead.is_empty() && d.undecided.is_empty(),
@@ -2230,7 +2231,7 @@ impl Answer {
             }
             _ => {}
         }
-        let Answer::Captures(caps, _) = self else { return Vec::new() };
+        let Answer::Captures(caps, ..) = self else { return Vec::new() };
         let mut files: std::collections::HashMap<String, Option<Vec<String>>> = std::collections::HashMap::new();
         caps.iter_mut()
             .enumerate()
@@ -2590,9 +2591,16 @@ impl Answer {
                 ),
                 ..Parts::default()
             },
-            Answer::Captures(caps, _) if caps.is_empty() => nothing("no matches".to_string()),
-            Answer::Captures(caps, stopped) => Parts {
-                tail: stop_line(*stopped, "matches"),
+            Answer::Captures(caps, _, large) if caps.is_empty() => {
+                nothing(std::iter::once("no matches".to_string()).chain(crate::intel::TooLarge::walked_note(large)).collect::<Vec<_>>().join("\n"))
+            }
+            Answer::Captures(caps, stopped, large) => Parts {
+                tail: [stop_line(*stopped, "matches")]
+                    .into_iter()
+                    .chain(crate::intel::TooLarge::walked_note(large))
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 items: caps.iter().map(capture_line).collect(),
                 noun: "matches",
                 brief: Some(
@@ -2834,14 +2842,21 @@ impl Answer {
     /// The one JSON form every front end gives: `{"schema", "result"}`, and `stopped_at` when
     /// the answer stopped at its limit with more left.
     pub fn envelope(&self, root: &std::path::Path) -> Value {
-        envelope(root, self.json(), self.stopped())
+        let mut v = envelope(root, self.json(), self.stopped());
+        // the files a structural search left out for their size, as the note in the text says
+        if let Answer::Captures(_, _, large) = self
+            && !large.is_empty()
+        {
+            v["skipped"] = json!({"why": "over 1 MB", "paths": large.iter().map(|t| &t.path).collect::<Vec<_>>()});
+        }
+        v
     }
 
     /// The limit the answer stopped at, when there were more.
     pub fn stopped(&self) -> Option<Stop> {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
-            Answer::Definitions(_, stopped, _) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
+            Answer::Definitions(_, stopped, _) | Answer::Captures(_, stopped, _) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
             Answer::Package(_, a) => a.stopped(),
             Answer::Impact(i) if i.stopped => Some(Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" }),
             _ => None,
@@ -2971,7 +2986,7 @@ impl Answer {
                 .map(|(h, cos, jac)| json!({"path": h.path, "start": h.start, "end": h.end, "kind": h.kind, "qualname": h.qualname, "cosine": cos, "jaccard": jac}))
                 .collect(),
             Answer::Dupes(groups, _) => serde_json::to_value(groups).unwrap_or_default(),
-            Answer::Captures(caps, _) => serde_json::to_value(caps).unwrap_or_default(),
+            Answer::Captures(caps, ..) => serde_json::to_value(caps).unwrap_or_default(),
             Answer::Map(files) => files
                 .iter()
                 .enumerate()
@@ -3233,7 +3248,7 @@ mod tests {
         assert_eq!(Answer::Outline { path: "a.py".into(), rows: vec![] }.text(), "no symbols in a.py (not indexed or no definitions)");
         assert_eq!(Answer::Rdeps { target: "m".into(), rows: vec![], unresolved: 0 }.text(), "nothing imports m");
         assert_eq!(Answer::Hits { hits: vec![], words: vec![], snippet: true, stopped: None }.text(), "(no results)");
-        assert!(Answer::Dupes(vec![], None).is_empty() && Answer::Captures(vec![], None).is_empty());
+        assert!(Answer::Dupes(vec![], None).is_empty() && Answer::Captures(vec![], None, vec![]).is_empty());
         assert_eq!(
             Answer::Rdeps { target: "m".into(), rows: vec![("a.py".into(), 3, "m".into())], unresolved: 0 }.json(),
             json!([{"path": "a.py", "line": 3, "module": "m"}])

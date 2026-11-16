@@ -399,6 +399,11 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `tsquery` and `tsquery --rewrite` say a source file over 1 MB, which they do not search: named
+  on the command line it gets `PATH: over 1 MB, left alone` and exit 2, where it exited 1 with
+  nothing printed as if it held no match; met in a walk it is one note with the count and the
+  first names, a `skipped` record in `--json` and `skipped` in the `structural_search` envelope
+  ([CLI](docs/CLI.md)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it

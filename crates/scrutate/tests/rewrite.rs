@@ -426,3 +426,95 @@ fn a_file_with_the_temporary_name_is_left_alone_and_the_write_refused() {
     assert_eq!(t.read(&tmp), "the user's own file\n");
     assert_eq!(t.read("a.py"), "print(x)\n");
 }
+
+/// A file over 1 MB is not searched and is always said. Named on the command line it gets
+/// `PATH: over 1 MB, left alone` and exit 2 in every form (plain, `--json`, the rewrite's dry run
+/// and `--write`), and is left unchanged; met in a walk it is one note with its count and name,
+/// the exit code still by the matches, and a `skipped` record in `--json` and in the MCP tool's
+/// envelope.
+#[test]
+fn a_file_over_one_megabyte_is_said_whether_named_or_met_in_a_walk() {
+    let t = Tree::new("over_bound");
+    let big = "print(x)\n".repeat(120_000);
+    assert_eq!(big.len(), 1_080_000);
+    t.write("big.py", &big);
+    t.write("small.py", "print(y)\n");
+    let forms = |path: &str| -> Vec<Vec<String>> {
+        let q = ["tsquery", "python", PRINT, path].map(String::from).to_vec();
+        let with = |extra: &[&str]| q.iter().cloned().chain(extra.iter().map(|s| s.to_string())).collect::<Vec<_>>();
+        vec![with(&[]), with(&["--json"]), with(&["--rewrite", "log$args"]), with(&["--rewrite", "log$args", "--write"])]
+    };
+    for args in forms("big.py") {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, out, err) = t.run(&args);
+        assert!(code == 2 && err.contains("big.py: over 1 MB, left alone"), "{args:?}: {code}\n{out}\n{err}");
+        assert_eq!(t.read("big.py"), big, "{args:?}");
+    }
+    for args in forms(".") {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, out, err) = t.run(&args);
+        assert!(code == 0 && err.contains("1 file over 1 MB was not searched: big.py") && !err.contains("left alone"), "{args:?}: {code}\n{out}\n{err}");
+        if args.contains(&"--json") {
+            let last: serde_json::Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
+            assert!(last["type"] == "skipped" && last["paths"] == serde_json::json!(["big.py"]), "{out}");
+        }
+        assert_eq!(t.read("big.py"), big, "{args:?}");
+    }
+    assert_eq!(t.read("small.py"), "log(y)\n", "the walk's --write changed the file within the bound");
+    // the MCP tool says the same, in its text and its envelope
+    let session = scrutate::session::Session::open(&t.root, scrutate::session::Every::given(Some(0.0))).unwrap();
+    session.set_cache_dir(t.root.with_extension("cache"));
+    let c = scrutate::mcp::call_tool(
+        &session,
+        "structural_search",
+        &serde_json::json!({"lang": "python", "query": PRINT}),
+        &scrutate::mcp::Settings::new(None),
+        &Default::default(),
+    );
+    assert!(c.text.contains("1 file over 1 MB was not searched: big.py"), "{}", c.text);
+    assert_eq!(c.structured["skipped"]["paths"], serde_json::json!(["big.py"]), "{}", c.structured);
+}
+
+/// The bound is the file's size: one of exactly 1,000,000 bytes is read and rewritten, one byte
+/// more and the file named is left alone with its line and exit 2.
+#[test]
+fn the_size_bound_reads_one_million_bytes_and_not_one_more() {
+    let t = Tree::new("bound_edge");
+    let at = format!("{}\n", "print(x)\n".repeat(111_111));
+    assert_eq!(at.len(), 1_000_000);
+    t.write("at.py", &at);
+    t.write("past.py", &format!("{at}\n"));
+    let (code, out, err) = t.run(&["tsquery", "python", PRINT, "at.py", "--rewrite", "log$args", "--write"]);
+    assert!(code == 0 && out.contains("at.py: 111111 replaced"), "{code}\n{out}\n{err}");
+    let (code, out, err) = t.run(&["tsquery", "python", PRINT, "past.py", "--rewrite", "log$args", "--write"]);
+    assert!(code == 2 && err.contains("past.py: over 1 MB, left alone") && !out.contains("replaced"), "{code}\n{out}\n{err}");
+    assert_eq!(t.read("past.py"), format!("{at}\n"));
+}
+
+/// A second process that appends to a file under the bound while `--write` runs never loses an
+/// appended line: the write lands only on the text it read, and a file changed since is left alone.
+#[test]
+fn a_write_never_lands_on_top_of_another_writers_change() {
+    let t = Tree::new("second_writer");
+    let text = "print(x)\n".repeat(30_000);
+    for round in 0..10u64 {
+        t.write("f.py", &text);
+        let path = t.root.join("f.py");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(round * 40));
+            let mut done = Vec::new();
+            for i in 0..50 {
+                use std::io::Write as _;
+                let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+                writeln!(f, "# a{round}_{i}").unwrap();
+                done.push(format!("# a{round}_{i}"));
+            }
+            done
+        });
+        let (code, _, err) = t.run(&["tsquery", "python", PRINT, "f.py", "--rewrite", "log$args", "--write"]);
+        let appended = writer.join().unwrap();
+        let now = t.read("f.py");
+        let lost: Vec<&String> = appended.iter().filter(|l| !now.lines().any(|n| n == l.as_str())).collect();
+        assert!(lost.is_empty(), "round {round}: exit {code}, {err}: lost {lost:?}");
+    }
+}

@@ -31,6 +31,8 @@ pub struct Plan {
     pub left: Vec<String>,
     /// a match inside another one, as `PATH:LINE:COLUMN: why`
     pub skipped: Vec<String>,
+    /// the note for the files a walk met over the size bound, which no one named
+    pub not_searched: Option<String>,
 }
 
 enum Piece {
@@ -120,7 +122,7 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
     // nor where it is written
     let dir = Dir::root(root)?;
     let top = std::fs::canonicalize(root)?;
-    let files = crate::intel::query_files(spec, paths, true);
+    let (files, large) = crate::intel::query_files(spec, paths, true);
     let results: Vec<(Option<FileChange>, Option<String>, Vec<String>)> = files
         .par_iter()
         .map_init(
@@ -223,7 +225,15 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
             },
         )
         .collect();
-    let mut plan = Plan { root: dir, files: Vec::new(), left: Vec::new(), skipped: Vec::new() };
+    // a file named over the size bound has no known match, so it is left alone and said
+    let not_searched = crate::intel::TooLarge::walked_note(&large);
+    let mut plan = Plan {
+        root: dir,
+        files: Vec::new(),
+        left: large.iter().filter(|t| t.named).map(crate::intel::TooLarge::alone).collect(),
+        skipped: Vec::new(),
+        not_searched,
+    };
     for (change, left, skipped) in results {
         plan.files.extend(change);
         plan.left.extend(left);
@@ -263,7 +273,7 @@ impl One {
     /// (old start, old end, new start, new end) bytes.
     pub fn plan(self, new: Vec<u8>, span: (usize, usize, usize, usize)) -> Plan {
         let change = FileChange { path: self.path, inside: self.inside, shown: self.shown, read: self.read, new, replaced: 1, spans: vec![span] };
-        Plan { root: self.root, files: vec![change], left: Vec::new(), skipped: Vec::new() }
+        Plan { root: self.root, files: vec![change], left: Vec::new(), skipped: Vec::new(), not_searched: None }
     }
 }
 

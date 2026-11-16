@@ -845,17 +845,45 @@ pub(crate) struct QueryFile {
     pub root: usize,
 }
 
+/// A file of the query's language a structural query leaves out: it is over `MAX_FILE_BYTES`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct TooLarge {
+    pub path: String,
+    /// named on the command line, not met in a walk
+    pub named: bool,
+}
+
+impl TooLarge {
+    /// The line for a file named on the command line: no match in it is known.
+    pub fn alone(&self) -> String {
+        format!("{}: over 1 MB, left alone", self.path)
+    }
+
+    /// The one note for the files a walk met over the bound, with the first names, or None.
+    pub fn walked_note(all: &[TooLarge]) -> Option<String> {
+        let walked: Vec<&str> = all.iter().filter(|t| !t.named).map(|t| t.path.as_str()).collect();
+        let (n, first) = (walked.len(), walked.iter().take(3).copied().collect::<Vec<_>>().join(", "));
+        let more = if n > 3 { format!(" and {} more", n - 3) } else { String::new() };
+        match n {
+            0 => None,
+            1 => Some(format!("1 file over 1 MB was not searched: {first}")),
+            _ => Some(format!("{n} files over 1 MB were not searched: {first}{more}")),
+        }
+    }
+}
+
 /// The files of up to 1 MB under `roots` that `spec` may hold by name, in path order, as Engine
-/// A's default walk gives them (ignore files read, hidden files and links left out).
-pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_given: bool) -> Vec<QueryFile> {
-    let mut files = Vec::new();
+/// A's default walk gives them (ignore files read, hidden files and links left out), and those of
+/// them over the bound.
+pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_given: bool) -> (Vec<QueryFile>, Vec<TooLarge>) {
+    let (mut files, mut large) = (Vec::new(), Vec::new());
     for (i, root) in roots.iter().enumerate() {
         let Ok(walk) = crate::instant::sorted_walk(root) else { continue };
         for entry in walk.flatten() {
             if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
             }
-            let Some(md) = entry.metadata().ok().filter(|m| m.len() <= crate::index::MAX_FILE_BYTES) else { continue };
+            let Ok(md) = entry.metadata() else { continue };
             let path = entry.path();
             let rel = crate::instant::slashed(path.strip_prefix(root).unwrap_or(path).to_string_lossy());
             // a root that is the file itself: report it as given (the extension check needs a name)
@@ -870,11 +898,15 @@ pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_g
                 } else {
                     rel.clone()
                 };
-                files.push(QueryFile { path: path.to_path_buf(), rel, shown, md, root: i });
+                if md.len() > crate::index::MAX_FILE_BYTES {
+                    large.push(TooLarge { path: shown, named: entry.depth() == 0 });
+                } else {
+                    files.push(QueryFile { path: path.to_path_buf(), rel, shown, md, root: i });
+                }
             }
         }
     }
-    files
+    (files, large)
 }
 
 /// Run a tree-sitter query (S-expression pattern language) over the files of one language under
@@ -884,7 +916,8 @@ pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_g
 /// content hash and files seen before are not parsed again (see `tscache`); the output is the same.
 /// With `as_given`, paths are printed as `grep PATH...` prints them (the root as given, then the
 /// path below it), except under `.`; without, from the root that holds them.
-/// Returns the number of captures delivered (stops at `limit`).
+/// Returns the number of captures delivered (stops at `limit`), and the files of the language
+/// left out for their size.
 #[allow(clippy::too_many_arguments)]
 pub fn tsquery_each(
     lang: &str,
@@ -895,7 +928,7 @@ pub fn tsquery_each(
     cache_root: Option<&Path>,
     watch: Watch,
     on_capture: &mut dyn FnMut(Capture),
-) -> Result<usize> {
+) -> Result<(usize, Vec<TooLarge>)> {
     use rayon::prelude::*;
     if cfg!(target_os = "wasi") {
         bail!("tsquery is not in the wasi build: it needs threads");
@@ -912,7 +945,8 @@ pub fn tsquery_each(
         .map(|root| top.as_ref().and_then(|t| std::fs::canonicalize(root).ok()?.strip_prefix(t).ok().map(|p| crate::instant::slashed(p.to_string_lossy()))))
         .collect();
     // (path, path from its root, path shown, the code index's hash of it when its stat is current)
-    let files: Vec<(PathBuf, String, String, Option<String>)> = query_files(spec, roots, as_given)
+    let (files, large) = query_files(spec, roots, as_given);
+    let files: Vec<(PathBuf, String, String, Option<String>)> = files
         .into_iter()
         .map(|f| {
             let known = under[f.root].as_ref().and_then(|u| {
@@ -1050,7 +1084,7 @@ pub fn tsquery_each(
     }
     if let Some(mut cache) = cache {
         if fresh_bytes > crate::tscache::MAX_BYTES {
-            return Ok(delivered); // too large to cache: the stored entries stay as they were
+            return Ok((delivered, large)); // too large to cache: the stored entries stay as they were
         }
         let stale = finished && fresh.len() != cache.entries.len();
         if !finished {
@@ -1065,7 +1099,7 @@ pub fn tsquery_each(
             cache.touch();
         }
     }
-    Ok(delivered)
+    Ok((delivered, large))
 }
 
 /// What a long search reports to and is stopped by: the files it read, and the call's cancel flag.
@@ -1076,10 +1110,10 @@ pub struct Watch<'a> {
 }
 
 /// `tsquery_each` collected into a vector (MCP and bindings; the CLI streams).
-pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>, watch: Watch) -> Result<Vec<Capture>> {
+pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>, watch: Watch) -> Result<(Vec<Capture>, Vec<TooLarge>)> {
     let mut out = Vec::new();
-    tsquery_each(lang, query, roots, false, limit, cache_root, watch, &mut |c| out.push(c))?;
-    Ok(out)
+    let (_, large) = tsquery_each(lang, query, roots, false, limit, cache_root, watch, &mut |c| out.push(c))?;
+    Ok((out, large))
 }
 
 /// One group of identifier occurrences inside the same enclosing symbol (or the same file when none).
