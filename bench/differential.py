@@ -218,7 +218,15 @@ def late_nul(root: str) -> list[str]:
         dirs[:] = [x for x in dirs if x not in (".git", ".scrutate")]
         for f in fs:
             p = os.path.join(d, f)
-            if os.path.isfile(p) and not os.path.islink(p) and open(p, "rb").read().find(b"\0") >= (64 << 10) - 8:
+            if not os.path.isfile(p) or os.path.islink(p):
+                continue
+            try:
+                with open(p, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                # not late: rg reports the read error itself, in the run without the late files
+                continue
+            if data.find(b"\0") >= (64 << 10) - 8:
                 out.append(os.path.relpath(p, root).replace(os.sep, "/"))
     return out
 
