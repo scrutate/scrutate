@@ -71,7 +71,7 @@
   "step": "differential test against ripgrep",
   "by": "gate: differential"
  },
- "ci.yml:python:de5a3d408b": {
+ "ci.yml:python:d8938962ca": {
   "step": "random checks against ripgrep and a fresh index",
   "by": "gate: fuzz-grep, fuzz-incremental"
  },

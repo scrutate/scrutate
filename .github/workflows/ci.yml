@@ -168,8 +168,16 @@ jobs:
         run: python bench/differential.py --cases 200 --seed 3
       - name: random checks against ripgrep and a fresh index
         run: |
-          python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7
+          python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7 --keep "$RUNNER_TEMP/fuzz-grep"
           python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7
+      # the tree and arguments of each case that differed, which the log alone cannot rebuild
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-grep-diffs
+          path: ${{ runner.temp }}/fuzz-grep
+          if-no-files-found: ignore
+          retention-days: 30
       # MRR@10 and hit@5 of 1,183 queries on a frozen copy of this repository's code, against bench/quality/floor.json
       - name: ranking quality against its recorded floor
         run: python bench/quality.py target/release/scrutate

@@ -30,6 +30,7 @@ ap.add_argument("--bin", default=os.path.join(os.path.dirname(os.path.abspath(__
 ap.add_argument("--seconds", type=float, default=60)
 ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--ordered", action="store_true", help="accepted as before: every case now also runs with --sort")
+ap.add_argument("--keep", help="a directory to keep the trees of differing cases in, each run in a new subdirectory of it (default: a new temporary directory)")
 a_ = ap.parse_args()
 BIN, SECONDS, SEED, ORDERED = os.path.abspath(a_.bin), a_.seconds, a_.seed, a_.ordered
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +39,8 @@ from differential import require_rg  # noqa: E402
 RG = require_rg()
 HERE = tempfile.mkdtemp(prefix="scrutate-fuzz-")
 WORK = os.path.join(HERE, f"work{SEED}")
-KEEP = os.path.join(HERE, f"diffs{SEED}")
+# a directory the user names is never cleared: each run keeps its cases in a new one inside it
+KEEP = os.path.join(os.path.abspath(a_.keep), f"diffs{SEED}-{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}") if a_.keep else os.path.join(HERE, f"diffs{SEED}")
 rnd = random.Random(SEED)
 WORDS = ["foo", "Foo", "FOO", "bar", "baz", "foobar", "foo_bar", "x", "été", "ÉTÉ", "token", "Token", "a.b", "(x)", "end", ""]
 NAMES = ["a.txt", "b.txt", "c.log", "d.rs", "e.tmp", "keep.log", ".h.txt", "A.TXT", "long name.txt"]
@@ -216,6 +218,11 @@ def run(tool, a):
         lines = [mend(l, a) for l in lines]
     return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr
 
+def shown(l):
+    """`l` as the summary prints it: its first 100 characters, any byte that is not UTF-8 as U+FFFD."""
+    return l[:100].encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def mend(l, a):
     """`l`, a line ripgrep printed for `a`, with its cut U+FFFD read as the whole one where the line
     is of a file `odd_utf16` marked. ripgrep 15.2.0's defect: remove this once a release prints
@@ -289,15 +296,22 @@ def compare(a, label=None):
         with open(os.path.join(dst, "ARGS.txt"), "w") as f:
             f.write(repr(a) + f"\nrg exit {rc}, scrutate exit {sc}\n")
         print(f"DIFF case{diffs}{f' (saved: {label})' if label else ''} {a!r}: rg {len(r)} lines exit {rc}; scrutate {len(s)} lines exit {sc}")
-        for l in [x for x in r if x not in s][:2]:
+        only_rg, only_sc = [x for x in r if x not in s][:2], [x for x in s if x not in r][:2]
+        for l in only_rg:
             print("    only rg:      ", l[:100])
-        for l in [x for x in s if x not in r][:2]:
+        for l in only_sc:
             print("    only scrutate:", l[:100])
+        # printed alike, the lines differ past their first 100 characters or in bytes shown as U+FFFD
+        for x in only_rg:
+            for y in only_sc:
+                if shown(x) == shown(y):
+                    bx, by = x.encode("utf-8", "surrogateescape"), y.encode("utf-8", "surrogateescape")
+                    i = next((k for k, (p, q) in enumerate(zip(bx, by)) if p != q), min(len(bx), len(by)))
+                    print(f"    bytes from {i}: rg {bx[i : i + 24].hex(' ') or '(end)'}; scrutate {by[i : i + 24].hex(' ') or '(end)'}")
         sys.stdout.flush()
 
 
-shutil.rmtree(KEEP, ignore_errors=True)
-os.makedirs(KEEP, exist_ok=True)
+os.makedirs(KEEP, exist_ok=False)
 # the saved cases every run replays, before the random ones: differences found before
 for case in json.load(open(CASES, encoding="utf-8")):
     load(case)
@@ -314,6 +328,8 @@ shutil.rmtree(WORK, ignore_errors=True)
 print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte, {mended} lines of ripgrep's mended (`mend`)" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
 if not diffs:
     shutil.rmtree(HERE, ignore_errors=True)
+    if a_.keep:
+        os.rmdir(KEEP)  # the run's own, empty
 if not nonempty:
     print("no compared run had any ripgrep output: nothing was really compared")
 sys.exit(1 if diffs or not nonempty else 0)
