@@ -721,6 +721,7 @@ pub enum Cmd {
         /// follow callers this many steps (at most 10)
         #[arg(long, default_value_t = crate::impact::DEPTH as u64, value_parser = clap::value_parser!(u64).range(0..=crate::impact::MAX_DEPTH as u64))]
         depth: u64,
+        /// print the answer as JSON: changed, callers, tests, findings and notes
         #[arg(long)]
         json: bool,
     },
@@ -732,6 +733,7 @@ pub enum Cmd {
         /// the commit of the pull request; check it out first, the index is the working tree's
         #[arg(long, value_name = "REV", default_value = "HEAD")]
         head: String,
+        /// markdown (a pull request comment, cut at GitHub's limit), json (the whole report) or gitlab (a Code Quality report)
         #[arg(long, value_enum, default_value_t = ReviewFormat::Markdown)]
         format: ReviewFormat,
         /// follow callers this many steps (at most 10)
