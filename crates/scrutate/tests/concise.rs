@@ -1,7 +1,7 @@
 //! `response_format: concise` on every MCP tool, run on a copy of this crate's own source: the
 //! concise answer lists the locations the detailed one lists and, when the detailed one is over
-//! 1 KB, takes at most half its bytes where the detailed one carries code, and fewer bytes where
-//! it is already only places and names.
+//! 1 KB, takes at most half its bytes where the detailed one carries code, and at most two thirds
+//! where it is already only places and names.
 
 #[path = "support/canon.rs"]
 mod canon;
@@ -85,8 +85,8 @@ fn locations(text: &str) -> BTreeSet<String> {
 }
 
 /// What a concise answer over 1 KB is held to beside its detailed form: at most half of it where
-/// the detailed form carries code, snippets or explanations; fewer bytes where it is already only
-/// places and names, so the concise form has little to drop.
+/// the detailed form carries code, snippets or explanations; at most two thirds where it is
+/// already only places and names, so the concise form has little to drop.
 #[derive(Debug)]
 enum Bar {
     Half,
@@ -111,31 +111,31 @@ fn a_concise_answer_lists_the_same_locations_in_fewer_bytes() {
         ("grep_code", json!({"pattern": "fn text"}), Bar::Half),
         ("grep_code", json!({"pattern": "max_bytes", "mode": "identifier"}), Bar::Half),
         ("find_symbol", json!({"name": "run"}), Bar::Half),
-        // only places and names already: concise holds them in fewer bytes (a caller is its place and name)
+        // only places and names already, so at most two thirds (a caller is its place and name)
         ("callers", json!({"name": "shown"}), Bar::Fewer),
-        // only places and names already: concise holds them in fewer bytes (a callee is its place and name)
+        // only places and names already, so at most two thirds (a callee is its place and name)
         ("callees", json!({"name": at("ops.rs", "pub fn run(")}), Bar::Fewer),
-        // only places and names already: concise holds them in fewer bytes (a callee is its place and name)
+        // only places and names already, so at most two thirds (a callee is its place and name)
         ("callees", json!({"name": at("cli.rs", "pub fn run(")}), Bar::Fewer),
         ("call_path", json!({"from": at("mcp.rs", "pub fn call_tool("), "to": "read_range"}), Bar::Half),
         ("repo_map", json!({}), Bar::Half),
         ("read_code", json!({"path": "crates/scrutate/src/ops.rs"}), Bar::Half),
         ("read_code", json!({"symbol": "Parts.render"}), Bar::Half),
         ("read_code", json!({"symbol": "Answer"}), Bar::Half),
-        // only places and names already: concise holds them in fewer bytes (an outline is lines, kinds and names)
+        // only places and names already, so at most two thirds (an outline is lines, kinds and names)
         ("outline", json!({"path": "crates/scrutate/src/ops.rs"}), Bar::Fewer),
         ("dependencies", json!({"path": "crates/scrutate/src/cli.rs"}), Bar::Half),
         ("dependents", json!({"target": "crates/scrutate/src/fmt.rs"}), Bar::Half),
         ("references", json!({"name": "hit_blocks"}), Bar::Half),
         ("references", json!({"name": "Answer", "textual": true}), Bar::Half),
-        // only places and names already: concise holds them in fewer bytes (a neighbour is its place, name and score)
+        // only places and names already, so at most two thirds (a neighbour is its place, name and score)
         ("similar_code", json!({"target": at("ops.rs", "pub fn stop_line("), "k": 50}), Bar::Fewer),
-        // only places and names already: concise holds them in fewer bytes (a group is its places and names)
+        // only places and names already, so at most two thirds (a group is its places and names)
         ("duplicates", json!({"threshold": 0.6, "limit": 200, "min_tokens": 15}), Bar::Fewer),
         ("structural_search", json!({"lang": "rust", "query": "(function_item name: (identifier) @f)"}), Bar::Half),
-        // only places and names already: concise holds them in fewer bytes (changed definitions, callers and tests by place and name)
+        // only places and names already, so at most two thirds (changed definitions, callers and tests by place and name)
         ("impact", json!({}), Bar::Fewer),
-        // only places and names already: concise holds them in fewer bytes (a file is its path)
+        // only places and names already, so at most two thirds (a file is its path)
         ("find_files", json!({"query": "rs", "limit": 200}), Bar::Fewer),
         ("dead_code", json!({}), Bar::Half),
         ("reindex", json!({}), Bar::Half),
@@ -159,7 +159,7 @@ fn a_concise_answer_lists_the_same_locations_in_fewer_bytes() {
         }
         let over = match bar {
             Bar::Half => detailed.len() > 1024 && concise.len() * 2 > detailed.len(),
-            Bar::Fewer => detailed.len() > 1024 && concise.len() >= detailed.len(),
+            Bar::Fewer => detailed.len() > 1024 && concise.len() * 3 > detailed.len() * 2,
         };
         if over {
             failed.push(format!("{tool} {args}: {} bytes concise for {} detailed ({bar:?})", concise.len(), detailed.len()));
