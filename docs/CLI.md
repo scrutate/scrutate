@@ -135,7 +135,11 @@
   (`| head`) stops it silently, with `-c`, `-l`, `--sort`, `--type-list` and `languages` too, and
   so does every other command (`impact`, `review` in any format, `refs`, `dead`, `--json`
   answers): no message, exit 0; any other failed write of the output (a full disk, a file size
-  limit) is an error, exit code 2.
+  limit) is an error, exit code 2. Only `grep` and `watch` stop through their own Ctrl-C handler;
+  any other command (`index` among them) ends as the system ends a program, which a Unix shell
+  reports as 130 and Windows as 0xC000013A (STATUS_CONTROL_C_EXIT). An `index` stopped so prints
+  nothing more, and needs no recovery step: reads answer from what it committed, and the next
+  `index` or update clears a segment the stop caught half written.
 
 ## Engine A: `grep` (alias `g`)
 

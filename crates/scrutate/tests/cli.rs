@@ -1972,6 +1972,118 @@ fn interrupt_exits_130() {
     panic!("Ctrl-C did not stop the search with exit code 130: {last:?}");
 }
 
+/// Ctrl-C on Windows. `grep` and `watch` stop through the console control handler and exit 130, as
+/// on Unix; `index` has no handler and ends as Windows ends a program (STATUS_CONTROL_C_EXIT),
+/// leaving no held write lock, an index that checks OK, and nothing the next build does not clear.
+/// The child runs in a process group of its own, the only kind a console event can be sent to
+/// alone, which takes CTRL_BREAK_EVENT.
+#[cfg(windows)]
+#[test]
+fn ctrl_break_stops_a_search_and_an_index_build_on_windows() {
+    use std::os::windows::process::CommandExt;
+    use std::time::{Duration, Instant};
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CTRL_BREAK_EVENT: u32 = 1;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GenerateConsoleCtrlEvent(event: u32, group: u32) -> i32;
+    }
+    let start = |r: &Repo, args: &[&str]| {
+        Command::new(BIN)
+            .args(args)
+            .current_dir(&r.root)
+            .creation_flags(CREATE_NEW_PROCESS_GROUP)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let ctrl_break = |child: &std::process::Child| {
+        // SAFETY: plain values; the group is the child's own, which this test started
+        let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+        assert_ne!(sent, 0, "GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, {}): {}", child.id(), std::io::Error::last_os_error());
+    };
+    let stopped = |child: &mut std::process::Child| {
+        let t0 = Instant::now();
+        while t0.elapsed() < Duration::from_secs(10) {
+            if let Some(st) = child.try_wait().unwrap() {
+                return st;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        panic!("the process did not stop within 10 s of CTRL_BREAK_EVENT");
+    };
+
+    // a search, as interrupt_exits_130
+    let r = Repo::new("ctrl_break_grep");
+    let line = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron\n".repeat(20_000);
+    for i in 0..60 {
+        r.write(&format!("f{i}.txt"), line.as_bytes());
+    }
+    let mut last = None;
+    for wait_ms in [200u64, 600, 1500] {
+        let mut child = start(&r, &["grep", "-j", "1", "--fuzzy=3", "omicron_pi_rho_sigma"]);
+        std::thread::sleep(Duration::from_millis(wait_ms));
+        if child.try_wait().unwrap().is_some() {
+            panic!("the search finished before the event: a larger tree is needed");
+        }
+        ctrl_break(&child);
+        let st = stopped(&mut child);
+        if st.code() == Some(130) {
+            last = None;
+            break;
+        }
+        last = Some(st);
+    }
+    assert!(last.is_none(), "CTRL_BREAK_EVENT did not stop the search with exit code 130: {last:?}");
+
+    // an index build: `index` has no handler, so Ctrl-C ends it as the system ends a program (on
+    // Unix by the signal, which a shell reports as 130); what matters is what it leaves
+    let tree = |name: &str| {
+        let r = Repo::new(name);
+        let body: String = (0..40).map(|j| format!("def f{j}(x):\n    return x + {j}\n\n")).collect();
+        for i in 0..8000 {
+            r.write(&format!("d{}/m{i}.py", i % 100), body.as_bytes());
+        }
+        r
+    };
+    const STATUS_CONTROL_C_EXIT: i32 = 0xC000_013Au32 as i32;
+    let r = tree("ctrl_break_index");
+    let mut child = start(&r, &["index"]);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(child.try_wait().unwrap().is_none(), "the build ended before the event: a larger tree is needed");
+    ctrl_break(&child);
+    let code = stopped(&mut child).code();
+    assert!(matches!(code, Some(130) | Some(STATUS_CONTROL_C_EXIT)), "index after CTRL_BREAK_EVENT: {code:?}");
+    let ix = r.root.join(".scrutate");
+    let db = rusqlite::Connection::open(ix.join("index.db")).unwrap();
+    db.busy_timeout(Duration::ZERO).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE; ROLLBACK").unwrap_or_else(|e| panic!("the write lock is still held: {e}"));
+    drop(db);
+    let (code, out, err) = r.run(&["check"]);
+    assert!(code == 0 && out.lines().last() == Some("OK"), "check after the stopped build: {code}\n{out}\n{err}");
+    // a segment the stop caught half written is cleared by the next build
+    let (code, _, err) = r.run(&["index"]);
+    assert_eq!(code, 0, "a build after the stopped one: {err}");
+    let partial: Vec<String> = ["seg", "text"]
+        .iter()
+        .filter_map(|d| fs::read_dir(ix.join(d)).ok())
+        .flat_map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert_eq!(partial, Vec::<String>::new(), "a partial segment outlived the next build");
+
+    // watch's first update, as ctrl_c_stops_a_long_first_update_of_watch: watch has the handler
+    let r = tree("ctrl_break_watch");
+    let mut child = start(&r, &["watch"]);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(child.try_wait().unwrap().is_none(), "watch ended before the event");
+    ctrl_break(&child);
+    assert_eq!(stopped(&mut child).code(), Some(130), "watch after CTRL_BREAK_EVENT");
+}
+
 /// With --json (or SCRUTATE_DIAGNOSTICS=json) an error is one JSON record on stderr.
 #[test]
 fn errors_are_json_when_asked() {

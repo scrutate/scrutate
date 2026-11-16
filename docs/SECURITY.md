@@ -780,7 +780,8 @@ link to a file outside the package and a package directory that is a link out of
     nul-terminated path into a buffer larger than `struct statfs` and 8-byte aligned as its
     64-bit fields, `f_flags` read as the four bytes at offset 64; `GetDriveTypeW` of a nul-terminated drive root. `watch::tests` asks both about
     the temporary directory;
-  - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
+  - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `GenerateConsoleCtrlEvent` to a process
+    group the test started (`tests/cli.rs`, Windows), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
     (`tests/intel_refs.rs`, its CPU time) with arguments they own, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
@@ -815,7 +816,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 28 |
-  | `crates/scrutate/tests/cli.rs` | 2 |
+  | `crates/scrutate/tests/cli.rs` | 4 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 2 |
   | `crates/scrutate/tests/lazy_bind.rs` | 12 |
