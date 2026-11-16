@@ -79,7 +79,8 @@ incompatible index by itself, and that is never breaking.
   `kinds`. A filtered search returns `-k` results whenever that many pass among its candidates
   widened up to 64 times their usual number; past that it says it stopped and why. `symbol`
   filters inside the name lookup, so `--kind` finds a definition past the first 100,000 of its
-  name.
+  name; `refs` with kinds or `--def` resolves at most 10,000 occurrences and a filtered `symbol`
+  reads at most 100,000 near matches, and an answer stopped there says why.
 - `impact`, its `--json` and the MCP `impact` tool list the change's findings: the duplicates it
   adds of code the repository has and the changed definitions no test reaches, which only
   `review` named before. `review` renders the same list, and its Markdown and GitLab reports are
@@ -477,6 +478,7 @@ incompatible index by itself, and that is never breaking.
 - `refs NAME --def PATH` (MCP `references` with `def`) counts `--max-results` over the occurrences
   that resolve to that definition, where it counted every occurrence of the name first and could
   answer "0 references" for a definition in use. It keeps only that definition's occurrences,
+  reading at most 10,000 (or `--max-results` when larger) and saying so when it stops there,
   and still counts those that resolve to other definitions and lists the unresolved ones, as
   `--kind` now does too
   ([CLI](docs/CLI.md)).

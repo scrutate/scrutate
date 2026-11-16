@@ -147,7 +147,7 @@ fn tool_table_unscoped() -> Value {
              "globs": {"type": ["array", "null"], "items": {"type": "string"}, "default": null, "description": "keep the files these globs match, as grep -g (`!` excludes)"},
              "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
         {"name": "find_symbol", "short": "Where a name is defined.", "description": "Where is this function/class/method defined? (`Class.method` works, as do `Class::method`, `Class#method` and a location from another answer).",
-         "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT},
+         "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT, "description": "at most 500"},
              "exact": {"type": "boolean", "default": false, "description": "only definitions of that name: no prefix, camelCase or contains matches when none has it"},
              "scope": {"type": "string", "enum": ["repo", "deps"], "default": "repo", "description": "deps: the name is PACKAGE.NAME, a dependency as the code imports it, read from the version its lockfile pins where it is installed"}}, "required": ["name"]}},
         {"name": "callers", "short": "Who calls a function.", "description": "Which functions call this function?",

@@ -316,7 +316,8 @@ every line; a line of only brackets or a closing word (`end`, `fi`, `done`,
 `esac`) is in a window only next to other lines. On the Linux kernel tree the windows add 8.9%
 chunks and 11.9% to the code index (not the text index). A window is no symbol: `symbol`,
 `refs --def`, `outline` and the language server never return one, and a window's location given
-to `symbol`, `callers` or `refs --def` gets "these lines are outside every definition". `callers`
+to `symbol` or `callers` gets "these lines are outside every definition", and given to `refs
+--def` "no definition of NAME in LOCATION". `callers`
 lists a window, or the module chunk, as the caller of a call outside every definition, and
 `callees` and `similar` take a window's location.
 
