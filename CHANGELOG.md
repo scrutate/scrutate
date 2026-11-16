@@ -315,6 +315,9 @@ incompatible index by itself, and that is never breaking.
   directory, or a link it leads through is pointed elsewhere), as `watch` does, where they kept
   answering from the old tree; a command line call made in the old tree is no longer answered by
   that session.
+- `impact` and `review` take time in proportion to the change, where it grew with its square: 8,000
+  edited definitions that call one another took 251.9 s and take 3.8 s, 2,000 took 17.1 s and
+  take 1.0 s. Each answer the caller walk stores no longer lists the answers directory twice.
 - A reader that closes early (`| head`) ends `impact`, `review` (every format) and every other
   command quietly with exit 0, as it ended a search, where they printed "internal error: failed
   printing to stdout: Broken pipe" and exited 2 ([CLI](docs/CLI.md)).

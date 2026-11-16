@@ -187,8 +187,14 @@ impl Stored {
             bail!("too large to keep");
         }
         let scrutate = self.dir.parent().unwrap_or(&self.dir);
-        crate::files::make_index_dir(scrutate.parent().unwrap_or(scrutate))?;
-        std::fs::create_dir_all(&self.dir)?;
+        // only this file's own path is checked for a link each time: the full check walks the
+        // whole index directory, this one included, and once per answer it made a walk that
+        // stores thousands of answers take time in the square of their number
+        let plain = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
+        if !(plain(scrutate) && plain(&self.dir)) {
+            crate::files::make_index_dir(scrutate.parent().unwrap_or(scrutate))?;
+            std::fs::create_dir_all(&self.dir)?;
+        }
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         #[cfg(not(target_os = "wasi"))]
         let tmp = self.dir.join(format!(".tmp-{}-{:?}-{nanos}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
@@ -201,7 +207,7 @@ impl Stored {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.into());
         }
-        evict(&self.dir, &self.path);
+        evict(&self.dir, &self.path, out.len() as u64);
         Ok(())
     }
 }
@@ -247,22 +253,48 @@ fn touch(path: &Path) {
     }
 }
 
-fn evict(dir: &Path, keep: &Path) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    let mut files: Vec<(SystemTime, u64, PathBuf)> = rd
-        .flatten()
-        .filter_map(|e| {
-            let md = e.metadata().ok()?;
-            Some((md.modified().unwrap_or(SystemTime::UNIX_EPOCH), md.len(), e.path()))
-        })
-        .collect();
-    files.sort_by_key(|f| std::cmp::Reverse(f.0));
-    let mut total = 0u64;
-    for (_, len, p) in files {
-        total += len;
-        if total > MAX_BYTES && p != keep {
-            let _ = std::fs::remove_file(&p);
+fn evict(dir: &Path, keep: &Path, written: u64) {
+    static COUNTED: std::sync::Mutex<Option<Counted>> = std::sync::Mutex::new(None);
+    COUNTED.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(Counted::default).evict(dir, keep, written, MAX_BYTES);
+}
+
+/// What one process knows of the size of each answers directory, so a stored answer does not
+/// list the directory again (an impact walk stores one per changed definition, and a listing per
+/// answer made its time grow with the square of the change). A listing evicts to `budget`; a
+/// write lists again when this count could pass it, or once this process wrote `budget / 8`
+/// since its last listing, so k processes writing at once keep it under budget + k * budget / 8,
+/// and each process lists on its first write.
+#[derive(Default)]
+struct Counted(HashMap<PathBuf, (u64, u64)>);
+
+impl Counted {
+    fn evict(&mut self, dir: &Path, keep: &Path, written: u64, budget: u64) {
+        if let Some((total, since)) = self.0.get_mut(dir) {
+            if total.saturating_add(written) <= budget && since.saturating_add(written) < budget / 8 {
+                *total += written;
+                *since += written;
+                return;
+            }
         }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut files: Vec<(SystemTime, u64, PathBuf)> = rd
+            .flatten()
+            .filter_map(|e| {
+                let md = e.metadata().ok()?;
+                Some((md.modified().unwrap_or(SystemTime::UNIX_EPOCH), md.len(), e.path()))
+            })
+            .collect();
+        files.sort_by_key(|f| std::cmp::Reverse(f.0));
+        let (mut total, mut kept) = (0u64, 0u64);
+        for (_, len, p) in files {
+            total += len;
+            if total > budget && p != keep {
+                let _ = std::fs::remove_file(&p);
+            } else {
+                kept += len;
+            }
+        }
+        self.0.insert(dir.to_path_buf(), (kept, 0));
     }
 }
 
@@ -345,6 +377,28 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two processes storing answers in one directory at once, each with its own count: the
+    /// directory stays under the budget plus an eighth of it for each.
+    #[test]
+    fn two_writers_keep_one_answers_directory_near_its_budget() {
+        let dir = std::env::temp_dir().join(format!("scrutate_answers_two_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (budget, size) = (80_000u64, 500usize);
+        let size_of = |d: &Path| std::fs::read_dir(d).unwrap().flatten().map(|e| e.metadata().unwrap().len()).sum::<u64>();
+        let mut writers = [Counted::default(), Counted::default()];
+        for n in 0..2000 {
+            let w = n % 2;
+            let path = dir.join(format!("{w}-{n}.bin"));
+            std::fs::write(&path, vec![0u8; size]).unwrap();
+            writers[w].evict(&dir, &path, size as u64, budget);
+            let now = size_of(&dir);
+            assert!(now <= budget + 2 * (budget / 8) + size as u64, "after {n} writes: {now} bytes");
+        }
+        assert!(size_of(&dir) >= budget / 2, "the budget was not kept to");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn kept_answers_stand_while_the_files_read_are_as_they_were() {

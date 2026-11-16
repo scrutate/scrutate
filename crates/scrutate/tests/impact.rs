@@ -356,6 +356,33 @@ fn a_renamed_module_lists_the_definitions_its_importers_lost() {
     assert!(deleted(&v).is_empty(), "{v}");
 }
 
+/// impact's time grows with the change, not with its square: four times the edited definitions
+/// (each a caller of the next) cost at most twice four times as long.
+#[test]
+fn impact_takes_time_in_proportion_to_the_change() {
+    let took = |files: usize| -> std::time::Duration {
+        let t = Tree::new(&format!("linear_{files}"));
+        t.git(&["init", "-q"]);
+        let module = |f: usize, pad: &str| -> String { (1..=200).map(|i| format!("def f{f}_{i}():\n    return {pad}f{f}_{}()\n\n", i % 200 + 1)).collect() };
+        for f in 1..=files {
+            t.write(&format!("m{f}.py"), &module(f, ""));
+        }
+        t.commit("base");
+        for f in 1..=files {
+            t.write(&format!("m{f}.py"), &module(f, " "));
+        }
+        t.commit("head");
+        assert_eq!(t.run(&["index"]).0, 0);
+        let t0 = std::time::Instant::now();
+        let v = t.json(&["--base", "HEAD~1"]);
+        let took = t0.elapsed();
+        assert!(v["changed"].as_array().unwrap().len() >= files * 200, "{files}");
+        took
+    };
+    let (small, large) = (took(5), took(20));
+    assert!(large < small * 8, "1,000 edited definitions took {small:?}, 4,000 took {large:?}");
+}
+
 #[test]
 fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
     let t = chain("deletednamesake");
