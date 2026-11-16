@@ -888,12 +888,16 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
     copied.is_ok()
 }
 
-/// The files of the segment directory `from` copied into `seg_dir/name` (a copy of the same
-/// name that is there already is the same segment: names are never reused).
+/// The files of the segment directory `from` copied into `seg_dir/name`. A copy of the same name
+/// that is there already is kept only when it holds the same files: a database lost here restarts
+/// the names, so one left from it can carry a name the main checkout gave another segment.
 fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()> {
     let dest = seg_dir.join(name);
     if dest.exists() {
-        return Ok(());
+        if same_files(from, &dest)? {
+            return Ok(());
+        }
+        std::fs::remove_dir_all(&dest)?;
     }
     let tmp = seg_dir.join(format!("{name}.{tag}"));
     std::fs::create_dir(&tmp)?;
@@ -912,6 +916,25 @@ fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()
         let _ = std::fs::remove_dir_all(&tmp);
     }
     copied.or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
+}
+
+/// The directories `a` and `b` hold files of the same names and bytes.
+fn same_files(a: &Path, b: &Path) -> Result<bool> {
+    let names = |d: &Path| -> Result<Vec<std::ffi::OsString>> {
+        let mut v = std::fs::read_dir(d)?.map(|e| e.map(|e| e.file_name())).collect::<std::io::Result<Vec<_>>>()?;
+        v.sort();
+        Ok(v)
+    };
+    let (na, nb) = (names(a)?, names(b)?);
+    if na != nb {
+        return Ok(false);
+    }
+    for n in &na {
+        if std::fs::read(a.join(n))? != std::fs::read(b.join(n))? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// The hash of a file's bytes the index records for it.
@@ -1805,11 +1828,13 @@ impl Index {
     }
 
     pub(crate) fn wipe(dir: &Path, seg_dir: &Path) {
+        // segments first: a database whose segments are gone reads as damaged, while segments
+        // left without their database could pass for the ones a seed copies under the same names
+        let _ = std::fs::remove_dir_all(seg_dir).or_else(|_| std::fs::remove_file(seg_dir));
         for name in ["index.db", "index.db-wal", "index.db-shm", "vectors.npz", CHECKED] {
             let p = dir.join(name);
             let _ = std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir_all(&p));
         }
-        let _ = std::fs::remove_dir_all(seg_dir).or_else(|_| std::fs::remove_file(seg_dir));
     }
 
     // ---- meta helpers

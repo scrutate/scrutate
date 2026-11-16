@@ -440,7 +440,9 @@ NFC with final sigma folded.
   must open (a segment the main checkout removed meanwhile fails the seed, and the index is built
   as usual). Copied segments are never deleted by a seed that lost or failed: several first opens
   at once share them, and the one whose database lands first lists them; an unlisted copy goes
-  with the segment collection. The first update reads and hashes every file and
+  with the segment collection. A segment already there under a listed name is kept only when its
+  files equal the main checkout's: one left by a lost database can carry a name the main checkout
+  gave another segment. The first update reads and hashes every file and
   parses only those that differ. Content an update has not seen is looked up in this checkout's
   store, then the main checkout's, read-only in one snapshot per update. Nothing of the other
   checkout is written (review in docs/SECURITY.md). Two plain clones do not find each other.
