@@ -927,9 +927,14 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Read { path, symbol: Some(symbol), history, .. } => {
             // a file the index leaves out has no definition: the path's own refusal says why
-            if let Some(p) = path.as_deref().filter(|p| inside(&s.ix.root, p)) {
+            if let Some(p) = path.as_deref() {
+                // spelt from the root as given (through a link) is spelt again from the root
                 let respelt = respelled(&s.ix, p);
-                if let Some(why) = std::fs::canonicalize(s.ix.root.join(&*respelt)).ok().and_then(|c| index_refusal(s, &echo(p), &respelt, &c)) {
+                if let Some(why) = inside(&s.ix.root, &respelt)
+                    .then(|| std::fs::canonicalize(s.ix.root.join(&*respelt)).ok())
+                    .flatten()
+                    .and_then(|c| index_refusal(s, &echo(p), &respelt, &c))
+                {
                     bail!("{why}");
                 }
             }

@@ -1971,3 +1971,31 @@ fn a_directory_argument_through_a_link_is_guarded_by_the_index_above_its_target(
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     let _ = fs::remove_dir_all(&base);
 }
+
+/// `read_code` by symbol in a path the index leaves out answers with the hard link's refusal for
+/// the path spelt from the root as it was given (through a link), as for the relative spelling.
+#[cfg(unix)]
+#[test]
+fn read_code_by_symbol_refuses_a_left_out_path_spelt_from_the_root_as_given() {
+    const LINKED: &str = "remove the hard link, by its path";
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_given_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = base.join("repo");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("a.py"), "def first():\n    return 1\n").unwrap();
+    std::os::unix::fs::symlink(&root, base.join("via")).unwrap();
+    let via = canon(&base).join("via");
+    let session = Session::open(&via, Every::given(Some(0.0))).unwrap();
+    session.set_cache_dir(base.with_extension("cache"));
+    let settings = scrutate::mcp::Settings::new(None);
+    let call = |args: Value| scrutate::mcp::call_tool(&session, "read_code", &args, &settings, &Default::default()).text;
+    assert!(call(json!({"symbol": "first", "path": "a.py"})).contains("def first"));
+    fs::create_dir_all(root.join(".scrutate")).unwrap();
+    fs::hard_link(root.join("a.py"), root.join(".scrutate/copy.py")).unwrap();
+    let absolute = via.join("a.py").to_string_lossy().into_owned();
+    for path in ["a.py", absolute.as_str()] {
+        let text = call(json!({"symbol": "first", "path": path}));
+        assert!(text.contains(LINKED) && !text.contains("no definition"), "{path}: {text}");
+    }
+    let _ = fs::remove_dir_all(&base);
+}
