@@ -1132,28 +1132,35 @@ fn a_context_group_a_nul_ends_keeps_its_separator_in_sorted_output() {
 fn where_a_walked_file_stops_at_a_nul_does_not_depend_on_the_files_before_it() {
     // a line longer than the reader's first buffer grows the buffer; the read that meets a NUL
     // past 64 KiB must start where it starts for ripgrep's first size all the same
-    let d = Dir::new("grownbuf");
-    let mut long = vec![b'x'; 100_000];
-    long.push(b'\n');
-    d.write("a/long.txt", &long);
-    let mut nul = Vec::new();
-    for i in 0.. {
-        nul.extend_from_slice(format!("beta {i}\n").as_bytes());
-        if nul.len() > 70_000 {
-            break;
+    // the long line as plain text, and as UTF-16 of either order, which is transcoded
+    let line: Vec<u8> = [&[b'x'; 100_000][..], b"\n"].concat();
+    let utf16 = |le: bool| -> Vec<u8> {
+        let units = line.iter().map(|&c| u16::from(c));
+        let bom: &[u8] = if le { &[0xFF, 0xFE] } else { &[0xFE, 0xFF] };
+        bom.iter().copied().chain(units.flat_map(|u| if le { u.to_le_bytes() } else { u.to_be_bytes() })).collect()
+    };
+    for (kind, long) in [("plain", line.clone()), ("utf16le", utf16(true)), ("utf16be", utf16(false))] {
+        let d = Dir::new(&format!("grownbuf_{kind}"));
+        d.write("a/long.txt", &long);
+        let mut nul = Vec::new();
+        for i in 0.. {
+            nul.extend_from_slice(format!("beta {i}\n").as_bytes());
+            if nul.len() > 70_000 {
+                break;
+            }
         }
-    }
-    nul.extend_from_slice(b"\0 beta\n");
-    d.write("b/nul.txt", &nul);
-    let (_, alone, _) = d.run(&["grep", "-j1", "-n", "beta", "b"]);
-    assert!(alone.lines().count() > 1000, "{}", alone.lines().count());
-    // after the long line, before it, and on as many threads as the machine gives
-    for roots in [&["a", "b"][..], &["b", "a"]] {
-        for threads in ["-j1", "-j4"] {
-            let (_, out, _) = d.run(&[&["grep", threads, "-n", "--sort", "beta"][..], roots].concat());
-            let b: Vec<&str> = out.lines().filter(|l| l.starts_with("b/")).collect();
-            assert_eq!(b.len(), alone.lines().count(), "{roots:?} {threads}");
-            assert!(b == alone.lines().collect::<Vec<_>>(), "{roots:?} {threads}: the lines differ");
+        nul.extend_from_slice(b"\0 beta\n");
+        d.write("b/nul.txt", &nul);
+        let (_, alone, _) = d.run(&["grep", "-j1", "-n", "beta", "b"]);
+        assert!(alone.lines().count() > 1000, "{kind}: {}", alone.lines().count());
+        // after the long line, before it, and on as many threads as the machine gives
+        for roots in [&["a", "b"][..], &["b", "a"]] {
+            for threads in ["-j1", "-j4"] {
+                let (_, out, _) = d.run(&[&["grep", threads, "-n", "--sort", "beta"][..], roots].concat());
+                let b: Vec<&str> = out.lines().filter(|l| l.starts_with("b/")).collect();
+                assert_eq!(b.len(), alone.lines().count(), "{kind} {roots:?} {threads}");
+                assert!(b == alone.lines().collect::<Vec<_>>(), "{kind} {roots:?} {threads}: the lines differ");
+            }
         }
     }
 }

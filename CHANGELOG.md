@@ -363,7 +363,6 @@ incompatible index by itself, and that is never breaking.
 - On Windows `hook run` goes into its job before it starts the program, so the program is in the
   job from its first instruction and cannot outlive `hook run` killed in the moment after the
   start; the child is put in a job after its start only when `hook run` cannot go in itself.
-  this tree.
 - `grep --sort` with context prints the `--` of a group a NUL byte ended before its first line,
   ahead of the `binary file matches` note, as ripgrep and the unsorted output do
   ([CLI](docs/CLI.md#conventions)).

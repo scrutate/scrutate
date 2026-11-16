@@ -89,7 +89,7 @@ impl Source for Disk {
         #[cfg(windows)]
         let _ = std::io::Seek::seek(&mut &self.file, std::io::SeekFrom::Start(0));
         match widest {
-            Some(widest) if !m.reads_whole(s) => m.search_reader(s, Watch { r: &self.file, widest }, sink),
+            Some(widest) if !m.reads_whole(s) => m.search_reader(s, Watch::new(&self.file, widest), sink),
             // a multi-line search of the whole file, read here as File's read_to_end sizes it
             // (searcher's own read zeroes more than it reads, through a reader that hides the
             // size): the same MultiLine search on the same bytes. A byte-order mark is transcoded
@@ -182,12 +182,26 @@ const FIRST_BUFFER: usize = 64 << 10;
 struct Watch<'c, R> {
     r: R,
     widest: &'c Cell<usize>,
+    /// no read made yet
+    first: bool,
+}
+
+impl<'c, R> Watch<'c, R> {
+    fn new(r: R, widest: &'c Cell<usize>) -> Self {
+        Watch { r, widest, first: true }
+    }
 }
 
 impl<R: Read> Read for Watch<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.widest.set(self.widest.get().max(buf.len()));
-        self.r.read(buf)
+        let n = self.r.read(buf)?;
+        // UTF-16 is transcoded through a decoder that reads its own 8 KiB at a time, so a long
+        // line's growth never shows here: such a file counts as one that grew the buffer
+        if std::mem::take(&mut self.first) && matches!(buf[..n], [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
+            self.widest.set(usize::MAX);
+        }
+        Ok(n)
     }
 }
 
@@ -303,7 +317,7 @@ fn with_a_nul(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], at: usize, name
     if !named && nothing_before_the_nul(b, at, searcher.line_terminator().as_byte()) {
         m.search_slice(searcher, &b[..=at], sink)
     } else if !named {
-        m.search_reader(searcher, Watch { r: up_to_the_nul(b, at), widest }, sink)
+        m.search_reader(searcher, Watch::new(up_to_the_nul(b, at), widest), sink)
     } else if !MAPS {
         m.search_reader(searcher, b, sink)
     } else {
