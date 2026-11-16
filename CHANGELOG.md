@@ -408,6 +408,9 @@ incompatible index by itself, and that is never breaking.
 - `--deps` reaches each distribution under a pkgutil-style namespace (`zope.interface`,
   `backports.tarfile`) by its own package, where two distributions that both ship the same
   `ns/__init__.py` made every name under it "names two packages" ([CLI](docs/CLI.md#--deps-a-dependency-at-its-locked-version)).
+- `--deps` finds a Go module that go.mod replaces with a fork of another name by the path the code
+  imports and by its package name (`yaml.Marshal` for a fork of github.com/a/yaml), where only the
+  fork's own path found it ([CLI](docs/CLI.md#--deps-a-dependency-at-its-locked-version)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it

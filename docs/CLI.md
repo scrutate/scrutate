@@ -819,7 +819,8 @@ dependency's source at the version the repository's lockfile pins, read where th
 installed. `PACKAGE` is the package as the code imports it, `.` or `::` before the definition:
 `requests.get`, `yaml.safe_load` (PyYAML), `serde::Deserialize`, `express.Router`,
 `@scope/pkg.fn`, `gin.Default` or `github.com/gin-gonic/gin.Default` (a Go module by its path or
-its last part, a major version suffix `/v2` skipped; the last part also without a `.v3` suffix or a
+its last part, a module go.mod replaces with another by the path go.mod requires and the code
+imports, and by the replacement's own, read from the replacement, a major version suffix `/v2` skipped; the last part also without a `.v3` suffix or a
 `go-` prefix, as the code names the package: `yaml.Unmarshal` for gopkg.in/yaml.v3, `sqlite3.Open`
 for github.com/mattn/go-sqlite3; when that name is two modules', a direct requirement comes before
 an `// indirect` one, which no package of the repository imports, and of two direct ones the one

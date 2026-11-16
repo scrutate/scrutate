@@ -76,6 +76,9 @@ pub struct Locked {
     pub from: From,
     /// a go.mod requirement marked `// indirect`: no package of the repository imports it
     pub indirect: bool,
+    /// a go.mod requirement replaced by another module: the path the code imports, where `name`
+    /// is the replacement's, which the store holds
+    pub imported_as: Option<String>,
 }
 
 pub const LOCKFILES: [&str; 5] = ["Cargo.lock", "package-lock.json", "uv.lock", "poetry.lock", "go.mod"];
@@ -120,14 +123,22 @@ fn cargo_lock(text: &str, manifest: &str) -> Vec<Locked> {
                 Some(s) => From::Other(s.split('+').next().unwrap_or(s).to_string()),
                 None => From::Path(path_of(&name).unwrap_or_default()),
             };
-            Some(Locked { eco: Eco::Cargo, name, version, lockfile: "Cargo.lock", from, indirect: false })
+            Some(Locked { eco: Eco::Cargo, name, version, lockfile: "Cargo.lock", from, indirect: false, imported_as: None })
         })
         .collect()
 }
 
 fn npm_lock(text: &str) -> Vec<Locked> {
     let Ok(v) = serde_json::from_str::<Value>(text) else { return Vec::new() };
-    let lock = |name: String, version: String, from: From| Locked { eco: Eco::Npm, name, version, lockfile: "package-lock.json", from, indirect: false };
+    let lock = |name: String, version: String, from: From| Locked {
+        eco: Eco::Npm,
+        name,
+        version,
+        lockfile: "package-lock.json",
+        from,
+        indirect: false,
+        imported_as: None,
+    };
     if let Some(packages) = v["packages"].as_object() {
         return packages
             .iter()
@@ -179,7 +190,7 @@ fn uv_lock(text: &str) -> Vec<Locked> {
             } else {
                 From::Other(source.and_then(|s| s.keys().next().cloned()).unwrap_or_default())
             };
-            Some(Locked { eco: Eco::Python, name, version, lockfile: "uv.lock", from, indirect: false })
+            Some(Locked { eco: Eco::Python, name, version, lockfile: "uv.lock", from, indirect: false, imported_as: None })
         })
         .collect()
 }
@@ -199,7 +210,7 @@ fn poetry_lock(text: &str) -> Vec<Locked> {
                 "git" | "url" => From::Other(kind.to_string()),
                 _ => From::Store,
             };
-            Some(Locked { eco: Eco::Python, name, version, lockfile: "poetry.lock", from, indirect: false })
+            Some(Locked { eco: Eco::Python, name, version, lockfile: "poetry.lock", from, indirect: false, imported_as: None })
         })
         .collect()
 }
@@ -239,13 +250,14 @@ fn go_mod(text: &str) -> Vec<Locked> {
         .into_iter()
         .map(|(module, version, indirect)| {
             let r = replaced.iter().find(|(m, v, ..)| *m == module && v.as_ref().is_none_or(|v| *v == version));
-            let (name, version, from) = match r {
-                Some((_, _, to, None)) => (module, version, From::Path(to.clone())),
-                Some((_, _, to, Some(v))) if to.starts_with('.') || to.starts_with('/') => (module, v.clone(), From::Path(to.clone())),
-                Some((_, _, to, Some(v))) => (to.clone(), v.clone(), From::Store),
-                None => (module, version, From::Store),
+            let (name, version, from, imported_as) = match r {
+                Some((_, _, to, None)) => (module, version, From::Path(to.clone()), None),
+                Some((_, _, to, Some(v))) if to.starts_with('.') || to.starts_with('/') => (module, v.clone(), From::Path(to.clone()), None),
+                // another module: the store holds it by its own path, the code imports the required one
+                Some((_, _, to, Some(v))) => (to.clone(), v.clone(), From::Store, Some(module).filter(|m| m != to)),
+                None => (module, version, From::Store, None),
             };
-            Locked { eco: Eco::Go, name, version, lockfile: "go.mod", from, indirect }
+            Locked { eco: Eco::Go, name, version, lockfile: "go.mod", from, indirect, imported_as }
         })
         .collect()
 }
@@ -444,14 +456,19 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
         Eco::Cargo => vec![l.name.replace('-', "_")],
         Eco::Npm => vec![l.name.clone()],
         Eco::Go => {
-            let last = go_last(&l.name);
+            // the path the code imports, and the replacement's own when a fork of another name is used
+            let path = l.imported_as.as_deref().unwrap_or(&l.name);
+            let last = go_last(path);
             // the package name the code uses when it is not the last part: gopkg.in/yaml.v3 is
             // `yaml`, github.com/mattn/go-sqlite3 is `sqlite3`
             let cut = last.rsplit_once('.').filter(|(_, v)| go_major(v)).map_or(last, |(b, _)| b);
             let cut = cut.strip_prefix("go-").filter(|c| !c.is_empty()).unwrap_or(cut);
-            let mut names = vec![l.name.clone(), last.to_string()];
+            let mut names = vec![path.to_string(), last.to_string()];
             if cut != last {
                 names.push(cut.to_string());
+            }
+            if path != l.name {
+                names.push(l.name.clone());
             }
             names
         }
@@ -491,7 +508,7 @@ fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Res
             if hits.iter().any(|l| !l.indirect) {
                 hits.retain(|l| !l.indirect);
             }
-            let mut modules: Vec<&str> = hits.iter().map(|l| l.name.as_str()).collect();
+            let mut modules: Vec<&str> = hits.iter().map(|l| l.imported_as.as_deref().unwrap_or(&l.name)).collect();
             modules.dedup();
             if modules.len() > 1 {
                 let mine: Vec<&str> = modules.iter().copied().filter(|m| imported(m)).collect();
@@ -506,7 +523,7 @@ fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Res
                         echo(modules[0])
                     );
                 };
-                hits.retain(|l| l.name == one);
+                hits.retain(|l| l.imported_as.as_deref().unwrap_or(&l.name) == one);
             }
         }
         let Some(first) = hits.first() else { continue };
@@ -1138,7 +1155,15 @@ mod tests {
         }
         let dir = std::fs::canonicalize(&pkg).unwrap();
         let inst = Installed { base: dir.clone(), dir, files: None };
-        let l = Locked { eco: Eco::Cargo, name: "p".into(), version: "1.0.0".into(), lockfile: "Cargo.lock", from: From::Store, indirect: false };
+        let l = Locked {
+            eco: Eco::Cargo,
+            name: "p".into(),
+            version: "1.0.0".into(),
+            lockfile: "Cargo.lock",
+            from: From::Store,
+            indirect: false,
+            imported_as: None,
+        };
         let cache = Some(top.join("cache"));
         let e = cached(&l, &inst, (4, 1 << 20), &top, cache.as_deref()).unwrap_err().to_string();
         assert!(e.contains("cap of 4 files"), "{e}");

@@ -670,6 +670,27 @@ fn a_path_dependency_inside_the_repository_answers_from_its_index_and_one_outsid
 }
 
 #[test]
+fn a_go_module_replaced_by_a_fork_of_another_name_is_found_by_the_path_the_code_imports() {
+    let t = Tree::new("go_fork");
+    t.go_mod("require github.com/a/yaml v1.0.0\n\nreplace github.com/a/yaml => github.com/b/goyaml-fork v1.2.3");
+    t.write("main.go", "package main\n\nimport \"github.com/a/yaml\"\n\nfunc main() { yaml.Marshal(nil) }\n");
+    t.store("gomod/github.com/b/goyaml-fork@v1.2.3/yaml.go", "package yaml\n\nfunc Marshal(in any) ([]byte, error) { return nil, nil }\n");
+    // the package name the code calls, the import path it writes, and the fork's own path
+    for name in ["yaml.Marshal", "github.com/a/yaml.Marshal", "github.com/b/goyaml-fork.Marshal"] {
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains("goyaml-fork@v1.2.3/yaml.go:3"), "{name}: {out}");
+    }
+    // and over MCP: find_symbol with scope deps
+    for v in t.batch(&[
+        serde_json::json!({"op": "find_symbol", "name": "yaml.Marshal", "scope": "deps"}),
+        serde_json::json!({"op": "find_symbol", "name": "github.com/a/yaml.Marshal", "scope": "deps"}),
+    ]) {
+        assert!(v.get("error").is_none() && v["result"].to_string().contains("goyaml-fork@v1.2.3/yaml.go"), "{v}");
+    }
+}
+
+#[test]
 fn a_name_outside_every_lockfile_says_which_lockfiles_were_read() {
     let t = Tree::new("unknown");
     t.cargo_lock(&[("serde", "1.0.200")]);
