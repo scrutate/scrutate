@@ -1018,7 +1018,9 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - In `--json`, `spans` and `column` count bytes of the printed `text`, as do the Python bindings'
   `Match.spans` and `Match.column`.
 - On Unix a non-UTF-8 file name prints as its own bytes in piped output, and `--json` adds
-  `path_bytes`; control characters in names print as escapes ([SECURITY](docs/SECURITY.md)).
+  `path_bytes`; control characters in names print as escapes in the index commands, the MCP
+  tools and `scrutate grep` on a terminal, and as they are in piped `scrutate grep`
+  ([CLI](docs/CLI.md#conventions)).
 - With `-l`, `--stats` says `N of M files match` and the JSON summary gives `"matches": null`.
 - The MCP `grep_code` tool and `grep --symbols` end a file whose search a NUL byte stopped with a
   `note:` line (it was printed as line 18446744073709551615, or dropped), and `refs` and
@@ -1201,7 +1203,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - A damaged segment found during a merge rebuilds the index; `serve --watch` and `watch` keep
   watching after an update panics.
 
-- A tool call path that leaves the repository is refused before anything is looked at, and an
+- A tool call path that leaves the repository by its own parts (`..`, an absolute path
+  elsewhere) is refused before anything is looked at, and an
   absolute path elsewhere (`/a.py`) no longer names the repository's file of that name. The
   language server reads no file behind a link that leaves the root and works on a Windows share or
   in WSL (`file://wsl.localhost/...`); MCP `callees` says how many outside names it left out past
@@ -1312,8 +1315,10 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - More kinds of damage are rebuilt, a writer stopped before its commit no longer blocks later
   ones, and a read-only index is answered as it is ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - On Unix a change of status time alone (a `chmod`) is seen.
-- A `.scrutate` that is or holds a symbolic link is refused, and nothing is written or deleted
-  outside the repository ([SECURITY](docs/SECURITY.md)).
+- A `.scrutate` that is a symbolic link, or holds one (checked three levels deep), is refused, so
+  nothing outside the repository is written or deleted through a link. Outside the repository
+  scrutate writes only the frecency file under `$XDG_STATE_HOME/scrutate/`, the agent
+  configurations `setup` writes, and the Grep hook's counter ([SECURITY](docs/SECURITY.md)).
 - `refs`, `callers` and `callees` infer a receiver's type from return types, fields, constructors
   and more, and a call matches a definition only in its own language family and by the name as
   written (`Ok(1)` is not a call of `ok`) ([CLI](docs/CLI.md)).
@@ -1384,7 +1389,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - In a linked git work tree (`git worktree add`), the first lookup copies the main checkout's
   index and parses only the files that differ: 0.06 s of user CPU (0.2 s with system time) on
   this repository, where a build costs 4.3 s. Renames, copies and a branch switch and back no
-  longer parse files the index has seen; nothing of the main checkout is written.
+  longer parse files the index has seen; nothing under the main checkout's `.scrutate/` is written
+  (SQLite marks its read lock in `index.db-shm`, as for every reader).
 - An index command uses the index a running `scrutate serve` holds open on the same root, through
   `.scrutate/session.sock` (Unix, owner only), with the bytes and exit code a fresh process
   prints; it never starts a server. `SCRUTATE_NO_SESSION=1` turns this off;
@@ -1421,7 +1427,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
   colour off for any non-empty value.
 - One definition of every index operation for the CLI, the MCP server, `batch` and the Python
   bindings (`ops.rs`); `batch` runs any operation by name.
-- For AI agents: every MCP tool but `reindex` is read-only; `grep_code` groups matches by
+- For AI agents: no MCP tool changes a source file, and every tool but `reindex` is marked
+  read-only (`readOnlyHint`); `grep_code` groups matches by
   enclosing symbol; `references` resolves each use; an answer is at most 24,000 bytes by default
   (`max_bytes`) with the `offset` that continues it, as `--max-bytes` (`SCRUTATE_MAX_BYTES`) and
   `--offset` on the CLI; a first index build blocks a tool call for at most 20 seconds
@@ -1478,7 +1485,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - Integrations: one MCP configuration per client, GitLab and Bitbucket templates, a pre-commit
   hook that works through `repo:`, the GitHub Action on Windows runners, Neovim's
   `lsp/scrutate.lua` (so `vim.lsp.enable('scrutate')` is the whole setup), and VS Code and Neovim
-  that never run a `scrutate.exe` from the opened folder.
+  that on Windows take a bare `scrutate` from an absolute `PATH` entry only, not from the working
+  directory.
 - `release.yml` refuses a tag whose version differs from the packages' (`tools/check_version.py`)
   and runs all of `ci.yml` on the tagged commit first; every action is pinned to a commit; the
   glibc archives need at most glibc 2.34.

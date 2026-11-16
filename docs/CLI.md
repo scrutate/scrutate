@@ -1426,7 +1426,7 @@ held the text index lock for 10 minutes" when the text index's writer is the one
 Ctrl-C ends the wait, as it does `watch`'s and that of `grep --index --update` (exit 130). A read-only index directory, or a read-only repository
 with a complete index, is answered from as it is; one that holds no files (a rebuild cut short
 after it cleared the index) and cannot be filled is an error (exit 2), never "(no results)". A `.scrutate` that is a symbolic link, or holds
-one, is refused: nothing is written or deleted outside the repository.
+one, is refused, so nothing is written or deleted outside the repository through it.
 ## Setup and the Grep hook
 
 ```
@@ -1552,6 +1552,11 @@ It fails open (prints nothing and exits 0, so Grep runs as if there were no hook
   under HKLM or HKCU on Windows (where one exists, Grep runs and applies it);
 - an invalid pattern, no match, a non-UTF-8 file name, a binary file that matched, a file it
   could not read, or a search longer than 3 seconds.
+
+A `Read` or `Grep` rule given only on Claude Code's command line (`--disallowedTools`,
+`--settings`) or by an SDK host is in no file the hook reads, so the hook answers a Grep that rule
+would have filtered: put such rules in a settings file, or leave the hook out
+([SECURITY](SECURITY.md#known-gaps-and-residual-risks)).
 
 It never exits with another code (exit code 2 would block the call) and reads no
 `.scrutate.toml` or other scrutate configuration file.
