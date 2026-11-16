@@ -1068,6 +1068,14 @@ mod unix {
             debug("no identity to offer");
             return None;
         };
+        // held to the bind: sessions starting together would each remove the socket another just bound
+        let dir = path.parent().and_then(|d| std::fs::File::open(d).ok());
+        if let Some(d) = &dir
+            && let Err(std::fs::TryLockError::WouldBlock) = d.try_lock()
+        {
+            debug("another session of this root is starting");
+            return None;
+        }
         if std::fs::symlink_metadata(&path).is_ok() {
             if !ours(&path) {
                 debug(&format!("{} is not a socket of this user; not listening", path.display()));
@@ -3779,5 +3787,44 @@ mod tests {
         assert_eq!(st.files_changed, 1);
         assert!(a.is_ok_and(|a| !a.is_empty()));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Sessions of one root started together over a socket a dead session left: one listens, so
+    /// none listens at a path another has taken over.
+    #[cfg(unix)]
+    #[test]
+    fn sessions_starting_together_over_a_stale_socket_leave_one_listening() {
+        fn never(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+            Ok(Printed::default())
+        }
+        // a short path: the stale socket is bound here directly, under the length a socket allows
+        let dir = Path::new("/tmp").join(format!("scrutate_start_together_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = std::fs::canonicalize(&dir).unwrap();
+        std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
+        let sessions: Vec<_> = (0..8).map(|_| Arc::new(Session::open(&root, Every::given(Some(3600.0))).unwrap())).collect();
+        let path = socket_path(&root);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for round in 0..30 {
+            drop(std::os::unix::net::UnixListener::bind(&path).unwrap()); // its file stays: stale
+            let start = Arc::new(std::sync::Barrier::new(sessions.len()));
+            let threads: Vec<_> = sessions
+                .iter()
+                .map(|s| {
+                    let (s, start) = (Arc::clone(s), Arc::clone(&start));
+                    std::thread::spawn(move || {
+                        start.wait();
+                        listen(&s, never)
+                    })
+                })
+                .collect();
+            let listening: Vec<_> = threads.into_iter().filter_map(|t| t.join().unwrap()).collect();
+            assert_eq!(listening.len(), 1, "round {round}: {} sessions listen", listening.len());
+            drop(listening);
+            let _ = std::fs::remove_file(&path);
+        }
+        drop(sessions);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
