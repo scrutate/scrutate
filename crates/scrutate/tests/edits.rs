@@ -701,3 +701,34 @@ fn a_parse_error_is_named_where_the_edit_made_it() {
     assert!(err && out.contains("does not parse: an error at line 20 of the edited file"), "{out}");
     assert_eq!(s.file("m.js"), text);
 }
+
+/// A new text that adds code beside the definition, or that swallows or changes code around it
+/// (a comment or a string left open, a statement continued), is refused with the file as it was:
+/// edit_symbol replaces one definition and nothing else.
+#[test]
+fn a_new_text_that_adds_or_swallows_code_outside_the_definition_is_refused() {
+    let js = "function f() {\n  return 1\n}\napp.use(auth());\n/* end */\nfunction g() { return 2 }\n";
+    let cont = "init()\nfunction f() { return 1 }\n";
+    let py = "class K:\n    def m(self):\n        return 1\n\nx = 1\n";
+    let open = "def f():\n    return 1\n\nrun()\n# \"\"\"\ndef g():\n    return 2\n";
+    let cases = [
+        ("a.js", js, "f", "function f() {\n  return 5\n} /*\n", "changes code after it"),
+        ("b.js", js, "f", "function f() {\n  return 5\n}\nrequire('child_process').execSync('touch /tmp/x');\n", "adds code outside the definition"),
+        ("c.py", py, "K.m", "    def m(self):\n        return 5\nimport os; os.system('true')\n", "adds code outside the definition"),
+        ("d.js", cont, "f", ".call(f); function f() { return 5 }\n", "changes code before it"),
+        ("e.py", open, "f", "def f():\n    return \"\"\"5\n", "changes code after it"),
+    ];
+    let files: Vec<(&str, &str)> = cases.iter().map(|c| (c.0, c.1)).collect();
+    let mut s = Server::start("outside_code", &files, &["--allow-edits"]);
+    let mut failed = Vec::new();
+    for (file, text, name, new_text, why) in cases {
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if !(err && out.contains(why) && out.contains("nothing written")) {
+            failed.push(format!("{file}: wanted a refusal that {why}: {out}"));
+        }
+        if s.file(file) != text {
+            failed.push(format!("{file}: the file changed"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

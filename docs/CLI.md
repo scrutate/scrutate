@@ -1178,7 +1178,11 @@ the new text does not define the same name and kind where the old definition beg
 never renames); when
 it defines another definition beside it (the body twice, a second function); or when a
 definition outside it is gone, moved or changed: one around it (the class of a method) keeps its
-name and kind, every other one its text too. A definition declared together with another
+name and kind, every other one its text too. Code that is no definition is kept the same way: a
+new text that adds code outside the definition (a statement after it) is refused with `the new
+text adds code outside the definition`, and one that changes code before or after it (a comment
+or string left open that swallows what follows, a statement continued) with `the new text
+changes code after it` or `changes code before it`; nothing is written. A definition declared together with another
 (`const a = 1, b = 2`, `var a, b = 1, 2`) is refused, the declaration holding both. The edit replaces the definition's lines whole, so one
 that shares its first or last line with other code that is not a comment (another definition, a
 statement before or after it) is refused, a dry run too: `NAME shares a line with other code that

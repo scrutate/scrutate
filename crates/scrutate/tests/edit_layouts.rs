@@ -373,6 +373,21 @@ fn refused_alone(kind: &str) -> Option<&'static str> {
     REFUSED_ALONE.iter().find(|(k, _)| *k == kind).map(|(_, why)| *why)
 }
 
+/// What follows a new text in a language to put code outside the definition: a statement, a
+/// comment left open, or a string left open (`which` picks one).
+fn tainted(ext: &str, which: usize) -> &'static str {
+    let [statement, comment, string] = match ext {
+        "go" => ["var _ = 1\n", "/*\n", "\"\n"],
+        "js" | "ts" => ["console.log(1);\n", "/*\n", "`\n"],
+        "rs" => ["use std::fmt;\n", "/*\n", "\"\n"],
+        "py" => ["print(1)\n", "\"\"\"\n", "'''\n"],
+        "c" => ["_Static_assert(1, \"x\");\n", "/*\n", "\"\n"],
+        "cpp" => ["static_assert(true);\n", "/*\n", "\"\n"],
+        _ => ["static { }\n", "/*\n", "\"\n"],
+    };
+    [statement, comment, string][which % 3]
+}
+
 /// How many of `FIXED` lead it and must be refused.
 const REFUSED_ROWS: usize = 6;
 
@@ -447,7 +462,7 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
     }
     let edits = scrutate::mcp::Settings::new(None).allowing_edits();
     let cancel = Arc::default();
-    let (mut applied, mut refused) = (0, 0);
+    let (mut applied, mut refused, mut tainted_cases) = (0, 0, 0);
     // (language, kind) -> (targets reached, applied, refused)
     let mut reached: std::collections::BTreeMap<(String, &str), (usize, usize, usize)> = Default::default();
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
@@ -477,6 +492,21 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
             dry = call(args.clone());
         }
         let now = || fs::read_to_string(root.join(&c.file)).unwrap();
+        // the same new text with code after the definition, or a comment or string left open to
+        // swallow what follows: refused, the file as it was
+        if k >= FIXED.len() {
+            let tail = tainted(c.file.rsplit('.').next().unwrap_or(""), k % 3);
+            let mut bad = args.clone();
+            bad["new_text"] = json!(format!("{}{tail}", c.new_text()));
+            let got = call(bad);
+            tainted_cases += 1;
+            if !got.is_error {
+                broken.push(format!("{}: a new text followed by {tail:?} was not refused: {}", c.file, got.text));
+            }
+            if now() != c.text {
+                broken.push(format!("{}: a new text followed by {tail:?} changed the file", c.file));
+            }
+        }
         if dry.is_error {
             refused += 1;
             reached.entry(key.clone()).or_default().2 += 1;
@@ -543,7 +573,7 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
             }
         }
     }
-    eprintln!("edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}", cases.len());
+    eprintln!("edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}; {tainted_cases} tainted new texts refused", cases.len());
     for ((lang, kind), (n, a, r)) in &reached {
         eprintln!("  {lang:<5} {kind:<26} targets {n:>3}  applied {a:>3}  refused {r:>3}");
     }

@@ -142,6 +142,66 @@ fn errors(root: tree_sitter::Node) -> Vec<(usize, usize)> {
     out
 }
 
+/// What the new tree changed outside the replaced bytes, `old` `a..b` and `new` `c..d`: at the
+/// root and at each node down to the one that holds the definition, every child before and after
+/// them must be the old one (after them, shifted by the edit), and at that level the new bytes hold
+/// one node beside comments, attributes and a lone `;`. None when nothing outside changed.
+fn outside_changed(t0: tree_sitter::Node, old: &str, (a, b): (usize, usize), t1: tree_sitter::Node, new: &str, (c, d): (usize, usize)) -> Option<&'static str> {
+    let trim = |src: &str, (x, y): (usize, usize)| {
+        let t = &src[x..y];
+        (x + (t.len() - t.trim_start().len()), y - (t.len() - t.trim_end().len()))
+    };
+    // the replaced lines' own whitespace is no node's: a node may end at the line's end
+    let whole = (c, d);
+    let ((a, b), (c, d)) = (trim(old, (a, b)), trim(new, (c, d)));
+    let shift = d as isize - b as isize;
+    fn kids(n: tree_sitter::Node<'_>) -> Vec<tree_sitter::Node<'_>> {
+        let mut w = n.walk();
+        n.children(&mut w).collect()
+    }
+    let trivia = |n: &tree_sitter::Node, src: &str| n.kind().contains("comment") || n.kind().contains("attribute") || src[n.byte_range()].trim() == ";";
+    let (mut x0, mut x1) = (t0, t1);
+    loop {
+        let (k0, k1) = (kids(x0), kids(x1));
+        let before = k0.iter().take_while(|n| n.end_byte() <= a).count();
+        let after = k0.iter().rev().take_while(|n| n.start_byte() >= b).count();
+        let same = |p: &tree_sitter::Node, q: &tree_sitter::Node, by: isize| {
+            p.kind_id() == q.kind_id() && p.start_byte() as isize + by == q.start_byte() as isize && p.end_byte() as isize + by == q.end_byte() as isize
+        };
+        if k1.len() < before || !k0[..before].iter().zip(&k1[..before]).all(|(p, q)| same(p, q, 0)) {
+            return Some("changes code before it");
+        }
+        if k1.len() < before + after || !k0[k0.len() - after..].iter().zip(&k1[k1.len() - after..]).all(|(p, q)| same(p, q, shift)) {
+            return Some("changes code after it");
+        }
+        let (m0, m1) = (&k0[before..k0.len() - after], &k1[before..k1.len() - after]);
+        // a node around the definition (a class, its body), not the definition's own lines
+        if let [one] = m0
+            && one.start_byte() <= a
+            && one.end_byte() >= b
+            && trim(old, (one.start_byte(), one.end_byte())) != (a, b)
+        {
+            let kept = |n: &tree_sitter::Node| n.kind_id() == one.kind_id() && n.start_byte() == one.start_byte();
+            match m1 {
+                // the same holds one level down
+                [two] if kept(two) => {
+                    (x0, x1) = (*one, *two);
+                    continue;
+                }
+                [two, ..] if kept(two) => return Some("adds code outside the definition"),
+                _ => return Some("changes code before it"),
+            }
+        }
+        if m1.iter().any(|n| n.start_byte() < c.min(whole.0)) {
+            return Some("changes code before it");
+        }
+        if m1.iter().any(|n| n.end_byte() > d.max(whole.1)) {
+            return Some("changes code after it");
+        }
+        return (m1.iter().filter(|n| !trivia(n, new)).count() != 1).then_some("adds code outside the definition");
+    }
+}
+
 /// `range` widened to each node around it that holds it alone and lies within the lines `a..b`
 /// (`export` before a function), so their words are the definition's; never to the file's root.
 fn wrapped(root: tree_sitter::Node, src: &str, range: (usize, usize), (a, b): (usize, usize)) -> (usize, usize) {
@@ -338,6 +398,10 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
         );
     };
     others_kept((&before, &old, &target), (&after, &new, edited), new_end)?;
+    // every node outside the replaced lines as it was, and the lines hold the definition alone
+    if let Some(what) = outside_changed(t0.root_node(), &old, (a, b), t1.root_node(), &new, (span.2, span.3)) {
+        bail!("the new text {what} ({}, {rel}:{}): edit_symbol replaces one definition and nothing else; nothing written", target.qualname, target.start);
+    }
     let plan = one.plan(new.clone().into_bytes(), span);
     let diff = plan.diff();
     if apply && let Some(why) = plan.write().into_iter().flatten().next() {
