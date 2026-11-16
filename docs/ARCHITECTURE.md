@@ -655,7 +655,7 @@ whose stat the code index holds as current is not read on a hit.
 
 Recovery has one rule: a store found damaged is built again from the sources, once, by the
 process that found it, which says so on stderr, and the operation that met the damage runs again.
-The code index's files are deleted first (`Repo::recover`, which every front end reaches: the CLI,
+The code index's files are deleted first (`Repo::rebuild`, which every front end reaches: the CLI,
 `batch` and the MCP server through `Repo::run` and `Repo::recovering`, the bindings through
 `Repo::recovering`, the language server and the watcher through `Repo`). On Windows a file another
 handle holds open cannot be deleted, so the database is emptied in place (`Index::clear_in_place`)
@@ -692,7 +692,7 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 | `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
 | `read(cancel, refresh, f)`, `read_pending(cancel, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again; `read_pending` scans first and gives the `Pending` set |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
-| `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing only while a first build runs with nothing committed |
+| `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing while a first build runs with nothing committed, when the session followed its root's link to another tree, or when the call fails |
 | `hold_writes()` | at exit: the first build is waited for and no write starts after it |
 
 Every call gets its own cancel flag, and a panic stays inside it: the call gets the error

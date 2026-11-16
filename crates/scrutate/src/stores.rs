@@ -25,7 +25,7 @@
 //!
 //! Recovery: a store found damaged is built again from the sources, once, by the process that
 //! found it, which says so on stderr; an operation that met the damage then runs again. The code
-//! index's files are deleted first (`Repo::recover`); the text index is rebuilt in place, its
+//! index's files are deleted first (`Repo::rebuild`); the text index is rebuilt in place, its
 //! manifest swapped last. `grep --index` without `--update` reports a damaged text index instead,
 //! since it promises not to walk the tree.
 //!
@@ -490,14 +490,6 @@ impl Repo {
         }
     }
 
-    /// The recovery of a damaged code index: its files are deleted (the index is a cache, the
-    /// sources are the truth) and it is built again from every file.
-    pub fn recover(&mut self, why: &anyhow::Error) -> Result<UpdateStats> {
-        let writer = Arc::clone(&self.writer);
-        let _w = hold(&writer);
-        self.rebuild(why)
-    }
-
     /// `rebuild`, unless a repository sharing this one's writer lock built the index again since
     /// this one opened it: then this one opens the new index. Called with the writer lock held.
     fn rebuild_unless_rebuilt(&mut self, why: &anyhow::Error) -> Result<()> {
@@ -510,7 +502,8 @@ impl Repo {
         self.rebuild(why).map(|_| ())
     }
 
-    /// `recover` with the writer lock already held.
+    /// The recovery of a damaged code index: its files are deleted (the index is a cache, the
+    /// sources are the truth) and it is built again from every file. Called with the writer lock held.
     fn rebuild(&mut self, why: &anyhow::Error) -> Result<UpdateStats> {
         eprintln!("[scrutate] index damaged ({why:#}); rebuilding");
         let progress = self.searcher.as_ref().is_some_and(|s| s.ix.progress);

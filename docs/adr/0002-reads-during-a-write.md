@@ -5,8 +5,8 @@ Status: accepted, 2026-11-15.
 ## Context
 
 A session's reads and writes share one writer lock inside the process. A write (the first build,
-a watch burst's update, a save, the scan before another read) can itself wait up to 40 s for
-another process's SQLite lock. Before this decision the front ends disagreed on what a read did
+a watch burst's update, a save, the scan before another read) can itself wait up to 10 minutes
+for another process's SQLite lock. Before this decision the front ends disagreed on what a read did
 then:
 
 - an MCP tool call, a language server request and a Python call skipped the scan and answered
@@ -37,7 +37,8 @@ One contract for every front end:
   `pending` in `structuredContent`, a `window/logMessage` warning in the language server, a
   Python `UserWarning`, a stderr line for a command a `serve` answers. Never silently stale.
 - A command line call a `serve` answers is not refused for a running write. It is refused only
-  while a first build runs with nothing committed, and the command then does the work itself.
+  while a first build runs with nothing committed (or when the session followed its root's link
+  to another tree, or the call failed), and the command then does the work itself.
 - Readers are opened from a repository no write holds (`Session::opener`).
 
 The bound: a watch burst's update takes 3 to 4 ms on Linux and about 150 ms on a loaded Mac

@@ -268,7 +268,8 @@ incompatible index by itself, and that is never breaking.
   while an update runs, and says the same on stderr
   ([ADR 0002](docs/adr/0002-reads-during-a-write.md), [CLI](docs/CLI.md#the-index-directory)).
 - The MCP server, the language server and the Python bindings watch a tree on a local disk, and
-  a walk in the background finds within 60 s a change that makes no event. On Linux and Windows
+  a walk in the background finds a change that makes no event within 60 s, or 50 times what one
+  walk takes when that is longer. On Linux and Windows
   each call looks only at the files the watch says changed since the last call, one `stat` each,
   where it looked at every file of the tree: a cookie file the call writes and waits for keeps
   every write made before the call in its answer. On macOS every call still looks at every file,
@@ -339,7 +340,7 @@ incompatible index by itself, and that is never breaking.
   `關係` and `关系` and the reverse (OpenCC ver.1.4.2 `JPShinjitaiCharacters.txt`, Apache-2.0).
   An older index reads every file again ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
 - `watch` on macOS follows FSEvents with file-level events, loaded with `dlopen` only by `watch`,
-  so a save updates that file alone with no walk of the tree: 0.24 to 0.31 s from the save to the
+  so a save updates that file alone with no walk of the tree (one walk at most every 30 s): 0.24 to 0.31 s from the save to the
   update on a tree of 20,000 directories (release build, the 200 ms burst wait included), where
   the timer took 11 to 14 s (debug build). The timer stays as the fallback when FSEvents cannot
   load ([CLI](docs/CLI.md#watch)).
@@ -402,7 +403,7 @@ incompatible index by itself, and that is never breaking.
   socket's buffer (a long search with several `--alt`) left the call waiting for good.
 - A save a read makes, which must not wait, no longer waits for another process's write lock to
   compact the index, up to 10 minutes while that process indexed: it tries once and leaves the
-  compaction to the next update, which does it even when nothing changed.
+  compaction to the same process's next update, which does it even when nothing changed.
 - Under `serve --refresh-interval S` a session saw no edit at all until the interval passed: once
   the watches were set after the first call, the walk that follows them was held back by the
   interval, and every call's change set waited with it, the files the watch named included. Now
@@ -678,8 +679,8 @@ incompatible index by itself, and that is never breaking.
   once, so `shutdown` behind four of them comes after one 20-second wait, not four
   ([CLI](docs/CLI.md#lsp)).
 - A `serve --watch` tool call no longer waits for the server's own update of a saved file, which
-  may itself wait for another process's write lock: it answers from the last committed index at
-  once, where it waited until the lock was free (37 s for a lock held 40 s)
+  may itself wait for another process's write lock: past 250 ms it answers from the last committed
+  index, where it waited until the lock was free (37 s for a lock held 40 s)
   ([CLI](docs/CLI.md#the-index-directory)).
 - Ctrl-C ends a wait for the text index's lock that another process holds, under `watch` and
   `grep --index --update` (exit 130): the wait went on up to 10 minutes

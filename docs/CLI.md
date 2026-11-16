@@ -935,8 +935,9 @@ makes no event here, and neither does a watch that cannot start (the inotify wat
 call there looks at every file, as follows. Without
 `--refresh-interval`, scans are at most a second apart, closer when a scan is cheap; with
 `--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S seconds after
-the last. With `--watch`, each watcher update counts as a scan. A scan that could not run because
-another process held the index does not start the interval. Inside that window an answer still
+the last. The interval runs from the last scan before a call; an update `--watch` makes does not
+restart it. Under `--refresh-interval`, a scan that could not run because another process held the index does not
+start the interval. Inside that window an answer still
 checks, one `stat` each, the files it cites and those its arguments name: when one changed or is
 gone, or a named file is new and a scan would index it, those files alone are indexed again and
 the answer computed again, once. A change in a file the answer does not cite or name waits for
@@ -1176,7 +1177,8 @@ It advertises only these four, plus full text sync and workspace folders with ch
 notifications. Open documents are read from the editor's
 text, so an unsaved line still finds the word under the cursor; locations in other files come
 from disk. `didSave` updates the index incrementally in a background thread, so requests keep
-being answered; before a request the index is scanned for changes at most once a second. With no
+being answered; before a request the index is scanned for changes, at most a second apart and closer when a scan
+is cheap, as under `serve`. With no
 index, `initialize` builds one (as `scrutate index` does, without the text index) and reports it
 with `window/logMessage`; a request that arrives meanwhile waits for it up to 20 seconds, then
 is answered with error -32801 (ContentModified), "the index is still being built", which asks the
@@ -1186,7 +1188,7 @@ are read on a thread of their own, so `$/cancelRequest` reaches the request it n
 runs: its wait for the build and its search stop, and it is answered with error -32800
 (RequestCancelled); one cancelled while it waits its turn is answered so without running, and a
 cancel for a request already answered is dropped. Columns are UTF-16 code
-units, as the protocol requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise.
+units, as the protocol requires. The exit code is 0 after `shutdown` (then `exit` or the end of input), 1 otherwise.
 Logs go to stderr.
 
 ### `watch`
