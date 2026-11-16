@@ -865,8 +865,9 @@ the repository's own packages (those Cargo.lock gives no `source`) depend on, fo
 `.venv` has. When that does not decide it, the answer is an error that names both versions
 (exit 2), never the first one in the lockfile. A path dependency (a Cargo `path`, an npm `link`, a uv `editable`,
 `directory` or `path` source, a poetry `directory`, a Go `replace` with a directory) answers from
-the repository's own index, kept to that directory, when it is inside the repository, and is an
-error when it is outside; one that names a drive, a share or a root (a `\`, a `:`, a leading `/`)
+the repository's own index, looked up inside that directory before `--limit` counts (and a read
+past its 20 definitions says to name one by its location, as `--deps` takes no path), when it is
+inside the repository, and is an error when it is outside; one that names a drive, a share or a root (a `\`, a `:`, a leading `/`)
 is refused by its text, with nothing looked at. A git or URL source is an error. A package is read once: its files are
 copied to `deps/ECO/NAME@VERSION/src` in the user cache (`SCRUTATE_CACHE_DIR`, else
 `$XDG_CACHE_HOME/scrutate`, `~/Library/Caches/scrutate` on macOS, `%LOCALAPPDATA%\scrutate` on

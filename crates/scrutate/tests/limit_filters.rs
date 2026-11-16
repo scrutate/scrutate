@@ -232,6 +232,13 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             fs::create_dir_all(root.join(&path).parent().unwrap()).unwrap();
             fs::write(root.join(path), text).unwrap();
         }
+        // a path dependency for the scope deps pair: an npm workspace link to one directory
+        let dd = r % 3;
+        fs::write(
+            root.join("package-lock.json"),
+            format!(r#"{{"name": "app", "lockfileVersion": 3, "packages": {{"": {{"name": "app"}}, "node_modules/dd": {{"resolved": "d{dd}", "link": true}}, "d{dd}": {{"version": "1.0.0"}}}}}}"#),
+        )
+        .unwrap();
         fs::create_dir_all(root.join(".git")).unwrap();
         let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
         let call = |tool: &str, args: Value| scrutate::mcp::call_tool(&session, tool, &args, &settings, &cancel).structured;
@@ -328,6 +335,27 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             }
             covered.insert(pair.to_string());
         }
+        // scope deps: the path dependency is looked up inside its directory before the limit, so
+        // the answer is the first `limit` of that directory's own definitions, the read's the first 20
+        let own: Vec<String> = all.iter().filter(|h| h.1.starts_with(&format!("d{dd}/"))).map(|h| h.0.clone()).collect();
+        let ids = |v: &Value, key: &str| -> Vec<String> {
+            let a = &v["result"]["answer"];
+            let items = if key.is_empty() { a.as_array() } else { a[key].as_array() };
+            items.into_iter().flatten().map(|h| format!("{}:{}-{}", h["path"].as_str().unwrap_or(""), h["start"], h["end"])).collect()
+        };
+        let mut dr = Rng(0x0dee_9000 + r as u64);
+        let limit = 1 + dr.below(own.len().max(1) + 2);
+        rows += 2;
+        let full = ids(&call("find_symbol", json!({"name": "dd.nm", "scope": "deps", "exact": true, "limit": 500})), "");
+        let cut = ids(&call("find_symbol", json!({"name": "dd.nm", "scope": "deps", "exact": true, "limit": limit})), "");
+        if full != own || cut[..] != full[..full.len().min(limit)] {
+            broken.push(format!("r{r} (n={n}) find_symbol scope deps limit {limit}: {cut:?} of {full:?} where d{dd}/ holds {own:?}"));
+        }
+        let read = ids(&call("read_code", json!({"symbol": "dd.nm", "scope": "deps"})), "definitions");
+        if read[..] != own[..own.len().min(20)] {
+            broken.push(format!("r{r} (n={n}) read_code scope deps: {read:?} where d{dd}/ holds {own:?}"));
+        }
+        covered.insert("scope deps".to_string());
     }
     let linked = LINKED.load(std::sync::atomic::Ordering::Relaxed);
     eprintln!(

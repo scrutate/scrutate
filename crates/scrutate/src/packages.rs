@@ -1132,6 +1132,27 @@ fn package_dir(l: &Locked, start: &str, prefix: &str) -> Option<(String, &'stati
     }
 }
 
+/// The closing line's advice of a `read --deps` with more definitions than it shows: it takes no path.
+const DEPS_MORE: &str = "read one by its location (path:start-end), without deps";
+
+/// A read stopped at its definitions advises what `--deps` takes, never a path.
+fn deps_stop(a: &mut Answer) {
+    if let Answer::Definitions(_, Some(stop), _) = a {
+        stop.how = DEPS_MORE;
+    }
+}
+
+/// `text` as a glob that matches it alone: each glob metacharacter is a class of its own.
+fn glob_literal(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '*' | '?' | '[' | '{' | '}' => format!("[{c}]"),
+            '\\' if cfg!(unix) => "\\\\".to_string(),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
 /// Whether `path` is a file directly in `dir` with extension `ext`, or the module file `dir.ext`.
 fn in_package(path: &str, dir: &str, ext: &str) -> bool {
     let inside = if dir.is_empty() { Some(path) } else { path.strip_prefix(&format!("{dir}/")) };
@@ -1139,25 +1160,37 @@ fn in_package(path: &str, dir: &str, ext: &str) -> bool {
 }
 
 /// `lookup`, with the definitions in the package's own directory first, and in each part a name
-/// as typed (`Marshal`) before one that matches only without its case (`marshal`). Symbols are
-/// looked up in that directory on their own first, so none of them is cut by the limit.
+/// as typed (`Marshal`) before one that matches only without its case (`marshal`). The package's
+/// own are looked up in that directory on their own first, so none of them is cut by the limit
+/// (a read's 20 definitions included: its own are read by their locations).
 fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, limit: usize, exact: bool, dir: Option<(String, &str)>) -> Result<Answer> {
     let Some((dir, ext)) = dir else { return lookup(run, rest, read, limit, exact) };
     let want = rest.rsplit("::").next().unwrap_or(rest).rsplit('.').next().unwrap_or(rest);
     let own = |p: &str| in_package(p, &dir, ext);
-    let mut own_hits = Vec::new();
-    if !read {
-        let globs = if dir.is_empty() { vec![format!("/*{ext}")] } else { vec![format!("/{dir}/*{ext}"), format!("/{dir}{ext}")] };
-        let filter = crate::filter::Filter { globs, ..Default::default() };
-        let scoped = |n: &str| Op::Symbol { name: n.to_string(), limit, exact }.scoped(filter.clone());
-        let mut got = run(&scoped(rest))?;
-        if got.is_empty() && want != rest {
-            got = run(&scoped(want))?;
-        }
-        if let Answer::Hits { hits, .. } = got {
-            own_hits = hits.into_iter().filter(|h| own(&h.path)).collect();
+    let at = glob_literal(&dir);
+    let globs = if dir.is_empty() { vec![format!("/*{ext}")] } else { vec![format!("/{at}/*{ext}"), format!("/{at}{ext}")] };
+    let filter = crate::filter::Filter { globs, ..Default::default() };
+    // a read looks a name up as written, with no near matches, and shows at most READ_DEFINITIONS
+    let (own_limit, own_exact) = if read { (crate::ops::READ_DEFINITIONS + 1, true) } else { (limit, exact) };
+    let scoped = |n: &str| Op::Symbol { name: n.to_string(), limit: own_limit, exact: own_exact }.scoped(filter.clone());
+    let mut got = run(&scoped(rest))?;
+    if got.is_empty() && want != rest {
+        got = run(&scoped(want))?;
+    }
+    let mut own_hits: Vec<crate::search::Hit> = match got {
+        Answer::Hits { hits, .. } => hits.into_iter().filter(|h| own(&h.path)).collect(),
+        _ => Vec::new(),
+    };
+    let mut own_defs = Vec::new();
+    if read {
+        for h in own_hits.iter().take(crate::ops::READ_DEFINITIONS) {
+            let at = Op::Read { path: None, symbol: Some(format!("{}:{}-{}", h.path, h.start, h.end)), start: 1, end: None, history: 0 };
+            if let Answer::Definitions(defs, ..) = run(&at)? {
+                own_defs.extend(defs);
+            }
         }
     }
+    let more_own = own_hits.len() > if read { crate::ops::READ_DEFINITIONS } else { limit };
     let mut a = lookup(run, rest, read, limit, exact)?;
     match &mut a {
         Answer::Hits { hits, stopped, .. } => {
@@ -1170,9 +1203,19 @@ fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, l
             }
             *hits = all;
         }
-        // shortcut: a read takes no filter, so its definitions are put in order after the lookup;
-        // a name with more than READ_DEFINITIONS of them could lose the package's own
-        Answer::Definitions(defs, ..) => defs.sort_by_key(|d| (!own(&d.0.path), d.0.name != want)),
+        Answer::Definitions(defs, stopped, _) => {
+            let others: Vec<_> = std::mem::take(defs)
+                .into_iter()
+                .filter(|d| !own_defs.iter().any(|o: &(crate::index::ChunkRow, String, Vec<crate::index::Symbol>)| o.0.id == d.0.id))
+                .collect();
+            let mut all: Vec<_> = std::mem::take(&mut own_defs).into_iter().chain(others).collect();
+            all.sort_by_key(|d| (!own(&d.0.path), d.0.name != want));
+            if all.len() > crate::ops::READ_DEFINITIONS || more_own {
+                all.truncate(crate::ops::READ_DEFINITIONS);
+                *stopped = Some(crate::ops::Stop { at: crate::ops::READ_DEFINITIONS, how: DEPS_MORE });
+            }
+            *defs = all;
+        }
         _ => {}
     }
     Ok(a)
@@ -1184,16 +1227,32 @@ fn names_a_root(d: &str) -> bool {
     d.contains(['\\', ':']) || d.starts_with('/') || Path::new(d).components().any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
 }
 
-/// `a` with only what is under the directory `dir` ("" keeps all).
-fn keep_under(a: &mut Answer, dir: &str) {
+/// `op` through `run`, kept inside the directory `dir` ("" for all): a symbol lookup is scoped to
+/// it, so its limit counts only what is there, and a read by symbol reads, by their locations,
+/// the definitions that lookup finds, so READ_DEFINITIONS counts only those too.
+fn in_dir(run: &mut dyn FnMut(&Op) -> Result<Answer>, dir: &str, op: &Op) -> Result<Answer> {
     if dir.is_empty() {
-        return;
+        return run(op);
     }
-    let under = |p: &str| p.starts_with(&format!("{dir}/"));
-    match a {
-        Answer::Hits { hits, .. } => hits.retain(|h| under(&h.path)),
-        Answer::Definitions(defs, ..) => defs.retain(|d| under(&d.0.path)),
-        _ => {}
+    let inside = crate::filter::Filter { globs: vec![format!("/{}/**", glob_literal(dir))], ..Default::default() };
+    match op {
+        Op::Symbol { name, limit, exact } => run(&Op::Symbol { name: name.clone(), limit: *limit, exact: *exact }.scoped(inside)),
+        Op::Read { symbol: Some(name), .. } if crate::intel::location(name).is_none() => {
+            let n = crate::ops::READ_DEFINITIONS;
+            let hits = match run(&Op::Symbol { name: name.clone(), limit: n + 1, exact: true }.scoped(inside))? {
+                Answer::Hits { hits, .. } if !hits.is_empty() => hits,
+                _ => bail!("no definition matches {}", crate::fmt::echo(name)),
+            };
+            let mut defs = Vec::new();
+            for h in hits.iter().take(n) {
+                let at = Op::Read { path: None, symbol: Some(format!("{}:{}-{}", h.path, h.start, h.end)), start: 1, end: None, history: 0 };
+                if let Answer::Definitions(d, ..) = run(&at)? {
+                    defs.extend(d);
+                }
+            }
+            Ok(Answer::Definitions(defs, (hits.len() > n).then_some(crate::ops::Stop { at: n, how: DEPS_MORE }), None))
+        }
+        _ => run(op),
     }
 }
 
@@ -1228,8 +1287,9 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
                 bail!("{} is {} in {}, outside the repository: refused", l.name, crate::fmt::echo(dir), l.lockfile);
             };
             let prefix = joined(&shown_path(&root, &full));
-            let mut a = ordered(&mut |op| crate::ops::run_in(s, op), rest, read, limit, exact, package_dir(&l, start, &prefix))?;
-            keep_under(&mut a, &prefix);
+            let mut inner = |op: &Op| crate::ops::run_in(s, op);
+            let mut a = ordered(&mut |op| in_dir(&mut inner, &prefix, op), rest, read, limit, exact, package_dir(&l, start, &prefix))?;
+            deps_stop(&mut a);
             let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: prefix, local: true };
             Ok(Answer::Package(Box::new(note), Box::new(a)))
         }
@@ -1243,8 +1303,9 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
                 repo.update(false)?;
                 std::fs::write(&indexed, "")?;
             }
-            let mut a = ordered(&mut |op| repo.run_as_is(op), rest, read, limit, exact, package_dir(&l, start, &sub))?;
-            keep_under(&mut a, &sub);
+            let mut inner = |op: &Op| repo.run_as_is(op);
+            let mut a = ordered(&mut |op| in_dir(&mut inner, &sub, op), rest, read, limit, exact, package_dir(&l, start, &sub))?;
+            deps_stop(&mut a);
             repath(&mut a, |p| shown_path(&root, &inst.base.join(p)));
             let dir = if sub.is_empty() { inst.dir.clone() } else { inst.dir.join(&sub) };
             let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: shown_path(&root, &dir), local: false };
@@ -1265,6 +1326,17 @@ mod tests {
         let share = Path::new(r"\\?\UNC\host\share\gomod\gin@v1.10.0\gin.go");
         assert_eq!(shown_path_on(root, share, true), "//host/share/gomod/gin@v1.10.0/gin.go");
         assert_eq!(shown_path_on(root, p, false), p.to_string_lossy());
+    }
+
+    #[test]
+    fn a_directory_s_glob_matches_that_directory_alone() {
+        let root = std::env::temp_dir();
+        let dir = "a[1]/b{c,d}/e*?";
+        let f = crate::filter::Filter { globs: vec![format!("/{}/**", glob_literal(dir))], ..Default::default() }.compile(&root).unwrap();
+        assert!(f.admits_path(&format!("{dir}/x.rs")));
+        for other in ["a1/bc/e/x.rs", "a[1]/bc/ex/x.rs", "a[1]/b{c,d}/ex/x.rs", "a1/b{c,d}/e*?/x.rs"] {
+            assert!(!f.admits_path(other), "{other}");
+        }
     }
 
     #[test]

@@ -1006,3 +1006,94 @@ fn a_cache_others_can_write_is_refused_and_one_left_open_is_made_private() {
     }
     assert!(!stale.exists(), "a stale temporary directory is removed");
 }
+
+/// A path dependency is looked up inside its own directory before any limit: 30 files of the
+/// repository define `new_thing` too and sort before it, for a Cargo path, an npm workspace link and
+/// a uv editable source, through `symbol --deps`, `read --deps --symbol` and the MCP tools with
+/// scope deps; and a read with more definitions than it shows names no `path` it cannot take.
+#[test]
+fn a_path_dependency_is_looked_up_inside_its_directory_before_the_limit() {
+    for eco in ["cargo", "npm", "uv"] {
+        let t = Tree::new(&format!("path_limit_{eco}"));
+        let (name, at) = match eco {
+            "cargo" => {
+                t.write("Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nzcore = { path = \"zz/zcore\" }\n");
+                t.write(
+                    "Cargo.lock",
+                    "version = 3\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"zcore\"]\n\n[[package]]\nname = \"zcore\"\nversion = \"0.1.0\"\n",
+                );
+                t.write("zz/zcore/Cargo.toml", "[package]\nname = \"zcore\"\nversion = \"0.1.0\"\n");
+                t.write("zz/zcore/src/lib.rs", "pub fn new_thing() -> u8 {\n    1\n}\n");
+                for i in 0..30 {
+                    t.write(&format!("src/m{i:02}.rs"), &format!("pub fn new_thing() -> u8 {{\n    {i}\n}}\n"));
+                }
+                ("zcore::new_thing", "zz/zcore/src/lib.rs")
+            }
+            "npm" => {
+                t.npm_lock(r#""node_modules/zshared": {"resolved": "zz/zshared", "link": true}, "zz/zshared": {"version": "1.0.0"}"#);
+                t.write("zz/zshared/index.js", "function new_thing() {\n  return 1;\n}\n");
+                for i in 0..30 {
+                    t.write(&format!("src/m{i:02}.js"), &format!("function new_thing() {{\n  return {i};\n}}\n"));
+                }
+                ("zshared.new_thing", "zz/zshared/index.js")
+            }
+            _ => {
+                t.write(
+                    "uv.lock",
+                    "version = 1\nrequires-python = \">=3.9\"\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n\
+                     dependencies = [{ name = \"zpylib\" }]\n\n[[package]]\nname = \"zpylib\"\nversion = \"0.1.0\"\nsource = { editable = \"zz/zpylib\" }\n",
+                );
+                t.write("zz/zpylib/zpylib/__init__.py", "def new_thing():\n    return 1\n");
+                for i in 0..30 {
+                    t.write(&format!("src/m{i:02}.py"), &format!("def new_thing():\n    return {i}\n"));
+                }
+                ("zpylib.new_thing", "zz/zpylib/zpylib/__init__.py")
+            }
+        };
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert!(code == 0 && out.contains(&format!("{at}:1-")) && !out.contains("stopped at"), "{eco} symbol --deps {name}: {code} {out}{err}");
+        let (code, out, err) = t.run(&["read", "--deps", "--symbol", name]);
+        assert!(code == 0 && out.contains(&format!("{at}:1-")) && !out.contains("stopped at"), "{eco} read --deps --symbol {name}: {code} {out}{err}");
+        let v = t.batch(&[
+            serde_json::json!({"op": "find_symbol", "name": name, "scope": "deps"}),
+            serde_json::json!({"op": "read_code", "symbol": name, "scope": "deps"}),
+        ]);
+        let found = v[0]["result"]["answer"].as_array().map(|a| a.iter().map(|h| h["path"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>());
+        assert_eq!(found, Some(vec![at.to_string()]), "{eco} find_symbol scope deps: {}", v[0]);
+        let read =
+            v[1]["result"]["answer"]["definitions"].as_array().map(|a| a.iter().map(|d| d["path"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>());
+        assert_eq!(read, Some(vec![at.to_string()]), "{eco} read_code scope deps: {}", v[1]);
+        if eco == "cargo" {
+            // more of the dependency's own than a read shows: the closing line names what --deps takes
+            for i in 0..21 {
+                t.write(&format!("zz/zcore/src/x{i:02}.rs"), &format!("pub fn new_thing() -> u8 {{\n    {i}\n}}\n"));
+            }
+            let (code, out, err) = t.run(&["read", "--deps", "--symbol", name]);
+            assert!(code == 0 && out.contains("stopped at 20 definitions") && !out.contains("pass path"), "{code} {out}{err}");
+            assert!(out.lines().filter(|l| l.starts_with("zz/zcore/src/")).count() == 20, "{out}");
+        }
+    }
+}
+
+/// A read of a package's name puts the package's own directory first before it takes its 20
+/// definitions: 31 classes `Widget` under pkg/aaa sort before pkg/core.py's, and `pkg.Widget` reads
+/// pkg/core.py's first, with a closing line that names what --deps takes.
+#[test]
+fn a_read_of_a_package_name_reads_the_package_s_own_definition_first_past_20_others() {
+    let t = Tree::new("own_first_read");
+    t.uv_lock(&[("pkg", "1.0.0")]);
+    let mut files = vec![("pkg/__init__.py".to_string(), String::new()), ("pkg/core.py".to_string(), "class Widget:\n    core = 1\n".to_string())];
+    for i in 0..31 {
+        files.push((format!("pkg/aaa/m{i:02}.py"), format!("class Widget:\n    n = {i}\n")));
+    }
+    let files: Vec<(&str, &str)> = files.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
+    t.wheel("pkg", "1.0.0", &files);
+    let (code, out, err) = t.run(&["read", "--deps", "--symbol", "pkg.Widget"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let first = out.lines().find(|l| l.contains("[class] Widget")).unwrap_or_default();
+    assert!(first.contains("pkg/core.py:1-2"), "{out}");
+    assert!(out.contains("stopped at 20 definitions") && !out.contains("pass path"), "{out}");
+    let v = t.batch(&[serde_json::json!({"op": "read_code", "symbol": "pkg.Widget", "scope": "deps"})]);
+    let first = v[0]["result"]["answer"]["definitions"][0]["path"].as_str().unwrap_or_default();
+    assert!(first.ends_with("pkg/core.py"), "{}", v[0]);
+}
