@@ -1,10 +1,17 @@
 {
  "startup/no match": {
   "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
-  "limit": 1.03,
+  "limit": 1.05,
   "since": "2026-11-16",
-  "audit": "R3X-17a; R3X-17b",
-  "reason": "what 0.1.0 adds at start, on top of what code layout and the environment move: 0.1.0 adds 1,209,775 -> 1,226,735 instructions (1.0140) from e7d6c9d9 to 54ac083c on the AWS build box (R3X-17a; one commit over 0.25%, e043cd1e, Names::tie, +0.36%), and 1.0177 for CI's own binaries of e7d6c9d9 and f62168a1 counted on one box (1,175,197 -> 1,195,956; the runner gave 1.0228). Layout: every 8th commit of f7475149..f62168a1 built on box 2 counts 1,200,182, 1,198,609, 1,201,229, 1,201,333, 1,197,269, 1,193,646, 1,200,200, 1,193,600, 1,197,989, a band of 1,193,600 to 1,201,333 (0.64%) with no step that holds, and two builds of one commit are byte-identical. Path and environment: one binary counts 1,197,368, 1,199,169 at another path and 1,197,989 with a longer environment. The limit is their sum rounded up"
+  "audit": "R3X-17a; R3X-17b; D2-BN-01",
+  "reason": "what 0.1.0 adds at start, counted without the dynamic loader's own instructions (startup/loader has those). On the AWS build box 2, release builds with symbols kept, callgrind: 424,755 -> 440,115 outside the loader from e7d6c9d9 to 24da6b5e (1.036), and the gate itself on CI's own binaries of e7d6c9d9 and 24da6b5e 428,844 -> 441,957 to 441,985 over two runs (1.0306). The ratio moves with build settings: a release build with symbols kept reads 1.036 and a release build on box 2 1.0409, so the limit is judged on CI's own binaries, where the headroom is about 1.9%. In main, 423,511 -> 436,694: the one new cost is the walker's index-file guard (files.rs climb, 14,328 instructions, 17bc4b4b and c46ff23c, with 8 more statx and 1 more getcwd), about 6.2 K of it hashing each ancestor's PathBuf component by component into a SipHash set; hashing the canonical path's bytes with InoHasher and one buffer per climb is the candidate for after 0.1.0. Absolute counts differ between the runner and a box by about 170 K, so only ratios on one machine mean anything; the same binary twice reads within 0.12%. The limit leaves room for the layout band R3X-17a measured (0.64%)"
+ },
+ "startup/loader": {
+  "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
+  "limit": 1.1,
+  "since": "2026-11-16",
+  "audit": "D2-BN-01",
+  "reason": "the dynamic loader's own instructions in the start-up row, reported so that growth there is seen, not because a user waits on it: they follow the binary's count of relative relocations, about 16 instructions each (35,488 at e7d6c9d9, 36,398 at 24da6b5e on box 2; 769,804 -> 784,567, 1.019, and 768,688 -> 783,273 on CI's own binaries), which every static table adds to. A planted table of 20,000 pointers adds 240,000 here and nothing to startup/no match; a planted constructor adds to startup/no match and nothing here. Absolute counts differ between the runner and a box by about 170 K, so only ratios on one machine mean anything"
  },
  "binheavy/literal": {
   "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",

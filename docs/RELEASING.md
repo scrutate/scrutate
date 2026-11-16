@@ -184,7 +184,11 @@ Then read the results:
   `--max-load "$(nproc)" --max-wait 30`: both binaries share every block, so load slows both
   alike. The instruction job runs every benchmark of the suite, `linux/` and `llvm/` included,
   once per binary under Valgrind's cachegrind (`bench/instructions.py`): text searches with
-  `-j1`, tsquery with `RAYON_NUM_THREADS=1`, since Valgrind runs one thread at a time. A row
+  `-j1`, tsquery with `RAYON_NUM_THREADS=1`, since Valgrind runs one thread at a time. The
+  start-up row counts under callgrind every instruction but the dynamic loader's own, which
+  follow the binary's relocations and so grow with every static table; the loader's count is its
+  own row, `startup/loader`, so that growth is still seen. A static's constructor counts in the
+  start-up row, its pointers' relocations in `startup/loader`. A row
   regresses past 1% more instructions, or past the limit `bench/instructions_accepted.json`
   gives it on review: each entry names the base it was measured against, its limit, reason, date
   and audit ID, and applies only while the run's base is that commit, so it lapses when the base

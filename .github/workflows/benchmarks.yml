@@ -7,6 +7,8 @@
 #   minute slows both; a row regresses when the 95% interval of the ratio lies above 1.10.
 # - instructions: every leaderboard benchmark under cachegrind, one search thread, which a busy
 #   runner does not move; a row regresses past 1% more instructions (bench/instructions.py).
+#   The start-up row runs under callgrind and leaves out the dynamic loader's own instructions,
+#   which are a row of their own (startup/loader).
 # Numbers from here never reach docs/LEADERBOARD.md.
 # The job to require is "benchmark gate". It runs on every pull request and passes when the
 # change touches nothing a benchmark runs: a skipped job reports success, a skipped workflow

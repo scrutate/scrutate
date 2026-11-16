@@ -46,3 +46,19 @@ def test_the_instruction_gate_counts_one_thread_and_fails_past_one_percent():
     cmd, _ = command(b["ripgrep/4 at once (literal)"], "/n/scrutate", "/c")
     assert cmd[:2] == ["/bin/sh", "-c"] and cmd[2].count("/n/scrutate grep -j1") == 4
     assert [verdict(n, 1000, 0.01)[1] for n in (1011, 1010, 1000, 989)] == ["REGRESSION", "same", "same", "faster"]
+
+
+def test_the_start_up_row_leaves_out_the_dynamic_loader_which_is_a_row_of_its_own():
+    from instructions import LOADER, LOADER_ROWS, accepted_limits, by_object
+    from leaderboard import suite
+
+    ids = {x["id"] for x in suite()}
+    assert LOADER_ROWS == {"startup/no match": "startup/loader"} and "startup/no match" in ids and "startup/loader" not in ids
+    # callgrind's cost lines: the one after calls= is the callee's inclusive cost, not the caller's
+    text = ("events: Ir\nob=(1) /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2\nfn=(1) _dl_relocate_object\n0 9000\n"
+            "cob=(2) /tmp/bin/scrutate\ncfn=(2) planted\ncalls=1 0\n0 400\nob=(2)\nfn=(2)\n0 400\n+2 600\ntotals: 10000\n")
+    own, total = by_object(text)
+    assert own == {"ld-linux-x86-64.so.2": 9000, "scrutate": 1000} and total == 10000
+    assert sum(v for k, v in own.items() if LOADER.match(k)) == 9000
+    limits = accepted_limits("e7d6c9d92da5674dcc169d60ce960978c75ab6c3")
+    assert limits["startup/no match"] == 1.05 and limits["startup/loader"] == 1.10
