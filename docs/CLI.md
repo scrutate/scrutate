@@ -1157,10 +1157,12 @@ on: no environment variable or configuration file does, so a repository cannot.
 
 `edit_symbol` replaces one whole definition with `new_text`. `symbol` names it as `read_code`
 takes one (a name, `Class.method`, a location), and `path` keeps the ones in one file; a name
-with more than one definition is an error that lists their locations. A module (a file's top
-level or a C++ namespace, `[module] N` in `read_code`) and a window are not edit targets: a name
-that matches one is refused with its kind and lines (`N names a module (b.cpp:1-3), not a
-definition`); name a definition inside it. A call is a dry run unless
+with more than one definition is an error that lists each one's kind and location and gives one
+location to pass (`A names 2 definitions in a.rs: struct at 1-1, impl at 3-7: pass one location
+(a.rs:1) to pick the one to edit`; without `path`, pass `path` or one location). A module (a
+file's top level or a C++ namespace, `[module] N` in `read_code`) and a window are not edit
+targets: a name that matches one is refused with its kind and lines (`N names a module
+(b.cpp:1-3), not a definition`); name a definition inside it. A call is a dry run unless
 it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewrite` form) and
 `hash:`, 16 hex digits of the file's content hash. `apply: true` writes only with that `hash`,
 and only while the file still has it: a file changed since is refused with its current hash and

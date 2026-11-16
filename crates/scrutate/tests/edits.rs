@@ -627,6 +627,28 @@ fn a_namespace_is_refused_as_a_module() {
     assert_eq!(s.file("b.cpp"), text);
 }
 
+/// A name two definitions of one file carry (a Rust struct and its impl) is refused naming each
+/// one's kind and lines, with only the step that helps: with the path given, one location, which
+/// then edits that one; without it, the path or one location.
+#[test]
+fn a_name_two_definitions_carry_is_refused_naming_each_and_the_location_it_gives_applies() {
+    let text = "struct A(u8);\n\nimpl A {\n    fn m(&self) -> u8 {\n        self.0\n    }\n}\n";
+    let mut s = Server::start("struct_and_impl", &[("a.rs", text)], &["--allow-edits"]);
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "A", "path": "a.rs", "new_text": "struct A(u16);\n"}));
+    assert!(err && out.contains("A names 2 definitions in a.rs: struct at 1-1, impl at 3-7: pass one location (a.rs:1) to pick the one to edit"), "{out}");
+    assert_eq!(s.file("a.rs"), text);
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "A", "new_text": "struct A(u16);\n"}));
+    assert!(
+        err && out.contains("A names 2 definitions: struct at a.rs:1-1, impl at a.rs:3-7: pass path, or one location (a.rs:1), to pick the one to edit"),
+        "{out}"
+    );
+    let (dry, err) = s.call("edit_symbol", json!({"symbol": "a.rs:1", "new_text": "struct A(u16);\n"}));
+    assert!(!err, "{dry}");
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "a.rs:1", "new_text": "struct A(u16);\n", "apply": true, "hash": Server::hash_in(&dry)}));
+    assert!(!err, "{out}");
+    assert_eq!(s.file("a.rs"), text.replacen("struct A(u8);", "struct A(u16);", 1));
+}
+
 /// A type that ends in `};` is edited: the `;` the grammar leaves outside the definition (beside
 /// it, beside the template that wraps it, or as an empty statement) is the definition's. A
 /// declarator after the brace (`} p;`) is other code, and refused.

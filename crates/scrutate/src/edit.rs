@@ -212,8 +212,16 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let read = Op::Read { path: path.map(str::to_string), symbol: Some(symbol.to_string()), start: 1, end: None, history: 0 };
     let Answer::Definitions(found, ..) = crate::ops::run_in(s, &read)? else { bail!("no definition matches {}", crate::fmt::echo(symbol)) };
     if found.len() != 1 {
-        let at: Vec<String> = found.iter().map(|(r, ..)| format!("{}:{}-{}", crate::fmt::shown(&r.path), r.start, r.end)).collect();
-        bail!("{} names {} definitions ({}): pass path, or one location, to pick the one to edit", crate::fmt::echo(symbol), at.len(), at.join(", "));
+        let first = &found[0].0;
+        let example = format!("{}:{}", crate::fmt::shown(&first.path), first.start);
+        let (each, step) = if let Some(p) = path {
+            let at: Vec<String> = found.iter().map(|(r, ..)| format!("{} at {}-{}", r.kind, r.start, r.end)).collect();
+            (format!(" in {}: {}", crate::fmt::shown(p), at.join(", ")), format!("pass one location ({example})"))
+        } else {
+            let at: Vec<String> = found.iter().map(|(r, ..)| format!("{} at {}:{}-{}", r.kind, crate::fmt::shown(&r.path), r.start, r.end)).collect();
+            (format!(": {}", at.join(", ")), format!("pass path, or one location ({example}),"))
+        };
+        bail!("{} names {} definitions{each}: {step} to pick the one to edit", crate::fmt::echo(symbol), found.len());
     }
     let row = &found[0].0;
     // a module (a file's top level, a namespace) or a window can carry a name, as `int a = 1;` on
