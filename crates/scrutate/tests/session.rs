@@ -371,9 +371,15 @@ fn a_session_that_reads_no_request_is_given_up_and_the_call_does_its_own_work() 
     use std::os::unix::net::{UnixListener, UnixStream};
     let r = Repo::new("reads_nothing");
     let server = Server::start(&r.root);
+    // the socket through a short link: macOS's temporary directory makes its own path longer than
+    // a socket address holds (the product goes through session::unix::short)
+    let near = PathBuf::from(format!("/tmp/scrutate-rn-{}", std::process::id()));
+    let _ = fs::remove_file(&near);
+    std::os::unix::fs::symlink(r.root.join(".scrutate"), &near).unwrap();
+    let socket = near.join("session.sock");
     // a real session's greeting for this root and build, replayed by a listener that never reads
     let hello = {
-        let c = UnixStream::connect(r.socket()).unwrap();
+        let c = UnixStream::connect(&socket).unwrap();
         c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         let mut line = String::new();
         BufReader::new(&c).read_line(&mut line).unwrap();
@@ -381,7 +387,8 @@ fn a_session_that_reads_no_request_is_given_up_and_the_call_does_its_own_work() 
     };
     server.stop();
     let _ = fs::remove_file(r.socket());
-    let listener = UnixListener::bind(r.socket()).unwrap();
+    let listener = UnixListener::bind(&socket).unwrap();
+    let _ = fs::remove_file(&near);
     fs::set_permissions(r.socket(), fs::Permissions::from_mode(0o600)).unwrap();
     std::thread::spawn(move || {
         let mut held = Vec::new();
