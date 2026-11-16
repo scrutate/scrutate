@@ -309,6 +309,11 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A directory named as git's or scrutate's own under another spelling (`.GIT`, `.Git.`,
+  `.Scrutate`, the short name `git~1`), which a case-insensitive file system such as APFS or NTFS
+  takes for `.git` or `.scrutate`, is no longer indexed, nor searched by `grep_code` and the
+  index's searches (plain `scrutate grep` walks as ripgrep does), at any depth, where a nested
+  `vendor/lib/.GIT/hooks` was indexed and `symbol` answered from its files ([CLI](docs/CLI.md)).
 - An index that holds no files and cannot be filled (a rebuild cut short after it cleared the
   index, opened where it cannot be written) answers with an error, exit 2, where every search and
   lookup answered "(no results)" as if nothing matched ([CLI](docs/CLI.md)).
