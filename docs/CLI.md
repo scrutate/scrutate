@@ -742,7 +742,8 @@ so GitLab matches an issue across pushes.
 Nothing to report (no changed definition, note or test, no new duplicate) is exit code 1, with
 the report still printed (in Markdown a line that says so, in GitLab an empty list). The errors
 are `impact`'s (exit 2), and `--head` is checked as `--base` is: a revision that starts with `-`
-is refused before git runs. `review` runs `git` as `impact` does and nothing else, writes only
+is refused before git runs, and a head given as a range (`A...B` or `A..B`) is an error that
+says to name one commit. `review` runs `git` as `impact` does and nothing else, writes only
 the index, as every index command does, and posts nothing; the GitHub Action posts its output
 ([GitHub Actions](../integrations/github/README.md)). There is no MCP tool; the MCP `impact` tool
 gives the same findings.

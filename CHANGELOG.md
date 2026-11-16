@@ -400,7 +400,8 @@ incompatible index by itself, and that is never breaking.
   base, head and depth with `--format json` (`--head` and `--depth` when they are not the
   default), in a code span.
 - `impact --base A..B` and `review --base A..B` say a two-dot range is not a revision and point at
-  `A...B` for the merge base, where they said the repository lacked it.
+  `A...B` for the merge base, where they said the repository lacked it; a `--head`
+  given as a range (`A...B` or `A..B`) says to name one commit.
 - A walk stopped at 2,000 callers lists them by distance, path and line, and names no
   `untested-change`, which its partial calls could not decide.
 - `dupes` lists each group's members by path and line, and cuts near pairs at `--limit` after

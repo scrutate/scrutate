@@ -122,7 +122,7 @@ fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact
     let against = against.to_string();
     let base = git.base(&against)?;
     let new = match new {
-        New::Commit(rev) => New::Commit(git.commit(&rev)?),
+        New::Commit(rev) => New::Commit(git.head(&rev)?),
         other => other,
     };
     let entries = git.diff(&base, &new)?;

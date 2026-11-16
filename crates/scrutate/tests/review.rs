@@ -546,4 +546,10 @@ fn a_two_dot_range_is_pointed_at_three_dots() {
     let (code, out, err) = t.run(&["review", "--base", "main..HEAD"]);
     assert_eq!(code, 2, "{out}{err}");
     assert!(err.contains("main..HEAD is a range") && err.contains("A...B"), "{err}");
+    // a head given as a range, of three dots or two: the hint about the base does not fit it
+    for head in ["main...HEAD", "main..HEAD"] {
+        let (code, out, err) = t.run(&["review", "--base", "main", "--head", head]);
+        assert_eq!(code, 2, "{head}: {out}{err}");
+        assert!(err.contains(&format!("{head} is a range, not a revision: name one commit")) && !err.contains("three dots"), "{head}: {err}");
+    }
 }

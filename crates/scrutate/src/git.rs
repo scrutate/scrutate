@@ -280,6 +280,14 @@ impl Git {
         }
     }
 
+    /// The commit a head names: one commit, so a range (two dots or three) is refused as one.
+    pub(crate) fn head(&self, rev: &str) -> Result<String> {
+        if rev.contains("..") {
+            bail!("{} is a range, not a revision: name one commit", echo(rev));
+        }
+        self.commit(rev)
+    }
+
     pub(crate) fn commit(&self, rev: &str) -> Result<String> {
         // a revision is one argument and never an option, so `--output=x` is refused here
         if rev.is_empty() || rev.starts_with('-') {
