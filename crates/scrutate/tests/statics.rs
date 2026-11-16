@@ -8,6 +8,7 @@ use std::path::Path;
 /// (file under src/, static, why it is safe as one value for the whole process or thread)
 const ALLOWED: &[(&str, &str, &str)] = &[
     ("answers.rs", "READS", "per thread, the files a resolver read while one Names is open"),
+    ("answers.rs", "COUNTED", "keyed by answers directory: what this process knows of each one's size"),
     ("cli.rs", "FLAG", "the process's Ctrl-C flag"),
     ("custom.rs", "CURRENT", "the last loaded root's custom languages; an update runs under custom::with for its own root"),
     ("custom.rs", "SCOPED", "per thread, the custom languages of the root custom::with runs for"),
