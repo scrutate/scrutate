@@ -255,7 +255,7 @@ Where tools differ in the details, scrutate does what ripgrep does:
 | `-A`, `-B`, `-C` | `-A` and `-B` win over `-C` in either order, as in ripgrep (`-C1 -A3` shows one line before and three after); a line `--` separates groups that are not adjacent, and different files (not in `--json`). With context on several threads a file's lines leave a group at a time, so another file's lines never stand between them; a file searched alone still streams |
 | `-g` | one glob per value, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` is split at commas outside braces |
 
-Five differences:
+Six differences:
 
 - A `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path, where ripgrep
   matches it from the current directory.
@@ -273,6 +273,10 @@ Five differences:
   with `--no-mmap` (`rg --no-mmap -v -U 'x\ny'` on the bytes `FF FE` and ` bad \r\n`), and on some
   runs or on every run for a file found by a walk; it printed the whole U+FFFD for a mapped file in
   every run measured.
+- On Unix, a file the walk finds that is one of scrutate's index files under another name (a hard
+  link, either way round) is left out, where ripgrep searches it, so no answer carries text from
+  the index. The walk says so once on stderr, `scrutate check` lists each such file, and a path
+  that names one is still searched.
 
 `--index` answers from Engine B's text index (`scrutate index`): its trigram postings name the
 files that can contain a match, and Engine A's matcher searches only those, so the output is what
