@@ -65,6 +65,40 @@ fn file(lang: usize, i: usize, function: bool) -> (&'static str, String) {
 
 const LANGS: [&str; 4] = ["python", "javascript", "rust", "go"];
 
+/// The files a tree holds that define `nm` once each for the others to import.
+const LIBS: [(&str, &str); 3] = [
+    ("d0/lib_py.py", "def nm():\n    return 0\n"),
+    ("d1/lib_js.js", "export function nm() { return 0 }\n\nexport default nm\n"),
+    ("d2/Lib.java", "package d2;\n\npublic class Lib {\n    public static int nm() { return 0; }\n\n    public static int nm(int x) { return x; }\n}\n"),
+];
+
+/// A file `k` in directory `d` that uses `nm` through an import, an alias or a re-export.
+fn link(form: usize, d: usize, k: usize) -> (String, String) {
+    match form {
+        0 => {
+            (format!("d{d}/al{k}.py"), format!("from d0.lib_py import nm as g{k}\nfrom d0.lib_py import nm\n\n\ndef use_al{k}():\n    return g{k}() + nm()\n"))
+        }
+        1 => (
+            format!("d{d}/al{k}.js"),
+            format!(
+                "import {{ nm as g{k} }} from \"../d1/lib_js.js\";\nimport nm from \"../d1/lib_js.js\";\nexport {{ nm }} from \"../d1/lib_js.js\";\n\nexport function use_al{k}() {{ return g{k}() + nm() }}\n"
+            ),
+        ),
+        2 => (
+            format!("d{d}/al{k}.ts"),
+            format!(
+                "import {{ nm as g{k} }} from \"../d1/lib_js\";\nimport nm from \"../d1/lib_js\";\nexport {{ nm as again{k} }} from \"../d1/lib_js\";\n\nexport function use_t{k}(): number {{ return g{k}() + nm() }}\n"
+            ),
+        ),
+        3 => (
+            format!("d{d}/Al{k}.java"),
+            format!("package d{d};\n\nimport d2.Lib;\nimport static d2.Lib.nm;\n\nclass Al{k} {{\n    int f() {{ return Lib.nm() + nm(1); }}\n}}\n"),
+        ),
+        4 => (format!("d{d}/al{k}.rs"), format!("use crate::d0::nm as g{k};\n\nfn use_al{k}() -> u64 {{ g{k}() }}\n")),
+        _ => (format!("d{d}/al{k}.go"), format!("package p\n\nimport q \"example.com/m/d0\"\n\nfunc useAl{k}() int {{ return q.nm() }}\n")),
+    }
+}
+
 /// The same rule as a filter, over a definition's path and kind.
 type Keeps = Box<dyn Fn(&str, &str) -> bool>;
 
@@ -108,15 +142,53 @@ fn listed(v: &Value) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// The occurrences a references answer lists, in the order the walk meets them: (path, line, column).
-fn occurrences(v: &Value) -> Vec<(String, u64, u64)> {
+/// An occurrence: path, line, column.
+type Occ = (String, u64, u64);
+/// A definition an occurrence is tied to: path, first line, kind.
+type Def = (String, u64, String);
+
+/// The occurrences a references answer ties to a definition, each with it, and its unresolved ones.
+fn tied(v: &Value) -> (Vec<(Occ, Def)>, Vec<Occ>) {
     let r = &v["result"];
     let at = |o: &Value| (o["path"].as_str().unwrap_or("").to_string(), o["line"].as_u64().unwrap_or(0), o["column"].as_u64().unwrap_or(0));
-    let mut all: Vec<(String, u64, u64)> =
-        r["definitions"].as_array().into_iter().flatten().flat_map(|d| d["references"].as_array().into_iter().flatten().map(at)).collect();
-    all.extend(r["unresolved"].as_array().into_iter().flatten().map(at));
-    all.sort();
-    all
+    let mut out = Vec::new();
+    for d in r["definitions"].as_array().into_iter().flatten() {
+        let def = (d["path"].as_str().unwrap_or("").to_string(), d["start"].as_u64().unwrap_or(0), d["kind"].as_str().unwrap_or("").to_string());
+        out.extend(d["references"].as_array().into_iter().flatten().map(|o| (at(o), def.clone())));
+    }
+    (out, r["unresolved"].as_array().into_iter().flatten().map(at).collect())
+}
+
+/// How many compared answers hold an occurrence in a file that imports `nm`.
+static LINKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Whether `full` (at 5000) ties exactly the occurrences of `whole` (the unfiltered answer) that
+/// `keep` admits, each to the same definition, and `cut` (at `max`) as many of those as it may: a
+/// narrowed read counts max_results over the tied ones and lists at most that many unresolved, a
+/// plain read counts both together; `truncated` says whether it is short of `full`.
+fn kept_of(whole: &Value, full: &Value, cut: &Value, max: usize, narrowed: bool, keep: &dyn Fn(&Occ, &Def) -> bool) -> Result<(), String> {
+    use std::collections::BTreeSet;
+    let want: BTreeSet<(Occ, Def)> = tied(whole).0.into_iter().filter(|(o, d)| keep(o, d)).collect();
+    let linked = want.iter().any(|(o, _)| o.0.contains("/al") || o.0.contains("/Al"));
+    LINKED.fetch_add(linked as usize, std::sync::atomic::Ordering::Relaxed);
+    let ((ft, fu), (ct, cu)) = (tied(full), tied(cut));
+    let (ft, ct): (BTreeSet<_>, BTreeSet<_>) = (ft.into_iter().collect(), ct.into_iter().collect());
+    if ft != want {
+        return Err(format!("missing {:?}, extra {:?}", want.difference(&ft).collect::<Vec<_>>(), ft.difference(&want).collect::<Vec<_>>()));
+    }
+    if !ct.is_subset(&ft) || !cu.iter().all(|u| fu.contains(u)) {
+        return Err(format!("the cut answer holds what the whole does not: {:?} {:?}", ct.difference(&ft).collect::<Vec<_>>(), cu));
+    }
+    // max_results counts occurrences: one an overload set shares is listed under each overload
+    let distinct = |t: &BTreeSet<(Occ, Def)>| t.iter().map(|(o, _)| o).collect::<BTreeSet<_>>().len();
+    let (got, of) = if narrowed { (distinct(&ct), distinct(&ft)) } else { (distinct(&ct) + cu.len(), distinct(&ft) + fu.len()) };
+    if got != of.min(max) || narrowed && cu.len() > max {
+        return Err(format!("{got} kept where {} of {of} are due ({} unresolved)", of.min(max), cu.len()));
+    }
+    if cut["result"]["truncated"] != json!(got < of) {
+        return Err(format!("truncated {} with {got} of {of}", cut["result"]["truncated"]));
+    }
+    Ok(())
 }
 
 /// The items of an answer in their order, for the tools whose items are a list or groups of lines.
@@ -147,10 +219,25 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, text).unwrap();
         }
+        // uses through imports, aliases and re-exports, of the libraries' `nm`
+        let links = rng.below(7);
+        for k in 0..links {
+            if k == 0 {
+                for (path, text) in LIBS {
+                    fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+                    fs::write(root.join(path), text).unwrap();
+                }
+            }
+            let (path, text) = link(rng.below(6), rng.below(3), k);
+            fs::create_dir_all(root.join(&path).parent().unwrap()).unwrap();
+            fs::write(root.join(path), text).unwrap();
+        }
         fs::create_dir_all(root.join(".git")).unwrap();
         let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
         let call = |tool: &str, args: Value| scrutate::mcp::call_tool(&session, tool, &args, &settings, &cancel).structured;
         let all = listed(&call("find_symbol", json!({"name": "nm", "limit": 500, "exact": true})));
+        // the unfiltered answer, which every filtered one is checked against
+        let whole = call("references", json!({"name": "nm", "max_results": 5000}));
         for _ in 0..4 {
             let (filter, keeps) = filters(&mut rng);
             for k in filter.as_object().unwrap().keys() {
@@ -169,18 +256,11 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             }
             let max = 1 + rng.below(2 * n);
             rows += 1;
-            let full = occurrences(&call("references", with(json!({"name": "nm", "max_results": 5000}), &filter)));
-            let cut = occurrences(&call("references", with(json!({"name": "nm", "max_results": max}), &filter)));
-            let want = &full[..full.len().min(max)];
-            if cut != want {
-                broken.push(format!(
-                    "r{r} (n={n}) references {filter} max_results {max}: {} occurrences where the first {} of {} pass ({:?} vs {:?})",
-                    cut.len(),
-                    want.len(),
-                    full.len(),
-                    cut.first(),
-                    want.first()
-                ));
+            let full = call("references", with(json!({"name": "nm", "max_results": 5000}), &filter));
+            let cut = call("references", with(json!({"name": "nm", "max_results": max}), &filter));
+            // a file filter picks occurrences by their own file, a kind by their definition's
+            if let Err(why) = kept_of(&whole, &full, &cut, max, filter.get("kinds").is_some(), &|o, d| keeps(&o.0, &d.2)) {
+                broken.push(format!("r{r} (n={n}) references {filter} max_results {max}: {why}"));
             }
             // search is ranked: every hit passes, and at least k when that many pass unfiltered
             let k = 1 + rng.below(10);
@@ -205,17 +285,24 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
         let def = format!("{}:{line}", target.1);
         let max = 1 + rng.below(4);
         rows += 1;
-        let full = occurrences(&call("references", json!({"name": "nm", "def": def, "max_results": 5000})));
-        let cut = occurrences(&call("references", json!({"name": "nm", "def": def, "max_results": max})));
-        if cut[..] != full[..full.len().min(max)] {
-            broken.push(format!(
-                "r{r} (n={n}) references def {def} max_results {max}: {} occurrences where the first {} of {} pass",
-                cut.len(),
-                full.len().min(max),
-                full.len()
-            ));
+        let full = call("references", json!({"name": "nm", "def": def, "max_results": 5000}));
+        let cut = call("references", json!({"name": "nm", "def": def, "max_results": max}));
+        let start: u64 = line.parse().unwrap_or(0);
+        if let Err(why) = kept_of(&whole, &full, &cut, max, true, &|_, d| d.0 == target.1 && d.1 == start) {
+            broken.push(format!("r{r} (n={n}) references def {def} max_results {max}: {why}"));
         }
         covered.insert("references def".to_string());
+        // each overload of Lib.nm: a static import stands for both
+        for start in [4u64, 6].into_iter().filter(|_| links > 0) {
+            let def = format!("d2/Lib.java:{start}");
+            let max = 1 + rng.below(4);
+            rows += 1;
+            let full = call("references", json!({"name": "nm", "def": def, "max_results": 5000}));
+            let cut = call("references", json!({"name": "nm", "def": def, "max_results": max}));
+            if let Err(why) = kept_of(&whole, &full, &cut, max, true, &|_, d| d.0 == "d2/Lib.java" && d.1 == start) {
+                broken.push(format!("r{r} (n={n}) references def {def} max_results {max}: {why}"));
+            }
+        }
         // the other narrowing arguments: the answer with a limit is the first items of the one without
         let d = rng.below(3);
         let others = [
@@ -242,7 +329,12 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             covered.insert(pair.to_string());
         }
     }
-    eprintln!("limit filters: {rows} rows, {} failed; covered: {}", broken.len(), covered.into_iter().collect::<Vec<_>>().join(", "));
+    let linked = LINKED.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!(
+        "limit filters: {rows} rows ({linked} references answers with an import's occurrences), {} failed; covered: {}",
+        broken.len(),
+        covered.into_iter().collect::<Vec<_>>().join(", ")
+    );
     assert!(broken.is_empty(), "{}", broken.join("\n"));
     let _ = fs::remove_dir_all(&base);
 }
