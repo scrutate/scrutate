@@ -18,15 +18,35 @@ struct Piece {
     kind: &'static str,
     text: String,
     targets: Vec<(String, String, String)>,
+    /// the kind of the targets after the first, each a member on lines of its own inside the piece
+    member: Option<&'static str>,
 }
 
 fn one(kind: &'static str, text: String, name: &str, new: String) -> Piece {
-    Piece { kind, targets: vec![(name.to_string(), new + "\n", text.clone())], text }
+    Piece { kind, targets: vec![(name.to_string(), new + "\n", text.clone())], text, member: None }
 }
 
 /// A piece of two names, each a target whose own text is the whole piece.
 fn both(kind: &'static str, text: String, (a, a_new): (String, String), (b, b_new): (String, String)) -> Piece {
-    Piece { kind, targets: vec![(a, a_new, text.clone()), (b, b_new, text.clone())], text }
+    Piece { kind, targets: vec![(a, a_new, text.clone()), (b, b_new, text.clone())], text, member: None }
+}
+
+/// An owner and its member `{owner}.{name}` on lines of its own: the piece is `head`, the member's
+/// old `body`, then `tail`; the owner as a target is the whole piece.
+fn owned(kind: &'static str, (owner, name): (&str, &str), (head, body, new_body, tail): (String, String, String, String)) -> Piece {
+    let text = format!("{head}{body}{tail}");
+    let whole = format!("{head}{new_body}{tail}\n");
+    Piece { kind, member: Some("method"), targets: vec![(owner.to_string(), whole, text.clone()), (format!("{owner}.{name}"), new_body + "\n", body)], text }
+}
+
+/// A type with its method beside it, not inside: the type's own line, then the method's.
+fn beside(kind: &'static str, (ty, ty_new): (String, String), rest: &str, (method, body, new_body): (String, String, String)) -> Piece {
+    Piece {
+        kind,
+        member: Some("method"),
+        text: format!("{ty}{rest}{body}"),
+        targets: vec![(String::new(), ty_new + "\n", ty), (method, new_body + "\n", body)],
+    }
 }
 
 /// The shapes of one language, `c` and `i` naming them apart (every name is the only one of its
@@ -42,6 +62,7 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
         ("go", 3) => one("function", format!("func {cap}() int {{\n\treturn {v}\n}}"), &cap, format!("func {cap}() int {{\n\treturn {w}\n}}")),
         ("go", 4) => one("type", format!("type {cap} int // the {i}"), &cap, format!("type {cap} int64 // the {i}")),
         ("go", 5) => Piece {
+            member: None,
             kind: "const block",
             text: format!("const (\n\t{cap} = {v}\n\t{cap}b = {v}\n)"),
             targets: vec![
@@ -56,6 +77,16 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
             (format!("{n}b"), format!("var {n}, {n}b = {v}, {w}\n")),
         ),
         ("go", 7) => one("struct", format!("type {cap} struct {{\n\tx{v} int\n}}"), &cap, format!("type {cap} struct {{\n\tx{w} int\n}}")),
+        ("go", 9) => {
+            let mut p = beside(
+                "struct with a method",
+                (format!("type {cap} struct{{ x{v} int }}"), format!("type {cap} struct{{ x{w} int }}")),
+                "\n\n",
+                (format!("{cap}.{m}"), format!("func (r {cap}) {m}() int {{\n\treturn {v}\n}}"), format!("func (r {cap}) {m}() int {{\n\treturn {w}\n}}")),
+            );
+            p.targets[0].0 = cap.clone();
+            p
+        }
         ("go", _) => one("interface", format!("type {cap} interface {{\n\tM{v}()\n}}"), &cap, format!("type {cap} interface {{\n\tM{w}()\n}}")),
         ("javascript" | "typescript", 0) => one("const", format!("const {n} = {v};"), &n, format!("const {n} = {w};")),
         ("javascript" | "typescript", 1) => one("function", format!("function {n}() {{ return {v} }}"), &n, format!("function {n}() {{ return {w} }}")),
@@ -63,6 +94,7 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
         ("javascript" | "typescript", 3) => {
             let text = format!("class {cap} {{ f = {v}; {m}() {{ return {v} }} }}");
             Piece {
+                member: None,
                 kind: "class",
                 targets: vec![
                     (cap.clone(), format!("class {cap} {{ f = {w}; {m}() {{ return {v} }} }}\n"), text.clone()),
@@ -88,6 +120,16 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
             one("interface", format!("export interface {cap} {{\n  x{v}: number;\n}}"), &cap, format!("export interface {cap} {{\n  x{w}: number;\n}}"))
         }
         ("typescript", 9) => one("enum", format!("enum {cap} {{\n  B{v},\n}}"), &cap, format!("enum {cap} {{\n  B{w},\n}}")),
+        ("javascript" | "typescript", 10) | ("javascript", 7) => owned(
+            "class with a method",
+            (&cap, &m),
+            (format!("class {cap} {{\n"), format!("  {m}() {{\n    return {v}\n  }}"), format!("  {m}() {{\n    return {w}\n  }}"), "\n}".to_string()),
+        ),
+        ("typescript", 11) => {
+            one("interface };", format!("interface {cap} {{\n  x{v}: number;\n}};"), &cap, format!("interface {cap} {{\n  x{w}: number;\n}};"))
+        }
+        ("typescript", 12) => one("class };", format!("class {cap} {{\n  x = {v};\n}};"), &cap, format!("class {cap} {{\n  x = {w};\n}};")),
+        ("typescript", 13) => one("enum };", format!("enum {cap} {{\n  B{v},\n}};"), &cap, format!("enum {cap} {{\n  B{w},\n}};")),
         ("javascript" | "typescript", _) => one("let (no definition)", format!("let {n} = {v}; // {i}"), &n, format!("let {n} = {w}; // {i}")),
         ("rust", 0) => one("const", format!("const {cap}: u8 = {};", v % 200), &cap, format!("const {cap}: u8 = {};", w % 200)),
         ("rust", 1) => one("static", format!("static {cap}: u8 = {};", v % 200), &cap, format!("static {cap}: u8 = {};", w % 200)),
@@ -107,11 +149,31 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
             &cap,
             format!("trait {cap} {{\n    fn {m}(&self) -> u64 {{ {w} }}\n}}"),
         ),
+        ("rust", 9) => {
+            let mut p = beside(
+                "struct beside its impl",
+                (format!("struct {cap}(u8);"), format!("struct {cap}(u16);")),
+                &format!("\n\nimpl {cap} {{\n"),
+                (
+                    format!("{cap}.{m}"),
+                    format!("    fn {m}(&self) -> u64 {{\n        {v}\n    }}"),
+                    format!("    fn {m}(&self) -> u64 {{\n        {w}\n    }}"),
+                ),
+            );
+            p.text.push_str("\n}");
+            p.targets[0].0 = cap.clone();
+            p
+        }
         ("rust", _) => one("type alias", format!("type {cap} = [u8; {}];", v % 200), &cap, format!("type {cap} = [u8; {}];", w % 200)),
         ("python", 0) => one("constant", format!("{cap} = {v}"), &cap, format!("{cap} = {w}")),
         ("python", 1) => one("constant", format!("{cap} = {v}  # {i}"), &cap, format!("{cap} = {w}  # {i}")),
         ("python", 2) => one("function", format!("def {n}():\n    return {v}"), &n, format!("def {n}():\n    return {w}")),
         ("python", 3) => one("class", format!("class {cap}:\n    v = {v}"), &cap, format!("class {cap}:\n    v = {w}")),
+        ("python", 5) => owned(
+            "class with a method",
+            (&cap, &m),
+            (format!("class {cap}:\n"), format!("    def {m}(self):\n        return {v}"), format!("    def {m}(self):\n        return {w}"), String::new()),
+        ),
         ("python", _) => one("decorated class", format!("@decorator\nclass {cap}:\n    v = {v}"), &cap, format!("@decorator\nclass {cap}:\n    v = {w}")),
         ("c", 0) => one("const", format!("const int {n} = {v};"), &n, format!("const int {n} = {w};")),
         ("c", 1) => one("function", format!("int {n}(void) {{ return {v}; }}"), &n, format!("int {n}(void) {{ return {w}; }}")),
@@ -128,6 +190,11 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
         ("c", 7) => {
             one("struct with a declarator", format!("struct {cap} {{\n    int x{v};\n}} {n};"), &cap, format!("struct {cap} {{\n    int x{w};\n}} {n};"))
         }
+        ("c", 8) => one("struct } ;", format!("struct {cap} {{\n    int x{v};\n}} ;"), &cap, format!("struct {cap} {{\n    int x{w};\n}} ;")),
+        ("c", 9) => one("struct };;", format!("struct {cap} {{\n    int x{v};\n}};;"), &cap, format!("struct {cap} {{\n    int x{w};\n}};;")),
+        ("c", 10) => {
+            one("struct }; // c", format!("struct {cap} {{\n    int x{v};\n}}; // c{i}"), &cap, format!("struct {cap} {{\n    int x{w};\n}}; // c{i}"))
+        }
         ("c", _) => one("typedef", format!("typedef int {cap};"), &cap, format!("typedef long {cap};")),
         ("cpp", 0) => one(
             "class };",
@@ -141,6 +208,37 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
         ("cpp", 4) => {
             one("struct with a declarator", format!("struct {cap} {{\n    int x{v};\n}} {n};"), &cap, format!("struct {cap} {{\n    int x{w};\n}} {n};"))
         }
+        ("cpp", 6) => owned(
+            "class }; with a method",
+            (&cap, &m),
+            (
+                format!("class {cap} {{\npublic:\n"),
+                format!("    int {m}() {{\n        return {v};\n    }}"),
+                format!("    int {m}() {{\n        return {w};\n    }}"),
+                "\n};".to_string(),
+            ),
+        ),
+        ("cpp", 7) => one(
+            "template function",
+            format!("template <typename T>\nT {n}(T x) {{\n    return x + {v};\n}}"),
+            &n,
+            format!("template <typename T>\nT {n}(T x) {{\n    return x + {w};\n}}"),
+        ),
+        ("cpp", 8) => one(
+            "template struct };",
+            format!("template <typename T>\nstruct {cap} {{\n    T x{v};\n}};"),
+            &cap,
+            format!("template <typename T>\nstruct {cap} {{\n    T x{w};\n}};"),
+        ),
+        ("cpp", 9) => one("struct } ;", format!("struct {cap} {{\n    int x{v};\n}} ;"), &cap, format!("struct {cap} {{\n    int x{w};\n}} ;")),
+        ("cpp", 10) => one("struct };;", format!("struct {cap} {{\n    int x{v};\n}};;"), &cap, format!("struct {cap} {{\n    int x{w};\n}};;")),
+        ("cpp", 11) => one("class }; // c", format!("class {cap} {{\n    int x{v};\n}}; // c{i}"), &cap, format!("class {cap} {{\n    int x{w};\n}}; // c{i}")),
+        ("cpp", 12) => one(
+            "template class };",
+            format!("template <class T>\nclass {cap} {{\n    T x{v};\n}};"),
+            &cap,
+            format!("template <class T>\nclass {cap} {{\n    T x{w};\n}};"),
+        ),
         ("cpp", _) => {
             one("namespace", format!("namespace {n} {{\nint f{v}() {{ return {v}; }}\n}}"), &n, format!("namespace {n} {{\nint f{w}() {{ return {w}; }}\n}}"))
         }
@@ -152,19 +250,29 @@ fn shape(lang: &str, k: usize, c: usize, i: usize, v: u64) -> Piece {
         ("java", 3) => {
             one("annotated class", format!("@Deprecated\nclass {cap} {{\n    int x{v};\n}}"), &cap, format!("@Deprecated\nclass {cap} {{\n    int x{w};\n}}"))
         }
+        ("java", 5) => owned(
+            "class with a method",
+            (&cap, &m),
+            (
+                format!("class {cap} {{\n"),
+                format!("    int {m}() {{\n        return {v};\n    }}"),
+                format!("    int {m}() {{\n        return {w};\n    }}"),
+                "\n}".to_string(),
+            ),
+        ),
         (_, _) => one("record", format!("record {cap}(int x{v}) {{}}"), &cap, format!("record {cap}(int x{w}) {{}}")),
     }
 }
 
 const LANGS: [(&str, &str, usize, &str, &str); 8] = [
-    ("go", "go", 9, "package p\n\n", "; "),
-    ("javascript", "js", 8, "", " "),
-    ("typescript", "ts", 11, "", " "),
-    ("rust", "rs", 9, "", " "),
-    ("python", "py", 5, "", "; "),
-    ("c", "c", 9, "", " "),
-    ("cpp", "cpp", 6, "", " "),
-    ("java", "java", 5, "", " "),
+    ("go", "go", 10, "package p\n\n", "; "),
+    ("javascript", "js", 9, "", " "),
+    ("typescript", "ts", 15, "", " "),
+    ("rust", "rs", 10, "", " "),
+    ("python", "py", 6, "", "; "),
+    ("c", "c", 12, "", " "),
+    ("cpp", "cpp", 14, "", " "),
+    ("java", "java", 6, "", " "),
 ];
 
 struct Rng(u64);
@@ -197,6 +305,12 @@ struct Case {
 impl Case {
     fn name(&self) -> &str {
         &self.pieces[self.target.0].targets[self.target.1].0
+    }
+
+    /// The target's kind: its piece's, or its member's.
+    fn kind(&self) -> &'static str {
+        let p = &self.pieces[self.target.0];
+        p.member.filter(|_| self.target.1 > 0).unwrap_or(p.kind)
     }
 
     fn new_text(&self) -> &str {
@@ -242,10 +356,22 @@ const FIXED: [(&str, &str, &str, &str, &str); 15] = [
     ("go", "package p\n\nconst A = 1\n", "A", "const A = 2\n", "const A = 1"),
 ];
 
-/// The kinds refused even with their lines to themselves: a declarator after the brace is other code,
-/// two names in one declaration cannot be edited apart, a `let` is no definition, and a C++
-/// namespace is not indexed under its name.
-const REFUSED_ALONE: [&str; 5] = ["struct with a declarator", "const pair", "var pair", "let (no definition)", "namespace"];
+/// The kinds refused even with their lines to themselves, each with the reason it must be refused
+/// for: a declarator or a second `;` after the brace is other code, two names in one declaration
+/// cannot be edited apart, a `let` is not indexed, and a C++ namespace is a module.
+const REFUSED_ALONE: [(&str, &str); 6] = [
+    ("struct with a declarator", "shares a line with other code that is not a comment"),
+    ("struct };;", "shares a line with other code that is not a comment"),
+    ("const pair", "is declared together with"),
+    ("var pair", "is declared together with"),
+    ("let (no definition)", "no definition matches"),
+    ("namespace", "names a module"),
+];
+
+/// The reason a kind of `REFUSED_ALONE` is refused for, alone.
+fn refused_alone(kind: &str) -> Option<&'static str> {
+    REFUSED_ALONE.iter().find(|(k, _)| *k == kind).map(|(_, why)| *why)
+}
 
 /// How many of `FIXED` lead it and must be refused.
 const REFUSED_ROWS: usize = 6;
@@ -256,7 +382,7 @@ fn cases(n: usize) -> Vec<Case> {
         let ext = LANGS.iter().find(|l| l.0 == lang).unwrap().1;
         let body = text.strip_prefix("package p\n\n").unwrap_or(text).to_string();
         let offsets = vec![text.len() - body.len()];
-        let piece = Piece { kind: "fixed row", text: body, targets: vec![(name.to_string(), new.to_string(), own.to_string())] };
+        let piece = Piece { kind: "fixed row", text: body, targets: vec![(name.to_string(), new.to_string(), own.to_string())], member: None };
         out.push(Case { file: format!("fixed{k}.{ext}"), text: text.to_string(), pieces: vec![piece], offsets, target: (0, 0), alone: false });
     }
     let mut rng = Rng(0x5eed_0fed);
@@ -284,7 +410,8 @@ fn cases(n: usize) -> Vec<Case> {
         let t = rng.below(pieces.len());
         let target = (t, rng.below(pieces[t].targets.len()));
         // a member's own text is part of its piece's, which shares its lines (a one-line class)
-        let own_lines = pieces[t].targets[target.1].2 == pieces[t].text || pieces[t].kind == "const block";
+        // a member's lines are its own; a type beside its method shares the piece with it
+        let own_lines = pieces[t].targets[target.1].2 == pieces[t].text || pieces[t].kind == "const block" || pieces[t].member.is_some();
         let alone = !shared[t] && own_lines;
         out.push(Case { file: format!("gen{c}.{ext}"), text, pieces, offsets, target, alone });
     }
@@ -339,9 +466,16 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
         let (root, session) = &sessions[k / 32];
         let call = |args: serde_json::Value| scrutate::mcp::call_tool(session, "edit_symbol", &args, &edits, &cancel);
         let args = json!({"symbol": c.name(), "path": c.file, "new_text": c.new_text()});
-        let key = (c.file.rsplit('.').next().unwrap_or("").to_string(), c.pieces[c.target.0].kind);
+        let key = (c.file.rsplit('.').next().unwrap_or("").to_string(), c.kind());
         reached.entry(key.clone()).or_default().0 += 1;
-        let dry = call(args.clone());
+        let mut dry = call(args.clone());
+        let mut args = args;
+        // a name two definitions carry (a Rust struct and its impl) is refused with one location
+        // to pass, which must then edit the target
+        if let Some(at) = dry.text.split_once("pass one location (").and_then(|(_, r)| r.split_once(')')).map(|(at, _)| at.to_string()) {
+            args["symbol"] = json!(at);
+            dry = call(args.clone());
+        }
         let now = || fs::read_to_string(root.join(&c.file)).unwrap();
         if dry.is_error {
             refused += 1;
@@ -354,13 +488,16 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
                 broken.push(format!("{}: {}", c.file, dry.text));
             }
             // a definition with its lines to itself is edited, unless its kind cannot be on its own
-            if c.alone && !REFUSED_ALONE.contains(&c.pieces[c.target.0].kind) {
-                broken.push(format!("{}: {} refused with its lines to itself: {}\n{:?}", c.file, c.pieces[c.target.0].kind, dry.text, c.text));
+            if c.alone && !refused_alone(c.kind()).is_some_and(|why| dry.text.contains(why)) {
+                broken.push(format!("{}: {} refused with its lines to itself: {}\n{:?}", c.file, c.kind(), dry.text, c.text));
             }
             continue;
         }
         if k < REFUSED_ROWS {
             broken.push(format!("{}: the Auditor's shared-line case was not refused: {}", c.file, dry.text));
+        }
+        if c.alone && refused_alone(c.kind()).is_some() {
+            broken.push(format!("{}: {} is refused by design but its dry run passed: {}", c.file, c.kind(), dry.text));
         }
         let hash = dry.text.lines().find_map(|l| l.strip_prefix("hash: ")).unwrap_or_else(|| panic!("{}", dry.text)).trim().to_string();
         let mut apply = args;
@@ -393,7 +530,8 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
         let mut from = 0;
         for (i, p) in c.pieces.iter().enumerate() {
             let texts: Vec<&str> = if i == c.target.0 {
-                p.targets.iter().enumerate().filter(|(j, _)| *j != c.target.1).map(|(_, t)| t.0.as_str()).collect()
+                // a member's text holds its own name, not its owner's qualified one
+                p.targets.iter().enumerate().filter(|(j, _)| *j != c.target.1).map(|(_, t)| t.0.rsplit('.').next().unwrap_or("")).collect()
             } else {
                 vec![p.text.as_str()]
             };
