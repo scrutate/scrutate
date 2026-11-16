@@ -2199,10 +2199,44 @@ struct GrepOutput {
     page: Option<(usize, usize)>,
 }
 
-/// Where grep's text goes: standard output, or the lines of an answer paged within a budget.
+/// Where grep's text goes: standard output, or the lines of an answer paged within a budget; with
+/// `Redacted`, each whole line redacted on its way there.
 enum Out {
     Stream(termcolor::BufferedStandardStream),
     Paged(Paged),
+    Redacted(Box<Redacting>),
+}
+
+/// The lines of an index answer redacted (`SCRUTATE_REDACT=on`), JSON records as values.
+struct Redacting {
+    inner: Out,
+    r: crate::secrets::Redactor,
+    line: Vec<u8>,
+    json: bool,
+}
+
+impl Redacting {
+    fn end_line(&mut self) -> std::io::Result<()> {
+        let raw = std::mem::take(&mut self.line);
+        let mut text = String::from_utf8_lossy(&raw).into_owned();
+        if self.json {
+            if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
+                let was = v["text"].clone();
+                self.r.redact_json(&mut v);
+                // the spans count bytes of the text as the file has it
+                if v["text"] != was {
+                    v.as_object_mut().map(|o| o.remove("spans"));
+                }
+                text = v.to_string();
+            }
+        } else if self.r.redact_in_place(&mut text) == 0 && std::str::from_utf8(&raw).is_err() {
+            // nothing redacted: the line goes out as the file has it, not decoded lossily
+            self.inner.write_all(&raw)?;
+            return self.inner.write_all(b"\n");
+        }
+        text.push('\n');
+        self.inner.write_all(text.as_bytes())
+    }
 }
 
 /// Lines kept up to what a budget can show; the ones after them are counted.
@@ -2242,6 +2276,16 @@ impl Write for Out {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             Out::Stream(w) => w.write(buf),
+            Out::Redacted(r) => {
+                for &b in buf {
+                    if b == b'\n' {
+                        r.end_line()?;
+                    } else {
+                        r.line.push(b);
+                    }
+                }
+                Ok(buf.len())
+            }
             Out::Paged(p) => {
                 for &b in buf {
                     if b == b'\n' {
@@ -2258,6 +2302,7 @@ impl Write for Out {
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             Out::Stream(w) => w.flush(),
+            Out::Redacted(r) => r.inner.flush(),
             Out::Paged(_) => Ok(()),
         }
     }
@@ -2271,14 +2316,14 @@ impl WriteColor for Out {
     fn set_color(&mut self, spec: &ColorSpec) -> std::io::Result<()> {
         match self {
             Out::Stream(w) => w.set_color(spec),
-            Out::Paged(_) => Ok(()),
+            Out::Paged(_) | Out::Redacted(_) => Ok(()),
         }
     }
 
     fn reset(&mut self) -> std::io::Result<()> {
         match self {
             Out::Stream(w) => w.reset(),
-            Out::Paged(_) => Ok(()),
+            Out::Paged(_) | Out::Redacted(_) => Ok(()),
         }
     }
 }
@@ -2318,8 +2363,14 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     interrupt::install(Arc::clone(&cancel));
     // Ctrl-C also ends `--update`'s wait for another process's lock
     crate::index::stop_waits_on(Arc::clone(&cancel));
-    let colour = color_choice(out.no_color) != ColorChoice::Never;
-    let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
+    // an index answer is redacted under SCRUTATE_REDACT=on, as the other index answers are: line
+    // by line, so without colour and through the general path
+    let redact = out.indexed && crate::secrets::on(false);
+    if redact {
+        crate::secrets::know_key_lines_at(&out.root);
+    }
+    let colour = !redact && color_choice(out.no_color) != ColorChoice::Never;
+    let plain = !redact && !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
     let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
     if out.indexed {
         let (root, files) = match indexed_candidates(&out.root, &q, out.update, out.under.as_deref()) {
@@ -2334,8 +2385,11 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     // buffered: one write per 64 KB instead of several per matching line
     let mut w = match out.page {
         Some((max_bytes, offset)) => Out::Paged(Paged { max_bytes: text_room(max_bytes), offset, items: Vec::new(), held: 0, rest: 0, line: Vec::new() }),
-        None => Out::Stream(termcolor::BufferedStandardStream::stdout(color_choice(out.no_color))),
+        None => Out::Stream(termcolor::BufferedStandardStream::stdout(if redact { ColorChoice::Never } else { color_choice(out.no_color) })),
     };
+    if redact {
+        w = Out::Redacted(Box::new(Redacting { inner: w, r: Default::default(), line: Vec::new(), json: out.json }));
+    }
     let mut collected: Vec<Record> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
     let mut counts: Vec<Record> = Vec::new();
@@ -2489,7 +2543,23 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         }
         return Err(e);
     }
+    // what was redacted is said on stderr, so the answer's own lines stay as a search gives them
+    let w = match w {
+        Out::Redacted(mut r) => {
+            if !r.line.is_empty() {
+                r.end_line()?;
+            }
+            let mut note = String::new();
+            crate::secrets::close(&mut note, r.r.total());
+            if !note.is_empty() {
+                eprintln!("{note}");
+            }
+            r.inner
+        }
+        w => w,
+    };
     let flushed = match w {
+        Out::Redacted(_) => unreachable!("taken apart above"),
         Out::Paged(p) => {
             let text = p.text();
             let mut so = std::io::stdout().lock();

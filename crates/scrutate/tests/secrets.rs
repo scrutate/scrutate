@@ -416,6 +416,48 @@ fn the_cli_s_json_stays_whole_when_it_redacts() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// `SCRUTATE_REDACT=on` covers `grep --index`, an answer from the index, in text and `--json`,
+/// as it covers `read` and `search`; plain `grep`, which reads the files, prints them as they are.
+#[test]
+fn grep_index_is_redacted_under_redact_on() {
+    let (root, secrets) = tree("grep_index");
+    let ran = |args: &[&str], redact: &str| {
+        let out = Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_REDACT", redact)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    fs::write(root.join("plain_latin.py"), b"NOTE = 1  # plain_caf\xe9\n").unwrap();
+    assert!(Command::new(BIN).args(["index", "--text"]).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap().success());
+    let token = secrets.iter().find(|(k, _)| *k == "github-token").map(|(_, s)| s.clone()).unwrap();
+    for args in
+        [&["grep", "--index", "-n", "GITHUB"][..], &["grep", "--index", "--json", "GITHUB"], &["grep", "--index", "-n", "--max-bytes", "4000", "GITHUB"]]
+    {
+        let (out, err) = ran(args, "on");
+        assert!(out.contains("[redacted:github-token]"), "{args:?}: {out}");
+        assert!(!out.contains(&token), "{args:?}: the token came back: {out}");
+        assert!(err.contains("redacted"), "{args:?}: {err}");
+        if args.contains(&"--json") {
+            for line in out.lines() {
+                serde_json::from_str::<Value>(line).unwrap_or_else(|e| panic!("{e}: {line}"));
+            }
+        }
+    }
+    // a line with nothing to redact is written as the file has it, bytes that are not UTF-8 too
+    let latin =
+        Command::new(BIN).args(["grep", "--index", "-I", "plain_caf"]).current_dir(&root).env("SCRUTATE_REDACT", "on").stdin(Stdio::null()).output().unwrap();
+    assert_eq!(latin.stdout, b"1:NOTE = 1  # plain_caf\xe9\n", "{:?}", String::from_utf8_lossy(&latin.stdout));
+    // the files as they are: plain grep, and grep --index with redaction off
+    assert!(ran(&["grep", "-n", "GITHUB"], "on").0.contains(&token));
+    assert!(ran(&["grep", "--index", "-n", "GITHUB"], "off").0.contains(&token));
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// Marks the repository may hold, each with why: none today. A secret-shaped literal in a tracked
 /// file is refused by GitHub's push protection and kept forever by a public repository, so tests
 /// build their samples at run time.
