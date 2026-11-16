@@ -323,6 +323,17 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["passw", "pwd", "secret", "token"],
             quoted,
         ),
+        // XML: an element whose name ends in a password, secret or token (`<password>`,
+        // `<ns:accessToken>`), or a .NET `<add key="..." value="...">` whose key does
+        rule(
+            "xml-secret",
+            "scrutate",
+            r#"(?i)(?:<(?:[\w.-]+:)?[\w.-]*(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key)>|\bkey=["'][^"'<>]*(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key)["'][ \t]+value=["'])([^<"'\s]{8,})(?:</|["'])"#,
+            1,
+            3.0,
+            &["passw", "pwd", "secret", "token", "apikey", "api_key", "api-key"],
+            quoted,
+        ),
         // a line of a key's base64 body read without its armour (a range that starts inside the
         // key, a search hit): base64 alone on its line, as wide as PEM writes it, near random
         rule("key-material", "scrutate", r#"(?m)(?:^|[\s:"'-])([A-Za-z0-9+/]{40,76}={0,2})["',]?[ \t]*$"#, 1, 4.5, &[], alone_on_its_line),
@@ -1688,6 +1699,37 @@ mod tests {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
             assert!(out.ends_with("&useSSL=false") || out.ends_with("&format=json") || out.ends_with("&x=1"), "{line} -> {out}");
+        }
+    }
+
+    /// A credential in an XML element (Maven's `<password>`) or in a .NET `key`/`value` pair is
+    /// redacted; an empty element, a placeholder and an element whose name only holds a keyword are
+    /// not.
+    #[test]
+    fn an_xml_credential_is_redacted() {
+        let (pw, key, token) = (fake(101, ALNUM, 14), fake(102, "abcdefghijklmnopqrstuvwxyz0123456789", 24), fake(103, ALNUM, 32));
+        for (line, secret) in [
+            (format!("    <password>{pw}</password>"), &pw),
+            (format!("<server><id>repo</id><username>deploy</username><password>{pw}</password></server>"), &pw),
+            (format!("<add key=\"ApiKey\" value=\"{key}\" />"), &key),
+            (format!("<add key='Stripe.SecretKey' value='{key}'/>"), &key),
+            (format!("<clientSecret>{token}</clientSecret>"), &token),
+            (format!("<ns:accessToken>{token}</ns:accessToken>"), &token),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && marks.iter().any(|m| m.kind == "xml-secret"), "{line} -> {out}");
+        }
+        for line in [
+            "<password/>",
+            "<password></password>",
+            "<token>${env.DEPLOY_TOKEN}</token>",
+            "<password>{{ vault_password }}</password>",
+            "<maxTokens>40961234</maxTokens>",
+            "<tokenizerClass>com.example.text.Tokenizer</tokenizerClass>",
+            "<add key=\"CacheKey\" value=\"products-v2-2024\" />",
+            "<passwordFile>conf/secrets/db.properties</passwordFile>",
+        ] {
+            assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
         }
     }
 

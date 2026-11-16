@@ -492,6 +492,7 @@ entropy thresholds; JSON's `\/` is read as `/`:
 | `basic-auth` | scrutate |
 | `env-secret` | scrutate |
 | `password` | scrutate |
+| `xml-secret` | scrutate |
 | `key-material` | scrutate |
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
@@ -519,7 +520,11 @@ number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the ba
 `changeme`). `env-secret`
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
 `KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`); `password` a quoted value of a name holding `password`, `secret` or
-`token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
+`token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
+`password`, `passwd`, `pwd`, `secret`, `secretKey`, `token` or `apiKey` (Maven's `<password>`,
+`<ns:accessToken>`), and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
+with `password`'s test of the value, so an empty element and a placeholder (`${env.X}`) stay;
+`key-material` a line of base64 alone as wide as a key's body and near
 random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside, and public
 material: an SSH key after its type, as `known_hosts` writes it, and the body of a public key, a
 certificate or a certificate request between its armour, read as a private key's is: armour
@@ -554,7 +559,7 @@ it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `
 per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files,
 none (a test holds it there). A rule's regex is built the first time a text holds one of its
 keywords, so a process pays for the rules its answers need. The page measured is the first 24,000
-bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 5 of the 32
+bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 5 of the 33
 rules. On a 16-vCPU AMD EPYC 9R14 server (three runs, load 6), a process takes 0.3 ms before any
 text and 2.1 ms more for that page; a text that needs every rule pays what building them all costs,
 10.3 ms. Redacting the page again then takes 0.45 ms (median of 101 runs). The source a page holds
