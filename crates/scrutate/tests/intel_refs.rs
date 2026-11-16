@@ -1503,6 +1503,15 @@ fn a_base_type_walk_over_a_diamond_of_many_paths_takes_linear_time() {
     }
 }
 
+/// A field looked up through bases that inherit from each other ends: a cycle (an error the
+/// compiler reports, or a file half edited) is no reason to lose the process.
+#[test]
+fn a_field_looked_up_through_an_inheritance_cycle_ends() {
+    let r = Repo::new("cs_cycle", &[("a.cs", "class A : B {\n    void Run() { helper.Go(); }\n}\n\nclass B : A {\n    void Go() { }\n}\n")]);
+    let (code, out, err) = r.exec(&["refs", "Go", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
 #[test]
 fn an_alias_and_the_name_on_one_line_are_both_references() {
     let r = Repo::new(

@@ -350,15 +350,28 @@ impl Resolver<'_> {
 
     /// The declared type of the field `name` of class `id`, inherited ones included.
     fn cs_field_ty(&mut self, id: i64, name: &str) -> Option<Ty> {
+        self.cs_field_ty_at(id, name, 0, &mut HashMap::new())
+    }
+
+    fn cs_field_ty_at(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<Ty> {
+        if seen_at(seen, id, depth) {
+            return None;
+        }
         let (path, _) = self.def_row(id)?;
         let fi = self.file(&path);
         let node = def_node(&fi, id)?;
         match cs_fields(node).into_iter().find(|(n, _)| text(*n, &fi.src) == name) {
             Some((_, Some(t))) => self.cs_type_ty(&fi, t),
             Some((_, None)) => Some(Ty::Local(id)),
-            None => {
-                self.cs_bases(id).iter().filter_map(|b| b.ok()).filter(|&b| b != id).collect::<Vec<_>>().into_iter().find_map(|b| self.cs_field_ty(b, name))
-            }
+            None if depth >= 8 => None,
+            None => self
+                .cs_bases(id)
+                .iter()
+                .filter_map(|b| b.ok())
+                .filter(|&b| b != id)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .find_map(|b| self.cs_field_ty_at(b, name, depth + 1, seen)),
         }
     }
 
