@@ -1413,6 +1413,8 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
 
 /// Most definitions a filtered symbol lookup reads before the filter, however few it keeps.
 const SCOPED_SYMBOLS_MAX: usize = 100_000;
+/// The most occurrences `references` with kinds reads to find max_results of them.
+const SCOPED_REFS_MAX: u64 = 100_000;
 
 /// A search, symbol or refs answer keeping what `f` admits.
 fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<Answer> {
@@ -1458,7 +1460,20 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
         }
         Op::Refs { name, max_results, def, .. } => {
             let name = &name.trim().to_string();
-            let mut refs = Names::new(s)?.references_in(name, *max_results, Some(f))?;
+            // a kind is known only once an occurrence is resolved, after the search counted it: with
+            // kinds the search reads more until max_results of the kept kinds are in, then cuts
+            let kept = |refs: &crate::resolve::Resolved| {
+                let ids: std::collections::HashSet<i64> = refs.definitions.iter().filter(|d| f.admits_kind(&d.kind)).map(|d| d.id).collect();
+                refs.occurrences.iter().filter(|o| f.admits_path(&o.path) && matches!(o.resolution, Ok((id, _)) if ids.contains(&id))).count() as u64
+            };
+            let mut read = *max_results;
+            let mut refs = loop {
+                let refs = Names::new(s)?.references_in(name, read, Some(f))?;
+                if !f.has_kinds() || !refs.truncated || read >= SCOPED_REFS_MAX || kept(&refs) > *max_results {
+                    break refs;
+                }
+                read = read.saturating_mul(4).min(SCOPED_REFS_MAX);
+            };
             // the definition --def names is found whatever the file filters keep
             let only = match def {
                 Some(spec) => Some(definition_at(s, &refs, name, spec)?),
@@ -1467,6 +1482,10 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
             // the file filters pick occurrences by their own file; a kind picks the definitions
             let by_kind: std::collections::HashSet<i64> = refs.definitions.iter().filter(|d| f.admits_kind(&d.kind)).map(|d| d.id).collect();
             refs.occurrences.retain(|o| f.admits_path(&o.path) && (!f.has_kinds() || matches!(o.resolution, Ok((id, _)) if by_kind.contains(&id))));
+            if refs.occurrences.len() as u64 > *max_results {
+                refs.occurrences.truncate(*max_results as usize);
+                refs.truncated = true;
+            }
             let used: std::collections::HashSet<i64> = refs.occurrences.iter().filter_map(|o| o.resolution.as_ref().ok().map(|r| r.0)).collect();
             refs.definitions.retain(|d| by_kind.contains(&d.id) && (f.admits_path(&d.path) || used.contains(&d.id) || only == Some(d.id)));
             refs.outside = refs.definitions.iter().filter(|d| !f.admits_path(&d.path)).map(|d| d.id).collect();

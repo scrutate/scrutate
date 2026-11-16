@@ -339,7 +339,9 @@ walks only the files the globs and types (or, with no type, the languages' file 
 `--max-results` counts only those; its file filters pick each occurrence by its own file, and a
 definition outside them heads the occurrences they keep, marked `(outside the filter)`
 (`outside_filter` in the JSON). `--kind` picks the definitions, and `--def` names one whatever
-the file filters keep.
+the file filters keep. With `--kind`, `--max-results` counts only the occurrences of the kinds it
+keeps: a kind is known once an occurrence is resolved, so the search reads more until that many
+are in, up to 100,000 occurrences, and an answer cut there says so.
 
 The code index holds every file the ignore rules let through, hidden files included, except:
 
