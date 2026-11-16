@@ -358,14 +358,17 @@ static NOT_SECRET_NAMES: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// A value that is no placeholder: not `true`, `false` or `null`, not one character repeated, not
-/// a variable (`$VAR`, `${VAR}`, `{{ x }}`, `%VAR%`, `<value>`), not an absolute path.
+/// a variable (`$VAR`, `${VAR}`, `{{ x }}`, `%VAR%`, `<value>`), not an absolute path. Base64 that
+/// starts with `/` and ends in `=` padding, as no path does, is no path.
 fn real_value(secret: &str, _: &str, _: &str) -> bool {
     let lower = secret.to_ascii_lowercase();
     let first = secret.chars().next().unwrap_or(' ');
+    let base64 = secret.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)) && secret.ends_with('=');
     !(matches!(lower.as_str(), "true" | "false" | "null" | "none")
         || PLACEHOLDER_PASSWORDS.contains(&lower.as_str())
         || secret.chars().all(|c| c == first)
-        || secret.starts_with(['$', '{', '%', '<', '/'])
+        || secret.starts_with(['$', '{', '%', '<'])
+        || secret.starts_with('/') && !base64
         || lower.starts_with("os."))
 }
 
@@ -1699,6 +1702,30 @@ mod tests {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
             assert!(out.ends_with("&useSSL=false") || out.ends_with("&format=json") || out.ends_with("&x=1"), "{line} -> {out}");
+        }
+    }
+
+    /// A base64 key that starts with `/` or `+` is redacted as one that starts with a letter is
+    /// (an Azure storage account key); an absolute path after a key name is not.
+    #[test]
+    fn a_base64_key_that_starts_with_a_slash_or_a_plus_is_redacted() {
+        let b64 = format!("{ALNUM}+/");
+        for (seed, first) in [(111, '/'), (112, '+'), (113, 'Q')] {
+            let key = format!("{first}{}==", fake(seed, &b64, 85));
+            let line = format!("DefaultEndpointsProtocol=https;AccountName=acct;AccountKey={key};EndpointSuffix=core.windows.net");
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(&key) && !marks.is_empty(), "{line} -> {out}");
+            assert!(out.ends_with(";EndpointSuffix=core.windows.net"), "{out}");
+        }
+        for line in [
+            "ssh_key = /home/deploy/.ssh/id_ed25519",
+            "api_key_file=/etc/app/keys/Prod2024Key",
+            "CXX_TOKEN_DIR=/usr/include/c++/v1",
+            "key_dir = /usr/local/include/c++/13",
+            "secret_path=/opt/app/keys+backup/Prod2024",
+            "auth_key = /var/lib/gtk+/themes/Adwaita",
+        ] {
+            assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
         }
     }
 

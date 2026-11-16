@@ -428,6 +428,9 @@ incompatible index by itself, and that is never breaking.
 - Redaction takes a credential in XML, a new `xml-secret` rule: the text of an element named for a
   password, secret, token or API key (Maven's `settings.xml` `<password>`) and the `value` of a
   .NET `<add key="ApiKey" value="...">`, which were shown as written ([Security](docs/SECURITY.md)).
+- Redaction takes a base64 key that starts with `/`, such as about one Azure storage
+  `AccountKey` in 32: it was left out as an absolute path. A value of base64 characters that ends
+  in `=` padding is no path; a path such as `/usr/include/c++/v1` still is.
 - `--deps PACKAGE.NAME` lists the package's own `NAME` before a method of that name, in Go and Python (`assert.Equal` is testify's function, `assert.Assertions.Equal` its method), and a bare Go package name many packages share is refused naming the first three import paths and how many more, where client-go's 59 packages named `fake` made one line of 3,604 bytes.
 - `--deps` finds a Go package in a module's subdirectory, by its import path (`go.uber.org/mock/gomock.NewController`) or by its name (`gomock.NewController`), where both said "no package of go.mod names" and only the module's own names answered: testify's `assert`, `golang.org/x/sync/errgroup` and most Go imports are such packages. Two packages of one name answer the one the repository imports, or are refused naming both import paths.
 - A source file the code index leaves out (over 1 MB, or not text or could not be parsed) is said
