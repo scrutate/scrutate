@@ -74,6 +74,20 @@ which this item first proposed, would not have moved these numbers.
    Once trees can go during a request, a later tree can reuse an id, so every `Parsed` that drops
    a tree counts it (`TREES_FREED`), and a resolver that sees the count move empties both caches
    before it reads them.
+5. **The process gives freed memory back.** The bounds above are on counted weight. On Linux with
+   glibc a process holds more: each thread allocates from an arena of its own, and the pages a
+   thread frees stay with that arena until something asks for them. `serve` answers each call
+   on a thread of its own, so over a session of large requests its RSS climbed to 1.7 to 2.2 GB
+   while what it held stayed under the bounds. After an answer is out, `serve`, `lsp` and `batch`
+   call `memory::give_back_memory`, which calls `malloc_trim(0)` when the request ran a second or
+   more or a second has passed since the last call. A long request pays the trim each time (6 to
+   77 ms, about 25), a burst of short requests once a second, and what stays unreturned is what
+   short requests freed within one second. A first form trimmed only after a request that used the
+   resolver; a session of other calls then never trimmed, and 160 `grep_code`, `search_code` and
+   `find_files` calls through one `serve` climbed from 101 to 196 MB, where trimming after each
+   held them at 62 to 83 MB (Reviewer 6's runs). On macOS, Windows and musl it does nothing:
+   musl's allocator, measured below, gives pages back by itself. The watch loop holds no resolver
+   store and does not call it.
 
 ## Measured
 
@@ -166,6 +180,35 @@ outputs are the same byte for byte. `dead` on the whole Linux tree, the set with
 memos run at once on scrutate-build-3: 4,439 s at 4.44 GB and 4,520 s at 4.37 GB, both the same
 output as before.
 
+Giving memory back (decision 5) was chosen from one round on scrutate-build (16-vCPU AMD EPYC
+9R14): one `serve` session asks `references` and `callers` of 26 names over the Python tree
+above, two sessions each, interleaved, with the same 52 answers in all:
+
+| allocator | first request | RSS after the last request | session peak | session |
+|---|---|---|---|---|
+| glibc as it is | 98.9 and 103.3 s, 521 MB | 1,683 and 1,681 MB | 1.69 GB | 200 and 175 s |
+| `malloc_trim(0)` after each answer | 100.0 and 103.3 s, 524 MB | 513 and 508 MB | 0.76 GB | 179 and 180 s |
+| `M_ARENA_MAX` 2 at start | 106.2 and 101.9 s, 518 MB | 1,274 and 1,265 MB | 1.29 GB | 178 and 172 s |
+
+The musl build that CI ships (24da6b5e, before the memos) against a glibc build of the same
+commit, one session each: musl ended at 452 MB (peak 539 MB) and glibc at 1,256 MB, with a first
+request of 669.6 s against 633.9 s. With the rule as built (Rust 1.100.0, the same box,
+alternated with a build that never trims): the 26-name session twice, first request 99.8 and
+99.6 s at 503 MB, after the last request 747 and 516 MB, peak 0.81 GB, 36 and 27 trims of 48 to
+51 ms, the same answers; in the first session the last call ran within a second of the trim
+before it, so what it freed stayed until a next call. 160 `grep_code`, `search_code` and
+`find_files` calls through one `serve` ended at 104 MB, against 190 MB never trimming and 98 MB
+trimming after every call. 300 short `references` and `callers` calls on a 200-file tree took
+3.70 and 3.55 s with 4 trims (under 0.4 ms each), against 4.13 and 3.71 s; 300 `grep_code` calls
+on a 20,000-file tree took 2.34 to 2.82 s (2.64 on average over six runs) with 3 trims (3 to 6
+ms in all), against 2.51 to 3.03 s (2.70).
+
+The evidence for a whole session is this table, not a test. A session small enough for a test
+never drops trees past the caps, which is what leaves freed pages in many arenas: 40 calls over a
+200-file tree whose first call loads every file went from 176 to 177 MB with no trim at all. So
+`tests/memory_given_back.rs` shows the call gives freed pages back (262 MB stayed without it, none
+with it), and `memory::tests` shows when the rule calls it.
+
 ## Other choices
 
 - **An occurrence table in the index** (every name with the lines that hold it). It replaces the
@@ -180,6 +223,15 @@ output as before.
   more than the parse it saves; a column is read alone.
 - **A second store of trees per request.** It would hold trees the process store already
   bounds, and the two bounds would add up for the same trees.
+- **Fewer arenas (`M_ARENA_MAX` 2).** It left the session at 1.27 GB and cost up to 7 percent on
+  the first request.
+- **Giving memory back after every answer.** A trim costs about 25 ms however small the request,
+  so a burst of short editor requests would pay it each time.
+
+## Not done
+
+- Another allocator for the whole process (one that returns pages itself, as musl's does): a new
+  dependency, measured nowhere yet.
 
 ## Consequences
 

@@ -882,7 +882,10 @@ resolver holds at most 512 MiB of weight, plus 32 MiB for the two memos below an
 use. Beside the set, a request keeps, by path, what it learned of each file it read (definitions
 and imports, used while the file's bytes keep the hash they had) and the instantiations each class
 name was found at, under 16 MiB each (`FACTS_MEMO`, `NESTED_MEMO`), so a file the set dropped is
-read and hashed again but not looked up again. A file is parsed only when the resolver reads its tree: the imports of a file the index
+read and hashed again but not looked up again. Those bounds are on counted weight; on Linux with
+glibc the pages a request's thread frees stay with its allocator arena, so `serve`, `lsp` and
+`batch` give freed memory back after an answer (`memory::give_back_memory`, at most once a second
+for short requests; [ADR 0008](adr/0008-resolver-reads-bindings-from-the-index.md)). A file is parsed only when the resolver reads its tree: the imports of a file the index
 parsed come from the index, stored by content beside its artifact
 ([ADR 0008](adr/0008-resolver-reads-bindings-from-the-index.md)). A process that answers many
 requests keeps each file's parse for the next one, found by its content and bounded by weight

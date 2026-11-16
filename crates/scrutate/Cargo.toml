@@ -158,6 +158,10 @@ notify = { version = "=9.0.0-rc.9", default-features = false, features = ["macos
 # F_BARRIERFSYNC for the index's files (index::sync_file); already in the tree through other crates
 libc = "0.2"
 
+# malloc_trim after a long-lived front end's answers (memory::give_back_memory)
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"
+
 # a write goes through directories opened one by one, never through a link (already in the
 # tree through tar)
 [target.'cfg(unix)'.dependencies]

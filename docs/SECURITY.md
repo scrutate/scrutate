@@ -703,6 +703,8 @@ link to a file outside the package and a package directory that is a link out of
     from a byte copy with bounds-checked slicing; and on macOS one `fcntl(F_BARRIERFSYNC)` per
     file the index flushes (`sync_file`), on a descriptor the `File` it borrows keeps open, with
     no third argument;
+  - `memory.rs` (Linux with glibc): one `malloc_trim(0)` after an answer of `serve`, `lsp` or
+    `batch`, which takes no pointer and only gives free pages back;
   - `policy.rs`: one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
     whose size it passes;
   - `instant.rs`: on Linux one `statfs` per search root, and per directory named `proc` or `sys`
@@ -806,6 +808,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/kq.rs` | 11 |
   | `crates/scrutate/src/lazy_bind.rs` | 14 |
   | `crates/scrutate/src/lex.rs` | 1 |
+  | `crates/scrutate/src/memory.rs` | 1 |
   | `crates/scrutate/src/npy.rs` | 14 |
   | `crates/scrutate/src/policy.rs` | 2 |
   | `crates/scrutate/src/rewrite.rs` | 2 |

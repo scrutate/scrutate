@@ -1072,6 +1072,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
             continue; // a response: this server sends no requests
         }
         let cancelled = || (-32800, "request cancelled".to_string());
+        let began = std::time::Instant::now();
         let started = running.lock().unwrap_or_else(|p| p.into_inner()).start(id);
         let Some(flag) = started else {
             send(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": cancelled().0, "message": cancelled().1}}));
@@ -1094,6 +1095,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
             }
             Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
         });
+        crate::memory::give_back_memory(began);
     }
     Ok(if srv.shutdown { 0 } else { 1 })
 }

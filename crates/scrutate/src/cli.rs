@@ -2998,6 +2998,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
             }
         };
         if let Some(tool) = req.get("op").and_then(|v| v.as_str()) {
+            let started = Instant::now();
             // any operation, named and given arguments as an MCP tool call is
             let rec = match Op::from_tool(tool, &req).and_then(|op| s.run_as_is(&op)) {
                 Ok(answer) => {
@@ -3008,6 +3009,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
                 Err(e) => serde_json::json!({"op": tool, "error": e.to_string()}),
             };
             writeln!(out, "{rec}")?;
+            crate::memory::give_back_memory(started);
             continue;
         }
         let query = req.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();

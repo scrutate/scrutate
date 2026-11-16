@@ -371,6 +371,7 @@ impl Reporter<'_> {
 /// stops waiting for the index or for its turn, an index update or a structural search it runs
 /// stops, and an answer already being computed is dropped.
 fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, call: Call) {
+    let started = std::time::Instant::now();
     let Call { id, name, args, stateless, structured, progress, cancelled } = call;
     let gone = || cancelled.load(Ordering::Relaxed);
     let limit = progress.is_null().then_some(BUILD_WAIT);
@@ -413,6 +414,7 @@ fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, 
         }
         respond(send, &id, stateless, result);
     }
+    crate::memory::give_back_memory(started);
 }
 
 /// The longest message read, as the language server's: a line without its end past it is dropped,

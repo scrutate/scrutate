@@ -33,6 +33,7 @@ pub mod langs;
 pub mod lex;
 pub mod lsp;
 pub mod mcp;
+pub mod memory;
 pub mod models;
 pub mod names;
 pub mod npy;
