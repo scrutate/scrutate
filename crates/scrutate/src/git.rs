@@ -20,7 +20,7 @@ pub(crate) enum New {
 
 /// One file of the diff: its paths on each side (None where it does not exist), git's blob ids,
 /// and the changed lines of each side as (first, last).
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct Entry {
     pub(crate) old: Option<String>,
     pub(crate) new: Option<String>,

@@ -133,6 +133,7 @@ fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact
         files: Vec::new(),
         base_copies: Vec::new(),
         head_paths: Vec::new(),
+        membership: None,
     };
     let blobs = git.blobs(&entries.iter().flat_map(|e| b.blobs_wanted(e)).collect::<BTreeSet<_>>())?;
     for e in &entries {
@@ -337,9 +338,17 @@ struct Builder<'a> {
     files: Vec<String>,
     base_copies: Vec<(String, Vec<u8>)>,
     head_paths: Vec<String>,
+    /// the code index's walk rules, read once when a path needs them
+    membership: Option<crate::files::Membership>,
 }
 
 impl Builder<'_> {
+    /// Whether the code index's rules take `path`.
+    fn member(&mut self, path: &str) -> bool {
+        let root = self.s.ix.root.clone();
+        self.membership.get_or_insert_with(|| crate::files::Membership::new(&root)).may_contain(&root.join(path))
+    }
+
     fn blobs_wanted(&self, e: &Entry) -> Vec<String> {
         if e.submodule || e.binary {
             return Vec::new();
@@ -382,10 +391,27 @@ impl Builder<'_> {
             self.notes.push((path, Note::Said("a binary file")));
             return Ok(());
         }
-        if let Some(new) = e.new.as_deref().filter(|n| !self.s.ix.has_file(n)) {
-            self.notes.push((new.to_string(), Note::Said("not in the index: it has no definitions to name")));
-            return Ok(());
-        }
+        // a file renamed or moved where the index's rules leave it out is gone as far as callers go;
+        // the rules decide, not the index's rows: it keeps a row for a file it holds nothing of, and
+        // a reviewed commit may hold paths this tree's index never saw
+        let renamed = matches!((&e.old, &e.new), (Some(o), Some(n)) if o != n);
+        let gone;
+        let e = match e.new.as_deref() {
+            Some(new) if !self.s.ix.has_file(new) || renamed && !self.member(new) => {
+                self.notes.push((new.to_string(), Note::Said("not in the index: it has no definitions to name")));
+                // only a move takes the file away: one edited in place is still where it was
+                if e.old.is_none() || !renamed || self.member(new) {
+                    return Ok(());
+                }
+                // lines as git counts them: a last line without a line feed is one too
+                let lines =
+                    blobs.get(&e.old_blob).map_or(0, |b| b.iter().filter(|&&c| c == b'\n').count() + usize::from(b.last().is_some_and(|&c| c != b'\n'))) as i64;
+                gone = Entry { new: None, new_blob: String::new(), new_lines: Vec::new(), old_lines: vec![(1, lines)], untracked: false, ..e.clone() };
+                &gone
+            }
+            _ => e,
+        };
+        let path = e.new.as_deref().or(e.old.as_deref()).unwrap_or_default().to_string();
         let blob = |sha: &str| blobs.get(sha).map(Vec::as_slice).unwrap_or_default();
         if let Some(old) = &e.old {
             self.base_copies.push((old.clone(), blob(&e.old_blob).to_vec()));

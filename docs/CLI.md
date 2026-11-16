@@ -675,7 +675,8 @@ line per item:
 
 Items sort by distance, path and line, the same every run. A file with no definitions to name
 gets a line under `notes`: a binary file, a submodule (its commits are not read), a file the
-index leaves out. `--json` gives the envelope, its `result` with `against`, `base` (the commit
+index leaves out. A file moved to a path the index's rules leave out (a directory `.ignore` or
+`.gitignore` names) reads as deleted, its definitions and callers as `git rm` of it gives. `--json` gives the envelope, its `result` with `against`, `base` (the commit
 compared with), `staged`, `depth`, `changed` (each with `status`), `callers` (each with
 `distance`, `via`, the location of what it calls, `undecided` and `calls_deleted`), `tests`
 (`path`, `distance`, `via`), `notes`, `findings` (each with `kind`, `severity`, `path`, `start`,

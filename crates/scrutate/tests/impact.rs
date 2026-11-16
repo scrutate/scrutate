@@ -233,6 +233,47 @@ fn the_callers_of_a_deleted_definition_are_followed_to_their_callers_and_tests()
     assert!(callers[1..].iter().all(|c| c["calls_deleted"] == false), "{v}");
 }
 
+/// A file moved to a path the index's rules leave out (a directory `.ignore` names, or one
+/// `.gitignore` names, the file added with `-f`) is gone as far as the index goes: its
+/// definitions come out deleted, with the callers and tests a `git rm` of the file gives, in the
+/// working tree and staged.
+#[test]
+fn a_file_renamed_out_of_the_index_reads_as_deleted() {
+    let summary = |v: &Value| (v["changed"].clone(), v["callers"].clone(), v["tests"].clone());
+    let removed = chain("renamed_out_rm");
+    removed.git(&["rm", "-q", "lib/core.py"]);
+    assert_eq!(removed.run(&["index"]).0, 0);
+    for form in [&[][..], &["--staged"][..]] {
+        let want = summary(&removed.json(form));
+        let changed: Vec<&str> = want.0.as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert!(changed.contains(&"lib/core.py:1-2") && want.1.as_array().unwrap().iter().any(|c| c["id"] == "lib/mid.py:4-5"), "{form:?}: {want:?}");
+        for rules in [".ignore", ".gitignore"] {
+            let to = "old/core.py";
+            let t = chain(&format!("renamed_out{}_{}", rules.replace('.', "_"), form.len()));
+            t.write(rules, "old/\n");
+            t.commit("leave old/ out");
+            fs::create_dir_all(t.root.join("old")).unwrap();
+            fs::rename(t.root.join("lib/core.py"), t.root.join(to)).unwrap();
+            t.git(&["add", "-A"]);
+            t.git(&["add", "-f", to]);
+            let how = rules;
+            assert_eq!(t.run(&["index"]).0, 0);
+            let v = t.json(form);
+            assert_eq!(summary(&v), want, "{how} {form:?}: {v}");
+            assert!(v["notes"].as_array().unwrap().iter().any(|n| n["path"] == to), "{how} {form:?}: {v}");
+        }
+    }
+    // a tracked file the rules leave out, edited where it is: not moved, so nothing reads as deleted
+    let t = chain("renamed_out_in_place");
+    t.write(".gitignore", "lib/core.py\n");
+    t.commit("ignore core, still tracked");
+    t.write("lib/core.py", "def deepest(x):\n    return x + 2\n\n\ndef spare(x):\n    return x\n");
+    assert_eq!(t.run(&["index"]).0, 0);
+    let v = t.json(&[]);
+    assert!(v["changed"].as_array().unwrap().iter().all(|c| c["status"] != "deleted"), "{v}");
+    assert!(v["notes"].as_array().unwrap().iter().any(|n| n["path"] == "lib/core.py"), "{v}");
+}
+
 #[test]
 fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
     let t = chain("deletednamesake");

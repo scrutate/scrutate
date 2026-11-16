@@ -311,6 +311,9 @@ incompatible index by itself, and that is never breaking.
   directory, or a link it leads through is pointed elsewhere), as `watch` does, where they kept
   answering from the old tree; a command line call made in the old tree is no longer answered by
   that session.
+- `impact` and `review` read a file moved where the index's rules leave it out (a directory
+  `.ignore` or `.gitignore` names) as deleted, with its callers and tests as `git rm` of it gives,
+  where they listed nothing ([CLI](docs/CLI.md)).
 - A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
   does the work itself, where a `serve` stopped or stuck at that point and a request over the
   socket's buffer (a long search with several `--alt`) left the call waiting for good.
