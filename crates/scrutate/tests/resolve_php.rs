@@ -249,6 +249,31 @@ fn a_variable_a_closure_captures_by_reference_has_the_type_it_has_outside() {
     assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php")]));
 }
 
+/// A plain `use` imports a class and `use function` a function: an unqualified call takes only a
+/// function import, else the global function, and a class name only a class import.
+#[test]
+fn a_class_use_and_a_function_use_bind_only_their_own_kind() {
+    let ctl = "<?php\nnamespace App\\Http;\n\nuse App\\Models\\Config;\nuse function App\\Support\\request;\nuse App\\{Models\\Cache, function Support\\session};\n\nclass Ctl\n{\n    public function run() {\n        $c = new Config();\n        $r = new Request();\n        request();\n        cache();\n        $s = new Session();\n        session();\n        return config('app.name');\n    }\n}\n";
+    let r = Repo::new(
+        "use_kinds",
+        &[
+            ("Ctl.php", ctl),
+            ("helpers.php", "<?php\nfunction config($key) { return $key; }\nfunction cache() { return 1; }\n"),
+            ("support.php", "<?php\nnamespace App\\Support;\n\nfunction request() { return 1; }\nfunction session() { return 1; }\n"),
+            ("Models/Config.php", "<?php\nnamespace App\\Models;\n\nclass Config\n{\n}\nclass Cache\n{\n}\n"),
+            ("Http/Request.php", "<?php\nnamespace App\\Http;\n\nclass Request\n{\n}\nclass Session\n{\n}\n"),
+        ],
+    );
+    let at = |name: &str, line: u64| r.resolved(name).get(&("Ctl.php".to_string(), line)).cloned().unwrap_or_default();
+    assert_eq!(at("config", 17), "helpers.php", "a call past a class use of the name");
+    assert_eq!(at("cache", 14), "helpers.php", "a call past a grouped class use of the name");
+    assert_eq!(at("request", 13), "support.php", "a call through use function");
+    assert_eq!(at("session", 16), "support.php", "a call through a grouped use function");
+    assert_eq!(at("Request", 12), "Http/Request.php", "a class past a function use of the name");
+    assert_eq!(at("Session", 15), "Http/Request.php", "a class past a grouped function use of the name");
+    assert_eq!(at("Config", 11), "Models/Config.php");
+}
+
 #[test]
 fn refs_find_a_use_alias_written_in_another_case() {
     let app = "<?php\nnamespace App;\nuse function Lib\\phpfn as pf;\nuse Lib\\Tool as T;\nfunction upper() { return PF(); }\nfunction cls() { return t::make(); }\nfunction cls2() { return T::make(); }\n";

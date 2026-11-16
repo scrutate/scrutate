@@ -561,7 +561,10 @@ PHP has rules of its own too:
 
 - A class or function name is made full through the `use` that binds its first part (plain,
   aliased, grouped, `use function`), else through the `namespace` it is written in (a
-  `namespace X;` line or a braced block); a name with a leading `\` is full as it is.
+  `namespace X;` line or a braced block); a name with a leading `\` is full as it is. As in PHP,
+  an unqualified function call takes only a `use function`, and a class name or the first part
+  of a qualified name only a plain `use`: `use App\Models\Config;` leaves `config()` the
+  global function.
 - A full name `A\B\C` is the class, interface, trait or enum named `C` whose file declares the
   namespace `A\B` where it defines it; an unqualified function call that finds none there takes
   the global function, as PHP does.
