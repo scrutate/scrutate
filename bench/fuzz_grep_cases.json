@@ -109,5 +109,26 @@
   "files": {
    "dir2/A.TXT": "//4gYmFkIA0K"
   }
+ },
+ {
+  "name": "an inverted multi-line search over a UTF-16 file of 7 bytes",
+  "why": "R4-FZ-03-n1: ripgrep cuts the last U+FFFD to two of its bytes, EF BF, which `mend` reads as the whole one",
+  "args": [
+   "-i",
+   "-S",
+   "-v",
+   "--hidden",
+   "-H",
+   "-U",
+   "Foo\\nFOO",
+   "."
+  ],
+  "dirs": [
+   ".git",
+   ".hid"
+  ],
+  "files": {
+   ".hid/e.tmp": "//69UAGgdQ=="
+  }
  }
 ]

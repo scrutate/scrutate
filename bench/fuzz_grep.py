@@ -118,9 +118,8 @@ def make():
 
 def odd_utf16(data):
     """UTF-16 behind its byte-order mark with a last byte that has no pair, which decodes to U+FFFD.
-    ripgrep reading such a file (not mapping it) under -v -U with a pattern that can match a line
-    break prints that U+FFFD cut to its first byte, `\xef`, a defect of its own; scrutate prints it
-    whole, as ripgrep does when it maps the file."""
+    ripgrep 15.2.0 sometimes prints that U+FFFD cut short, to `EF` or `EF BF`, under -v -U with a
+    pattern that can match a line break, a defect of its own (`mend`); scrutate prints it whole."""
     return data[:2] in (b"\xff\xfe", b"\xfe\xff") and len(data) % 2 == 1
 
 def pattern():
@@ -202,7 +201,7 @@ def ours(a):
     return out
 
 
-def run(tool, a):
+def run(tool, a, again=False):
     cmd = [RG, "-n", "--no-heading", "--no-messages"] + a if tool == "rg" else [BIN, "grep"] + ours(a)
     if tool == "rg" and "--sort" in a:
         cmd.insert(cmd.index("--sort") + 1, "path")
@@ -215,7 +214,7 @@ def run(tool, a):
     out = out[:-1] if out and out[-1] == "" else out
     lines = [l[2:] if l.startswith("./") else l for l in out]
     if tool == "rg" and STATE["odd16"]:
-        lines = [mend(l, a) for l in lines]
+        lines = [mend(l, a, not again) for l in lines]
     return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr
 
 def shown(l):
@@ -223,16 +222,17 @@ def shown(l):
     return l[:100].encode("utf-8", "surrogateescape").decode("utf-8", "replace")
 
 
-def mend(l, a):
-    """`l`, a line ripgrep printed for `a`, with its cut U+FFFD read as the whole one where the line
-    is of a file `odd_utf16` marked. ripgrep 15.2.0's defect: remove this once a release prints
-    the whole U+FFFD for `rg --no-mmap -v -U 'x\\ny'` on FF FE ` bad \\r\\n`."""
+def mend(l, a, count=True):
+    """`l`, a line ripgrep printed for `a`, with its U+FFFD cut short (to `EF` or `EF BF`) read as the
+    whole one where the line is of a file `odd_utf16` marked. ripgrep 15.2.0's defect: remove this
+    once a release prints the whole U+FFFD for `rg --no-mmap -v -U 'x\\ny'` on FF FE ` bad \\r\\n`."""
     global mended
     named = [x for x in a if x in STATE["odd16"]]
     own = any(l.startswith((f + ":", f + "-")) for f in STATE["odd16"]) or (named == a[-1:] and "-H" not in a)
-    if own and l.endswith("\udcef"):
-        mended += 1
-        return l[:-1] + "\ufffd"
+    for cut in ("\udcef\udcbf", "\udcef"):
+        if own and l.endswith(cut):
+            mended += count
+            return l[: -len(cut)] + "\ufffd"
     return l
 
 
@@ -244,7 +244,7 @@ def only(x, y):
     left.subtract(Counter(y))
     return [l for l, c in left.items() if c > 0]
 
-t0, n, compared, nonempty, diffs, known, kinds, mended = time.time(), 0, 0, 0, 0, 0, {}, 0
+t0, n, compared, nonempty, diffs, known, kinds, mended, unsettled = time.time(), 0, 0, 0, 0, 0, {}, 0, 0
 CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuzz_grep_cases.json")
 
 
@@ -268,7 +268,7 @@ def load(case):
 
 def compare(a, label=None):
     """Run both tools on `a` in WORK and count the outcome; a difference is kept and printed."""
-    global n, compared, nonempty, diffs, known
+    global n, compared, nonempty, diffs, known, unsettled
     n += 1
     r, rc, rerr = run("rg", a)
     if rc == 2 and rerr.strip():
@@ -286,6 +286,13 @@ def compare(a, label=None):
         changed = only(run("rg", named)[0], run("sc", named)[0]) + only(run("sc", named)[0], run("rg", named)[0])
     if ("-v" in a or "^$" in a) and changed and all(in_nul_file(l) for l in changed):
         known += 1
+        return
+    # ripgrep asked again: where it answers otherwise and scrutate gave its second answer, ripgrep
+    # is no oracle for the case (its state between files, its threads), which is set aside, shown
+    r2, rc2, _ = run("rg", a, again=True)
+    if (r2, rc2) != (r, rc) and s == r2 and (sc == rc2 or rc2 == 2):
+        unsettled += 1
+        print(f"    set aside, ripgrep answered two ways: {a!r}")
         return
     diffs += 1
     key = " ".join(x for x in a if x.startswith("-") and not x[1:].isdigit())
@@ -325,7 +332,7 @@ while time.time() - t0 < SECONDS:
         if "--sort" not in a:
             compare(["--sort", *a])
 shutil.rmtree(WORK, ignore_errors=True)
-print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte, {mended} lines of ripgrep's mended (`mend`)" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
+print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte, {mended} lines of ripgrep's mended (`mend`), {unsettled} set aside where ripgrep answered two ways" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
 if not diffs:
     shutil.rmtree(HERE, ignore_errors=True)
     if a_.keep:
