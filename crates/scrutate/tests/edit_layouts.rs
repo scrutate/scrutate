@@ -475,6 +475,8 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
     let edits = scrutate::mcp::Settings::new(None).allowing_edits();
     let cancel = Arc::default();
     let (mut applied, mut refused, mut tainted_cases, mut led_cases) = (0, 0, 0, 0);
+    // each case's first answer, by its name
+    let mut first: Vec<bool> = Vec::new();
     // (language, kind) -> (targets reached, applied, refused)
     let mut reached: std::collections::BTreeMap<(String, &str), (usize, usize, usize)> = Default::default();
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
@@ -496,6 +498,7 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
         let key = (c.file.rsplit('.').next().unwrap_or("").to_string(), c.kind());
         reached.entry(key.clone()).or_default().0 += 1;
         let mut dry = call(args.clone());
+        first.push(dry.is_error);
         let mut args = args;
         // a name two definitions carry (a Rust struct and its impl) is refused with one location
         // to pass, which must then edit the target
@@ -606,9 +609,56 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
             }
         }
     }
+    // the same cases with the file named like the target (a file's module chunk carries the
+    // file's name) and with a sibling whose name differs from the target's only by case: each
+    // answers as its original first did
+    let vroot = base.join("variants");
+    fs::create_dir_all(vroot.join(".git")).unwrap();
+    let mut variants = Vec::new();
+    for (k, c) in cases.iter().enumerate().skip(FIXED.len()) {
+        let name = c.name().to_string();
+        if c.target.1 != 0 || name.is_empty() || name.contains('.') {
+            continue;
+        }
+        let ext = c.file.rsplit('.').next().unwrap_or("");
+        variants.push((k, format!("like{k}/{name}.{ext}"), c.text.clone()));
+        let mut chars = name.chars();
+        let head = chars.next().unwrap();
+        let flip: String = if head.is_uppercase() { head.to_lowercase().collect() } else { head.to_uppercase().collect() };
+        let flip = flip + chars.as_str();
+        if flip != name && !c.text.contains(&flip) {
+            let sibling = c.pieces[c.target.0].text.replace(&name, &flip);
+            let sep = if c.text.ends_with('\n') { "" } else { "\n" };
+            variants.push((k, format!("case{k}.{ext}"), format!("{}{sep}\n{sibling}\n", c.text)));
+        }
+    }
+    for (_, file, text) in &variants {
+        let p = vroot.join(file);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    }
+    let vsession = Session::open(&vroot, Every::given(Some(0.0))).unwrap();
+    for (k, file, text) in &variants {
+        let c = &cases[*k];
+        let got = scrutate::mcp::call_tool(&vsession, "edit_symbol", &json!({"symbol": c.name(), "path": file, "new_text": c.new_text()}), &edits, &cancel);
+        if got.is_error != first[*k] {
+            broken.push(format!(
+                "{file}: answers {} where {} {}: {}",
+                if got.is_error { "refused" } else { "applied" },
+                c.file,
+                if first[*k] { "was refused" } else { "applied" },
+                got.text
+            ));
+        }
+        if fs::read_to_string(vroot.join(file)).unwrap() != *text {
+            broken.push(format!("{file}: a dry run changed the file"));
+        }
+    }
+    drop(vsession);
     eprintln!(
-        "edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}; {tainted_cases} tainted new texts refused; {led_cases} led by a comment applied",
-        cases.len()
+        "edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}; {tainted_cases} tainted new texts refused; {led_cases} led by a comment applied; {} named like the file or beside a name in another case, as their originals",
+        cases.len(),
+        variants.len()
     );
     for ((lang, kind), (n, a, r)) in &reached {
         eprintln!("  {lang:<5} {kind:<26} targets {n:>3}  applied {a:>3}  refused {r:>3}");

@@ -1189,7 +1189,9 @@ file's top level or a C++ namespace, `[module] N` in `read_code`) and a window a
 targets: a name that matches only one is refused with its kind and lines (`N names a module
 (b.cpp:1-3), not a definition`); name a definition inside it. When the name also matches a
 definition, the module or window is no candidate (a file's module chunk carries the file's name,
-so `func G` in `g.go` is one candidate). A call is a dry run unless
+so `func G` in `g.go` is one candidate). A name matches whatever its case, as `read_code` takes
+it, but when some candidates' own names are the name in the case typed, only those are (`F` the
+class `F`, `f` its method `F.f`); in a case none has, all stay. A call is a dry run unless
 it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewrite` form) and
 `hash:`, 16 hex digits of the file's content hash. A file marked read-only (on Unix, no write
 bit for its owner; on Windows, the read-only attribute) is refused, a dry run too: `PATH is

@@ -1055,3 +1055,40 @@ fn a_definition_named_like_its_file_is_edited_not_taken_for_two() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// A name that, in the case typed, is the last part of one definition's name edits that one, where
+/// the case-blind match also named another (class F and method F.f, functions Foo and foo); a name in
+/// a case none has still names them all, and one only the case-blind match finds is still found.
+#[test]
+fn the_case_typed_picks_the_definition_when_it_is_one_of_them() {
+    let java = "package a;\n\nclass F {\n    int f() { return 0; }\n}\n";
+    let py = "def Foo():\n    return 1\n\ndef foo():\n    return 2\n";
+    let applies = [
+        ("a/F.java", java, "F", "class F {\n    int f() { return 5; }\n}\n", "package a;\n\nclass F {\n    int f() { return 5; }\n}\n"),
+        ("b/F.java", java, "f", "    int f() { return 7; }\n", "package a;\n\nclass F {\n    int f() { return 7; }\n}\n"),
+        ("c/F.java", java, "F.f", "    int f() { return 9; }\n", "package a;\n\nclass F {\n    int f() { return 9; }\n}\n"),
+        ("x.py", py, "Foo", "def Foo():\n    return 5\n", "def Foo():\n    return 5\n\ndef foo():\n    return 2\n"),
+        ("y.py", py, "foo", "def foo():\n    return 7\n", "def Foo():\n    return 1\n\ndef foo():\n    return 7\n"),
+        // PHP's function names are case-blind, so two functions cannot differ only by case there
+        ("p.php", "<?php\nfunction Foo() { return 1; }\n", "foo", "function Foo() { return 5; }\n", "<?php\nfunction Foo() { return 5; }\n"),
+    ];
+    let files: Vec<(&str, &str)> = applies.iter().map(|c| (c.0, c.1)).chain([("z.py", py)]).collect();
+    let mut s = Server::start("case_typed", &files, &["--allow-edits"]);
+    let mut failed = Vec::new();
+    for (file, _, name, new_text, want) in applies {
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file}: refused: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        if err || s.file(file) != want {
+            failed.push(format!("{file}: {out}\n{:?}", s.file(file)));
+        }
+    }
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "FOO", "path": "z.py", "new_text": "def FOO():\n    return 3\n"}));
+    if !(err && out.contains("FOO names 2 definitions in z.py")) || s.file("z.py") != py {
+        failed.push(format!("z.py: a case no definition has was not refused naming both: {out}"));
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

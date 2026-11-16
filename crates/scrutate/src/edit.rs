@@ -375,6 +375,12 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     // definition too, the definitions alone are the candidates
     let defined = |r: &crate::index::ChunkRow| !matches!(r.kind.as_str(), "module" | "window");
     let found: Vec<_> = if found.iter().any(|(r, ..)| defined(r)) { found.into_iter().filter(|(r, ..)| defined(r)).collect() } else { found };
+    // the lookup is case-blind: the definitions whose own name is the one typed, in its case, are the
+    // candidates when there are some, so it narrows the match and never widens it
+    let last = |q: &str| q.rsplit('.').next().unwrap_or(q).to_string();
+    let typed = last(symbol);
+    let found: Vec<_> =
+        if found.iter().any(|(r, ..)| last(&r.qualname) == typed) { found.into_iter().filter(|(r, ..)| last(&r.qualname) == typed).collect() } else { found };
     if found.len() != 1 {
         let first = &found[0].0;
         let example = format!("{}:{}", crate::fmt::shown(&first.path), first.start);
