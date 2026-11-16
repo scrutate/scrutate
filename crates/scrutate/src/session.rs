@@ -316,6 +316,8 @@ impl Session {
                 let _ = std::fs::remove_file(at);
                 #[cfg(windows)]
                 windows::wake(&at);
+                #[cfg(not(any(unix, windows)))]
+                let _ = at;
             }
             if self.notes().is_some() {
                 let (fresh, notes) = crate::fresh::for_session(&now);
