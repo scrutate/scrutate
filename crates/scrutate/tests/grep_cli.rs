@@ -1159,6 +1159,29 @@ fn where_a_walked_file_stops_at_a_nul_does_not_depend_on_the_files_before_it() {
 }
 
 #[test]
+fn a_walked_file_whose_nul_comes_late_is_listed_as_ripgrep_lists_it_alone() {
+    // -l after a line that grew the reader's buffer, on one thread or many: the file is listed as
+    // ripgrep lists it searched alone (a match before the read that meets the NUL)
+    let d = Dir::new("grownlist");
+    let mut long = vec![b'x'; 100_000];
+    long.push(b'\n');
+    d.write("a/long.txt", &long);
+    let mut nul = b"beta 0\n".to_vec();
+    while nul.len() <= 70_000 {
+        nul.extend_from_slice(b"y\n");
+    }
+    nul.extend_from_slice(b"\0 beta\n");
+    d.write("b/nul.txt", &nul);
+    for threads in ["-j1", "-j8"] {
+        // -c leaves the file out, as ripgrep's count of it searched alone does
+        for (flag, want) in [("-l", vec!["b/nul.txt"]), ("-c", vec![])] {
+            let (_, out, err) = d.run(&["grep", threads, "--sort", flag, "beta", "a", "b"]);
+            assert_eq!(out.lines().collect::<Vec<_>>(), want, "{threads} {flag} {err}");
+        }
+    }
+}
+
+#[test]
 fn a_walked_file_with_an_early_nul_byte_is_searched_as_ripgrep_reads_it() {
     // ripgrep reads a file's first 3 bytes on their own (its BOM check, encoding_rs_io's BomPeeker)
     // and stops at the read that meets the NUL: a match on a line ending in those 3 bytes prints
