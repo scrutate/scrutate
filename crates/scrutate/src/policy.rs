@@ -226,7 +226,7 @@ impl Machine for System {
 
     fn show(&self, running: Option<usize>, threads: usize) {
         static DEBUG: OnceLock<bool> = OnceLock::new();
-        if !*DEBUG.get_or_init(|| std::env::var_os("SCRUTATE_GREP_DEBUG").is_some_and(|v| !v.is_empty())) {
+        if !*DEBUG.get_or_init(|| crate::config::env_on("SCRUTATE_GREP_DEBUG")) {
             return;
         }
         match running {

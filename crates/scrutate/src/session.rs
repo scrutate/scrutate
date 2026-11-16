@@ -686,11 +686,11 @@ impl Session {
 
 /// Whether the command line may use a running session (`SCRUTATE_NO_SESSION` turns it off).
 pub fn wanted() -> bool {
-    std::env::var_os("SCRUTATE_NO_SESSION").is_none_or(|v| v.is_empty() || v == "0")
+    !crate::config::env_on("SCRUTATE_NO_SESSION")
 }
 
 fn debug(what: &str) {
-    if std::env::var_os("SCRUTATE_SESSION_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+    if crate::config::env_on("SCRUTATE_SESSION_DEBUG") {
         eprintln!("[scrutate] session: {what}");
     }
 }

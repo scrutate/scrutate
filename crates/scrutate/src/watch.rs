@@ -633,7 +633,7 @@ fn moves_a_dir(root: &Path, e: &Event, walked: Option<&Walked>) -> bool {
 }
 
 fn session_debug(why: &str) {
-    if std::env::var_os("SCRUTATE_SESSION_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+    if crate::config::env_on("SCRUTATE_SESSION_DEBUG") {
         eprintln!("[scrutate] session: every file, {why}");
     }
 }
@@ -1099,7 +1099,7 @@ fn sync_watches(_: &mut fsevents::Stream, root: &Path, code: &CodeWalk, _: Optio
 
 /// `SCRUTATE_WATCH_DEBUG`: one line on stderr per burst, saying what it costs.
 fn debug() -> bool {
-    std::env::var_os("SCRUTATE_WATCH_DEBUG").is_some_and(|v| !v.is_empty())
+    crate::config::env_on("SCRUTATE_WATCH_DEBUG")
 }
 
 /// Watch `root` until `stop` is set. Once the watch is in place `on_change` runs, then `on_ready`;

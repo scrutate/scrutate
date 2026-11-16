@@ -234,6 +234,35 @@ fn a_ranked_search_through_a_session_prints_what_a_fresh_process_prints() {
     assert_eq!(through, want);
 }
 
+/// `SCRUTATE_NO_SESSION` is off for `0`, `false`, `no`, `off` and empty, as every on/off variable.
+#[test]
+fn no_session_set_to_false_no_or_off_still_uses_the_session() {
+    let r = Repo::new("no_session_off");
+    let _server = Server::start(&r.root);
+    for off in ["0", "false", "no", "off", "OFF", ""] {
+        let (_, said) = r.through(&["find", "helper"], &[("SCRUTATE_NO_SESSION", off)]);
+        assert_eq!(said, "[scrutate] session: answered by the session", "SCRUTATE_NO_SESSION={off:?}");
+    }
+    for on in ["1", "true", "yes"] {
+        let (_, said) = r.through(&["find", "helper"], &[("SCRUTATE_NO_SESSION", on)]);
+        assert_eq!(said, "", "SCRUTATE_NO_SESSION={on:?}");
+    }
+}
+
+/// `SCRUTATE_SESSION_DEBUG` is off for `0`, `false`, `no`, `off` and empty, as every on/off variable.
+#[test]
+fn session_debug_set_to_false_no_or_off_says_nothing() {
+    let r = Repo::new("debug_off");
+    let _server = Server::start(&r.root);
+    let said = |v: &str| r.cli(&["find", "helper"], &[("SCRUTATE_SESSION_DEBUG", v), ("SCRUTATE_SESSION_WAIT_MS", "5000")]).2.contains("[scrutate] session: ");
+    for off in ["0", "false", "no", "off", "OFF", ""] {
+        assert!(!said(off), "SCRUTATE_SESSION_DEBUG={off:?}");
+    }
+    for on in ["1", "true", "yes"] {
+        assert!(said(on), "SCRUTATE_SESSION_DEBUG={on:?}");
+    }
+}
+
 #[test]
 fn a_ranked_search_does_the_work_itself_when_the_session_is_not_its_own_or_is_gone() {
     let r = Repo::new("search_differs");

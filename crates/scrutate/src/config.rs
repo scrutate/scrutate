@@ -142,6 +142,12 @@ pub fn at(path: &Path, text: &str, offset: usize) -> String {
     format!("{}:{line}", path.display())
 }
 
+/// Whether on/off variable `name` is on: off when unset, empty, `0`, `n`, `no`, `f`, `false` or
+/// `off` in any case, as clap reads the flags' variables; a value that is not UTF-8 is off too.
+pub fn env_on(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| !matches!(v.to_ascii_lowercase().as_str(), "" | "0" | "n" | "no" | "f" | "false" | "off"))
+}
+
 /// Export the configured values as environment variables unless the variable is already set
 /// (an explicit environment setting beats the file).
 pub fn apply_as_env(cfg: &Config) {

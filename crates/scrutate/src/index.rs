@@ -297,7 +297,7 @@ pub mod prof {
         c.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     }
     pub fn enabled() -> bool {
-        std::env::var_os("SCRUTATE_PROFILE").is_some()
+        crate::config::env_on("SCRUTATE_PROFILE")
     }
     pub fn report(wall: f64) {
         let g = |c: &AtomicU64| c.load(Ordering::Relaxed) as f64 / 1e9;

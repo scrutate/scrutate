@@ -353,6 +353,11 @@ incompatible index by itself, and that is never breaking.
 - Plain `impact` refuses a file a merge left in conflict ("is unmerged: finish the merge before
   asking what it changes", exit 2), as `impact --staged` did, where it named the conflict-marked
   text as an edit.
+- `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_GREP_DEBUG`, `SCRUTATE_WATCH_DEBUG`
+  and `SCRUTATE_PROFILE` are off for `false`, `no` and `off` as for `0` or empty, as every other
+  on/off variable is, where `SCRUTATE_NO_SESSION=false` turned the use of a running `serve` off,
+  `SCRUTATE_SESSION_DEBUG=off` turned its lines on and `SCRUTATE_PROFILE=0` printed timings
+  ([CLI](docs/CLI.md#conventions)).
 - A directory named as git's or scrutate's own under another spelling (`.GIT`, `.Git.`,
   `.Scrutate`, the short name `git~1`), which a case-insensitive file system such as APFS or NTFS
   takes for `.git` or `.scrutate`, is no longer indexed, nor searched by `grep_code` and the

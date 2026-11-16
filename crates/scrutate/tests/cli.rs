@@ -3287,3 +3287,17 @@ fn a_humps_query_lists_only_the_spellings_whose_own_words_it_names() {
         }
     }
 }
+
+/// `SCRUTATE_PROFILE` is off for `0`, `false`, `no`, `off` and empty, as every on/off variable.
+#[test]
+fn profile_set_to_false_no_or_off_prints_no_timings() {
+    let r = Repo::new("profile_off");
+    r.write("a.py", b"def alpha():\n    return 1\n");
+    let said = |v: &str| run_in(&r.root, &["index", "--force"], &[("SCRUTATE_PROFILE", v), ("SCRUTATE_NO_SESSION", "1")]).2.contains("[scrutate profile]");
+    for off in ["0", "false", "no", "off", "OFF", ""] {
+        assert!(!said(off), "SCRUTATE_PROFILE={off:?}");
+    }
+    for on in ["1", "true", "yes"] {
+        assert!(said(on), "SCRUTATE_PROFILE={on:?}");
+    }
+}

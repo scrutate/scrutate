@@ -104,7 +104,7 @@ pub fn for_session(root: &Path) -> (Box<dyn Freshness>, Option<Watching>) {
         let notes = crate::watch::Notes::new(root);
         return (Box::new(notes.clone()), Some(notes));
     }
-    if cfg!(not(target_os = "wasi")) && std::env::var_os("SCRUTATE_SESSION_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+    if cfg!(not(target_os = "wasi")) && crate::config::env_on("SCRUTATE_SESSION_DEBUG") {
         eprintln!("[scrutate] session: {} is not on a local disk; every read walks the tree", root.display());
     }
     (Box::new(Walk::new(root)), None)
