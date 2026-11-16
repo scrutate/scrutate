@@ -41,8 +41,9 @@ command line calls use cannot carry one to a running server (one without the fla
   file still there by name and kind, in order. An edit that fails a check is refused with the
   check that failed.
 - The edit replaces the definition's lines whole, so a definition that shares its first or last
-  line with other code (another definition, a statement) is refused before any of that, a dry run
-  too: whole lines are what keep the check of the other definitions complete, since none of them
+  line with other code that is not a comment (another definition, a statement) is refused before
+  any of that, a dry run too; a comment on those lines that ends on them is the definition's, as
+  `read_code` shows its lines, and is replaced with it: whole lines are what keep the check of the other definitions complete, since none of them
   can then lie on a replaced line unless it is nested in the definition.
 - The write goes through the structural rewrite's writer (`rewrite.rs`): the file is opened by
   its directory with no link on the way, its bytes are checked to still be the ones read, and a

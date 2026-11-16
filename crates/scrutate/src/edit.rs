@@ -116,6 +116,24 @@ fn wrapped(root: tree_sitter::Node, range: (usize, usize), (a, b): (usize, usize
     (from, to)
 }
 
+/// Whether `old[lo..hi]` holds only whitespace and comments that lie within the lines `a..b`, by
+/// the parse `root`: a comment that runs past them would be cut in two.
+fn comments_only(root: tree_sitter::Node, old: &str, (lo, hi): (usize, usize), (a, b): (usize, usize)) -> bool {
+    let mut code: Vec<bool> = old.as_bytes()[lo..hi].iter().map(|c| !c.is_ascii_whitespace()).collect();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if n.end_byte() <= lo || n.start_byte() >= hi {
+            continue;
+        }
+        if n.kind().contains("comment") && n.start_byte() >= a && n.end_byte() <= b {
+            code[n.start_byte().max(lo) - lo..n.end_byte().min(hi) - lo].fill(false);
+            continue;
+        }
+        stack.extend(n.children(&mut n.walk()));
+    }
+    !code.contains(&true)
+}
+
 /// The answer to `edit_symbol`.
 pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, apply: bool, given: Option<&str>) -> Result<Answer> {
     let read = Op::Read { path: path.map(str::to_string), symbol: Some(symbol.to_string()), start: 1, end: None, history: 0 };
@@ -154,12 +172,14 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&(spec.language)())?;
     let Some(t0) = parser.parse(&old, None) else { bail!("{rel} did not parse") };
-    // whole lines are replaced, so other code on the first or the last of them would go with them
+    // whole lines are replaced, so other code on the first or the last of them would go with them;
+    // a comment there is the definition's, as read_code shows its lines
     if let Some((from, to)) = target.bytes.map(|r| wrapped(t0.root_node(), r, (a, b))) {
-        let before = !old[a..from.max(a)].trim().is_empty();
-        if before || !old[to.min(b)..b].trim().is_empty() {
+        let clear = |lo: usize, hi: usize| comments_only(t0.root_node(), &old, (lo, hi), (a, b));
+        let before = !clear(a, from.max(a));
+        if before || !clear(to.min(b), b) {
             let line = if before { target.start } else { target.end };
-            bail!("{} shares a line with other code ({rel}:{line}): edit_symbol replaces whole lines; nothing written", target.qualname);
+            bail!("{} shares a line with other code that is not a comment ({rel}:{line}): edit_symbol replaces whole lines; nothing written", target.qualname);
         }
     }
     // the line ending of the lines it replaces, whatever another line of the file has; a last

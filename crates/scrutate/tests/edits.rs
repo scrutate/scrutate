@@ -502,3 +502,56 @@ fn the_edit_takes_the_line_ending_of_the_lines_it_replaces() {
         assert_eq!(s.file(file), want, "{file}");
     }
 }
+
+/// A comment on the definition's first or last line is the definition's, as `read_code` shows
+/// its lines: the edit goes through with the comment replaced, where other code there is refused.
+#[test]
+fn a_comment_on_the_definitions_first_or_last_line_is_edited_with_it() {
+    // (file, text, name, the definition's old lines, its new lines)
+    let cases = [
+        ("a.go", "package p\n\ntype ID int // the user id\n", "ID", "type ID int // the user id\n", "type ID int64 // the user id\n"),
+        (
+            "b.rs",
+            "fn f() -> u8 {\n    1\n} // end f\n\nfn g() -> u8 {\n    f()\n}\n",
+            "f",
+            "fn f() -> u8 {\n    1\n} // end f\n",
+            "fn f() -> u8 {\n    2\n} // end f\n",
+        ),
+        ("c.js", "const f = () => 1; // one\n\nfunction g() {\n  return f()\n}\n", "f", "const f = () => 1; // one\n", "const f = () => 2; // two\n"),
+        (
+            "d.go",
+            "package p\n\nfunc f() int { return 1 } // doc\n\nfunc g() int { return f() }\n",
+            "f",
+            "func f() int { return 1 } // doc\n",
+            "func f() int { return 2 } // doc\n",
+        ),
+        (
+            "e.js",
+            "/* first */ function f() {\n  return 1\n}\n\nfunction g() {\n  return f()\n}\n",
+            "f",
+            "/* first */ function f() {\n  return 1\n}\n",
+            "/* first */ function f() {\n  return 2\n}\n",
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (file, text, name, old_def, new_text) in cases {
+        let mut s = Server::start(&format!("comment_{}", file.replace('.', "_")), &[(file, text)], &["--allow-edits"]);
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file} dry run: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        let got = s.file(file);
+        if err || got != text.replacen(old_def, new_text, 1) {
+            failed.push(format!("{file} apply ({err}): {out}\n{got:?}"));
+        }
+    }
+    // a statement after the definition is other code, with a comment after it or not
+    let mut s = Server::start("comment_and_code", &[("f.js", "function f() {\n  return 1\n}; init() // go\n")], &["--allow-edits"]);
+    let (dry, err) = s.call("edit_symbol", json!({"symbol": "f", "path": "f.js", "new_text": "function f() {\n  return 2\n}\n"}));
+    if !(err && dry.contains("other code that is not a comment")) {
+        failed.push(format!("f.js: {dry}"));
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

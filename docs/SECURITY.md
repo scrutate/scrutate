@@ -594,7 +594,7 @@ operation is never serialized, so the session socket that command line calls use
 one to a server, and `batch` refuses the tool by name (the Python bindings have no call that edits). A call writes only
 with `apply: true` and the hash of the file as it is, so an agent that
 read an older version is refused; only when the definition has its lines to itself (one that
-shares its first or last line with other code is refused, a dry run too, since the edit replaces
+shares its first or last line with other code that is not a comment is refused, a dry run too, since the edit replaces
 whole lines); and only when the new file parses as well as the old one and
 keeps every definition outside the edit ([ADR 0009](adr/0009-verified-symbol-edits.md)). Tests:
 `tests/edits.rs` (the tool absent without the flag, a stale hash refused with the file kept as

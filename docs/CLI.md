@@ -1136,11 +1136,13 @@ refused, with the reason, when it adds a parse error or a missing node; when the
 not define the same name and kind where the old definition began (an edit never renames); when
 it defines another definition beside it (the body twice, a second function); or when a
 definition outside it is gone or moved. The edit replaces the definition's lines whole, so one
-that shares its first or last line with other code (another definition, a statement before or
-after it) is refused, a dry run too: `NAME shares a line with other code (PATH:LINE): edit_symbol
-replaces whole lines; nothing written`. A comment after the definition on its last line
-(`function f() {...} // end`) belongs to the definition, as `read_code` shows it, and is replaced
-with it; the dry run's diff shows it. The definitions nested in it may change. A definition's
+that shares its first or last line with other code that is not a comment (another definition, a
+statement before or after it) is refused, a dry run too: `NAME shares a line with other code that
+is not a comment (PATH:LINE): edit_symbol replaces whole lines; nothing written`. A comment before
+the definition on its first line or after it on its last (`type ID int // the user id`,
+`function f() {...} // end`) belongs to the definition, as `read_code` shows its lines, and is
+replaced with it; the dry run's diff shows it. A comment that runs on past those lines is other
+code. The definitions nested in it may change. A definition's
 range is the index's, its attributes and comment block included, so `new_text` replaces them
 too. The new text takes the line ending of the definition's first line (`\r\n` stays `\r\n`,
 and one `\r\n` line elsewhere in a `\n` file changes nothing), and the rest of the
