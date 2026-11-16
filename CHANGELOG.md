@@ -830,6 +830,12 @@ incompatible index by itself, and that is never breaking.
 - `grep --fuzzy-regex` reports where a match starts: the reversed pattern is run back from its
   end. The column, the `--json` spans and the colour took a lower bound (`zzz a12b` gave column 1
   for `a[0-9]*b`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `grep --fuzzy` and `--fuzzy-regex` highlight a match whole, in colour and in `--json` spans:
+  an exact `abcd` within one edit is one span over `abcd`, where it stopped at `abc`, and
+  `a[0-9]*b` on `a12b` is one span, where it was two. Which lines match is unchanged. The fuzzy
+  modes do more work at a match's end: on the Linux tree's `kernel/`, 2.5% more instructions for
+  `--fuzzy=1 kmalloc`, 10.8% for `--fuzzy=2 return`, 4.3% for `--fuzzy-regex=1 kmal+oc` and 5.6%
+  for `--fuzzy-regex=1 'ret[a-z]*n'` ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - An internal error advises `scrutate index --force` only in a process that opened an index:
   `grep` without `--index`, `hook`, `setup` and the other commands without one now only ask for a
   report; with `--index` the text index counts.

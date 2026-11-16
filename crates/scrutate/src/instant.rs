@@ -668,15 +668,21 @@ impl FuzzyMatcher {
         None
     }
 
-    /// End positions (exclusive) in `hay[at..]` where a match with <= k edits ends, with its distance.
+    /// End (exclusive) and distance of the first match in `hay[at..]` within k edits, its end carried
+    /// on while the next character still ends a match with no more edits (`abcd` within one edit is
+    /// `abcd` whole, not `abc` with a deletion).
     fn first_end(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
         let mut i = at;
+        let mut found: Option<(usize, usize)> = None;
         if let Some(b) = &self.long {
             let (fwd, _) = &**b;
             let (mut pv, mut mv) = fwd.start();
             let mut score = self.m as isize;
             while i < hay.len() {
                 if hay[i] == b'\n' {
+                    if found.is_some() {
+                        return found;
+                    }
                     (pv, mv) = fwd.start();
                     score = self.m as isize;
                     i += 1;
@@ -685,11 +691,14 @@ impl FuzzyMatcher {
                 let (eq, n) = fwd.eq_at(hay, i);
                 score += fwd.step(&mut pv, &mut mv, eq);
                 i += n;
-                if score <= self.k as isize {
-                    return Some((i, score as usize));
+                match found {
+                    Some((_, best)) if score <= best as isize => found = Some((i, score as usize)),
+                    Some(_) => return found,
+                    None if score <= self.k as isize => found = Some((i, score as usize)),
+                    None => {}
                 }
             }
-            return None;
+            return found;
         }
         let m = self.m;
         let top = 1u128 << (m - 1);
@@ -701,6 +710,9 @@ impl FuzzyMatcher {
             let c = hay[i];
             let (eq, n) = if c < 0x80 {
                 if c == b'\n' {
+                    if found.is_some() {
+                        return found;
+                    }
                     pv = mask;
                     mv = 0;
                     score = m as isize;
@@ -713,11 +725,14 @@ impl FuzzyMatcher {
             };
             score += myers_step(eq, &mut pv, &mut mv, top, mask);
             i += n;
-            if score <= self.k as isize {
-                return Some((i, score as usize));
+            match found {
+                Some((_, best)) if score <= best as isize => found = Some((i, score as usize)),
+                Some(_) => return found,
+                None if score <= self.k as isize => found = Some((i, score as usize)),
+                None => {}
             }
         }
-        None
+        found
     }
 
     /// Start of the match that ends at `end` with distance `d`: run the algorithm on the reversed
@@ -4105,21 +4120,29 @@ mod tests {
         m.find_at(hay.as_bytes(), 0).unwrap().map(|m| (m.start(), m.end()))
     }
 
-    /// First end (and distance) of a match within `k` edits: the textbook dynamic programme.
-    fn naive_first_end(pat: &[u8], hay: &[u8], k: usize) -> Option<(usize, usize)> {
+    /// First end (and distance) of a match within `k` edits: the textbook dynamic programme. With
+    /// `carry`, the end goes on while the next byte ends a match at no greater distance.
+    fn naive_first_end(pat: &[u8], hay: &[u8], k: usize, carry: bool) -> Option<(usize, usize)> {
         let m = pat.len();
         let mut col: Vec<usize> = (0..=m).collect();
+        let mut found: Option<(usize, usize)> = None;
         for (i, &c) in hay.iter().enumerate() {
             let mut next = vec![0usize; m + 1];
             for j in 1..=m {
                 next[j] = (next[j - 1] + 1).min(col[j] + 1).min(col[j - 1] + usize::from(pat[j - 1] != c));
             }
             col = next;
-            if col[m] <= k {
-                return Some((i + 1, col[m]));
+            match found {
+                Some((_, best)) if col[m] <= best => found = Some((i + 1, col[m])),
+                Some(_) => return found,
+                None if col[m] <= k => found = Some((i + 1, col[m])),
+                None => {}
+            }
+            if found.is_some() && !carry {
+                return found;
             }
         }
-        None
+        found
     }
 
     #[test]
@@ -4152,7 +4175,7 @@ mod tests {
             hay.extend((0..next(50)).map(|_| b"abcd"[next(4) as usize]));
             let k = (next(8) as usize).min(m - 1);
             let f = FuzzyMatcher::new(std::str::from_utf8(&pat).unwrap(), k as u8, false).unwrap();
-            assert_eq!(f.first_end(&hay, 0), naive_first_end(&pat, &hay, k), "round {round}: m={m} k={k}");
+            assert_eq!(f.first_end(&hay, 0), naive_first_end(&pat, &hay, k, true), "round {round}: m={m} k={k}");
             if m <= 128 {
                 // the block path on short patterns too, against the single-word one
                 let b = Blocks::new(&fuzzy_classes(std::str::from_utf8(&pat).unwrap(), false));
@@ -4166,7 +4189,7 @@ mod tests {
                         break;
                     }
                 }
-                assert_eq!(got, naive_first_end(&pat, &hay, k), "blocks, round {round}: m={m} k={k}");
+                assert_eq!(got, naive_first_end(&pat, &hay, k, false), "blocks, round {round}: m={m} k={k}");
             }
         }
         assert!(FuzzyMatcher::new(&"a".repeat(FUZZY_MAX + 1), 1, false).is_err());
@@ -4185,15 +4208,29 @@ mod tests {
         assert_eq!(fuzzy_find("token", 1, "tok\nen"), None); // never across lines
     }
 
-    /// `naive_first_end` over characters: each unit is a character or a byte of invalid UTF-8.
+    #[test]
+    fn an_exact_fuzzy_match_is_highlighted_whole() {
+        // a match ends first at `abc`, one deletion away, and goes on while no edit is added
+        assert_eq!(fuzzy_find("abcd", 1, "zz abcd"), Some((3, 7)));
+        assert_eq!(fuzzy_find("abcd", 1, "abcdx"), Some((0, 4)));
+        assert_eq!(fuzzy_find("abcd", 2, "zz abcd ok"), Some((3, 7)));
+        // and stops at the line end
+        assert_eq!(fuzzy_find("abcd", 1, "abc\nd"), Some((0, 3)));
+    }
+
+    /// `naive_first_end` (carried) over characters: each unit is a character or a byte of invalid UTF-8.
     fn naive_first_end_chars(classes: &[Vec<char>], hay: &[u8], k: usize) -> Option<(usize, usize)> {
         let m = classes.len();
         let mut col: Vec<usize> = (0..=m).collect();
+        let mut found: Option<(usize, usize)> = None;
         let mut i = 0;
         while i < hay.len() {
             let (c, n) = if hay[i] < 0x80 { (Some(hay[i] as char), 1) } else { wide_char(hay, i) };
             i += n;
             if c == Some('\n') {
+                if found.is_some() {
+                    return found;
+                }
                 col = (0..=m).collect();
                 continue;
             }
@@ -4203,18 +4240,21 @@ mod tests {
                 next[j] = (next[j - 1] + 1).min(col[j] + 1).min(col[j - 1] + usize::from(!same));
             }
             col = next;
-            if col[m] <= k {
-                return Some((i, col[m]));
+            match found {
+                Some((_, best)) if col[m] <= best => found = Some((i, col[m])),
+                Some(_) => return found,
+                None if col[m] <= k => found = Some((i, col[m])),
+                None => {}
             }
         }
-        None
+        found
     }
 
     #[test]
     fn fuzzy_edits_are_characters_and_case_folds_as_in_the_regex_engine() {
         assert_eq!(fuzzy_find("naïve", 1, "a naive b"), Some((2, 7)));
         assert_eq!(fuzzy_find("naive", 1, "a naïve b"), Some((2, 8)));
-        assert_eq!(fuzzy_find("日本語", 1, "日本誤のテキスト"), Some((0, 6)));
+        assert_eq!(fuzzy_find("日本語", 1, "日本誤のテキスト"), Some((0, 9)));
         assert_eq!(fuzzy_find("naive", 1, "na\u{0}ve"), Some((0, 5)));
         let m = FuzzyMatcher::new("naive", 1, false).unwrap();
         assert_eq!(m.find_at(b"x na\xffve", 0).unwrap().map(|s| (s.start(), s.end())), Some((2, 7)), "invalid UTF-8 is one unit per byte");

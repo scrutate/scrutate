@@ -263,16 +263,22 @@ impl FuzzyRegex {
         best
     }
 
-    /// End (exclusive) and number of errors of the first match in `hay[at..]`.
+    /// End (exclusive) and number of errors of the first match in `hay[at..]`, its end carried on
+    /// while the next character still ends a match with no more errors (`a[0-9]*b` within one edit
+    /// is `a12b` whole, not `a` with a deletion and then `12b`).
     fn first_end(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
         let k = self.k;
         let mut r = self.init.clone();
         let mut next = vec![0u64; k + 1];
+        let mut found: Option<(usize, usize)> = None;
         let mut i = at;
         while i < hay.len() {
             let c = hay[i];
             let bc = if c < 0x80 {
                 if c == b'\n' {
+                    if found.is_some() {
+                        return found;
+                    }
                     r.copy_from_slice(&self.init);
                     i += 1;
                     continue;
@@ -290,11 +296,14 @@ impl FuzzyRegex {
                 next[j] = (self.step(r[j]) & bc) | r[j - 1] | self.step(r[j - 1]) | self.step(next[j - 1]);
             }
             std::mem::swap(&mut r, &mut next);
-            if let Some(j) = r.iter().position(|&s| s & self.last != 0) {
-                return Some((i, j));
+            match (r.iter().position(|&s| s & self.last != 0), found) {
+                (Some(j), Some((_, best))) if j <= best => found = Some((i, j)),
+                (Some(j), None) => found = Some((i, j)),
+                (_, Some(_)) => return found,
+                (None, None) => {}
             }
         }
-        None
+        found
     }
 }
 
@@ -385,9 +394,29 @@ mod tests {
         assert_eq!(at("a[0-9]*b", 0, "aa12b"), (1, 5));
         // the longest text within the match's edits, as --fuzzy highlights it
         assert_eq!(at("abcd", 1, "zzzz abxd"), (5, 9));
-        assert_eq!(at("é[0-9]+", 0, "xé12"), (1, 4));
+        assert_eq!(at("é[0-9]+", 0, "xé12"), (1, 5));
         // a match on a later line starts on that line
         assert_eq!(at("a[0-9]*b", 0, "a1\nzz a2b"), (6, 9));
+    }
+
+    #[test]
+    fn a_match_with_no_edits_is_one_match_whatever_the_edits_allowed() {
+        let all = |pat: &str, k: u8, hay: &str| {
+            let m = FuzzyRegex::new(pat, k, false).unwrap();
+            let (mut out, mut at) = (Vec::new(), 0);
+            while let Some(s) = m.find_at(hay.as_bytes(), at).unwrap() {
+                out.push((s.start(), s.end()));
+                at = s.end().max(at + 1);
+            }
+            out
+        };
+        assert_eq!(all("a[0-9]*b", 1, "zzz a12b"), [(4, 8)]);
+        assert_eq!(all("abc[0-9]*d", 2, "zz abc12d"), [(3, 9)]);
+        assert_eq!(all("abcd", 1, "zz abcd"), [(3, 7)]);
+        // the end goes no further once a character adds an edit
+        assert_eq!(all("abcd", 1, "abcdx"), [(0, 4)]);
+        // and stops at the line end
+        assert_eq!(all("a[0-9]*b", 1, "a1\na2b"), [(0, 2), (3, 6)]);
     }
 
     #[test]
