@@ -56,7 +56,9 @@ fn any(_: &str, _: &str, _: &str) -> bool {
     true
 }
 
-const CODE_END: &str = r#"(?:[`'"\s;]|\\[nr]|$)"#;
+/// What may follow a secret: a quote, space, `;`, an escaped line end, the line's end, or `&`
+/// before a URL's next query parameter.
+const CODE_END: &str = r#"(?:[`'"\s;&]|\\[nr]|$)"#;
 
 /// A typed assignment's annotation and `=` (`: &str =`, `?: string | undefined =`, `!: string =`,
 /// `: HashMap<String, Vec<u8>> =`): printable ASCII but `=`, `;`, `{`, `}`, `!` and quotes (a
@@ -1660,6 +1662,23 @@ mod tests {
         }
         for line in ["https://deploy@git.example.com/app.git", "ssh://git@github.com/org/app.git", "https://user_name_2024@example.com/"] {
             assert!(redact(line).1.iter().all(|m| m.kind != "url-token"), "{line}");
+        }
+    }
+
+    /// A secret in a URL's query string is redacted when another parameter follows it.
+    #[test]
+    fn a_secret_followed_by_another_query_parameter_is_redacted() {
+        let (password, key, token) = (fake(81, ALNUM, 16), fake(82, "abcdefghijklmnopqrstuvwxyz0123456789", 16), fake(83, ALNUM, 24));
+        let jwt = format!("ey{}.ey{}.{}", fake(84, ALNUM, 20), fake(85, ALNUM, 30), fake(86, ALNUM, 43));
+        for (line, secret) in [
+            (format!("jdbc:mysql://db:3306/app?user=root&password={password}&useSSL=false"), &password),
+            (format!("https://api.example.com/v1/data?api_key={key}&format=json"), &key),
+            (format!("token={token}&x=1"), &token),
+            (format!("https://example.com/cb?state=1&t={jwt}&x=1"), &jwt),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
+            assert!(out.ends_with("&useSSL=false") || out.ends_with("&format=json") || out.ends_with("&x=1"), "{line} -> {out}");
         }
     }
 
