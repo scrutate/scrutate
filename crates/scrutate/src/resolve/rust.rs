@@ -753,15 +753,8 @@ fn token_idents<'s>(n: Node, src: &'s str, out: &mut Vec<&'s str>) {
     }
 }
 
+/// The name a manifest's library is used under: `[lib] name`, else `[package] name`.
 pub(super) fn cargo_package_name(toml: &str) -> Option<String> {
-    let mut in_pkg = false;
-    for line in toml.lines() {
-        let l = line.trim();
-        if l.starts_with('[') {
-            in_pkg = l == "[package]";
-        } else if in_pkg && let Some(v) = l.strip_prefix("name").map(str::trim_start).and_then(|v| v.strip_prefix('=')) {
-            return Some(v.trim().trim_matches('"').to_string());
-        }
-    }
-    None
+    let t = toml.parse::<toml::Table>().ok()?;
+    ["lib", "package"].iter().find_map(|k| t.get(*k)?.get("name")?.as_str().map(str::to_string))
 }
