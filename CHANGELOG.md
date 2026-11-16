@@ -115,10 +115,10 @@ incompatible index by itself, and that is never breaking.
 - The GitHub Action's `comment: true` posts that report as one pull request comment and edits it
   on each push, with only the `pull-requests: write` permission and never failing the job;
   `args` is now optional.
-- Every MCP tool takes `response_format`: `detailed` (the default) or `concise`, which keeps every
-  location and name and drops code, snippets and explanations; on this repository a concise
-  answer is 5% to 44% of the detailed one ([CLI](docs/CLI.md)). The Python `Repo.call` reads it
-  too; `batch` checks it.
+- Every MCP tool but `edit_symbol` takes `response_format`: `detailed` (the default) or
+  `concise`, which keeps every location and name and drops code, snippets and explanations; on
+  this repository a concise answer is 5% to 44% of the detailed one ([CLI](docs/CLI.md)). The
+  Python `Repo.call` reads it too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short tool list with the same
   tools, arguments and checks: 5,657 bytes against 17,055 (13,968 before `response_format`).
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes an MCP server entry that runs this
@@ -370,7 +370,8 @@ incompatible index by itself, and that is never breaking.
 - `serve --watch`, the MCP server's watch, the language server and the Python bindings follow a
   root reached through a link when the link is pointed at another tree (or replaced by a
   directory, or a link it leads through is pointed elsewhere), as `watch` does, where they kept
-  answering from the old tree; a command line call made in the old tree is no longer answered by
+  answering from the old tree. Off a local disk only `serve --watch` follows, since the others
+  watch nothing there; a command line call made in the old tree is no longer answered by
   that session.
 - `impact` and `review` take time in proportion to the change, where it grew with its square: 8,000
   edited definitions that call one another took 251.9 s and take 3.8 s, 2,000 took 17.1 s and
