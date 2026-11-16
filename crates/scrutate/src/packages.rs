@@ -119,13 +119,17 @@ fn cargo_lock(text: &str, manifest: &str) -> Vec<Locked> {
         .filter_map(|p| {
             let (name, version) = (p.get("name")?.as_str()?.to_string(), p.get("version")?.as_str()?.to_string());
             let from = match p.get("source").and_then(|s| s.as_str()) {
-                Some(s) if s.starts_with("registry+") || s.starts_with("sparse+") => From::Store,
-                Some(s) => From::Other(s.split('+').next().unwrap_or(s).to_string()),
+                Some(s) => cargo_source(s),
                 None => From::Path(path_of(&name).unwrap_or_default()),
             };
             Some(Locked { eco: Eco::Cargo, name, version, lockfile: "Cargo.lock", from, indirect: false, imported_as: None })
         })
         .collect()
+}
+
+/// Where a Cargo.lock `source` (`registry+URL`, `git+URL`) has a crate come from.
+fn cargo_source(s: &str) -> From {
+    if s.starts_with("registry+") || s.starts_with("sparse+") { From::Store } else { From::Other(s.split('+').next().unwrap_or(s).to_string()) }
 }
 
 fn npm_lock(text: &str) -> Vec<Locked> {
@@ -694,9 +698,10 @@ fn go_dirs_named(dir: &Path, package: &str) -> Vec<String> {
 /// uses: for Cargo the version its own packages depend on, for Python the one `.venv` has; never
 /// the first in the lockfile.
 fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Locked> {
+    // one version from two sources (the registry's and a git copy) is two packages
     let mut versions: Vec<&'l Locked> = Vec::new();
     for l in hits {
-        if !versions.iter().any(|v| v.version == l.version) {
+        if !versions.iter().any(|v| v.version == l.version && v.from == l.from) {
             versions.push(l);
         }
     }
@@ -704,17 +709,26 @@ fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Lo
     if versions.len() == 1 {
         return Ok(first);
     }
-    let used: Vec<String> = match first.eco {
+    let used: Vec<(String, Option<From>)> = match first.eco {
         Eco::Cargo => cargo_direct(root, &first.name),
-        Eco::Python => dists.iter().filter(|d| normalized(&d.name) == normalized(&first.name)).map(|d| d.version.clone()).collect(),
+        Eco::Python => dists.iter().filter(|d| normalized(&d.name) == normalized(&first.name)).map(|d| (d.version.clone(), None)).collect(),
         Eco::Npm | Eco::Go => Vec::new(),
     };
-    let mine: Vec<&'l Locked> = versions.iter().copied().filter(|l| used.contains(&l.version)).collect();
+    let mine: Vec<&'l Locked> =
+        versions.iter().copied().filter(|l| used.iter().any(|(v, from)| *v == l.version && from.as_ref().is_none_or(|f| *f == l.from))).collect();
     if let [one] = mine[..] {
         return Ok(one);
     }
     let echo = crate::fmt::echo;
-    let listed = versions.iter().map(|l| echo(&l.version)).collect::<Vec<_>>().join(" and ");
+    // a version locked from two sources is named with each source's kind
+    let twice = |l: &Locked| versions.iter().filter(|o| o.version == l.version).count() > 1;
+    let kind = |l: &Locked| match &l.from {
+        From::Store => "registry".to_string(),
+        From::Path(_) => "path".to_string(),
+        From::Other(how) => how.clone(),
+    };
+    let listed =
+        versions.iter().map(|l| if twice(l) { format!("{} ({})", echo(&l.version), kind(l)) } else { echo(&l.version) }).collect::<Vec<_>>().join(" and ");
     let name = echo(&first.name);
     match first.eco {
         Eco::Cargo => bail!(
@@ -724,7 +738,7 @@ fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Lo
         Eco::Python if used.is_empty() => Err(not_in_venv(first, &name, &listed)),
         Eco::Python => bail!(
             "{name} is locked at {listed} but .venv has {}: run {}",
-            used.iter().map(|v| echo(v)).collect::<Vec<_>>().join(" and "),
+            used.iter().map(|(v, _)| echo(v)).collect::<Vec<_>>().join(" and "),
             first.eco.sync(first.lockfile)
         ),
         Eco::Npm | Eco::Go => bail!("{name} is locked at {listed}: --deps cannot tell which"),
@@ -732,23 +746,28 @@ fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Lo
 }
 
 /// The versions of `name` that the repository's own packages (those Cargo.lock gives no source:
-/// the root, the workspace members, path dependencies) depend on; Cargo.lock writes `NAME VERSION`
-/// in `dependencies` when it locks more than one version of NAME.
-fn cargo_direct(root: &Path, name: &str) -> Vec<String> {
+/// the root, the workspace members, path dependencies) depend on, with the source when it names
+/// one; Cargo.lock writes `NAME VERSION` in `dependencies` when it locks more than one version of
+/// NAME, and `NAME VERSION (SOURCE)` when it locks one version from more than one source.
+fn cargo_direct(root: &Path, name: &str) -> Vec<(String, Option<From>)> {
     let text = std::fs::read_to_string(root.join("Cargo.lock")).unwrap_or_default();
     let Ok(t) = text.parse::<toml::Table>() else { return Vec::new() };
     let packages = t.get("package").and_then(|p| p.as_array()).cloned().unwrap_or_default();
-    let mut out: Vec<String> = packages
+    let mut out: Vec<(String, Option<From>)> = packages
         .iter()
         .filter(|p| p.get("source").is_none())
         .filter_map(|p| p.get("dependencies").and_then(|d| d.as_array()).cloned())
         .flatten()
         .filter_map(|d| {
-            let mut parts = d.as_str()?.split(' ');
-            (parts.next()? == name).then(|| parts.next().map(str::to_string)).flatten()
+            let mut parts = d.as_str()?.splitn(3, ' ');
+            if parts.next()? != name {
+                return None;
+            }
+            let version = parts.next()?.to_string();
+            let source = parts.next().and_then(|s| s.strip_prefix('(')?.strip_suffix(')')).map(cargo_source);
+            Some((version, source))
         })
         .collect();
-    out.sort();
     out.dedup();
     out
 }

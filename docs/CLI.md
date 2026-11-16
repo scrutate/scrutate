@@ -860,7 +860,8 @@ path}, "answer": ...}`.
 The version is never another one: when the installed package has another version than the lock
 (`node_modules`, `.venv`), the answer is an error that names both and the command that installs
 the locked one (exit 2). When a lockfile holds one package at two versions (Cargo.lock often does;
-a uv fork does by its markers), the one read is the one the repository uses: for Cargo the version
+a uv fork does by its markers), or Cargo.lock one version from two sources (the registry and a
+git copy), the one read is the one the repository uses: for Cargo the version and source
 the repository's own packages (those Cargo.lock gives no `source`) depend on, for Python the one
 `.venv` has. When that does not decide it, the answer is an error that names both versions
 (exit 2), never the first one in the lockfile. A path dependency (a Cargo `path`, an npm `link`, a uv `editable`,

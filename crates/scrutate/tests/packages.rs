@@ -1097,3 +1097,34 @@ fn a_read_of_a_package_name_reads_the_package_s_own_definition_first_past_20_oth
     let first = v[0]["result"]["answer"]["definitions"][0]["path"].as_str().unwrap_or_default();
     assert!(first.ends_with("pkg/core.py"), "{}", v[0]);
 }
+
+/// One crate locked at one version from two sources is read from the one the root depends on, in
+/// either order of the lockfile: from the registry it is read, from git it is refused as git.
+#[test]
+fn one_version_from_two_sources_is_read_from_the_source_the_root_uses() {
+    let registry = "registry+https://github.com/rust-lang/crates.io-index";
+    let git = "git+https://example.com/foo?rev=def#def0000000000000000000000000000000000000";
+    for git_first in [true, false] {
+        for root_uses in [registry, git] {
+            let t = Tree::new("two_sources");
+            t.cargo("foo", "1.0.0", "pub fn from_registry() {}\n");
+            let entry = |src: &str| format!("\n[[package]]\nname = \"foo\"\nversion = \"1.0.0\"\nsource = \"{src}\"\n");
+            let (a, b) = if git_first { (entry(git), entry(registry)) } else { (entry(registry), entry(git)) };
+            t.write(
+                "Cargo.lock",
+                &format!(
+                    "version = 4\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n \"foo 1.0.0 ({root_uses})\",\n \"gdep\",\n]\n{a}{b}\n\
+                     [[package]]\nname = \"gdep\"\nversion = \"0.1.0\"\nsource = \"git+https://example.com/gdep#abc\"\ndependencies = [\"foo 1.0.0 ({git})\"]\n"
+                ),
+            );
+            t.write("Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n");
+            t.write("src/main.rs", "fn main() {}\n");
+            let (code, out, err) = t.run(&["symbol", "--deps", "foo::from_registry"]);
+            if root_uses == registry {
+                assert!(code == 0 && out.contains("foo-1.0.0/src/lib.rs"), "git first {git_first}, root on the registry: {code} {out}{err}");
+            } else {
+                assert!(code == 2 && err.contains("comes from git"), "git first {git_first}, root on git: {code} {out}{err}");
+            }
+        }
+    }
+}

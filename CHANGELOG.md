@@ -423,6 +423,11 @@ incompatible index by itself, and that is never breaking.
   dead, and a private method or function after a `public`, `export`, `pub` or `extern` one (Java,
   C#, TypeScript, Rust) was taken for an entry point and never listed; a one-line class's methods
   now have that class as their holder ([CLI](docs/CLI.md#engine-b)).
+- A crate Cargo.lock locks at one version from two sources (the registry and a git copy a git
+  dependency pulls in) is read by `symbol --deps` from the source the repository's own packages
+  depend on,
+  where the lockfile's first entry won: "comes from git" for a crate the root takes from crates.io,
+  or the registry copy for one it takes from git.
 - `symbol --deps` and `read --deps --symbol` (MCP `scope: "deps"`) look a path dependency's name up
   inside its directory before the limit counts, where a Cargo workspace member, an npm workspace
   link or a uv editable source answered "(no results)" once more than 20 other files of the
