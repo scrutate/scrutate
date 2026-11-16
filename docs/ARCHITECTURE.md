@@ -732,7 +732,7 @@ file written while they were set may have no event), more than 10,000 events sin
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
 floor the user gave and the change sets are a proof (`Freshness::order_proves`): on macOS every
 read walks whatever the interval. A walk the floor holds back still applies the files the events
-named since the last walk (`Freshness::named_since`, read with the burst rules but past a
+named since the last walk a read applied, a setting of the watches between them included (`Freshness::named_since`, read with the burst rules but past a
 directory that came or went), and start-up's walk is owed from the session's start
 (`Freshness::owes_a_walk`): until a read has applied the walk that follows the watches' first
 set, every read walks whatever the floor, before the watch is in place too. A named file costs one `stat` (`UpdateStats::files_looked`

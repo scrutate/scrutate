@@ -350,6 +350,10 @@ incompatible index by itself, and that is never breaking.
   interval holds back still looks at the files the watch named; a new directory still waits for
   the interval, as documented. That start-up walk is one walk: new directories made before a call
   took it no longer each get a walk of every file the interval does not hold back.
+- Under `serve --refresh-interval S` on Linux an edit was lost until the interval passed when a
+  directory was made, removed or moved before the next call: setting the watches again for that
+  directory dropped the events noted so far, so the held-back walk had nothing to apply. They are
+  kept now, and dropped only when the watch lost events, reported an error or noted too many.
 - The language server answers definition and references in the spelling of the request's
   document when the editor names one repository in two ways (two folders, one through a link, or
   a file named through one), where every answer named the first folder's spelling.

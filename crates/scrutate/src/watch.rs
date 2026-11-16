@@ -367,10 +367,17 @@ struct Noted {
 }
 
 impl Noted {
+    /// Every read before the next one asks for a walk. The events stay: a walk the refresh
+    /// interval holds back still applies what they name.
     fn walk_all(&mut self, why: &'static str) {
         self.gen += 1;
         self.walk_below = self.gen;
         self.why = why;
+    }
+
+    /// `walk_all`, when the events no longer tell what changed.
+    fn lost(&mut self, why: &'static str) {
+        self.walk_all(why);
         self.events.clear();
     }
 }
@@ -440,8 +447,8 @@ impl Notes {
     pub(crate) fn note(&self, ev: &notify::Result<Event>) {
         let mut n = lock(&self.0.noted);
         match ev {
-            Err(_) => n.walk_all("the watcher reported an error"),
-            Ok(e) if e.need_rescan() => n.walk_all("the watcher lost events"),
+            Err(_) => n.lost("the watcher reported an error"),
+            Ok(e) if e.need_rescan() => n.lost("the watcher lost events"),
             Ok(Event { kind: EventKind::Access(_), .. }) => {}
             Ok(e) => {
                 let index = self.0.root.join(INDEX_DIR);
@@ -463,7 +470,7 @@ impl Notes {
                     n.dirs += 1;
                 }
                 if n.events.len() >= MOST_NOTED {
-                    n.walk_all("too many changes since the last read");
+                    n.lost("too many changes since the last read");
                     return;
                 }
                 n.gen += 1;

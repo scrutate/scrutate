@@ -388,6 +388,58 @@ fn new_directories_right_after_start_up_cost_one_walk_under_a_refresh_interval()
     assert!(walks <= early + 1, "{walks} walks of every file for 5 new directories, {early} before the watch: one is start-up's; the calls said {told:#?}");
 }
 
+/// Under `--refresh-interval` an edit the watch saw is seen at the next call when a directory was
+/// made before that call: the walk the new directory asks for is held back, the edit is not.
+#[test]
+fn an_edit_followed_by_a_new_directory_is_seen_under_a_refresh_interval() {
+    let r = Repo::new("refresh_edit_mkdir", 0);
+    for i in 0..40 {
+        let d = r.root.join(format!("d{i}"));
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join(format!("m{i}.py")), format!("def base_{i}():\n    return {i}\n")).unwrap();
+    }
+    let indexed = Command::new(BIN).arg("--root").arg(&r.root).arg("index").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+    let (mut floor, said) = Session::start_said(&r, &["serve", "--refresh-interval", "3600"]);
+    let find = |n: &str| json!({"name": n});
+    let mut id = 1;
+    assert!(floor.text(id, "find_symbol", find("base_1")).contains("d1/m1.py"));
+    // start-up done, as in an_explicit_refresh_interval_is_a_floor
+    let t0 = std::time::Instant::now();
+    while !cfg!(target_os = "macos") {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        while said.try_recv().is_ok() {}
+        id += 1;
+        assert!(floor.text(id, "find_symbol", find("base_1")).contains("d1/m1.py"));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if !std::iter::from_fn(|| said.try_recv().ok()).any(|l| l.contains("every file")) {
+            break;
+        }
+        assert!(t0.elapsed() < std::time::Duration::from_secs(30), "start-up never ended");
+    }
+    for k in 0..3 {
+        while said.try_recv().is_ok() {}
+        let m = r.root.join(format!("d{k}/m{k}.py"));
+        fs::write(&m, format!("{}\n\ndef edited_{k}():\n    return {k}\n", fs::read_to_string(&m).unwrap())).unwrap();
+        let d = r.root.join(format!("new_{k}"));
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("n.py"), format!("def made_{k}():\n    return {k}\n")).unwrap();
+        // the watch's burst over the edit and the new directory sets its watches again first
+        let mut lines: Vec<String> = Vec::new();
+        while !lines.iter().any(|l| l.contains("full walk: yes")) {
+            lines.push(said.recv_timeout(std::time::Duration::from_secs(30)).expect("the watch's burst over the new directory"));
+        }
+        id += 1;
+        let seen = floor.text(id, "find_symbol", find(&format!("edited_{k}"))).contains(&format!("d{k}/m{k}.py"));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        lines.extend(std::iter::from_fn(|| said.try_recv().ok()));
+        assert!(seen, "edit {k} within the interval, after a new directory; the call said {lines:?}");
+        if !cfg!(target_os = "macos") {
+            assert!(!walked(&lines), "a walk of every file within the interval: {lines:?}");
+        }
+    }
+}
+
 #[test]
 fn a_walk_the_watch_asks_for_comes_at_once_by_default() {
     let r = Repo::new("refresh_default", 2);
