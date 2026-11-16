@@ -1877,8 +1877,8 @@ fn a_named_file_that_is_an_index_file_under_another_name_is_searched_by_grep_and
     child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
     let hooked = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
     assert!(hooked.contains(LINKED) && !hooked.contains("needle in the cache"), "hook grep: {hooked}");
-    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    session.set_cache_dir(root.with_extension("cache"));
     let c = scrutate::mcp::call_tool(&session, "read_code", &json!({"path": "named.txt"}), &scrutate::mcp::Settings::new(None), &Default::default());
     assert!(c.text.contains(LINKED) && !c.text.contains("needle in the cache"), "read_code: {}", c.text);
     let _ = fs::remove_dir_all(&root);
