@@ -346,6 +346,13 @@ incompatible index by itself, and that is never breaking.
 - `impact` and `review` read a file moved where the index's rules leave it out (a directory
   `.ignore` or `.gitignore` names) as deleted, with its callers and tests as `git rm` of it gives,
   where they listed nothing ([CLI](docs/CLI.md)).
+- A file that is one of scrutate's index files under another name, a hard link either way round,
+  is left out of every search scrutate walks itself on Unix (`grep`, the index and so `search`,
+  `refs` and the MCP tools, the Grep hook), where only a path naming it was refused. The walk says
+  so once on stderr and `check` lists each one (`left_out` in `--json`); a path that names one is
+  refused with the index file it is and that removing the hard link, by its path, lets it be
+  searched again. Every file under `.scrutate/` that can hold a file's text reads as binary,
+  which keeps such a file out of the searches on Windows too ([Security](docs/SECURITY.md)).
 - A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
   does the work itself, where a `serve` stopped or stuck at that point and a request over the
   socket's buffer (a long search with several `--alt`) left the call waiting for good.

@@ -382,7 +382,20 @@ one of the index directories' files or directories by device and inode (on Windo
 handle's volume and index: a link, a hard link
 under another name, a nested repository's index), or when the walk is too large to check
 (over 1,000,000 entries or 5 seconds); `read_code`, `grep_code` and the Grep hook
-refuse such a path the same way. Not covered: a link or a hard link made while the search runs
+refuse such a path the same way. A path that is an index file under another name (a hard link,
+either way round) is refused with a line that names the index file and says to remove the hard
+link, by its path, to search it again. The searches scrutate walks itself (`scrutate grep`, the
+index's walk and so `search`, `refs` and the MCP tools, the Grep hook) leave such a file out: on
+Unix the inode comes with each directory entry, so a file that is one of the index files by
+device and inode is in no answer, whichever of its names was there first. The walk says so once
+on stderr, and `scrutate check` lists each one with the index file it is. On Windows the walks
+would have to open every entry to know it, so they do not. There, what keeps an index file's
+text out of their answers is that every file scrutate writes under `.scrutate/` that can hold a
+file's text has a NUL byte in its first kilobyte, so the walks see a binary file and skip it (a
+test holds every file there to that), and a repository file hard-linked into `.scrutate/` is
+still found by the walks while being refused by name. The walks know the index directories of
+the searched paths and of the directories above them, not that of a nested repository inside the
+tree, where the binary header is what keeps its text out. Not covered: a link or a hard link made while the search runs
 (the walk is done before it starts); a hard link to an index file of a repository outside the
 searched tree; a search that prints only part of a secret (`-o` with a pattern that matches
 inside it), since the redactor sees a line as printed and a piece of a token gives it nothing to

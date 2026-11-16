@@ -956,6 +956,16 @@ and the global limit gives the same prefix. Files are written to a temporary nam
 unreadable one counts as empty. Eviction is by query file, least recently used first, above
 128 MB in total.
 
+Every file scrutate writes under `.scrutate/` that can hold a file's text reads as binary: it has
+a NUL byte in its first kilobyte (the `tsquery` cache and the answer store from the length after
+their magic, the database and the segments by their formats). A search that walks a hard link to
+one under a repository name then sees a binary file and skips it, which on Windows is what keeps
+an index file's text out of scrutate's own searches (on Unix the walks also know such a file by
+its inode, see [Security](SECURITY.md)). The few files that never hold a file's text are listed
+with their reason in `tests/secrets.rs` (`NO_TEXT`), and a new kind of file fails
+`every_index_file_that_can_hold_text_reads_as_binary` until it gets a binary header or a place on
+that list.
+
 `tsquery --rewrite` (`rewrite.rs`) shares the query's checks and walk with `tsquery`
 (`intel::compile_query`, `intel::query_files`) but not the cache, since a write must rest on the
 bytes it read. `rewrite::plan` reads and parses each file once, takes per match the `@match`

@@ -2157,9 +2157,11 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     let report = s.ix.check(files)?;
     // a constant or a field has no postings, so no segment row: the counts below leave it out
     let constants = s.ix.constants();
+    let left_out = crate::files::left_out(root);
     if json {
         let mut v = serde_json::to_value(&report)?;
         v["constants"] = serde_json::json!(constants);
+        v["left_out"] = left_out.iter().map(|(p, t)| serde_json::json!({"path": p, "index_file": t})).collect();
         outln!("{}", serde_json::to_string_pretty(&v)?);
     } else {
         outln!("database: {}", if report.database_ok { "ok" } else { "CORRUPT" });
@@ -2175,6 +2177,9 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
         }
         for p in &report.problems {
             outln!("problem: {p}");
+        }
+        for (p, t) in &left_out {
+            outln!("note: {}", crate::files::left_out_line(p, t));
         }
         for u in &report.unlisted {
             let fate = if u.age_s > crate::index::GC_AGE_S {

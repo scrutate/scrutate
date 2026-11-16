@@ -1076,11 +1076,7 @@ pub fn run_main(args: &[String]) -> i32 {
     match names_the_index_dir(argv, &mut index) {
         crate::files::Reach::Clear => {}
         crate::files::Reach::Index(p) => {
-            eprintln!(
-                "scrutate hook run: {} is inside scrutate's index directory ({}), whose files hold the repository's text: not searched",
-                p.display(),
-                crate::files::INDEX_DIR
-            );
+            eprintln!("scrutate hook run: {}", crate::files::refused(&p.display().to_string(), &p, &index, "searched"));
             return 2;
         }
         crate::files::Reach::TooWide => {

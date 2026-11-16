@@ -1262,3 +1262,309 @@ fn hook_run_redacts_a_line_that_is_not_utf8() {
     }
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A file that is one of scrutate's index files under another name, either way round (an index file
+/// that holds a planted secret's line hard-linked under a repository name, or a repository file
+/// hard-linked into the index directory), is left out of every search scrutate walks itself, plain
+/// and `--json`, with redaction off and on: no answer names it, and none carries the secret while
+/// redaction is on. The walk says so once on stderr, `check` lists it, and a path that names it is
+/// refused with how to search it again.
+#[cfg(unix)]
+#[test]
+fn a_file_that_is_an_index_file_under_another_name_is_left_out_of_every_walk() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_linked_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let secret = chars(&mut 63, &format!("{ALNUM}/+"), 40);
+    let line = format!("aws_secret_access_key = \"{secret}\"");
+    fs::write(root.join("conf.py"), format!("def settings():\n    return KEY\n\n\nKEY = 1\n{line}\n")).unwrap();
+    // a tsquery cache record as the hook test plants it: the secret runs into the next field
+    let mut record = b"\0\0\0assignment@\0\0\0aws_secret_access_key = ".to_vec();
+    record.extend_from_slice(secret.as_bytes());
+    record.extend_from_slice(b"4\0\0\0\0\0\0\0\x01\0\0\0a\n");
+    fs::create_dir_all(root.join(".scrutate/tsquery")).unwrap();
+    fs::write(root.join(".scrutate/tsquery/planted.bin"), &record).unwrap();
+    // a cache written as text: only the file's identity tells the walk what it is
+    fs::write(root.join(".scrutate/tsquery/planted.txt"), format!("{line}\n")).unwrap();
+    // the other way round: a repository file linked into the index directory
+    fs::write(root.join("mine.py"), "aws_region = \"eu-west-1\"\n").unwrap();
+    fs::hard_link(root.join("mine.py"), root.join(".scrutate/copy.py")).unwrap();
+    let root = canon(&root);
+    let home = root.with_extension("home");
+    let run = |args: &[&str], env: &[(&str, &str)]| {
+        let mut c = Command::new(BIN);
+        c.args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_CACHE_DIR", root.with_extension("cache"))
+            .env_remove("SCRUTATE_REDACT")
+            .stdin(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        let out = c.output().unwrap();
+        (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    run(&["index"], &[]);
+    run(&["tsquery", "python", "(assignment) @a"], &[]);
+    // every index file that now holds the secret's bytes, the planted record among them, gets a
+    // hard link under a plain name, as code and as text
+    let mut held = Vec::new();
+    for e in ignore::WalkBuilder::new(root.join(".scrutate")).standard_filters(false).build().flatten() {
+        if e.file_type().is_some_and(|t| t.is_file()) && fs::read(e.path()).unwrap().windows(secret.len()).any(|w| w == secret.as_bytes()) {
+            held.push(e.path().to_path_buf());
+        }
+    }
+    assert!(held.iter().any(|p| p.ends_with("planted.bin")) && held.iter().any(|p| p.ends_with("planted.txt")), "{held:?}");
+    let mut links = vec![("mine.py".to_string(), ".scrutate/copy.py".to_string())];
+    for (i, p) in held.iter().enumerate() {
+        for ext in ["txt", "py"] {
+            let name = format!("zzlink{i}.{ext}");
+            fs::hard_link(p, root.join(&name)).unwrap();
+            links.push((name, p.strip_prefix(&root).unwrap().to_string_lossy().into_owned()));
+        }
+    }
+    run(&["index"], &[]);
+    let leaks = std::cell::RefCell::new(Vec::new());
+    let check = |what: String, text: &str, redacted: bool| {
+        // the search ran and found the repository's own line
+        if !what.starts_with("hook run") && !text.contains("conf.py") {
+            leaks.borrow_mut().push(format!("{what}: no answer to check:\n{text}"));
+        }
+        for (name, of) in &links {
+            if text.contains(name.as_str()) {
+                leaks.borrow_mut().push(format!("{what}: names {name} (a link to {of})"));
+            }
+        }
+        if redacted && text.contains(&secret) {
+            leaks.borrow_mut().push(format!("{what}: the secret came back"));
+        }
+    };
+    let cli: &[&[&str]] = &[
+        &["grep", "aws"],
+        &["grep", "-l", "aws"],
+        &["grep", "-c", "aws"],
+        &["grep", "--symbols", "aws"],
+        &["grep", "--index", "aws"],
+        &["grep", "--hidden", "--no-ignore", "aws"],
+        &["search", "aws_secret_access_key"],
+        &["find", "aws_secret_access_key"],
+        &["refs", "aws_secret_access_key", "--textual"],
+    ];
+    for args in cli {
+        for json in [false, true] {
+            for redact in ["off", "on"] {
+                let mut a = args.to_vec();
+                if json {
+                    a.push("--json");
+                }
+                // a link's lines come with its name; conf.py's own line under `on` is another test's
+                let text = run(&a, &[("SCRUTATE_REDACT", redact)]).0;
+                check(format!("scrutate {} SCRUTATE_REDACT={redact}", a.join(" ")), &text, false);
+            }
+        }
+    }
+    // the Grep hook, over the whole repository, in each output mode
+    for mode in ["content", "files_with_matches", "count"] {
+        let mut c = Command::new(BIN);
+        c.args(["hook", "grep"])
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("CLAUDE_PROJECT_DIR", &root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("SCRUTATE_REDACT")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let input = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": root.to_str().unwrap(),
+            "tool_input": {"pattern": "aws", "output_mode": mode, "-n": true}, "tool_use_id": "t1", "permission_mode": "default"});
+        let mut child = c.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+        let text = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+        check(format!("hook grep {mode}"), &text, true);
+    }
+    // hook run refuses a search that reaches the link
+    let (text, err) = run(&["hook", "run", "--piped", "--", "grep", "-r", "-a", "aws", "."], &[]);
+    check("hook run grep -r -a aws .".into(), &text, true);
+    if !err.contains("remove the hard link, by its path") {
+        leaks.borrow_mut().push(format!("hook run: no way back in the refusal: {err}"));
+    }
+    // the walk says once what it left out, and check lists each one
+    let err = run(&["grep", "aws"], &[]).1;
+    if err.matches("is left out of every search").count() != 1 || !err.contains("remove the hard link, by its path") {
+        leaks.borrow_mut().push(format!("grep's stderr: {err}"));
+    }
+    let (said, json) = (run(&["check"], &[]).0, run(&["check", "--json"], &[]).0);
+    for (name, _) in &links {
+        if !said.contains(&format!("/{name} is left out of every search")) || !json.contains(&format!("/{name}\"")) {
+            leaks.borrow_mut().push(format!("check does not list {name}:\n{said}\n{json}"));
+        }
+    }
+    // the MCP tools that walk the repository
+    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    let settings = scrutate::mcp::Settings::new(None);
+    for path in ["mine.py", "zzlink0.py", "zzlink1.txt"] {
+        let c = scrutate::mcp::call_tool(&session, "read_code", &json!({"path": path}), &settings, &Default::default());
+        if !c.text.contains("remove the hard link, by its path") || c.text.contains(&secret) {
+            leaks.borrow_mut().push(format!("read_code {path}: {}", c.text));
+        }
+    }
+    for (tool, args) in [
+        ("grep_code", json!({"pattern": "aws", "max_results": 1000})),
+        ("grep_code", json!({"pattern": "aws_secret_access_key", "max_results": 1000, "mode": "identifier"})),
+        ("search_code", json!({"query": "aws_secret_access_key"})),
+        ("references", json!({"name": "aws_secret_access_key"})),
+    ] {
+        for form in ["detailed", "concise"] {
+            let mut a = args.clone();
+            a["response_format"] = json!(form);
+            let c = scrutate::mcp::call_tool(&session, tool, &a, &settings, &Default::default());
+            let mut text = c.text.clone();
+            strings(&c.structured, &mut text);
+            check(format!("mcp {tool} {a}"), &text, true);
+        }
+    }
+    let leaks = leaks.into_inner();
+    assert!(leaks.is_empty(), "{} leaks:\n{}", leaks.len(), leaks.join("\n"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The files under the index directory that never hold a file's text, so need no binary header:
+/// (path from the index directory, `*` standing for any part of one name, why).
+const NO_TEXT: &[(&str, &str)] = &[
+    (".gitignore", "the one line `*`"),
+    ("checked", "a stamp of the last integrity check: counts, sizes and times"),
+    ("text/lock", "empty: only its lock is used"),
+    ("text/manifest.json", "the text index's format, generation and segment names"),
+    ("text/*/live-*.bin", "a bitmap of the segment's live files"),
+    ("text/*/paths.bin", "the indexed files' paths, which a listing of the tree shows too"),
+];
+
+/// Whether `rel` matches `pattern`, where `*` stands for any part of one name.
+fn on_list(pattern: &str, rel: &str) -> bool {
+    let (p, r): (Vec<&str>, Vec<&str>) = (pattern.split('/').collect(), rel.split('/').collect());
+    p.len() == r.len()
+        && p.iter().zip(&r).all(|(p, r)| match p.split_once('*') {
+            Some((head, tail)) => r.len() >= head.len() + tail.len() && r.starts_with(head) && r.ends_with(tail),
+            None => p == r,
+        })
+}
+
+/// Every regular file scrutate writes under its index directory has a NUL in its first kilobyte, so
+/// every search scrutate runs sees a binary file and skips it, or is on `NO_TEXT`. A new kind of
+/// file fails here until it gets a binary header or a place on the list with its reason.
+#[test]
+fn every_index_file_that_can_hold_text_reads_as_binary() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_binary_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let root = canon(&root);
+    let home = root.with_extension("home");
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.autocrlf=false"])
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    let secret = chars(&mut 64, &format!("{ALNUM}/+"), 40);
+    let conf = |body: &str| format!("aws_secret_access_key = \"{secret}\"\n\n\ndef settings():\n    {body}\n");
+    fs::write(root.join("conf.py"), conf("return aws_secret_access_key")).unwrap();
+    fs::write(root.join("app.py"), "from conf import settings\n\n\ndef main():\n    return settings()\n").unwrap();
+    fs::write(root.join("copy.py"), "def settings_copy():\n    return 1\n\n\ndef settings_copy2():\n    return 1\n").unwrap();
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    fs::write(root.join("conf.py"), conf("return [aws_secret_access_key]")).unwrap();
+    git(&["commit", "-qam", "head"]);
+    fs::write(root.join("conf.py"), conf("return {aws_secret_access_key}")).unwrap();
+    let cmd = || {
+        let mut c = Command::new(BIN);
+        c.current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_CACHE_DIR", root.with_extension("cache"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        c
+    };
+    for args in [
+        &["index", "--no-text"][..],
+        &["index"],
+        &["index", "--text"],
+        &["search", "settings"],
+        &["find", "settings"],
+        &["symbol", "settings"],
+        &["callers", "settings"],
+        &["refs", "settings"],
+        &["refs", "settings", "--textual"],
+        &["similar", "settings"],
+        &["dupes"],
+        &["dead"],
+        &["map"],
+        &["files", "conf"],
+        &["grep", "--index", "aws"],
+        &["grep", "--symbols", "aws"],
+        &["tsquery", "python", "(assignment) @a"],
+        &["tsquery", "python", "(identifier) @i", "--rewrite", "$i"],
+        &["impact"],
+        &["impact", "--base", "HEAD~1"],
+        &["review", "--base", "HEAD~1"],
+        &["check"],
+        &["stats"],
+    ] {
+        cmd().args(args).status().unwrap();
+    }
+    // the watcher, through one change
+    let mut watch = cmd().arg("watch").spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    fs::write(root.join("app.py"), "from conf import settings\n\n\ndef main():\n    return [settings()]\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let _ = watch.kill();
+    let _ = watch.wait();
+    // the MCP tools, through a session
+    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    let settings = scrutate::mcp::Settings::new(None);
+    for (tool, args) in [
+        ("impact", json!({})),
+        ("references", json!({"name": "settings"})),
+        ("callers", json!({"name": "settings"})),
+        ("structural_search", json!({"lang": "python", "query": "(string) @s"})),
+        ("grep_code", json!({"pattern": "aws"})),
+        ("search_code", json!({"query": "settings"})),
+        ("duplicates", json!({})),
+        ("dead_code", json!({})),
+        ("repo_map", json!({})),
+    ] {
+        scrutate::mcp::call_tool(&session, tool, &args, &settings, &Default::default());
+    }
+    drop(session);
+    let dir = root.join(".scrutate");
+    let mut text = Vec::new();
+    for e in ignore::WalkBuilder::new(&dir).standard_filters(false).build().flatten() {
+        if !e.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let rel = e.path().strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
+        let mut head = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::Read::take(fs::File::open(e.path()).unwrap(), 1024), &mut head).unwrap();
+        if !head.contains(&0) && !NO_TEXT.iter().any(|(pattern, _)| on_list(pattern, &rel)) {
+            text.push(format!("{rel}: {:?}", String::from_utf8_lossy(&head[..head.len().min(80)])));
+        }
+    }
+    assert!(text.is_empty(), "index files that read as text:\n{}", text.join("\n"));
+    let _ = fs::remove_dir_all(&root);
+}

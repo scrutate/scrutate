@@ -44,23 +44,37 @@ pub enum Reach {
 /// links, a hard link. They start as the index directory of `start` and of each directory above
 /// it; `reached_by_search` adds every one its walk meets.
 pub struct IndexFiles {
+    /// each one's path, by device and inode
     #[cfg(unix)]
-    ids: std::collections::HashSet<(u64, u64)>,
+    ids: std::collections::HashMap<(u64, u64), PathBuf, InoHash>,
+    #[cfg(unix)]
+    inos: std::collections::HashSet<u64, InoHash>,
     /// elsewhere a file's identity is its handle (on Windows its volume and file index)
     #[cfg(not(unix))]
-    handles: Vec<same_file::Handle>,
+    handles: Vec<(same_file::Handle, PathBuf)>,
 }
 
 impl IndexFiles {
     pub fn near(start: &Path) -> IndexFiles {
+        IndexFiles::near_all(&[start])
+    }
+
+    /// The index directories of every one of `starts` and of each directory above them.
+    pub fn near_all(starts: &[impl AsRef<Path>]) -> IndexFiles {
         let mut index = IndexFiles {
             #[cfg(unix)]
-            ids: std::collections::HashSet::new(),
+            ids: Default::default(),
+            #[cfg(unix)]
+            inos: Default::default(),
             #[cfg(not(unix))]
             handles: Vec::new(),
         };
-        let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
-        for dir in start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()) {
+        let mut dirs = std::collections::BTreeSet::new();
+        for start in starts {
+            let start = std::fs::canonicalize(start.as_ref()).unwrap_or_else(|_| start.as_ref().to_path_buf());
+            dirs.extend(start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()));
+        }
+        for dir in dirs {
             index.add(&dir);
         }
         index
@@ -68,20 +82,32 @@ impl IndexFiles {
 
     /// Knows the files and directories of the index directory `dir`.
     fn add(&mut self, dir: &Path) {
+        // inodes from the directory entries, no stat per file: a hard link to one of them is on
+        // the index directory's device
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
-            let walk = ignore::WalkBuilder::new(dir).standard_filters(false).follow_links(false).build();
-            for e in walk.flatten() {
-                if let Ok(md) = std::fs::symlink_metadata(e.path()) {
-                    self.ids.insert((md.dev(), md.ino()));
+            use std::os::unix::fs::{DirEntryExt, MetadataExt};
+            let Ok(top) = std::fs::symlink_metadata(dir) else { return };
+            let dev = top.dev();
+            let mut todo = vec![(dir.to_path_buf(), top.ino())];
+            while let Some((d, ino)) = todo.pop() {
+                let rd = std::fs::read_dir(&d);
+                self.inos.insert(ino);
+                self.ids.insert((dev, ino), d);
+                for e in rd.into_iter().flatten().flatten() {
+                    if e.file_type().is_ok_and(|t| t.is_dir()) {
+                        todo.push((e.path(), e.ino()));
+                    } else {
+                        self.inos.insert(e.ino());
+                        self.ids.insert((dev, e.ino()), e.path());
+                    }
                 }
             }
         }
         #[cfg(not(unix))]
         {
             let walk = ignore::WalkBuilder::new(dir).standard_filters(false).follow_links(false).build();
-            self.handles.extend(walk.flatten().filter_map(|e| same_file::Handle::from_path(e.path()).ok()));
+            self.handles.extend(walk.flatten().filter_map(|e| Some((same_file::Handle::from_path(e.path()).ok()?, e.into_path()))));
         }
     }
 
@@ -148,14 +174,13 @@ impl IndexFiles {
         #[cfg(unix)]
         let hit = {
             use std::os::unix::fs::MetadataExt;
-            let inos: std::collections::HashSet<u64> = self.ids.iter().map(|&(_, i)| i).collect();
             // a link is read through: its target decides; another entry's inode is its own
             entries.into_iter().find(|(p, ino, link)| {
-                (*link || ino.is_none_or(|i| inos.contains(&i))) && std::fs::metadata(p).is_ok_and(|m| self.ids.contains(&(m.dev(), m.ino())))
+                (*link || ino.is_none_or(|i| self.inos.contains(&i))) && std::fs::metadata(p).is_ok_and(|m| self.ids.contains_key(&(m.dev(), m.ino())))
             })
         };
         #[cfg(not(unix))]
-        let hit = entries.into_iter().find(|(p, _, _)| inside_index_dir(p) || same_file::Handle::from_path(p).is_ok_and(|h| self.handles.contains(&h)));
+        let hit = entries.into_iter().find(|(p, _, _)| inside_index_dir(p) || self.twin_of(p).is_some());
         hit.map_or(Reach::Clear, |e| Reach::Index(e.0))
     }
 
@@ -165,15 +190,147 @@ impl IndexFiles {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if std::fs::metadata(path).is_ok_and(|md| self.ids.contains(&(md.dev(), md.ino()))) {
+            if std::fs::metadata(path).is_ok_and(|md| self.ids.contains_key(&(md.dev(), md.ino()))) {
                 return true;
             }
         }
         #[cfg(not(unix))]
-        if same_file::Handle::from_path(path).is_ok_and(|h| self.handles.contains(&h)) {
+        if self.twin_of(path).is_some() {
             return true;
         }
         inside_index_dir(path)
+    }
+
+    /// The index file or directory `path` is by identity, links followed, when one is.
+    pub fn twin_of(&self, path: &Path) -> Option<PathBuf> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let md = std::fs::metadata(path).ok()?;
+            self.ids.get(&(md.dev(), md.ino())).cloned()
+        }
+        #[cfg(not(unix))]
+        {
+            let h = same_file::Handle::from_path(path).ok()?;
+            self.handles.iter().find(|(k, _)| *k == h).map(|(_, p)| p.clone())
+        }
+    }
+
+    /// The index file or directory that `e`, met by a walk under a name outside any index
+    /// directory, is by identity. The inode comes with the directory entry, so only a link or an
+    /// entry that shares an index file's inode costs a stat.
+    #[cfg(unix)]
+    fn twin(&self, e: &ignore::DirEntry) -> Option<&Path> {
+        use std::os::unix::fs::MetadataExt;
+        if !(e.path_is_symlink() || e.ino().is_some_and(|i| self.inos.contains(&i))) {
+            return None;
+        }
+        let md = std::fs::metadata(e.path()).ok()?;
+        let twin = self.ids.get(&(md.dev(), md.ino()))?;
+        (!inside_index_dir_named(e.path())).then_some(twin.as_path())
+    }
+}
+
+/// Hashes inodes and devices by one multiply each: they are already spread, and the walks ask
+/// about every entry they meet.
+#[cfg(unix)]
+#[derive(Clone, Copy, Default)]
+struct InoHasher(u64);
+
+#[cfg(unix)]
+impl std::hash::Hasher for InoHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        bytes.iter().for_each(|&b| self.write_u64(u64::from(b)));
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0 ^ n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+#[cfg(unix)]
+type InoHash = std::hash::BuildHasherDefault<InoHasher>;
+
+/// What scrutate's own walks leave out: on Unix an entry that is, by identity, a file or directory
+/// of an index directory of the walk's roots, met under another name (a hard link either way). It
+/// is said once per run on stderr. Elsewhere it leaves out nothing, since the walk would have to open
+/// every entry: there the binary header of every index file that holds text keeps it out of a search.
+#[derive(Clone, Default)]
+pub struct WalkGuard(#[cfg(unix)] Option<Arc<IndexFiles>>);
+
+impl WalkGuard {
+    pub fn new(roots: &[impl AsRef<Path>]) -> WalkGuard {
+        #[cfg(unix)]
+        {
+            let ix = IndexFiles::near_all(roots);
+            WalkGuard((!ix.ids.is_empty()).then(|| Arc::new(ix)))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = roots;
+            WalkGuard()
+        }
+    }
+
+    pub fn is_on(&self) -> bool {
+        #[cfg(unix)]
+        return self.0.is_some();
+        #[cfg(not(unix))]
+        false
+    }
+
+    pub fn leaves_out(&self, e: &ignore::DirEntry) -> bool {
+        #[cfg(unix)]
+        if let Some(twin) = self.0.as_ref().and_then(|ix| ix.twin(e)) {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| eprintln!("[scrutate] {}", left_out_line(e.path(), twin)));
+            return true;
+        }
+        let _ = e;
+        false
+    }
+}
+
+/// Why `shown`, a path that reaches `path`, is refused (`done`: "searched" or "read"): it lies in an
+/// index directory by its name, or it is one of `index`'s files under another name, and then how
+/// to have it searched again.
+pub fn refused(shown: &str, path: &Path, index: &IndexFiles, done: &str) -> String {
+    match index.twin_of(path).filter(|_| !inside_index_dir(path)) {
+        Some(twin) => format!(
+            "{shown} is the same file as {}, in scrutate's index directory, whose files hold the repository's text: not {done}; remove the hard link, by its path, to search it again",
+            twin.display()
+        ),
+        None => format!("{shown} is inside scrutate's index directory ({INDEX_DIR}), whose files hold the repository's text: not {done}"),
+    }
+}
+
+/// Why `path` is in no answer, and how to have it searched again.
+pub fn left_out_line(path: &Path, twin: &Path) -> String {
+    format!(
+        "{} is left out of every search: it is the same file as {}, in scrutate's index (a hard link); remove the hard link, by its path, to search it",
+        path.display(),
+        twin.display()
+    )
+}
+
+/// The files the walks of `root` leave out by identity (`WalkGuard`), each with the index file it
+/// is: (path, index file).
+pub fn left_out(root: &Path) -> Vec<(PathBuf, PathBuf)> {
+    #[cfg(unix)]
+    {
+        let Some(ix) = WalkGuard::new(&[root]).0 else { return Vec::new() };
+        let skip = skip_dirs(root);
+        let mut wb = CodeWalk::rules(root);
+        wb.hidden(false).ignore(false).git_ignore(false).git_global(false).git_exclude(false).parents(false);
+        wb.filter_entry(move |e| !(e.depth() > 0 && e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy())));
+        wb.build().flatten().filter_map(|e| ix.twin(&e).map(|t| (e.path().to_path_buf(), t.to_path_buf()))).collect()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = root;
+        Vec::new()
     }
 }
 
@@ -511,12 +668,12 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
     let left_out = |rules: &std::sync::Mutex<ignore::IncrementalIgnore>, rel: &Path, is_dir: bool| {
         maybe_hidden(rel) && rules.lock().unwrap_or_else(|p| p.into_inner()).matched(rel, is_dir).is_ignore()
     };
-    let (skip, base, held) = (walk.skip.clone(), root.to_path_buf(), rules.clone());
+    let (skip, base, held, guard) = (walk.skip.clone(), root.to_path_buf(), rules.clone(), walk.guard.clone());
     let mut wb = CodeWalk::rules(root);
     // a directory the code index skips is still entered when the text index's walk enters it
     wb.filter_entry(move |e| {
         let skipped = e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy());
-        !skipped || held.as_ref().is_some_and(|r| !e.path().strip_prefix(&base).is_ok_and(|rel| left_out(r, rel, true)))
+        (!skipped || held.as_ref().is_some_and(|r| !e.path().strip_prefix(&base).is_ok_and(|rel| left_out(r, rel, true)))) && !guard.leaves_out(e)
     });
     // a stat per file is most of a fresh process's look at a large tree: the walk runs on every
     // core, each thread keeping what it found until it ends
@@ -633,17 +790,18 @@ fn maybe_hidden(rel: &Path) -> bool {
 pub struct CodeWalk {
     root: PathBuf,
     skip: Arc<Vec<String>>,
+    guard: WalkGuard,
 }
 
 impl CodeWalk {
     pub fn new(root: &Path) -> CodeWalk {
-        CodeWalk { root: root.to_path_buf(), skip: Arc::new(skip_dirs(root)) }
+        CodeWalk { root: root.to_path_buf(), skip: Arc::new(skip_dirs(root)), guard: WalkGuard::new(&[root]) }
     }
 
     pub fn builder(&self, start: &Path) -> ignore::WalkBuilder {
-        let skip = self.skip.clone();
+        let (skip, guard) = (self.skip.clone(), self.guard.clone());
         let mut wb = Self::rules(start);
-        wb.filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy())));
+        wb.filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy())) && !guard.leaves_out(e));
         wb
     }
 

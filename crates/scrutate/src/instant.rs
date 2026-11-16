@@ -2122,14 +2122,18 @@ fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuil
     }
     // the walk keeps one entry filter: both rules go in it
     let own = f.skip_own_dirs;
+    let guard = crate::files::WalkGuard::new(roots);
     let scoped = f.scoped_globs.clone().map(|sg| {
         let scopes: Vec<(PathBuf, Scope)> = roots.iter().map(|r| (r.clone(), sg.scope(r))).collect();
         (sg, scopes)
     });
-    if own || scoped.is_some() {
+    if own || scoped.is_some() || guard.is_on() {
         wb.filter_entry(move |e| {
             let dir = e.file_type().is_some_and(|t| t.is_dir());
             if own && dir && e.depth() > 0 && crate::files::own_dir_name(&e.file_name().to_string_lossy()).is_some() {
+                return false;
+            }
+            if guard.leaves_out(e) {
                 return false;
             }
             let Some((sg, scopes)) = &scoped else { return true };
