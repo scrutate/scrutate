@@ -38,6 +38,54 @@ pub const MAX_MERGE_ROWS: usize = 300_000;
 pub const QUICK_CHECK_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub const GC_AGE_S: u64 = 600; // unreferenced segment directories younger than this may be in flight
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
+
+/// How many of the files over `MAX_FILE_BYTES` a note names.
+const NOT_INDEXED_NAMED: usize = 20;
+
+/// The files the code index leaves out, as its `files` rows record them (hash `SKIP`, with the
+/// size the scan saw): one over `MAX_FILE_BYTES`, by count and the first paths, and one that is
+/// not text or could not be parsed, by count. A row is as its last scan left it, so if the bound
+/// ever changes, a file between the old and the new bound keeps its old reason until the next
+/// scan reads it; the two causes of the second reason share one row and are not told apart.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NotIndexed {
+    pub over: usize,
+    pub first: Vec<String>,
+    pub other: usize,
+}
+
+impl NotIndexed {
+    pub fn is_empty(&self) -> bool {
+        self.over == 0 && self.other == 0
+    }
+
+    /// One note line per reason.
+    pub fn lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.over > 0 {
+            let more = if self.over > self.first.len() { format!(" and {} more", self.over - self.first.len()) } else { String::new() };
+            let (n, are) = if self.over == 1 { ("1 file".to_string(), "is") } else { (format!("{} files", self.over), "are") };
+            out.push(format!("{n} over 1 MB {are} not in the index: {}{more}", self.first.join(", ")));
+        }
+        if self.other > 0 {
+            let (n, are) = if self.other == 1 { ("1 file".to_string(), "is") } else { (format!("{} files", self.other), "are") };
+            out.push(format!("{n} {are} not in the index: not text or could not be parsed"));
+        }
+        out
+    }
+
+    /// The additive `not_indexed` field: one object per reason.
+    pub fn json(&self) -> serde_json::Value {
+        let mut v = Vec::new();
+        if self.over > 0 {
+            v.push(serde_json::json!({"reason": "over 1 MB", "count": self.over, "paths": self.first}));
+        }
+        if self.other > 0 {
+            v.push(serde_json::json!({"reason": "not text or could not be parsed", "count": self.other}));
+        }
+        serde_json::Value::Array(v)
+    }
+}
 /// Source bytes of the syntax trees an open index keeps for incremental reparsing (the trees
 /// themselves take several times this in memory).
 pub const TREE_CACHE_BYTES: usize = 2 << 20;
@@ -3462,6 +3510,33 @@ impl Index {
         Ok(some as usize)
     }
 
+    /// The files this index leaves out (`NotIndexed`); nothing when it cannot be read.
+    pub fn not_indexed(&self) -> NotIndexed {
+        let count = |over: bool| -> rusqlite::Result<usize> {
+            let sql = if over {
+                "SELECT COUNT(*) FROM files WHERE hash = 'SKIP' AND size > ?1"
+            } else {
+                "SELECT COUNT(*) FROM files WHERE hash = 'SKIP' AND size <= ?1"
+            };
+            self.db.prepare_cached(sql)?.query_row([MAX_FILE_BYTES as i64], |r| r.get::<_, i64>(0)).map(|n| n as usize)
+        };
+        let first = || -> rusqlite::Result<Vec<String>> {
+            let mut q = self.db.prepare_cached("SELECT path FROM files WHERE hash = 'SKIP' AND size > ?1 ORDER BY path LIMIT ?2")?;
+            q.query_map(rusqlite::params![MAX_FILE_BYTES as i64, NOT_INDEXED_NAMED as i64], |r| r.get::<_, String>(0))?.collect()
+        };
+        match (count(true), count(false)) {
+            (Ok(0), Ok(other)) => NotIndexed { other, ..NotIndexed::default() },
+            (Ok(over), Ok(other)) => NotIndexed { over, first: first().unwrap_or_default(), other },
+            _ => NotIndexed::default(),
+        }
+    }
+
+    /// Why the code index leaves out `rel`, a path from the root, when it does.
+    pub fn not_indexed_reason(&self, rel: &str) -> Option<&'static str> {
+        let size: i64 = self.db.prepare_cached("SELECT size FROM files WHERE path = ?1 AND hash = 'SKIP'").ok()?.query_row([rel], |r| r.get(0)).ok()?;
+        Some(if size > MAX_FILE_BYTES as i64 { "over 1 MB" } else { "not text or could not be parsed" })
+    }
+
     /// The indexed files, the skipped ones aside, in table order.
     pub fn files(&self) -> Result<Vec<String>> {
         let mut st = self.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;
@@ -3702,6 +3777,13 @@ impl Index {
             "semantic": self.models.semantic_enabled(),
             "segments": self.segments().len(),
         }))
+        .map(|mut v| {
+            let ni = self.not_indexed();
+            if !ni.is_empty() {
+                v["not_indexed"] = ni.json();
+            }
+            v
+        })
     }
 }
 

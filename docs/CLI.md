@@ -415,6 +415,22 @@ words are split at case changes and stemmed.
 Names compare in Unicode NFC, so a name typed with a combining accent finds the precomposed
 spelling. A definition name longer than 200 bytes is still a symbol when it holds no whitespace.
 
+### Files the index leaves out
+
+The code index reads a source file of up to 1 MB (1,000,000 bytes) that is text and parses; it
+leaves out a larger one, and one that is not text or could not be parsed, and records why. `grep`
+and the text index have no such bound, and `read` reads any file by its lines. Where an answer
+from the code index depends on a left-out file, it says so, as a note line and, in `--json` and
+the MCP tools' envelope, a `not_indexed` field (`reason`, `count`, and for a file over 1 MB the
+first twenty `paths`): `index`, `check` and `stats` always (`1 file over 1 MB is not in the
+index: big.py`, past twenty `and N more`); a lookup (`symbol`, `search`, `find`, `callers`,
+`callees`, `refs`, `read --symbol`, `outline`, `path`) after an empty answer, and whenever a path,
+glob or file it is given names a left-out file (`big.py is not in the index (over 1 MB): read it
+by lines, or search it with grep`); `dupes`, `dead` and `map` always, as they claim the whole
+repository. `refs` labels an occurrence in such a file `in a file that is not indexed (over 1 MB)`
+and keeps it among the unresolved; `impact` and `review` list a changed one as `big.py [file]
+(edited; not indexed: over 1 MB)`. A repository with no left-out file gets every answer as before.
+
 ### `refs`
 ```
 scrutate refs NAME [--def PATH[:LINE]] [--textual] [--max-results N] [--json]

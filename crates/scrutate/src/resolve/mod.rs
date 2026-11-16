@@ -324,6 +324,8 @@ struct Binding {
 
 /// Why an occurrence stays unresolved in a language that has a grammar but no resolver rules.
 pub const UNREAD: &str = "not resolved in this language";
+/// An occurrence in a file the code index leaves out for its size.
+pub const NOT_INDEXED: &str = "in a file that is not indexed (over 1 MB)";
 
 /// Why an occurrence in a file whose tree is deeper than `MAX_DEPTH` stays unresolved.
 pub const TOO_DEEP: &str = "nested too deeply to read";
@@ -1579,6 +1581,10 @@ impl<'a> Resolver<'a> {
             return Err(if crate::langs::detect(path, Some("")).is_some() { UNREAD } else { "no grammar" });
         }
         let fi = self.file(path);
+        // a file over the bound is read as empty (`repo_bytes`): no occurrence in it is placed
+        if fi.src.is_empty() && std::fs::metadata(self.ix.root.join(path)).is_ok_and(|m| m.len() > crate::index::MAX_FILE_BYTES) {
+            return Err(NOT_INDEXED);
+        }
         let (Some(lang), Some(tree)) = (fi.lang, fi.tree()) else {
             if fi.deep {
                 return Err(TOO_DEEP);

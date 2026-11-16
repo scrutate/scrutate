@@ -1492,6 +1492,9 @@ pub fn run() -> Result<i32> {
             let up = crate::stores::update(&cli.root, w, force)?;
             if let Some(st) = up.code {
                 outln!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
+                for line in crate::open(&cli.root).map(|r| r.ix.not_indexed().lines()).unwrap_or_default() {
+                    outln!("note: {line}");
+                }
             }
             if let Some(t) = up.text {
                 outln!(
@@ -2017,7 +2020,11 @@ fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
             let op = &request.op;
             let run = || match op {
                 Op::Files { query, limit } => crate::ops::files(root, query, *limit),
-                _ => (if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? }).run_as_is(op),
+                _ => {
+                    let mut repo = if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? };
+                    let a = repo.run_as_is(op).map_err(|e| crate::ops::noted_error(&repo.ix, op, e))?;
+                    Ok(crate::ops::noted(&repo.ix, op, a))
+                }
             };
             let answer = match (run(), outside) {
                 (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
@@ -2038,8 +2045,10 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
     use std::fmt::Write as _;
     let mut p = crate::session::Printed::default();
     // these print nothing on standard output when empty, so a pipeline sees no lines
-    let quiet =
-        matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..) | Answer::Files(..));
+    let quiet = matches!(
+        answer.bare(),
+        Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..) | Answer::Files(..)
+    );
     let why = r.outside.as_deref().filter(|_| answer.is_empty());
     // a person reads the CLI's answers as they are, unless SCRUTATE_REDACT=on: JSON is redacted
     // as values before it is written, so it stays whole, and the closing line goes to stderr
@@ -2068,12 +2077,13 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request, root: &Path)
         writeln!(p.err, "{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default())?;
         p.code = 1;
         return Ok(p);
-    } else if let (false, Op::Search { query, alt, .. }, Answer::Hits { hits, .. }) = (answer.is_empty(), r.op.unscoped(), &answer) {
+    } else if let (false, Op::Search { query, alt, .. }, Answer::Hits { hits, .. }) = (answer.is_empty(), r.op.unscoped(), answer.bare()) {
         // a ranked search shows `--why` and lights up the words of every phrasing as given
         let words: Vec<String> = std::iter::once(query).chain(alt).flat_map(|q| query_words(q)).collect();
         let v = crate::text::Vendored::of(root);
         let blocks = crate::fmt::hit_blocks(hits, &words, true, r.why).iter().map(|b| crate::ops::mark_hit_block(b, &|p| v.is(p))).collect();
         writeln!(p.out, "{}", crate::ops::paged(blocks, "results", text_room(r.max_bytes), r.offset))?;
+        answer.notes().iter().try_for_each(|n| writeln!(p.out, "{n}"))?;
     } else {
         let text = answer.text_page(Some(root), text_room(r.max_bytes), r.offset, crate::ops::Form::Detailed, None).0;
         write!(p.out, "{text}{}", if text.ends_with('\n') { "" } else { "\n" })?;
@@ -2194,10 +2204,14 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     // a constant or a field has no postings, so no segment row: the counts below leave it out
     let constants = s.ix.constants();
     let left_out = crate::files::left_out(root);
+    let not_indexed = s.ix.not_indexed();
     if json {
         let mut v = serde_json::to_value(&report)?;
         v["constants"] = serde_json::json!(constants);
         v["left_out"] = left_out.iter().map(|(p, t)| serde_json::json!({"path": p, "index_file": t})).collect();
+        if !not_indexed.is_empty() {
+            v["not_indexed"] = not_indexed.json();
+        }
         outln!("{}", serde_json::to_string_pretty(&v)?);
     } else {
         outln!("database: {}", if report.database_ok { "ok" } else { "CORRUPT" });
@@ -2210,6 +2224,9 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
         );
         if files {
             outln!("files: {} indexed, {} changed since indexing, {} missing", report.files_indexed, report.files_changed, report.files_missing);
+        }
+        for line in not_indexed.lines() {
+            outln!("note: {line}");
         }
         for p in &report.problems {
             outln!("problem: {p}");

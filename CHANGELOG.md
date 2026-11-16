@@ -409,6 +409,13 @@ incompatible index by itself, and that is never breaking.
 ### Fixed
 - `--deps PACKAGE.NAME` lists the package's own `NAME` before a method of that name, in Go and Python (`assert.Equal` is testify's function, `assert.Assertions.Equal` its method), and a bare Go package name many packages share is refused naming the first three import paths and how many more, where client-go's 59 packages named `fake` made one line of 3,604 bytes.
 - `--deps` finds a Go package in a module's subdirectory, by its import path (`go.uber.org/mock/gomock.NewController`) or by its name (`gomock.NewController`), where both said "no package of go.mod names" and only the module's own names answered: testify's `assert`, `golang.org/x/sync/errgroup` and most Go imports are such packages. Two packages of one name answer the one the repository imports, or are refused naming both import paths.
+- A source file the code index leaves out (over 1 MB, or not text or could not be parsed) is said
+  wherever an answer depends on it, where `symbol`, `callers`, `read --symbol`, `dupes` and the
+  rest answered as if it held nothing: `index`, `check` and `stats` name it, a lookup that found
+  nothing or names it says why it is not in the index and what reads it, `dupes`, `dead` and
+  `map` always say it, `refs` labels an occurrence in it as in a file that is not indexed where
+  it said "not an identifier", and `impact` and `review` list it as not indexed; `--json` and the
+  MCP tools carry a `not_indexed` field ([CLI](docs/CLI.md#files-the-index-leaves-out)).
 - `tsquery` and `tsquery --rewrite` say a source file over 1 MB, which they do not search: named
   on the command line it gets `PATH: over 1 MB, left alone` and exit 2, where it exited 1 with
   nothing printed as if it held no match; met in a walk it is one note with the count and the

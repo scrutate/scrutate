@@ -455,6 +455,18 @@ impl Session {
         self.run_counted(op, cancel, &Arc::default()).map(|(a, _)| a)
     }
 
+    /// `run_counted` with what the code index leaves out said where it matters (`ops::noted`): the
+    /// answer an MCP tool gives.
+    pub fn run_noted(&self, op: &Op, cancel: &Arc<AtomicBool>, count: &Arc<FileCount>) -> Result<(Answer, Pending)> {
+        self.waiting_for_others(cancel, || {
+            self.call(cancel, Some(count), None, |repo| {
+                let pending = if op.reads_index() { self.scan(repo, false)?.1 } else { Pending::default() };
+                let a = repo.run_as_is(op).map_err(|e| crate::ops::noted_error(&repo.ix, op, e))?;
+                Ok((crate::ops::noted(&repo.ix, op, a), pending))
+            })
+        })
+    }
+
     /// `run`, counting the files the operation reads in `count` as it goes, with what its answer
     /// does not hold yet.
     pub fn run_counted(&self, op: &Op, cancel: &Arc<AtomicBool>, count: &Arc<FileCount>) -> Result<(Answer, Pending)> {
@@ -506,7 +518,8 @@ impl Session {
                 return Ok(None);
             }
             let (st, pending) = if op.reads_index() { self.scan(repo, true)? } else { Default::default() };
-            Ok(Some((st, repo.run_as_is(op), pending)))
+            let a = repo.run_as_is(op).map(|a| crate::ops::noted(&repo.ix, op, a)).map_err(|e| crate::ops::noted_error(&repo.ix, op, e));
+            Ok(Some((st, a, pending)))
         });
         r.ok().flatten()
     }

@@ -572,7 +572,7 @@ impl<'a> Names<'a> {
                 self.by_name(path, line, col, spelled, how).unwrap_or(Tie::Undecided(why))
             }
             Reason::Unread | Reason::TooDeep => Tie::Undecided(why),
-            Reason::NoGrammar => Tie::Undecided(why),
+            Reason::NoGrammar | Reason::NotIndexed => Tie::Undecided(why),
             Reason::Receiver | Reason::NotFound | Reason::MacroArgument => Tie::Undecided(why),
             _ => Tie::Elsewhere(why),
         }
@@ -1488,13 +1488,15 @@ pub(crate) enum Reason {
     NotAnIdentifier,
     NoGrammar,
     Unread,
+    /// in a file the code index leaves out for its size
+    NotIndexed,
     TooDeep,
     /// by name only, and the name has more than one definition the call can reach
     Rivals,
 }
 
 impl Reason {
-    const ALL: [Reason; 34] = [
+    const ALL: [Reason; 35] = [
         Reason::Definition,
         Reason::Import,
         Reason::Member,
@@ -1527,6 +1529,7 @@ impl Reason {
         Reason::NotAnIdentifier,
         Reason::NoGrammar,
         Reason::Unread,
+        Reason::NotIndexed,
         Reason::TooDeep,
         Reason::Rivals,
     ];
@@ -1565,6 +1568,7 @@ impl Reason {
             Reason::NotAnIdentifier => "not an identifier",
             Reason::NoGrammar => "no grammar",
             Reason::Unread => crate::resolve::UNREAD,
+            Reason::NotIndexed => crate::resolve::NOT_INDEXED,
             Reason::TooDeep => crate::resolve::TOO_DEEP,
             Reason::Rivals => "by name, with other definitions of the name",
         }

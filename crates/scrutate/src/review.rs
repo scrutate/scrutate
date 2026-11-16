@@ -95,12 +95,16 @@ impl Review {
         let short = |c: &str| c.get(..12).unwrap_or(c).to_string();
         // a revision given as its commit id is named once, by its short form
         let named = |rev: &str, commit: &str| if commit.starts_with(rev) { code(&short(commit)) } else { format!("{} ({})", code(rev), short(commit)) };
+        let unread = i.changed.iter().filter(|c| c.not_indexed.is_some()).count();
         let mut counts = vec![
-            plural(i.changed.len(), "changed definition", "changed definitions"),
+            plural(i.changed.len() - unread, "changed definition", "changed definitions"),
             plural(i.callers.len(), "caller", "callers"),
             plural(i.tests.len(), "test file to run", "test files to run"),
             plural(self.duplicates().len(), "new duplicate", "new duplicates"),
         ];
+        if unread > 0 {
+            counts.insert(1, plural(unread, "changed file not indexed (over 1 MB)", "changed files not indexed (over 1 MB)"));
+        }
         let untested = self.untested();
         if !untested.is_empty() {
             counts.push(format!("{} no test reaches", untested.len()));
@@ -130,7 +134,8 @@ impl Review {
                     let reached = c.status == "deleted" || !untested.contains(&(c.hit.path.as_str(), c.hit.start, c.hit.end, name.as_str()));
                     let mark = if reached { "" } else { ", no test reaches it" };
                     let base_lines = if c.status == "deleted" && c.hit.kind != "file" { ", lines of the base" } else { "" };
-                    format!("- {} ({}{base_lines}{mark})", def(&c.hit), c.status)
+                    let left = c.not_indexed.map(|why| format!("; not indexed: {why}")).unwrap_or_default();
+                    format!("- {} ({}{base_lines}{mark}{left})", def(&c.hit), c.status)
                 })
                 .collect(),
         );

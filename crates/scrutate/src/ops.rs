@@ -839,6 +839,8 @@ pub enum Answer {
     Files(Vec<crate::finder::FileHit>, Option<Stop>),
     /// An answer from a dependency's source, and the package it comes from.
     Package(Box<crate::packages::Note>, Box<Answer>),
+    /// an answer from the code index with what that index leaves out (`not_indexed`)
+    Noted(Box<Noted>, Box<Answer>),
     Edit(Box<crate::edit::Edited>),
 }
 
@@ -870,6 +872,83 @@ impl Op {
             _ => Ok(()),
         }
     }
+}
+
+impl Answer {
+    /// The answer itself, without what `noted` put around it.
+    pub fn bare(&self) -> &Answer {
+        match self {
+            Answer::Noted(_, a) => a.bare(),
+            a => a,
+        }
+    }
+
+    /// The lines `noted` added: what the code index leaves out.
+    pub fn notes(&self) -> &[String] {
+        match self {
+            Answer::Noted(n, _) => &n.lines,
+            _ => &[],
+        }
+    }
+}
+
+/// What an answer from the code index adds about the files that index leaves out.
+#[derive(Debug)]
+pub struct Noted {
+    lines: Vec<String>,
+    field: Value,
+}
+
+/// `a`, the answer of `op`, with what the code index leaves out, when that matters to it: a
+/// lookup says why a file it names or a glob of its admits is not in the index, and when it
+/// found nothing what the index leaves out; a listing of the whole repository always says it.
+/// Any other answer, and every answer on a repository whose files are all indexed, is `a`. The
+/// command line and the MCP tools say it; a caller that reads the answer's form (the bindings,
+/// `--also`, `batch`) gets `a` itself.
+pub fn noted(ix: &crate::index::Index, op: &Op, a: Answer) -> Answer {
+    match not_indexed_lines(ix, op, a.is_empty()) {
+        Some((lines, field)) => Answer::Noted(Box::new(Noted { lines, field }), Box::new(a)),
+        None => a,
+    }
+}
+
+/// `noted` for a lookup that found nothing and says so as an error (`read --symbol`, `path`): the
+/// error with what the code index leaves out after it.
+pub fn noted_error(ix: &crate::index::Index, op: &Op, e: anyhow::Error) -> anyhow::Error {
+    // only that answer: any other error keeps its type (a first build, a busy or damaged index)
+    if !e.to_string().starts_with("no definition") {
+        return e;
+    }
+    match not_indexed_lines(ix, op, true) {
+        Some((lines, _)) => anyhow!("{e:#}\n{}", lines.join("\n")),
+        None => e,
+    }
+}
+
+/// The lines `noted` adds for `op`, whose answer is `empty` or not, and the `not_indexed` field.
+fn not_indexed_lines(ix: &crate::index::Index, op: &Op, empty: bool) -> Option<(Vec<String>, Value)> {
+    let whole = match op.unscoped() {
+        Op::Symbol { .. } | Op::Search { .. } | Op::Callers { .. } | Op::Callees { .. } | Op::Refs { .. } | Op::Outline { .. } | Op::Path { .. } => false,
+        Op::Read { symbol: Some(_), .. } => false,
+        Op::Dupes { .. } | Op::Dead { .. } | Op::Map { .. } => true,
+        _ => return None,
+    };
+    let ni = ix.not_indexed();
+    if ni.is_empty() {
+        return None;
+    }
+    let left = |p: &str, why: &str| format!("{} is not in the index ({why}): read it by lines, or search it with grep", echo(p));
+    let mut lines: Vec<String> = op.named_paths().iter().filter_map(|p| ix.not_indexed_reason(p).map(|why| left(p, why))).collect();
+    if let Op::Scoped { filter, .. } = op
+        && let Ok(f) = filter.compile(&ix.root)
+        && f.has_files()
+    {
+        lines.extend(ni.first.iter().filter(|p| f.admits_path(p)).map(|p| left(p, "over 1 MB")));
+    }
+    if whole || empty {
+        lines.extend(ni.lines());
+    }
+    (!lines.is_empty()).then(|| (lines, ni.json()))
 }
 
 /// `f` on `s` with every read of the code index from one commit (`Index::begin_read`).
@@ -2162,6 +2241,7 @@ impl Answer {
             // the edit's own write must not make the answer stale and run the edit again
             Answer::Edit(_) => Vec::new(),
             Answer::Package(..) => Vec::new(),
+            Answer::Noted(_, a) => a.cited(),
         }
     }
 
@@ -2191,7 +2271,7 @@ impl Answer {
             Answer::Reindexed(_) => false,
             Answer::Impact(i) => i.is_empty(),
             Answer::Files(v, _) => v.is_empty(),
-            Answer::Package(_, a) => a.is_empty(),
+            Answer::Package(_, a) | Answer::Noted(_, a) => a.is_empty(),
             Answer::Edit(_) => false,
         }
     }
@@ -2223,7 +2303,7 @@ impl Answer {
     /// answers whose items are lines of text, the whole count on the first).
     /// Only what a page of `room` bytes from item `offset` can show is read for.
     pub fn redact_in_context(&mut self, root: &std::path::Path, offset: usize, room: usize) -> Vec<usize> {
-        if let Answer::Package(_, a) = self {
+        if let Answer::Package(_, a) | Answer::Noted(_, a) = self {
             return a.redact_in_context(root, offset, room);
         }
         // every item a page shows takes 8 bytes at least, so none past this is on the page
@@ -2782,6 +2862,13 @@ impl Answer {
                 p.head = joined(note.line(), std::mem::take(&mut p.head));
                 p
             }
+            Answer::Noted(note, a) => {
+                let mut p = a.parts();
+                let lines = note.lines.join("\n");
+                p.tail = joined(std::mem::take(&mut p.tail), lines.clone());
+                p.brief_tail = p.brief_tail.map(|b| joined(b, lines));
+                p
+            }
         }
     }
 
@@ -2810,6 +2897,9 @@ impl Answer {
     fn page_json(&self, page: std::ops::Range<usize>, total: usize) -> Value {
         if let Answer::Package(note, a) = self {
             return json!({"package": note.json(), "answer": a.page_json(page, total)});
+        }
+        if let Answer::Noted(_, a) = self {
+            return a.page_json(page, total);
         }
         let mut v = self.json();
         if total == 0 {
@@ -2916,6 +3006,9 @@ impl Answer {
     /// the answer stopped at its limit with more left.
     pub fn envelope(&self, root: &std::path::Path) -> Value {
         let mut v = envelope(root, self.json(), self.stopped());
+        if let Answer::Noted(note, _) = self {
+            v["not_indexed"] = note.field.clone();
+        }
         // the files a structural search left out for their size, as the note in the text says
         if let Answer::Captures(_, _, large) = self
             && !large.is_empty()
@@ -2942,7 +3035,7 @@ impl Answer {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
             Answer::Definitions(_, stopped, _) | Answer::Captures(_, stopped, _) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
-            Answer::Package(_, a) => a.stopped(),
+            Answer::Package(_, a) | Answer::Noted(_, a) => a.stopped(),
             Answer::Impact(i) if i.stopped => Some(Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" }),
             _ => None,
         }
@@ -3110,6 +3203,7 @@ impl Answer {
             Answer::Impact(i) => i.json(),
             Answer::Files(v, _) => serde_json::to_value(v).unwrap_or_default(),
             Answer::Package(note, a) => json!({"package": note.json(), "answer": a.json()}),
+            Answer::Noted(_, a) => a.json(),
             Answer::Edit(e) => e.json(),
         }
     }

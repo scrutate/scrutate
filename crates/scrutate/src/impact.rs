@@ -29,6 +29,8 @@ pub const MAX_CALLERS: usize = 2000;
 pub struct Changed {
     pub hit: Hit,
     pub status: &'static str,
+    /// a file of kind `file` the code index leaves out, and why: its definitions are not read
+    pub not_indexed: Option<&'static str>,
 }
 
 /// A definition that calls a changed one, `distance` steps away; `via` is the location of what it calls.
@@ -159,7 +161,7 @@ fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact
         for h in moved.into_iter().take(MOVED_CHECKED) {
             let listed = changed.iter().any(|c| c.status == "deleted" && c.hit.path == h.path && c.hit.start == h.start && c.hit.qualname == h.qualname);
             if !listed && !names.callers_of_deleted(&h, 1)?.is_empty() {
-                changed.push(Changed { hit: h, status: "deleted" });
+                changed.push(Changed { hit: h, status: "deleted", not_indexed: None });
             }
         }
     }
@@ -407,7 +409,7 @@ impl Builder<'_> {
             (0, hit.path.clone(), hit.start, hit.kind.clone(), hit.qualname.clone())
         };
         if self.seen.insert(key) {
-            self.changed.push(Changed { hit, status });
+            self.changed.push(Changed { hit, status, not_indexed: None });
         }
     }
 
@@ -542,7 +544,19 @@ impl Builder<'_> {
             } else {
                 "edited"
             };
+            // a copy over the bound has no definitions to read: the file says why
+            let size = match (from_index, e.new.is_some()) {
+                (true, _) => std::fs::metadata(ix.root.join(&path)).map_or(0, |m| m.len()),
+                (false, true) => blob(&e.new_blob).len() as u64,
+                (false, false) => blob(&e.old_blob).len() as u64,
+            };
+            let pushed = self.changed.len();
             self.push(Hit { path, kind: "file".into(), ..Hit::default() }, status);
+            if size > crate::index::MAX_FILE_BYTES
+                && let Some(c) = self.changed.get_mut(pushed)
+            {
+                c.not_indexed = Some("over 1 MB");
+            }
         }
         Ok(())
     }
@@ -591,7 +605,8 @@ impl Impact {
                 out.push(format!("{}  renamed from {}", shown(new), shown(old)));
             }
             let at = if c.status == "deleted" && c.hit.kind != "file" { ", lines of the base" } else { "" };
-            out.push(format!("{}  ({}{at})", symbol(&c.hit), c.status));
+            let left = c.not_indexed.map(|why| format!("; not indexed: {why}")).unwrap_or_default();
+            out.push(format!("{}  ({}{at}{left})", symbol(&c.hit), c.status));
         }
         out.push(format!("callers: {} (depth {})", self.callers.len(), self.depth));
         out.extend(self.callers.iter().map(|c| {
@@ -674,7 +689,17 @@ impl Impact {
             "base": self.base,
             "staged": self.staged,
             "depth": self.depth,
-            "changed": self.changed.iter().map(|c| with(symbol(&c.hit), "status", json!(c.status))).collect::<Vec<_>>(),
+            "changed": self
+                .changed
+                .iter()
+                .map(|c| {
+                    let v = with(symbol(&c.hit), "status", json!(c.status));
+                    match c.not_indexed {
+                        Some(why) => with(v, "not_indexed", json!(why)),
+                        None => v,
+                    }
+                })
+                .collect::<Vec<_>>(),
             "callers": self.callers.iter().map(|c| {
                 let v = with(symbol(&c.hit), "distance", json!(c.distance));
                 with(with(with(v, "via", json!(c.via)), "undecided", json!(c.undecided)), "calls_deleted", json!(c.calls_deleted))
