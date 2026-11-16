@@ -960,8 +960,10 @@ that takes no request for 2 s once it greeted (stopped or stuck, with a request 
 socket or, on Windows, the pipe holds) is given up as well. Of two
 servers on one root, the first offers the socket.
 
-- Every tool but `reindex` is marked read-only (`readOnlyHint`), and all as staying on this
-  machine (`openWorldHint: false`), so clients that ask before a write do not ask for these.
+- Every tool but `reindex` and `edit_symbol` is marked read-only (`readOnlyHint`), and all as
+  staying on this machine (`openWorldHint: false`), so clients that ask before a write do not
+  ask for these. `edit_symbol` is listed only by `serve --allow-edits`
+  ([Edits](#serve---allow-edits-and-edit_symbol)), marked `destructiveHint: true`.
 - The server returns `instructions`: which tool to start with, that answers are capped, and how
   a concise answer writes its paths.
 - Every read-only tool takes `max_bytes` and `offset`, as `--max-bytes` and `--offset` above;
@@ -1097,6 +1099,33 @@ Per tool:
   tool or a `tools/call` without `name` -32602. A message without `id` (a notification) is never
   answered; only `notifications/cancelled` does anything. A client's response (a `result` or
   `error` without `method`) is ignored.
+
+#### `serve --allow-edits` and `edit_symbol`
+
+`serve --allow-edits` lists one more tool, `edit_symbol`, the one tool that writes source files.
+Without the flag it is not listed, and a call of it is an unknown tool. Only the flag turns it
+on: no environment variable or configuration file does, so a repository cannot.
+
+`edit_symbol` replaces one whole definition with `new_text`. `symbol` names it as `read_code`
+takes one (a name, `Class.method`, a location), and `path` keeps the ones in one file; a name
+with more than one definition is an error that lists their locations. A call is a dry run unless
+it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewrite` form) and
+`hash:`, 16 hex digits of the file's content hash. `apply: true` writes only with that `hash`,
+and only while the file still has it: a file changed since is refused with its current hash and
+nothing written. Before it writes, the new file is parsed with its language and the edit is
+refused, with the reason, when it adds a parse error or a missing node; when the new text does
+not define the same name and kind where the old definition began (an edit never renames); when
+it defines another definition beside it (the body twice, a second function); or when a
+definition outside it is gone or moved. The definitions nested in it may change. A definition's
+range is the index's, its attributes and comment block included, so `new_text` replaces them
+too. The new text takes the file's line endings (`\r\n` stays `\r\n`), and the rest of the
+file is written byte for byte as it was. The file is written as `tsquery --rewrite --write`
+writes one: opened through its directory with no link on the way, its bytes checked to still be
+the ones read, then a new file in the same directory renamed over it, its permissions kept. A
+file under `.git/` or `.scrutate/`, a link, a file that is not UTF-8 text, and a language with
+no grammar are refused. The answer to an applied edit names the definition's new lines and the
+file's new hash; the next call sees the edit in the index, as it sees any write. The JSON form:
+`path`, `start`, `end`, `new_start`, `new_end`, `applied`, `hash`, `diff`.
 
 ### `lsp`
 

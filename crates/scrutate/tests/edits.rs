@@ -1,0 +1,293 @@
+//! `serve --allow-edits` and its `edit_symbol` tool: one whole definition replaced, a dry run
+//! unless asked, written only with the hash of the file as it is, and only when the new file
+//! parses and keeps its definitions.
+
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+use serde_json::{json, Value};
+
+const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+
+struct Server {
+    root: PathBuf,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    id: i64,
+}
+
+impl Server {
+    fn start(name: &str, files: &[(&str, &str)], args: &[&str]) -> Server {
+        let root = std::env::temp_dir().join(format!("scrutate_edits_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".git")).unwrap();
+        for (rel, text) in files {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        }
+        let mut child = Command::new(BIN)
+            .arg("--root")
+            .arg(&root)
+            .arg("serve")
+            .args(args)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let (stdin, stdout) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
+        let mut s = Server { root, child, stdin, stdout, id: 0 };
+        s.ask("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}));
+        s
+    }
+
+    fn ask(&mut self, method: &str, params: Value) -> Value {
+        self.id += 1;
+        writeln!(self.stdin, "{}", json!({"jsonrpc": "2.0", "id": self.id, "method": method, "params": params})).unwrap();
+        loop {
+            let mut line = String::new();
+            assert!(self.stdout.read_line(&mut line).unwrap() > 0, "the server closed stdout");
+            let v: Value = serde_json::from_str(&line).unwrap();
+            if v["id"] == self.id {
+                return v;
+            }
+        }
+    }
+
+    /// The answer's text and whether it is an error, once the index is built.
+    fn call(&mut self, name: &str, args: Value) -> (String, bool) {
+        loop {
+            let v = self.ask("tools/call", json!({"name": name, "arguments": args}));
+            if let Some(e) = v.get("error") {
+                return (e["message"].as_str().unwrap_or("").to_string(), true);
+            }
+            let text = v["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{v}")).to_string();
+            if !text.contains("still building its index") {
+                return (text, v["result"]["isError"] == true);
+            }
+        }
+    }
+
+    fn file(&self, rel: &str) -> String {
+        fs::read_to_string(self.root.join(rel)).unwrap()
+    }
+
+    fn hash_in(text: &str) -> String {
+        text.lines().find_map(|l| l.strip_prefix("hash: ")).unwrap_or_else(|| panic!("no hash in {text}")).trim().to_string()
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+const PY: &str =
+    "import os\n\n\ndef first():\n    return 1\n\n\ndef second():\n    return first() + 1\n\n\nclass Box:\n    def size(self):\n        return 3\n";
+
+#[test]
+fn without_the_flag_the_tool_is_neither_listed_nor_run() {
+    let mut s = Server::start("off", &[("a.py", PY)], &[]);
+    let tools = s.ask("tools/list", json!({}));
+    let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"edit_symbol"), "{names:?}");
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "new_text": "def first():\n    return 9\n", "apply": true}));
+    assert!(err && text.contains("unknown tool"), "{text}");
+    assert_eq!(s.file("a.py"), PY);
+    // no environment variable turns it on
+    let out = Command::new(BIN).args(["serve", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("--allow-edits") && !help.contains("SCRUTATE_ALLOW_EDITS"), "{help}");
+}
+
+#[test]
+fn with_the_flag_it_is_listed_as_the_one_tool_that_writes() {
+    let mut s = Server::start("listed", &[("a.py", PY)], &["--allow-edits"]);
+    let tools = s.ask("tools/list", json!({}));
+    let all = tools["result"]["tools"].as_array().unwrap();
+    let edit = all.iter().find(|t| t["name"] == "edit_symbol").expect("edit_symbol is listed");
+    assert_eq!(edit["annotations"]["readOnlyHint"], false);
+    assert_eq!(edit["annotations"]["destructiveHint"], true);
+    for k in ["symbol", "new_text", "apply", "hash", "path"] {
+        assert!(edit["inputSchema"]["properties"].get(k).is_some(), "{k}: {edit}");
+    }
+    assert!(all.iter().filter(|t| t["name"] != "edit_symbol" && t["name"] != "reindex").all(|t| t["annotations"]["readOnlyHint"] == true));
+}
+
+#[test]
+fn a_dry_run_shows_the_diff_and_the_hash_and_writes_nothing() {
+    let mut s = Server::start("dry", &[("a.py", PY)], &["--allow-edits"]);
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "new_text": "def first():\n    return 2\n"}));
+    assert!(!err, "{text}");
+    assert!(text.contains("-    return 1") && text.contains("+    return 2") && text.contains("--- a.py"), "{text}");
+    assert!(text.contains("dry run"), "{text}");
+    Server::hash_in(&text);
+    assert_eq!(s.file("a.py"), PY);
+}
+
+#[test]
+fn apply_writes_exactly_with_the_current_hash_and_refuses_a_stale_one() {
+    let mut s = Server::start("apply", &[("a.py", PY)], &["--allow-edits"]);
+    let new = "def first():\n    return 2\n";
+    let (dry, _) = s.call("edit_symbol", json!({"symbol": "first", "new_text": new}));
+    let hash = Server::hash_in(&dry);
+    // apply without the hash is refused
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "new_text": new, "apply": true}));
+    assert!(err && text.contains("hash"), "{text}");
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "new_text": new, "apply": true, "hash": hash}));
+    assert!(!err, "{text}\nthe dry run said:\n{dry}");
+    assert_eq!(s.file("a.py"), PY.replace("    return 1\n", "    return 2\n"));
+    // the same call again: the file moved, so its hash did
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "new_text": new, "apply": true, "hash": hash}));
+    assert!(err && text.contains("changed"), "{text}");
+    let now = Server::hash_in(&text);
+    assert_ne!(now, hash);
+    // a write by someone else after the dry run: refused, and the file keeps that write
+    let (dry, _) = s.call("edit_symbol", json!({"symbol": "second", "new_text": "def second():\n    return 0\n"}));
+    let hash = Server::hash_in(&dry);
+    let theirs = s.file("a.py").replace("import os\n", "import os\nimport sys\n");
+    fs::write(s.root.join("a.py"), &theirs).unwrap();
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "second", "new_text": "def second():\n    return 0\n", "apply": true, "hash": hash}));
+    assert!(err && text.contains("changed"), "{text}");
+    assert_eq!(s.file("a.py"), theirs);
+}
+
+#[test]
+fn an_edit_that_breaks_the_parse_or_the_definitions_is_refused() {
+    let mut s = Server::start("checks", &[("a.py", PY), ("lib.rs", "pub fn one() -> u8 {\n    1\n}\n\npub fn two() -> u8 {\n    2\n}\n")], &["--allow-edits"]);
+    let refused = |s: &mut Server, symbol: &str, new: &str, why: &str| {
+        let (text, err) = s.call("edit_symbol", json!({"symbol": symbol, "new_text": new}));
+        assert!(err && text.contains(why), "{symbol} {new:?}: {text}");
+    };
+    refused(&mut s, "first", "def first(:\n    return 1\n", "parse");
+    refused(&mut s, "one", "pub fn one() -> u8 {\n    1\n", "parse");
+    // the body twice: the duplicate an edit by range makes
+    refused(&mut s, "first", "def first():\n    return 2\n\n\ndef first():\n    return 1\n", "first");
+    // another name, or another definition beside it
+    refused(&mut s, "first", "def other():\n    return 1\n", "first");
+    refused(&mut s, "two", "pub fn two() -> u8 {\n    2\n}\n\npub fn three() -> u8 {\n    3\n}\n", "three");
+    assert_eq!(s.file("a.py"), PY);
+    // a method, by its qualified name, keeps its class around it
+    let (dry, err) = s.call("edit_symbol", json!({"symbol": "Box.size", "new_text": "    def size(self):\n        return 4\n"}));
+    assert!(!err, "{dry}");
+    let (text, err) = s.call(
+        "edit_symbol",
+        json!({"symbol": "Box.size", "new_text": "    def size(self):\n        return 4\n", "apply": true, "hash": Server::hash_in(&dry)}),
+    );
+    assert!(!err, "{text}");
+    assert!(s.file("a.py").ends_with("class Box:\n    def size(self):\n        return 4\n"));
+}
+
+#[test]
+fn a_name_with_two_definitions_is_refused_until_a_path_or_location_picks_one() {
+    let mut s = Server::start("two", &[("a.py", PY), ("b.py", "def first():\n    return 10\n")], &["--allow-edits"]);
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "new_text": "def first():\n    return 2\n"}));
+    assert!(err && text.contains("a.py:4-5") && text.contains("b.py:1-2"), "{text}");
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "first", "path": "b.py", "new_text": "def first():\n    return 2\n"}));
+    assert!(!err && text.contains("--- b.py"), "{text}");
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "a.py:4-5", "new_text": "def first():\n    return 2\n"}));
+    assert!(!err && text.contains("--- a.py"), "{text}");
+}
+
+#[test]
+fn crlf_lines_stay_crlf_and_the_rest_of_the_file_is_byte_for_byte_the_same() {
+    let crlf = PY.replace('\n', "\r\n");
+    let mut s = Server::start("crlf", &[("a.py", &crlf)], &["--allow-edits"]);
+    let new = "def second():\n    return 5\n";
+    let (dry, _) = s.call("edit_symbol", json!({"symbol": "second", "new_text": new}));
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "second", "new_text": new, "apply": true, "hash": Server::hash_in(&dry)}));
+    assert!(!err, "{text}");
+    assert_eq!(s.file("a.py"), crlf.replace("    return first() + 1\r\n", "    return 5\r\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_reached_through_a_link_is_never_written() {
+    let mut s = Server::start("link", &[("real/a.py", PY)], &["--allow-edits"]);
+    std::os::unix::fs::symlink(s.root.join("real/a.py"), s.root.join("linked.py")).unwrap();
+    let (text, _) = s.call("edit_symbol", json!({"symbol": "linked.py:4-5", "new_text": "def first():\n    return 2\n", "apply": true, "hash": "x"}));
+    assert!(!text.contains("+    return 2") || text.starts_with("error"), "{text}");
+    assert_eq!(s.file("real/a.py"), PY);
+}
+
+/// One file per language with four definitions, each returning its number.
+fn defs_file(lang: &str, values: &[i32]) -> (String, Vec<String>) {
+    let def = |i: usize, v: i32| match lang {
+        "py" => format!("def f{i}():\n    return {v}\n"),
+        "rs" => format!("fn f{i}() -> i32 {{\n    {v}\n}}\n"),
+        "ts" => format!("function f{i}(): number {{\n  return {v};\n}}\n"),
+        "go" => format!("func F{i}() int {{\n\treturn {v}\n}}\n"),
+        _ => format!("    int f{i}() {{\n        return {v};\n    }}\n"),
+    };
+    let defs: Vec<String> = values.iter().enumerate().map(|(i, v)| def(i, *v)).collect();
+    let body = defs.join("\n");
+    let text = match lang {
+        "go" => format!("package p\n\n{body}"),
+        "java" => format!("class C {{\n{body}}}\n"),
+        _ => body,
+    };
+    (text, defs)
+}
+
+#[test]
+fn a_hundred_edits_over_five_languages_land_byte_for_byte_and_every_stale_one_is_refused() {
+    let langs = ["py", "rs", "ts", "go", "java"];
+    let files: Vec<(String, String)> = langs.iter().map(|l| (format!("f.{l}"), defs_file(l, &[0, 1, 2, 3]).0)).collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let mut s = Server::start("hundred", &refs, &["--allow-edits"]);
+    let (mut exact, mut stale_refused, mut broken_landed) = (0, 0, 0);
+    for lang in langs {
+        let path = format!("f.{lang}");
+        let mut values = vec![0, 1, 2, 3];
+        let symbol = |i: usize| match lang {
+            "go" => format!("F{i}"),
+            "java" => format!("C.f{i}"),
+            _ => format!("f{i}"),
+        };
+        for k in 0..20 {
+            let i = k % 4;
+            let old = defs_file(lang, &values).1[i].clone();
+            let mut next = values.clone();
+            next[i] = 100 + k as i32;
+            let new = defs_file(lang, &next).1[i].clone();
+            let args = json!({"symbol": symbol(i), "path": path, "new_text": new});
+            let (dry, err) = s.call("edit_symbol", args.clone());
+            assert!(!err, "{lang} {k}: {dry}");
+            let hash = Server::hash_in(&dry);
+            let mut apply = args.clone();
+            apply["apply"] = json!(true);
+            apply["hash"] = json!(hash);
+            if k % 5 == 4 {
+                // another writer comes between the read and the write
+                let mut theirs = s.file(&path);
+                theirs.push_str(if lang == "py" { "# theirs\n" } else { "// theirs\n" });
+                fs::write(s.root.join(&path), &theirs).unwrap();
+                let (text, err) = s.call("edit_symbol", apply);
+                stale_refused += usize::from(err && text.contains("changed") && Server::hash_in(&text) != hash && s.file(&path) == theirs);
+                continue;
+            }
+            let expected = s.file(&path).replacen(&old, &new, 1);
+            let (text, err) = s.call("edit_symbol", apply);
+            assert!(!err, "{lang} {k}: {text}");
+            exact += usize::from(s.file(&path) == expected);
+            values = next;
+        }
+        // an edit that breaks the parse never lands
+        let before = s.file(&path);
+        let broken = defs_file(lang, &values).1[0].replacen('(', "((", 1);
+        let (dry, _) = s.call("edit_symbol", json!({"symbol": symbol(0), "path": path, "new_text": broken}));
+        let hash = dry.lines().find_map(|l| l.strip_prefix("hash: ")).unwrap_or("none").to_string();
+        let _ = s.call("edit_symbol", json!({"symbol": symbol(0), "path": path, "new_text": broken, "apply": true, "hash": hash}));
+        broken_landed += usize::from(s.file(&path) != before);
+    }
+    assert_eq!((exact, stale_refused, broken_landed), (80, 20, 0));
+}

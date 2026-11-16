@@ -118,6 +118,17 @@ pub enum Op {
         limit: usize,
         exact: bool,
     },
+    /// `edit_symbol` (`serve --allow-edits`): the one definition `symbol` names replaced with
+    /// `new_text`, written only with `apply` and the file's `hash`. Never serialized, so the
+    /// session socket cannot carry one to a server that does not allow edits.
+    #[serde(skip)]
+    Edit {
+        symbol: String,
+        path: Option<String>,
+        new_text: String,
+        apply: bool,
+        hash: Option<String>,
+    },
     Outline {
         path: String,
     },
@@ -237,6 +248,25 @@ impl Op {
         Ok(op.scoped(filter))
     }
 
+    /// The `edit_symbol` call, for a server started with `--allow-edits`.
+    pub fn edit_from_tool(args: &Value) -> Result<Op> {
+        let text = |k: &str| match args.get(k).filter(|v| !v.is_null()) {
+            None => Ok(None),
+            Some(v) => v.as_str().map(|s| Some(s.to_string())).ok_or_else(|| anyhow!("{k} must be a string")),
+        };
+        let apply = match args.get("apply").filter(|v| !v.is_null()) {
+            None => false,
+            Some(v) => v.as_bool().ok_or_else(|| anyhow!("apply must be a boolean (true or false)"))?,
+        };
+        Ok(Op::Edit {
+            symbol: text("symbol")?.ok_or_else(|| anyhow!("missing required argument symbol"))?,
+            path: text("path")?,
+            new_text: text("new_text")?.ok_or_else(|| anyhow!("missing required argument new_text"))?,
+            apply,
+            hash: text("hash")?,
+        })
+    }
+
     /// The operation, keeping what `filter` admits when it names anything.
     pub fn scoped(self, filter: crate::filter::Filter) -> Op {
         if filter.is_empty() {
@@ -341,6 +371,7 @@ impl Op {
                 depth: natural("depth")?.map_or(crate::impact::DEPTH, |d| d.min(crate::impact::MAX_DEPTH as u64) as usize),
             },
             "find_files" => Op::Files { query: text("query")?, limit: count("limit", crate::finder::LIMIT as u64, crate::finder::MAX_LIMIT)? as usize },
+            // a front end that allows edits parses it with `Op::edit_from_tool`
             _ => bail!("unknown tool {}", echo(name)),
         })
     }
@@ -449,7 +480,7 @@ impl Scope {
 
 /// Whether the tool leaves everything as it was (`reindex` rewrites the index, a cache).
 pub fn read_only(tool: &str) -> bool {
-    tool != "reindex"
+    !matches!(tool, "reindex" | "edit_symbol")
 }
 
 /// The JSON Schema of what `Answer::structured` returns for one tool: the answer's JSON form in
@@ -550,6 +581,11 @@ pub fn output_schema(tool: &str) -> Value {
                 &["from", "to", "found", "depth", "stopped", "steps"],
             )
         }
+        "edit_symbol" => obj(
+            json!({"path": ty("string"), "start": ty("integer"), "end": ty("integer"), "new_start": ty("integer"), "new_end": ty("integer"),
+                   "applied": ty("boolean"), "hash": ty("string"), "diff": ty("string")}),
+            &["path", "start", "end", "new_start", "new_end", "applied", "hash", "diff"],
+        ),
         "dead_code" => {
             let mut why = span("qualname");
             why["properties"]["reason"] = ty("string");
@@ -800,6 +836,7 @@ pub enum Answer {
     Files(Vec<crate::finder::FileHit>, Option<Stop>),
     /// An answer from a dependency's source, and the package it comes from.
     Package(Box<crate::packages::Note>, Box<Answer>),
+    Edit(Box<crate::edit::Edited>),
 }
 
 /// The `files` answer, which reads no index: a front end runs it without opening one.
@@ -842,6 +879,7 @@ impl Drop for Snapshot<'_> {
 pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
         Op::Package { name, read, limit, exact } => crate::packages::run(s, name, *read, *limit, *exact)?,
+        Op::Edit { symbol, path, new_text, apply, hash } => crate::edit::run(s, symbol, path.as_deref(), new_text, *apply, hash.as_deref())?,
         Op::Scoped { op, filter } => run_scoped(s, op, &filter.compile(&s.ix.root)?)?,
         Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
@@ -1958,6 +1996,8 @@ impl Answer {
             Answer::Dead(d) => d.dead.iter().chain(d.undecided.iter().map(|u| &u.0)).map(|s| s.path.as_str()).collect(),
             Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) | Answer::Files(..) => Vec::new(),
             Answer::Package(note, a) if note.local => a.cited(),
+            // the edit's own write must not make the answer stale and run the edit again
+            Answer::Edit(_) => Vec::new(),
             Answer::Package(..) => Vec::new(),
         }
     }
@@ -1988,6 +2028,7 @@ impl Answer {
             Answer::Impact(i) => i.is_empty(),
             Answer::Files(v, _) => v.is_empty(),
             Answer::Package(_, a) => a.is_empty(),
+            Answer::Edit(_) => false,
         }
     }
 
@@ -2557,6 +2598,7 @@ impl Answer {
                 brief: Some(v.iter().map(|h| vec![Brief::path(&h.path)]).collect()),
                 ..Parts::default()
             },
+            Answer::Edit(e) => nothing(e.text()),
             Answer::Package(note, a) => {
                 let mut p = a.parts();
                 p.head = joined(note.line(), std::mem::take(&mut p.head));
@@ -2868,6 +2910,7 @@ impl Answer {
             Answer::Impact(i) => i.json(),
             Answer::Files(v, _) => serde_json::to_value(v).unwrap_or_default(),
             Answer::Package(note, a) => json!({"package": note.json(), "answer": a.json()}),
+            Answer::Edit(e) => e.json(),
         }
     }
 }

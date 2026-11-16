@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [The review comment](#the-review-comment) &nbsp;·&nbsp; [Secrets in answers](#secrets-in-answers) &nbsp;·&nbsp; [Dependency source](#dependency-source) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [The review comment](#the-review-comment) &nbsp;·&nbsp; [Secrets in answers](#secrets-in-answers) &nbsp;·&nbsp; [Verified symbol edits](#verified-symbol-edits) &nbsp;·&nbsp; [Dependency source](#dependency-source) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -32,8 +32,9 @@ the tool, (3) availability (no hangs or resource exhaustion on hostile inputs). 
 JSON-RPC, path escapes), and **another local process** that reaches the socket a running `serve`
 offers (below). Writes outside a repository happen on the user's word only: `scrutate setup`
 writes an agent's configuration files, and the Grep hook it installs appends to a counter file
-(below). Only `scrutate tsquery --rewrite` with `--write` writes source files
-([below](#the-structural-rewrite)).
+(below). Only `scrutate tsquery --rewrite` with `--write`, and the MCP `edit_symbol` of a server
+the user starts with `serve --allow-edits`, write source files ([below](#the-structural-rewrite),
+[Verified symbol edits](#verified-symbol-edits)).
 
 <p align="center">
 <img src="assets/diagram-trust-boundaries.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
@@ -531,6 +532,26 @@ line (a name on the line before it); the CLI and the Python bindings, which prin
 hold unless `SCRUTATE_REDACT=on` (the CLI's index answers only); and the index itself:
 `.scrutate/` keeps chunk text, secrets included, and the hash of every key body line (mode 0700
 on Unix).
+
+## Verified symbol edits
+
+The MCP server writes no source file unless the user starts it with `serve --allow-edits`; no
+environment variable or configuration file turns that on, so a repository cannot. The flag adds
+one tool, `edit_symbol`, marked `readOnlyHint: false` and `destructiveHint: true`, so a client
+that asks before a write asks for it. It writes one file per call, only one the index holds,
+never under `.git/` or `.scrutate/` (by name, and by file identity for each directory on the way,
+so a link or another spelling of either counts), through the structural rewrite's writer: the root opened
+once, each directory below it by name with no link followed, the file a regular file, its bytes
+checked again just before a new file in the same directory is renamed over it, its permissions
+kept. A dry run writes nothing, not even a temporary file. Only an MCP call reaches it: the
+operation is never serialized, so the session socket that command line calls use cannot carry
+one to a server, and `batch` refuses the tool by name (the Python bindings have no call that edits). A call writes only
+with `apply: true` and the hash of the file as it is, so an agent that
+read an older version is refused; and only when the new file parses as well as the old one and
+keeps every definition outside the edit ([ADR 0009](adr/0009-verified-symbol-edits.md)). Tests:
+`tests/edits.rs` (the tool absent without the flag, a stale hash refused with the file kept as
+another writer left it, an edit that breaks the parse or adds a definition refused, a file
+reached through a link never written).
 
 ## Dependency source
 

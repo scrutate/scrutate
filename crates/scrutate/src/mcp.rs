@@ -220,7 +220,8 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
     // a wrong value is refused with the other arguments
     let form = ops::Form::from_tool(args).unwrap_or_default();
-    match ops::Op::from_tool(name, args).and_then(|op| session.run_counted(&op, cancel, count)) {
+    let op = if name == "edit_symbol" && settings.edits { ops::Op::edit_from_tool(args) } else { ops::Op::from_tool(name, args) };
+    match op.and_then(|op| session.run_counted(&op, cancel, count)) {
         Ok((mut answer, pending)) => {
             // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off; a capture
             // of a value alone, as its line reads it
@@ -517,12 +518,40 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
 pub struct Settings {
     /// answer size of a call that gives no `max_bytes`
     max_bytes: usize,
+    /// `edit_symbol` is listed and runs (`serve --allow-edits`)
+    edits: bool,
 }
 
 impl Settings {
     pub fn new(max_bytes: Option<usize>) -> Settings {
-        Settings { max_bytes: max_bytes.map_or(ops::AGENT_BYTES, clamp_bytes) }
+        Settings { max_bytes: max_bytes.map_or(ops::AGENT_BYTES, clamp_bytes), edits: false }
     }
+
+    /// These settings with `edit_symbol` listed and run.
+    pub fn allowing_edits(self) -> Settings {
+        Settings { edits: true, ..self }
+    }
+}
+
+/// `edit_symbol`, the one tool that writes source files, listed only by `serve --allow-edits`.
+pub fn edit_tool(structured: bool, short: bool) -> Value {
+    let mut tool = json!({"name": "edit_symbol",
+        "description": "Replace one whole definition with new_text, checked before it is written: symbol names it as read_code takes one (a name, Class.method or a location; path keeps one file). A dry run by default: it returns the diff and the file's hash. apply: true with that hash writes it, refused when the file changed since, when the new file does not parse, or when the new text does not define the same name where the old one began or defines another one beside it.",
+        "inputSchema": {"type": "object", "properties": {
+            "symbol": {"type": "string"}, "path": {"type": ["string", "null"], "default": null, "description": "keep the definitions in this file"},
+            "new_text": {"type": "string", "description": "the whole new definition, as read_code shows it"},
+            "apply": {"type": "boolean", "default": false, "description": "write the edit; without it, a dry run"},
+            "hash": {"type": ["string", "null"], "default": null, "description": "the file's hash as the dry run gave it; required with apply"}},
+            "required": ["symbol", "new_text"]},
+        "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}});
+    if structured {
+        tool["outputSchema"] = ops::output_schema("edit_symbol");
+    }
+    if short {
+        tool["description"] = json!("Replace one definition, checked; a dry run unless apply with its hash.");
+        drop_descriptions(&mut tool["inputSchema"]);
+    }
+    tool
 }
 
 fn clamp_bytes(n: usize) -> usize {
@@ -598,7 +627,13 @@ impl Server<'_> {
                 );
             }
             "ping" => respond(send, &id, stateless, json!({})),
-            "tools/list" => list(json!({"tools": tools(self.structured, self.settings.max_bytes, self.short)})),
+            "tools/list" => {
+                let mut all = tools(self.structured, self.settings.max_bytes, self.short);
+                if self.settings.edits {
+                    all.as_array_mut().into_iter().for_each(|a| a.push(edit_tool(self.structured, self.short)));
+                }
+                list(json!({"tools": all}))
+            }
             "resources/list" => list(json!({"resources": []})),
             "resources/templates/list" => list(json!({"resourceTemplates": []})),
             "prompts/list" => list(json!({"prompts": []})),
@@ -606,7 +641,8 @@ impl Server<'_> {
                 let Some(name) = params.get("name").and_then(Value::as_str) else {
                     return respond_err(send, &id, -32602, "tools/call has no params.name", None);
                 };
-                if !tool_table().as_array().into_iter().flatten().any(|t| t["name"] == name) {
+                let edits = self.settings.edits && name == "edit_symbol";
+                if !edits && !tool_table().as_array().into_iter().flatten().any(|t| t["name"] == name) {
                     return respond_err(send, &id, -32602, &format!("unknown tool: {name}"), None);
                 }
                 let call = Call {

@@ -800,6 +800,10 @@ pub enum Cmd {
         /// tokens in every session; the tools, their arguments and defaults stay the same
         #[arg(long, env = "SCRUTATE_MCP_SHORT_TOOLS", value_parser = clap::builder::FalseyValueParser::new())]
         short_tools: bool,
+        /// list `edit_symbol`, the one tool that writes source files: a checked edit of one
+        /// definition, a dry run unless asked; this flag alone turns it on
+        #[arg(long)]
+        allow_edits: bool,
     },
     /// run a Language Server Protocol server on stdio (definitions, references, symbols from the index)
     Lsp,
@@ -1794,7 +1798,7 @@ pub fn run() -> Result<i32> {
                 0
             })
         }
-        Cmd::Serve { refresh_interval, watch, structured, short_tools } => {
+        Cmd::Serve { refresh_interval, watch, structured, short_tools, allow_edits } => {
             if cfg!(target_os = "wasi") {
                 anyhow::bail!("serve is not in the wasi build: it needs threads");
             }
@@ -1806,7 +1810,9 @@ pub fn run() -> Result<i32> {
             // any thread starts, as a long socket path is named from its directory
             let _listening = crate::session::listen(&s, printed);
             s.watch(watch)?;
-            crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes), crate::VERSION, structured, short_tools)?;
+            let settings = crate::mcp::Settings::new(cli.max_bytes);
+            let settings = if allow_edits { settings.allowing_edits() } else { settings };
+            crate::mcp::serve(s, settings, crate::VERSION, structured, short_tools)?;
             Ok(0)
         }
         Cmd::Lsp => crate::lsp::serve(&cli.root, root_given),

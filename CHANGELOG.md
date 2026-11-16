@@ -9,6 +9,13 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `serve --allow-edits` lists `edit_symbol`, which replaces one whole definition: a dry run gives
+  the diff and the file's hash, and `apply: true` writes only with that hash, while the file still
+  has it, and only when the new file parses and the definitions outside the edit keep their names,
+  kinds and order (a grown edit shifts their lines). A file under `.git/` or `.scrutate/`, a link,
+  and a file that is not UTF-8 text are never written. Without the flag the server stays read-only,
+  and no environment variable or configuration file turns it on
+  ([CLI](docs/CLI.md#serve---allow-edits-and-edit_symbol)).
 - `symbol --deps PACKAGE.NAME` and `read --deps --symbol PACKAGE.NAME`, and the MCP `find_symbol`
   and `read_code` with `scope: "deps"`, answer from a dependency's source at the version the
   lockfile pins (`Cargo.lock`, `package-lock.json`, `uv.lock`, `poetry.lock`, `go.mod`), read

@@ -12,6 +12,7 @@ pub mod cli;
 pub mod config;
 pub mod custom;
 pub mod dead;
+pub mod edit;
 pub mod files;
 pub mod filter;
 pub mod finder;

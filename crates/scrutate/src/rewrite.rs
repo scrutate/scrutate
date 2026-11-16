@@ -92,7 +92,7 @@ fn through_link(path: &Path, top: &Path) -> bool {
 }
 
 /// Whether an error or missing node of the tree touches `start..end`.
-fn broken(root: tree_sitter::Node, start: usize, end: usize) -> bool {
+pub(crate) fn broken(root: tree_sitter::Node, start: usize, end: usize) -> bool {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         if !n.has_error() || n.end_byte() < start || n.start_byte() > end {
@@ -229,6 +229,41 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
         plan.skipped.extend(skipped);
     }
     Ok(plan)
+}
+
+/// One file of the repository, read as `plan` reads one: through its directory, with no link on
+/// the way, a regular file.
+pub struct One {
+    root: Dir,
+    path: PathBuf,
+    inside: PathBuf,
+    shown: String,
+    pub read: Vec<u8>,
+}
+
+/// The file `rel` (a path relative to `root`, by its own normal parts) read for an edit.
+pub fn open_one(root: &Path, rel: &str) -> Result<One> {
+    let inside = PathBuf::from(rel);
+    if rel.is_empty() || !inside.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        bail!("{rel} is not a path inside the repository");
+    }
+    let dir = Dir::root(root)?;
+    let (parent, name) = split(&inside);
+    let Ok(at) = dir.below(parent) else { bail!("{rel} could not be read: a directory on the way is missing or a link") };
+    if !at.regular(name).is_ok_and(|p| p.is_some()) {
+        bail!("{rel} is not a regular file");
+    }
+    let read = at.read(name)?;
+    Ok(One { root: dir, path: root.join(&inside), inside, shown: rel.to_string(), read })
+}
+
+impl One {
+    /// The plan that writes `new` in place of what was read; `span` is the changed range, as
+    /// (old start, old end, new start, new end) bytes.
+    pub fn plan(self, new: Vec<u8>, span: (usize, usize, usize, usize)) -> Plan {
+        let change = FileChange { path: self.path, inside: self.inside, shown: self.shown, read: self.read, new, replaced: 1, spans: vec![span] };
+        Plan { root: self.root, files: vec![change], left: Vec::new(), skipped: Vec::new() }
+    }
 }
 
 impl Plan {
