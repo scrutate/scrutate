@@ -615,6 +615,7 @@ pub fn output_schema(tool: &str) -> Value {
         json!("present when an index update was still running: the changed files this answer does not hold yet (all: any file changed since the last scan)");
     obj(
         json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped,
+            "stopped_reason": {"type": "string", "description": "present when a bounded read stopped short of the limit: why, and what narrows it"},
             "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending, "capped": capped}),
         &["schema", "complete", "result"],
     )
@@ -722,6 +723,9 @@ pub fn wrapped(result: Value, stopped: Option<Stop>) -> Value {
     let mut v = json!({"schema": ANSWER_SCHEMA, "result": result});
     if let Some(stop) = stopped {
         v["stopped_at"] = json!(stop.at);
+        if bound_reason(stop.how) {
+            v["stopped_reason"] = json!(stop.how);
+        }
     }
     v
 }
@@ -1564,7 +1568,12 @@ fn definition_at(s: &Searcher, refs: &Resolved, name: &str, spec: &str) -> Resul
 
 /// The closing line of an answer that stopped at its limit.
 pub fn stop_line(stopped: Option<Stop>, noun: &str) -> String {
-    stopped.map(|s| format!("(stopped at {} {noun}: {})", s.at, s.how)).unwrap_or_default()
+    stopped.map(|s| if bound_reason(s.how) { format!("({})", s.how) } else { format!("(stopped at {} {noun}: {})", s.at, s.how) }).unwrap_or_default()
+}
+
+/// Whether `how` says a bounded read stopped short, which is the whole reason, not a cut at a limit.
+fn bound_reason(how: &str) -> bool {
+    how == SCOPED_SYMBOLS_STOP || how == crate::search::FILTER_STOP
 }
 
 /// Two closing lines, either of them possibly empty.
@@ -3068,8 +3077,9 @@ mod tests {
             .map(|hits| (how, hits))
         }) {
             let a = Answer::Hits { hits, words: Vec::new(), snippet: true, stopped: Some(Stop { at: 0, how }) };
-            assert!(a.text().contains(how), "{}", a.text());
-            assert!(!a.envelope(std::path::Path::new("/r"))["stopped_at"].is_null());
+            assert!(a.text().contains(&format!("({how})")) && !a.text().contains("stopped at 0"), "{}", a.text());
+            let v = a.envelope(std::path::Path::new("/r"));
+            assert!(!v["stopped_at"].is_null() && v["stopped_reason"] == json!(how), "{v}");
         }
     }
     use super::*;
