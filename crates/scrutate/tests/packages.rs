@@ -813,7 +813,9 @@ fn of_two_go_packages_of_one_name_the_one_the_repository_imports_is_read_and_oth
 fn a_package_s_own_name_comes_before_a_method_of_that_name_unless_the_method_is_asked_for() {
     // the first hit's file, then the second's
     let order = |out: &str| -> Vec<String> {
-        out.lines().filter(|l| l.contains(".go:") || l.contains(".py:")).map(|l| l.split(':').next().unwrap().rsplit('/').next().unwrap().to_string()).collect()
+        // the path ends at the colon after its extension: a Windows path has one after the drive too
+        let path_end = |l: &str| [".go:", ".py:"].iter().filter_map(|e| l.find(e).map(|i| i + e.len() - 1)).min();
+        out.lines().filter_map(|l| path_end(l).map(|end| l[..end].rsplit('/').next().unwrap().to_string())).collect()
     };
     let t = Tree::new("own_name_first");
     t.go_mod("require (\n\tgithub.com/stretchr/testify v1.9.0\n\texample.com/kit v1.0.0\n)");
