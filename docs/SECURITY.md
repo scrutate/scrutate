@@ -536,7 +536,9 @@ holding a common word. `aws-secret-access-key`, `password` and `generic-secret` 
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
 string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> = "..."`), a value
 in up to two constructors (`Some(String::from("..."))`, `Optional.of("...")`) and a Rust raw
-string (`r"..."`, `r#"..."#`). A private key's
+string (`r"..."`, `r#"..."#`). The rules that end a secret at what follows it take a quote, a
+space, `;`, an escaped line end, the line's end, or `&` before a URL's next query parameter
+(`?api_key=...&format=json`, `jdbc:...&password=...&useSSL=false`). A private key's
 body is redacted line by line between its armour, which is matched in any case (`Rsa Private
 Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
 a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
