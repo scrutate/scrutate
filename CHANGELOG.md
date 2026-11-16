@@ -201,6 +201,12 @@ incompatible index by itself, and that is never breaking.
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- Outside a repository, the climb to an index in a directory above stops short of the system's
+  temporary directory (and `/tmp` and `/var/tmp` on Unix), the home directory (also one kept in
+  git) and a filesystem root: an index there answers only for that directory itself, and a
+  command in a project below it runs as with no index above and says in one line which index it
+  is not using, where it answered from that index, for a sibling project too
+  ([CLI](docs/CLI.md#conventions)).
 - `grep --max-results N` with after-context (`-A`, `-C`) prints the context of the Nth match
   before it stops, as `-m N` does, where it stopped at the match; a match inside that context
   prints as a match, as ripgrep prints one after `-m`'s last, and does not count toward N
