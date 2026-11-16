@@ -218,6 +218,9 @@ incompatible index by itself, and that is never breaking.
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,
+  where it was 1.99.1). The oldest compiler that builds it is still 1.91 (`rust-version`). What the
+  tool does is unchanged.
 - `refs`, `callers` and `dead` hold a bounded set of parsed files: 256 MiB a request, and 256 MiB
   kept across the requests of `serve`, `lsp` and `batch`. The index stores each file's import
   bindings, so a C name looked up through included headers parses only the files whose trees it
@@ -1586,7 +1589,7 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
   when a regex-looking query finds nothing.
 - Text files check out with LF line ends on every platform (`.gitattributes`).
-- Toolchain pinned to Rust 1.99.1 (`rust-version` 1.91).
+- Toolchain pinned to Rust 1.100.0, edition 2024 (`rust-version` 1.91).
 - Python bindings (PyO3 0.30): three wheels per platform (`cp39-abi3`, `cp314t`,
   `cp315-abi3.abi3t`), the GIL released (in `stats()` too), notices in `dist-info/licenses`,
   Ctrl-C within about 100 ms, and results as a `scrutate.Results` list with `stopped_at`

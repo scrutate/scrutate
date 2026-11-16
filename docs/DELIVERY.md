@@ -43,7 +43,7 @@ carry the licence files too ([Releasing](RELEASING.md#6-platform-checks-and-arti
 | `scrutate-0.1.0-cp39-abi3-macosx_13_0_arm64.whl` | macOS arm64 (macOS 13 or newer), standard CPython 3.9 to 3.14 | |
 | `scrutate-0.1.0-cp314-cp314t-macosx_13_0_arm64.whl` | macOS arm64, free-threaded CPython 3.14 | |
 | `scrutate-0.1.0-cp315-abi3.abi3t-macosx_13_0_arm64.whl` | macOS arm64, CPython 3.15 and newer, standard and free-threaded | |
-| `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `261ed1a2a4613e19...`, identical from two build images (`bench/results/platforms/repro/`), and the binary measured in the Linux VM |
+| `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `261ed1a2a4613e19...`, the binary measured in the Linux VM (Rust 1.99.1); the reproducible-build proof on the pinned 1.100.0 is in docs/SECURITY.md's row |
 | `scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl` | Linux aarch64, standard CPython 3.9 to 3.14 | |
 | `scrutate-0.1.0-cp314-cp314t-manylinux_2_34_aarch64.whl` | Linux aarch64, free-threaded CPython 3.14 | |
 | `scrutate-0.1.0-cp315-abi3.abi3t-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.15 and newer, standard and free-threaded | |
