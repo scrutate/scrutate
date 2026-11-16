@@ -516,9 +516,12 @@ random, a key read without its armour (lockfile checksums such as go.sum's `h1:`
 material: an SSH key after its type, as `known_hosts` writes it, and the body of a public key, a
 certificate or a certificate request between its armour, read as a private key's is: armour
 that ends its line opens it, and the first line that is not base64 ends it. Such a body is left
-as written only when its END line comes later in the same answer, and `hook run` holds at most 64
-lines (8 KiB) of it for that END; a public key or certificate longer than that, or shown without its END
-line, is marked, since base64 after it may be another file's private key);
+as written only when an END line of the same label comes later in the same answer and, for a DER
+body (every such body but an RFC 4716 SSH key's), the body is then exactly the one element its
+first bytes give the length of; `hook run` holds at most 64 lines (8 KiB) of it for that END. A
+public key or certificate longer than that, one that runs past its element's length, or one
+shown without its own END line, is marked, since base64 after it may be another file's private
+key);
 `generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
 holding a common word. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:

@@ -505,7 +505,7 @@ static PREFILTER: LazyLock<aho_corasick::AhoCorasick> = LazyLock::new(|| {
 static PEM_BEGIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----").unwrap());
 /// The armour of material that is public: a public key, a certificate, a certificate request.
 static PUBLIC_ARMOUR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i-u)-----(BEGIN|END)[ A-Z0-9_-]{0,100}(?:PUBLIC KEY|CERTIFICATE(?: REQUEST)?|X509 CRL)-----").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i-u)-----(BEGIN|END)([ A-Z0-9_-]{0,100}(?:PUBLIC KEY|CERTIFICATE(?: REQUEST)?|X509 CRL))-----").unwrap());
 static PEM_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i-u)-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----").unwrap());
 static BASE64_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/=]{4,}").unwrap());
 /// What an answer writes before a line of a file: read_code's `    7  ` (a range's `1-2  `),
@@ -578,6 +578,7 @@ fn unslash(text: &str) -> (String, Vec<usize>) {
 /// The most lines and bytes of a public key's or a certificate's body held for its END: past
 /// either, it is read as any base64 (a 4096-bit certificate's body is about 30 lines).
 const PUBLIC_LINES: usize = 64;
+const B64_DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PUBLIC_BYTES: usize = 8 << 10;
 
 /// What `Redactor::hold` says to do with a line of a stream.
@@ -591,14 +592,21 @@ pub enum Hold {
 
 /// The body of a public key or a certificate being read: only armour that ends its line (or is
 /// followed by a written-out `\n`, a key in one string) and is not closed on it opens one; base64
-/// alone, blank and header lines are its body; its END shows it was one, anything else ends it.
+/// alone, blank and header lines are its body. An END of the same label shows it was one, when a
+/// DER body (all but RFC 4716's) is then exactly the one element its first bytes say; anything
+/// else ends it.
 #[derive(Default)]
 struct PublicBody {
     open: bool,
+    /// the BEGIN's label (`PUBLIC KEY`, `CERTIFICATE`)
+    label: String,
     /// its base64 lines so far: (text, start, end)
     held: Vec<(usize, usize, usize)>,
     lines: usize,
     bytes: usize,
+    /// the body's base64 characters so far, padding left out, and the first eight of them
+    chars: usize,
+    head: String,
 }
 
 enum Seen {
@@ -613,18 +621,29 @@ enum Seen {
 impl PublicBody {
     fn line(&mut self, ti: usize, at: usize, line: &str) -> Seen {
         if self.open {
-            if PUBLIC_ARMOUR.captures(line).is_some_and(|c| &c[1] == "END") {
+            if let Some(c) = PUBLIC_ARMOUR.captures(line).filter(|c| &c[1] == "END") {
                 self.open = false;
-                return Seen::Released;
+                if c[2].trim().eq_ignore_ascii_case(&self.label) && self.der_len().is_none_or(|n| n == self.decoded()) {
+                    return Seen::Released;
+                }
+                self.held.clear();
+                return Seen::Dropped;
             }
             let body = key_body(line);
             if !matches!(body, Body::NotKey) && self.lines < PUBLIC_LINES && self.bytes + line.len() <= PUBLIC_BYTES {
                 self.lines += 1;
                 self.bytes += line.len();
-                if let Body::Base64(..) = body {
+                if let Body::Base64(a, b) = body {
+                    let b64 = &line[a..b];
+                    let take = (8 - self.head.len()).min(b64.len());
+                    self.head.push_str(&b64[..take]);
+                    self.chars += b64.bytes().filter(|&c| c != b'=').count();
                     self.held.push((ti, at, at + line.len()));
                 }
-                return Seen::Held;
+                // more than the one element it began: another body runs on after it
+                if self.der_len().is_none_or(|n| self.decoded() <= n) {
+                    return Seen::Held;
+                }
             }
             self.open = false;
             self.held.clear();
@@ -641,8 +660,31 @@ impl PublicBody {
             let rest = line[m.end()..].trim_end_matches(['\n', '\r']);
             let closed = PUBLIC_ARMOUR.captures_iter(&line[m.end()..]).any(|e| &e[1] == "END");
             if (rest.trim().is_empty() || rest.starts_with("\\n")) && !closed {
-                *self = PublicBody { open: true, ..PublicBody::default() };
+                *self = PublicBody { open: true, label: c[2].trim().to_string(), ..PublicBody::default() };
             }
+        }
+    }
+
+    /// The bytes the base64 held so far decodes to.
+    fn decoded(&self) -> usize {
+        self.chars * 3 / 4
+    }
+
+    /// The length of the DER element the body starts with, from its first bytes (a SEQUENCE, as
+    /// every such PEM body is but RFC 4716's): None while there are too few, or for another body.
+    fn der_len(&self) -> Option<usize> {
+        let value = |c: u8| B64_DIGITS.iter().position(|&d| d == c);
+        let mut bytes = Vec::new();
+        for quad in self.head.as_bytes().chunks(4).filter(|q| q.len() == 4) {
+            let v = quad.iter().try_fold(0u32, |acc, &c| value(c).map(|d| acc << 6 | d as u32))?;
+            bytes.extend([(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+        }
+        match bytes[..] {
+            [0x30, n, ..] if n < 0x80 => Some(2 + n as usize),
+            [0x30, 0x81, a, ..] => Some(3 + a as usize),
+            [0x30, 0x82, a, b, ..] => Some(4 + ((a as usize) << 8 | b as usize)),
+            [0x30, 0x83, a, b, c, ..] => Some(5 + ((a as usize) << 16 | (b as usize) << 8 | c as usize)),
+            _ => None,
         }
     }
 }
@@ -1677,6 +1719,48 @@ mod tests {
         let mut r = Redactor::default();
         let steps: Vec<Hold> = pem(&long).iter().map(|l| r.hold(l)).collect();
         assert_eq!(steps[65], Hold::Release { public: false }, "the 65th body line ends the hold");
+    }
+
+    /// A held body goes out as a public one only at an END of its own label, and a DER body only
+    /// when it is then exactly the one element its first bytes say: a cut public key with a
+    /// private key's body after it (its armour filtered out) is not, whichever END comes.
+    #[test]
+    fn a_cut_public_body_with_another_body_after_it_is_not_released_as_public() {
+        let b64 = format!("{ALNUM}+/");
+        let lines =
+            |seed: u64, n: u64, last: usize| (0..n).map(|i| fake(seed + i, &b64, 64)).chain([format!("{}==", fake(seed + n, &b64, last))]).collect::<Vec<_>>();
+        let steps = |stream: &[String]| {
+            let mut r = Redactor::default();
+            stream.iter().map(|l| r.hold(l)).collect::<Vec<_>>()
+        };
+        let begin = |what: &str| format!("-----BEGIN {what}-----");
+        let end = |what: &str| format!("-----END {what}-----");
+        // random bodies: a public key cut before its END, a private body, a certificate's END
+        let stream = [vec![begin("PUBLIC KEY")], lines(130, 6, 20), lines(140, 25, 30), lines(170, 8, 30), vec![end("CERTIFICATE")]].concat();
+        assert_eq!(steps(&stream).last(), Some(&Hold::Release { public: false }), "an END of another label");
+        // DER bodies: the same label's END after a cut key and another body
+        let der = |len: usize, seed: u8| {
+            let mut v = vec![0x30, 0x82, ((len - 4) >> 8) as u8, (len - 4) as u8];
+            v.extend((0..len - 4).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)));
+            let mut s = String::new();
+            for c in v.chunks(3) {
+                let n = c.iter().enumerate().fold(0u32, |a, (i, &b)| a | (b as u32) << (16 - 8 * i));
+                for k in 0..4 {
+                    s.push(if k <= c.len() { b64.as_bytes()[(n >> (18 - 6 * k) & 63) as usize] as char } else { '=' });
+                }
+            }
+            s.as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect::<Vec<_>>()
+        };
+        let (public, private) = (der(294, 1), der(1192, 2));
+        let stream = [vec![begin("PUBLIC KEY")], public[..3].to_vec(), private.clone(), vec![end("PUBLIC KEY")]].concat();
+        assert_eq!(steps(&stream).last(), Some(&Hold::Release { public: false }), "a cut key and another body, the same label");
+        // what stays public: a whole key, and two certificates back to back
+        let whole = [vec![begin("PUBLIC KEY")], public.clone(), vec![end("PUBLIC KEY")]].concat();
+        assert_eq!(steps(&whole).last(), Some(&Hold::Release { public: true }));
+        let (a, b) = (der(1000, 3), der(1400, 4));
+        let chain = [vec![begin("CERTIFICATE")], a.clone(), vec![end("CERTIFICATE"), begin("CERTIFICATE")], b.clone(), vec![end("CERTIFICATE")]].concat();
+        let s = steps(&chain);
+        assert_eq!((&s[a.len() + 1], s.last()), (&Hold::Release { public: true }, Some(&Hold::Release { public: true })));
     }
 
     /// Shopify's tokens are found as gitleaks finds them, with no word boundary around them.
