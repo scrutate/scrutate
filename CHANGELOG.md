@@ -365,6 +365,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- An error from a git that crashed or failed without a word names how it ended (`git diff-index:
+  ended by signal 11 (a crash) and gave no reason`, or its exit status), where `impact`, `review`
+  and `read --history` said `git diff-index: ` and nothing after it.
 - Plain `impact` refuses a file a merge left in conflict ("is unmerged: finish the merge before
   asking what it changes", exit 2), as `impact --staged` did, where it named the conflict-marked
   text as an edit.

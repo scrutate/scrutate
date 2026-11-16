@@ -410,6 +410,37 @@ fn a_file_left_unmerged_by_a_conflict_is_refused() {
     }
 }
 
+/// A git that crashes with nothing on its errors (git 2.53 does on one `diff-index --cached`) gives
+/// an error that names the command and how git ended, not an empty reason.
+#[cfg(unix)]
+#[test]
+fn a_git_that_crashes_without_a_word_is_named_with_how_it_ended() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = chain("crashing_git");
+    t.write("lib/core.py", "def deepest(x):\n    return x + 2\n\n\ndef spare(x):\n    return x\n");
+    t.git(&["add", "-A"]);
+    let real = String::from_utf8(Command::new("sh").args(["-c", "command -v git"]).output().unwrap().stdout).unwrap().trim().to_string();
+    let bin = t.root.with_extension("bin");
+    let _ = fs::remove_dir_all(&bin);
+    fs::create_dir_all(&bin).unwrap();
+    fs::write(bin.join("git"), format!("#!/bin/sh\ncase \" $* \" in *\" diff-index \"*) kill -SEGV $$;; esac\nexec '{real}' \"$@\"\n")).unwrap();
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let out = Command::new(BIN)
+        .args(["--root", t.root.to_str().unwrap(), "impact", "--staged"])
+        .current_dir(&t.root)
+        .envs(GIT_ENV)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&bin);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("git diff-index: ended by signal 11 (a crash) and gave no reason"), "{err}");
+}
+
 #[test]
 fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
     let t = chain("deletednamesake");

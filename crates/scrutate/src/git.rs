@@ -259,7 +259,7 @@ impl Git {
     /// (exited with 0, standard output, standard error)
     fn output(&self, args: &[&str]) -> Result<(bool, Vec<u8>, String)> {
         let out = self.command(args)?.output().map_err(not_run)?;
-        Ok((out.status.success(), out.stdout, first_line(&out.stderr)))
+        Ok((out.status.success(), out.stdout, reason(out.status, &out.stderr)))
     }
 
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
@@ -482,8 +482,12 @@ impl Git {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let take = |b: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>| std::mem::take(&mut *b.lock().unwrap_or_else(|e| e.into_inner()));
-        let (out, why) = (take(&out), first_line(&take(&err)));
-        Ok((out, status, why))
+        let why = take(&err);
+        let why = match status {
+            Some(s) => reason(s, &why),
+            None => first_line(&why),
+        };
+        Ok((take(&out), status, why))
     }
 
     /// Where lines `start` to `end` of the working tree's `path` are in HEAD's copy of the file.
@@ -802,6 +806,23 @@ fn verb_at(args: &[&str]) -> usize {
     }
 }
 
+/// Why git failed: the first line of its errors, or, when it wrote none, how it ended (a signal,
+/// a crash, or its exit status), so no error ends in an empty reason.
+fn reason(status: std::process::ExitStatus, stderr: &[u8]) -> String {
+    let line = first_line(stderr);
+    if status.success() || !line.is_empty() {
+        return line;
+    }
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return format!("ended by signal {signal}{} and gave no reason", if signal == 11 { " (a crash)" } else { "" });
+    }
+    match status.code() {
+        Some(code) => format!("exited with status {code} and gave no reason"),
+        None => "ended and gave no reason".to_string(),
+    }
+}
+
 fn first_line(b: &[u8]) -> String {
     let s = String::from_utf8_lossy(b);
     let line = s.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
@@ -831,6 +852,19 @@ fn plain_dir(root: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A git that fails and writes nothing gets a reason that says how it ended.
+    #[cfg(unix)]
+    #[test]
+    fn a_git_that_fails_and_says_nothing_gets_a_reason() {
+        use std::os::unix::process::ExitStatusExt;
+        let signalled = std::process::ExitStatus::from_raw(11);
+        assert_eq!(reason(signalled, b""), "ended by signal 11 (a crash) and gave no reason");
+        assert_eq!(reason(std::process::ExitStatus::from_raw(9), b"\n"), "ended by signal 9 and gave no reason");
+        assert_eq!(reason(std::process::ExitStatus::from_raw(3 << 8), b""), "exited with status 3 and gave no reason");
+        assert_eq!(reason(std::process::ExitStatus::from_raw(128 << 8), b"fatal: bad object x\n"), "bad object x");
+        assert_eq!(reason(std::process::ExitStatus::from_raw(0), b""), "");
+    }
 
     #[test]
     fn a_patch_gives_each_file_its_changed_lines_by_the_path_it_has_now() {
