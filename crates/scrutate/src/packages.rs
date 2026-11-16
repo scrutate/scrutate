@@ -451,6 +451,7 @@ fn split<'n>(root: &Path, name: &'n str) -> Result<(Locked, &'n str)> {
                 other.lockfile
             );
         }
+        let first = chosen(root, &hits, &dists)?;
         // what a lockfile names is shown and used only when it is one of its ecosystem's
         if !valid_name(first.eco, &first.name) {
             return Err(refused(first, "that is no package name"));
@@ -463,9 +464,72 @@ fn split<'n>(root: &Path, name: &'n str) -> Result<(Locked, &'n str)> {
             let sep = if first.eco == Eco::Cargo { "::" } else { "." };
             bail!("name a definition of {}: {}{sep}NAME (--deps takes PACKAGE.NAME)", echo(start), echo(start));
         }
-        return Ok(((*first).clone(), rest));
+        return Ok((first.clone(), rest));
     }
     bail!("no package of {} names {}: --deps takes PACKAGE.NAME, PACKAGE as the code imports it", read.join(", "), crate::fmt::echo(name))
+}
+
+/// The one of `hits`, one package that may be locked at several versions, that the repository
+/// uses: for Cargo the version its own packages depend on, for Python the one `.venv` has; never
+/// the first in the lockfile.
+fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Locked> {
+    let mut versions: Vec<&'l Locked> = Vec::new();
+    for l in hits {
+        if !versions.iter().any(|v| v.version == l.version) {
+            versions.push(l);
+        }
+    }
+    let [first, ..] = versions[..] else { bail!("no package") };
+    if versions.len() == 1 {
+        return Ok(first);
+    }
+    let used: Vec<String> = match first.eco {
+        Eco::Cargo => cargo_direct(root, &first.name),
+        Eco::Python => dists.iter().filter(|d| normalized(&d.name) == normalized(&first.name)).map(|d| d.version.clone()).collect(),
+        Eco::Npm | Eco::Go => Vec::new(),
+    };
+    let mine: Vec<&'l Locked> = versions.iter().copied().filter(|l| used.contains(&l.version)).collect();
+    if let [one] = mine[..] {
+        return Ok(one);
+    }
+    let echo = crate::fmt::echo;
+    let listed = versions.iter().map(|l| echo(&l.version)).collect::<Vec<_>>().join(" and ");
+    let name = echo(&first.name);
+    match first.eco {
+        Eco::Cargo => bail!(
+            "{name} is locked at {listed}, and the repository's own packages depend on {} directly: --deps cannot tell which; `cargo tree -i {name}` shows what pulls in each",
+            if mine.is_empty() { "neither" } else { "more than one" }
+        ),
+        Eco::Python if used.is_empty() => Err(anyhow!("{name} {listed} are not in .venv: run {}", first.eco.sync(first.lockfile))),
+        Eco::Python => bail!(
+            "{name} is locked at {listed} but .venv has {}: run {}",
+            used.iter().map(|v| echo(v)).collect::<Vec<_>>().join(" and "),
+            first.eco.sync(first.lockfile)
+        ),
+        Eco::Npm | Eco::Go => bail!("{name} is locked at {listed}: --deps cannot tell which"),
+    }
+}
+
+/// The versions of `name` that the repository's own packages (those Cargo.lock gives no source:
+/// the root, the workspace members, path dependencies) depend on; Cargo.lock writes `NAME VERSION`
+/// in `dependencies` when it locks more than one version of NAME.
+fn cargo_direct(root: &Path, name: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(root.join("Cargo.lock")).unwrap_or_default();
+    let Ok(t) = text.parse::<toml::Table>() else { return Vec::new() };
+    let packages = t.get("package").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+    let mut out: Vec<String> = packages
+        .iter()
+        .filter(|p| p.get("source").is_none())
+        .filter_map(|p| p.get("dependencies").and_then(|d| d.as_array()).cloned())
+        .flatten()
+        .filter_map(|d| {
+            let mut parts = d.as_str()?.split(' ');
+            (parts.next()? == name).then(|| parts.next().map(str::to_string)).flatten()
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// A package's files where its locked version is installed.

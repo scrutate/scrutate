@@ -168,6 +168,68 @@ fn a_crate_is_read_at_the_version_cargo_lock_pins_never_another() {
 }
 
 #[test]
+fn of_two_locked_versions_the_one_the_repository_uses_is_read_never_the_first_in_the_lockfile() {
+    let registry = "source = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"00\"\n";
+    let lock = |app_deps: &str, bar_dep: &str| {
+        format!(
+            "version = 4\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [{app_deps}]\n\n\
+             [[package]]\nname = \"bar\"\nversion = \"0.3.0\"\n{registry}dependencies = [\"{bar_dep}\"]\n\n\
+             [[package]]\nname = \"baz\"\nversion = \"0.1.0\"\n{registry}dependencies = [\"foo 2.0.0\"]\n\n\
+             [[package]]\nname = \"foo\"\nversion = \"1.0.0\"\n{registry}\n\
+             [[package]]\nname = \"foo\"\nversion = \"2.0.0\"\n{registry}"
+        )
+    };
+    let t = Tree::new("cargo_two_versions");
+    t.cargo("foo", "1.0.0", "pub fn common() -> &'static str {\n    \"1.0.0\"\n}\n");
+    t.cargo("foo", "2.0.0", "pub fn common() -> &'static str {\n    \"2.0.0\"\n}\npub fn only_in_two() {}\n");
+    t.cargo_lock(&[]);
+    // the root depends on foo 2; bar, before it in the lockfile, pulls in foo 1
+    t.write("Cargo.lock", &lock("\"bar\", \"foo 2.0.0\"", "foo 1.0.0"));
+    let (code, out, err) = t.run(&["symbol", "--deps", "foo::common"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("foo 2.0.0 (Cargo.lock)") && out.contains("foo-2.0.0/src/lib.rs:1-3") && !out.contains("1.0.0"), "{out}");
+    let (code, out, err) = t.run(&["symbol", "--deps", "foo::only_in_two"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("foo-2.0.0/src/lib.rs:4-4"), "{out}");
+    // the root depends on neither: both versions are named, and neither is read
+    t.write("Cargo.lock", &lock("\"bar\", \"baz\"", "foo 1.0.0"));
+    let (code, out, err) = t.run(&["symbol", "--deps", "foo::common"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("foo is locked at 1.0.0 and 2.0.0") && err.contains("cannot tell which") && err.contains("cargo tree -i foo"), "{err}");
+    assert!(!out.contains("lib.rs"), "{out}");
+}
+
+#[test]
+fn of_two_versions_a_uv_fork_locks_the_one_the_venv_has_is_read() {
+    let t = Tree::new("uv_fork");
+    let package = |v: &str, marker: &str| {
+        format!(
+            "\n[[package]]\nname = \"numpy\"\nversion = \"{v}\"\nsource = {{ registry = \"https://pypi.org/simple\" }}\nresolution-markers = [\"{marker}\"]\n"
+        )
+    };
+    t.uv_lock(&[]);
+    let fork = format!(
+        "version = 1\nrequires-python = \">=3.9\"\nresolution-markers = [\"python_full_version < '3.10'\", \"python_full_version >= '3.10'\"]\n\n\
+         [[package]]\nname = \"app\"\nversion = \"0.1.0\"\nsource = {{ virtual = \".\" }}\n{}{}",
+        package("1.26.4", "python_full_version < '3.10'"),
+        package("2.1.0", "python_full_version >= '3.10'")
+    );
+    t.write("uv.lock", &fork);
+    t.wheel("numpy", "2.1.0", &[("numpy/__init__.py", "def array(obj):\n    return obj\n")]);
+    let (code, out, err) = t.run(&["symbol", "--deps", "numpy.array"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("numpy 2.1.0 (uv.lock)") && out.contains("site-packages/numpy/__init__.py:1-2"), "{out}");
+    // a .venv with neither version is told to sync, naming both
+    let t = Tree::new("uv_fork_neither");
+    t.uv_lock(&[]);
+    t.write("uv.lock", &fork);
+    t.wheel("numpy", "1.0.0", &[("numpy/__init__.py", "def array(obj):\n    return obj\n")]);
+    let (code, _, err) = t.run(&["symbol", "--deps", "numpy.array"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("1.26.4 and 2.1.0") && err.contains("1.0.0") && err.contains("uv sync"), "{err}");
+}
+
+#[test]
 fn a_crate_the_registry_lacks_at_the_locked_version_is_an_error_that_says_how_to_fetch_it() {
     let t = Tree::new("cargo_missing");
     t.cargo_lock(&[("serde", "1.0.200")]);
