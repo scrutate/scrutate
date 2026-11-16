@@ -1540,7 +1540,7 @@ root.
 | `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook, `hook run` and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts every CLI answer that prints file text too ([serve](#serve-mcp)); any other value keeps the default and says so on stderr |
 | `SCRUTATE_HOOK_BASH` | `off` (or `0`, `false`, `no`): `hook bash` rewrites nothing, so every shell command runs as written ([setup](#setup-and-the-grep-hook)) |
 | `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none`; a model whose tables do not agree in size is refused with an error |
-| `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's makes `search` fail |
+| `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's, or whose trees do not fit their arrays, makes `search` fail |
 | `SCRUTATE_PROFILE` | print indexing phase timings |
 | `SCRUTATE_DIAGNOSTICS` | `json`: errors as JSON records |
 | `SCRUTATE_CACHE_DIR` | where `--deps` keeps its copies of dependencies, in place of the user cache ([`--deps`](#--deps-a-dependency-at-its-locked-version)); `CARGO_HOME`, `GOMODCACHE` and `GOPATH` name the stores it reads |
