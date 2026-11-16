@@ -49,7 +49,9 @@ command line calls use cannot carry one to a running server (one without the fla
   line with other code that is not a comment (another definition, a statement) is refused before
   any of that, a dry run too. A node that holds the definition alone on its lines (an `export`
   before a function) is the definition's; a comment on those lines that ends on them is the definition's, as
-  `read_code` shows its lines, and is replaced with it: whole lines are what keep the check of the other definitions complete, since none of them
+  `read_code` shows its lines, and is replaced with it, and so is a lone `;` right after it on its
+  last line (`struct P {...};` in C and C++, a template's too, TypeScript's `interface I {...};`),
+  whatever node the grammar hangs it on; a declarator there (`} p;`) is other code: whole lines are what keep the check of the other definitions complete, since none of them
   can then lie on a replaced line unless it is nested in the definition.
 - The write goes through the structural rewrite's writer (`rewrite.rs`): the file is opened by
   its directory with no link on the way, its bytes are checked to still be the ones read, and a

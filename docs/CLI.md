@@ -1173,8 +1173,10 @@ statement before or after it) is refused, a dry run too: `NAME shares a line wit
 is not a comment (PATH:LINE): edit_symbol replaces whole lines; nothing written`. A comment before
 the definition on its first line or after it on its last (`type ID int // the user id`,
 `function f() {...} // end`) belongs to the definition, as `read_code` shows its lines, and is
-replaced with it; the dry run's diff shows it. A comment that runs on past those lines is other
-code. The definitions nested in it may change. A definition's
+replaced with it; the dry run's diff shows it. So is a lone `;` right after the definition on its
+last line (`struct P {...};` in C and C++, a template's too, `interface I {...};` in
+TypeScript); a declarator there (`struct P {...} p;`) is other code. A comment that runs on past
+those lines is other code. The definitions nested in it may change. A definition's
 range is the index's, its attributes and comment block included, so `new_text` replaces them
 too. The new text takes the line ending of the definition's first line (`\r\n` stays `\r\n`,
 and one `\r\n` line elsewhere in a `\n` file changes nothing), and the rest of the

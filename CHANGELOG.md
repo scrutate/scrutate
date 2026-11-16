@@ -22,7 +22,8 @@ incompatible index by itself, and that is never breaking.
   has it, and only when the new file parses and the definitions outside the edit keep their names,
   kinds, text and order (a grown edit shifts their lines). The edit replaces the definition's lines
   whole, so one that shares its first or last line with other code that is not a comment is
-  refused, a dry run too; a comment there is replaced with it. A
+  refused, a dry run too; a comment there, or a lone `;` after it (`struct P {...};`), is replaced
+  with it. A
   file under `.git/` or `.scrutate/` at any
   depth, under any spelling a file system takes for them (`.GIT`, `git~1`), a link, and a file that
   is not UTF-8 text are never written. Without the flag the server stays read-only, and no

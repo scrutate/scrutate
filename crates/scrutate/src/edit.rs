@@ -144,7 +144,7 @@ fn errors(root: tree_sitter::Node) -> (usize, usize) {
 
 /// `range` widened to each node around it that holds it alone and lies within the lines `a..b`
 /// (`export` before a function), so their words are the definition's; never to the file's root.
-fn wrapped(root: tree_sitter::Node, range: (usize, usize), (a, b): (usize, usize)) -> (usize, usize) {
+fn wrapped(root: tree_sitter::Node, src: &str, range: (usize, usize), (a, b): (usize, usize)) -> (usize, usize) {
     let (mut from, mut to) = range;
     let Some(mut n) = root.descendant_for_byte_range(from, to) else { return range };
     while let Some(p) = n.parent() {
@@ -154,6 +154,13 @@ fn wrapped(root: tree_sitter::Node, range: (usize, usize), (a, b): (usize, usize
         }
         (from, to) = (from.min(p.start_byte()), to.max(p.end_byte()));
         n = p;
+    }
+    // a lone `;` right after the definition on its last line (`struct P {...};`, `interface I {...};`)
+    // is the definition's, whatever node the grammar hangs it on; a declarator there (`} p;`) is code
+    let rest = src.get(to..b).unwrap_or("");
+    let at = to + rest.len() - rest.trim_start_matches([' ', '\t']).len();
+    if src.as_bytes().get(at) == Some(&b';') && root.descendant_for_byte_range(at, at + 1).is_some_and(|x| x.kind() == ";") {
+        to = at + 1;
     }
     (from, to)
 }
@@ -270,7 +277,7 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     }
     // whole lines are replaced, so other code on the first or the last of them would go with them;
     // a comment there is the definition's, as read_code shows its lines
-    if let Some((from, to)) = target.bytes.map(|r| wrapped(t0.root_node(), r, (a, b))) {
+    if let Some((from, to)) = target.bytes.map(|r| wrapped(t0.root_node(), &old, r, (a, b))) {
         let clear = |lo: usize, hi: usize| comments_only(t0.root_node(), &old, (lo, hi), (a, b));
         let before = !clear(a, from.max(a));
         if before || !clear(to.min(b), b) {

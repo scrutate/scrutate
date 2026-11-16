@@ -613,3 +613,44 @@ fn a_constant_on_the_first_line_is_edited() {
     assert!(err && out.contains("no definition matches a"), "{out}");
     assert_eq!(s.file("a.c"), text);
 }
+
+/// A type that ends in `};` is edited: the `;` the grammar leaves outside the definition (beside
+/// it, beside the template that wraps it, or as an empty statement) is the definition's. A
+/// declarator after the brace (`} p;`) is other code, and refused.
+#[test]
+fn a_c_or_cpp_type_ending_in_a_semicolon_is_edited() {
+    let cases = [
+        ("a.cpp", "struct P {\n    int m() { return 1; }\n};\n\nint g() { return 2; }\n", "P", "struct P {\n    int m() { return 5; }\n};\n"),
+        ("b.cpp", "class P {\n    int m() { return 1; }\n};\n\nint g() { return 2; }\n", "P", "class P {\n    int m() { return 5; }\n};\n"),
+        ("c.cpp", "struct P { int x; };\n\nint g() { return 2; }\n", "P", "struct P { long x; };\n"),
+        ("d.c", "struct P {\n    int x;\n};\n\nint g(void) { return 2; }\n", "P", "struct P {\n    long x;\n};\n"),
+        ("e.cpp", "enum E {\n    A,\n    B\n};\n\nint g() { return 2; }\n", "E", "enum E {\n    A,\n    C\n};\n"),
+        ("g.cpp", "template <typename T>\nstruct P {\n    T x;\n};\n\nint g() { return 2; }\n", "P", "template <typename T>\nstruct P {\n    T y;\n};\n"),
+        ("h.cpp", "template <class T>\nclass B {\n    T x;\n};\n\nint g() { return 2; }\n", "B", "template <class T>\nclass B {\n    T y;\n};\n"),
+        ("i.ts", "interface I {\n  x: number;\n};\n\nfunction g() { return 2 }\n", "I", "interface I {\n  y: number;\n};\n"),
+        ("j.ts", "class K {\n  x = 1;\n};\n\nfunction g() { return 2 }\n", "K", "class K {\n  x = 5;\n};\n"),
+        ("k.ts", "enum E {\n  A,\n};\n\nfunction g() { return 2 }\n", "E", "enum E {\n  B,\n};\n"),
+    ];
+    let mut failed = Vec::new();
+    for (file, text, name, new_text) in cases {
+        let mut s = Server::start(&format!("semi_{}", file.replace('.', "_")), &[(file, text)], &["--allow-edits"]);
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file} dry run: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        let old_def = &text[..text.find("\n\n").unwrap() + 1];
+        let want = text.replacen(old_def, new_text, 1);
+        if err || s.file(file) != want {
+            failed.push(format!("{file} apply ({err}): {out}\n{:?}", s.file(file)));
+        }
+    }
+    let text = "struct P {\n    int x;\n} p;\n\nint g(void) { return p.x; }\n";
+    let mut s = Server::start("semi_declarator", &[("f.c", text)], &["--allow-edits"]);
+    let (dry, err) = s.call("edit_symbol", json!({"symbol": "P", "path": "f.c", "new_text": "struct P {\n    long x;\n};\n"}));
+    if !(err && dry.contains("shares a line with other code")) || s.file("f.c") != text {
+        failed.push(format!("f.c `}} p;`: {dry}"));
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
