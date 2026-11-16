@@ -213,7 +213,15 @@ fn outside_changed(t0: tree_sitter::Node, old: &str, (a, b): (usize, usize), t1:
         if m1.iter().any(|n| n.end_byte() > d.max(whole.1)) {
             return Some("changes code after it");
         }
-        return (m1.iter().filter(|n| !trivia(n, new)).count() != 1).then_some("adds code outside the definition");
+        let held: Vec<usize> = (0..m1.len()).filter(|&i| !trivia(&m1[i], new)).collect();
+        let [at] = held[..] else { return Some("adds code outside the definition") };
+        // an attribute or a doc comment marks what follows it: after the definition, the next item
+        let doc = |n: &tree_sitter::Node| {
+            let t = new[n.byte_range()].trim_start();
+            (t.starts_with("///") && !t.starts_with("////")) || t.starts_with("//!") || (t.starts_with("/**") && !t.starts_with("/**/")) || t.starts_with("/*!")
+        };
+        let marker = |n: &tree_sitter::Node| n.kind().contains("attribute") || (n.kind().contains("comment") && doc(n));
+        return m1[at + 1..].iter().any(marker).then_some("leaves an attribute or a doc comment after the definition, which would mark the code after it");
     }
 }
 

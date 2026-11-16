@@ -764,3 +764,54 @@ fn a_read_only_file_is_not_rewritten() {
     back.set_readonly(false);
     fs::set_permissions(&path, back).unwrap();
 }
+
+/// An attribute or a doc comment marks what follows it, so one a new text leaves after the
+/// definition would mark the next item (`#[cfg(any())]` compiles it out): refused, the file as it
+/// was. An attribute before the definition is the definition's own, and a plain comment after
+/// it is kept. The markers of C++, C#, Python, Java, PHP, Swift and Kotlin join the next
+/// definition, which the definitions' own check refuses; Rust's stand beside it.
+#[test]
+fn a_marker_after_the_definition_is_refused_and_one_before_it_is_kept() {
+    let rs = "fn f() -> u8 { 1 }\n\nfn g() -> u8 { 2 }\n";
+    let st = "struct S(u8);\n\nfn g() -> u8 { 2 }\n";
+    let refused = [
+        ("a.rs", rs, "f", "fn f() -> u8 { 5 }\n#[cfg(any())]\n"),
+        ("b.rs", rs, "f", "fn f() -> u8 { 5 }\n/// the next one\n"),
+        ("c.cpp", "int f() { return 1; }\n\nint g() { return 2; }\n", "f", "int f() { return 5; }\n[[deprecated]]\n"),
+        ("d.cs", "class C {\n    int F() { return 1; }\n    int G() { return 2; }\n}\n", "F", "    int F() { return 5; }\n    [Obsolete]\n"),
+        ("e.py", "def f():\n    return 1\n\ndef g():\n    return 2\n", "f", "def f():\n    return 5\n@decorator\n"),
+        ("f.java", "class C {\n    int f() { return 1; }\n    int g() { return 2; }\n}\n", "f", "    int f() { return 5; }\n    @Deprecated\n"),
+        ("g.php", "<?php\nfunction f() { return 1; }\nfunction g() { return 2; }\n", "f", "function f() { return 5; }\n#[Attr]\n"),
+        ("h.swift", "func f() -> Int { return 1 }\nfunc g() -> Int { return 2 }\n", "f", "func f() -> Int { return 5 }\n@available(*, deprecated)\n"),
+        ("i.kt", "fun f(): Int { return 1 }\nfun g(): Int { return 2 }\n", "f", "fun f(): Int { return 5 }\n@Deprecated(\"x\")\n"),
+    ];
+    let kept = [("j.rs", rs, "f", "fn f() -> u8 { 5 }\n// note\n"), ("k.rs", st, "S", "#[derive(Debug)]\nstruct S(u8);\n")];
+    let files: Vec<(&str, &str)> = refused.iter().chain(&kept).map(|c| (c.0, c.1)).collect();
+    let mut s = Server::start("trailing_markers", &files, &["--allow-edits"]);
+    let mut failed = Vec::new();
+    for (file, text, name, new_text) in refused {
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if !(err && out.contains("nothing written")) {
+            failed.push(format!("{file}: a marker after the definition was not refused: {out}"));
+        }
+        eprintln!("{file}: {}", out.lines().next().unwrap_or(""));
+        if s.file(file) != text {
+            failed.push(format!("{file}: the file changed"));
+        }
+    }
+    for (file, text, name, new_text) in kept {
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file}: refused: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        // each target here is its file's first line
+        let first = text.split_inclusive('\n').next().unwrap();
+        let want = text.replacen(first, new_text, 1);
+        if err || s.file(file) != want {
+            failed.push(format!("{file}: {out}\n{:?}", s.file(file)));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

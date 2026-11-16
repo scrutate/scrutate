@@ -1192,7 +1192,10 @@ name and kind, every other one its text too. Code that is no definition is kept 
 new text that adds code outside the definition (a statement after it) is refused with `the new
 text adds code outside the definition`, and one that changes code before or after it (a comment
 or string left open that swallows what follows, a statement continued) with `the new text
-changes code after it` or `changes code before it`; nothing is written. A definition declared together with another
+changes code after it` or `changes code before it`, and one that leaves an attribute or a doc
+comment after the definition, where it would mark the next item (Rust's `#[cfg(any())]` or
+`///`), with `the new text leaves an attribute or a doc comment after the definition`; nothing is
+written. A definition declared together with another
 (`const a = 1, b = 2`, `var a, b = 1, 2`) is refused, the declaration holding both. The edit replaces the definition's lines whole, so one
 that shares its first or last line with other code that is not a comment (another definition, a
 statement before or after it) is refused, a dry run too: `NAME shares a line with other code that

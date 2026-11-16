@@ -374,8 +374,17 @@ fn refused_alone(kind: &str) -> Option<&'static str> {
 }
 
 /// What follows a new text in a language to put code outside the definition: a statement, a
-/// comment left open, or a string left open (`which` picks one).
+/// comment left open, a string left open, or where the language has one an attribute that would
+/// mark the next item (`which` picks one).
 fn tainted(ext: &str, which: usize) -> &'static str {
+    let attribute = match ext {
+        "rs" => Some("#[cfg(any())]\n"),
+        "py" => Some("@decorator\n"),
+        "java" => Some("@Deprecated\n"),
+        "cpp" => Some("[[deprecated]]\n"),
+        "ts" => Some("@sealed\n"),
+        _ => None,
+    };
     let [statement, comment, string] = match ext {
         "go" => ["var _ = 1\n", "/*\n", "\"\n"],
         "js" | "ts" => ["console.log(1);\n", "/*\n", "`\n"],
@@ -385,7 +394,10 @@ fn tainted(ext: &str, which: usize) -> &'static str {
         "cpp" => ["static_assert(true);\n", "/*\n", "\"\n"],
         _ => ["static { }\n", "/*\n", "\"\n"],
     };
-    [statement, comment, string][which % 3]
+    match attribute {
+        Some(a) => [statement, comment, string, a][which % 4],
+        None => [statement, comment, string][which % 3],
+    }
 }
 
 /// How many of `FIXED` lead it and must be refused.
