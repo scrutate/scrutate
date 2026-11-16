@@ -75,6 +75,21 @@ impl Session {
         let (stdin, stdout) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
         Session { child, stdin, stdout }
     }
+    /// `start`, with the server's debug lines: the session's and the watch's.
+    fn start_said(r: &Repo, args: &[&str]) -> (Session, std::sync::mpsc::Receiver<String>) {
+        let mut c = Command::new(BIN);
+        c.arg("--root").arg(&r.root).args(args).env("SCRUTATE_SESSION_DEBUG", "1").env("SCRUTATE_WATCH_DEBUG", "1");
+        let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let err = child.stderr.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                let _ = tx.send(line);
+            }
+        });
+        let (stdin, stdout) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
+        (Session { child, stdin, stdout }, rx)
+    }
     fn ask(&mut self, msg: Value) -> Value {
         writeln!(self.stdin, "{msg}").unwrap();
         loop {
@@ -260,27 +275,129 @@ fn max_bytes_given_to_serve_is_the_default_answer_size() {
     }
 }
 
+/// After a new directory: Windows waits for the watch's burst over it, whose walk lets a call name
+/// the directory's files (a call before it holds them back); elsewhere 300 ms. The lines read.
+fn after_the_burst(said: &std::sync::mpsc::Receiver<String>) -> Vec<String> {
+    if !cfg!(windows) {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    while !lines.iter().any(|l| l.contains("full walk: yes")) {
+        lines.push(said.recv_timeout(std::time::Duration::from_secs(30)).expect("the watch's burst over the new directory"));
+    }
+    lines
+}
+
+/// A call's debug lines say it walked every file and no interval held that walk back.
+fn walked(lines: &[String]) -> bool {
+    lines.iter().any(|l| l.contains("session: every file")) && !lines.iter().any(|l| l.contains("the refresh interval holds that walk back"))
+}
+
 #[test]
 fn an_explicit_refresh_interval_is_a_floor() {
     let r = Repo::new("refresh", 2);
     let find = |n: &str| json!({"name": n});
-    // one after the other: a scan that another server's write holds off does not start the interval
-    let mut floor = Session::start(&r, &["serve", "--refresh-interval", "3600"], &[]);
-    assert!(floor.text(1, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
+    // indexed before the server starts, so its first call answers before the watches are set
+    let indexed = Command::new(BIN).arg("--root").arg(&r.root).arg("index").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+    let (mut floor, said) = Session::start_said(&r, &["serve", "--refresh-interval", "3600"]);
+    let mut id = 1;
+    assert!(floor.text(id, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
+    // start-up done: the watch is in place and a read applied the walk that follows it, so a
+    // plain call looks at no file (macOS looks at every file at every call)
+    let t0 = std::time::Instant::now();
+    while !cfg!(target_os = "macos") {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        while said.try_recv().is_ok() {}
+        id += 1;
+        assert!(floor.text(id, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if !std::iter::from_fn(|| said.try_recv().ok()).any(|l| l.contains("every file")) {
+            break;
+        }
+        assert!(t0.elapsed() < std::time::Duration::from_secs(30), "start-up never ended");
+    }
+    while said.try_recv().is_ok() {}
+    fs::create_dir_all(r.root.join("pkg/new_dir")).unwrap();
+    fs::write(r.root.join("pkg/new_dir/later.py"), "def arrived_later():\n    return 1\n").unwrap();
+    let mut lines = after_the_burst(&said);
+    id += 1;
+    let seen = floor.text(id, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    lines.extend(std::iter::from_fn(|| said.try_recv().ok()));
+    // macOS: every call looks at every file. Linux: the new directory has no inotify watch, so its
+    // file has no event, and the walk that lists it waits for the floor. Windows: the subtree watch
+    // has an event for the file, and the watch's walk over the new directory lets the call name it:
+    // one stat, no walk.
+    assert_eq!(seen, !cfg!(target_os = "linux"), "seen on macOS and Windows, not on Linux; the call said {lines:?}");
+    if !cfg!(target_os = "macos") {
+        assert!(!walked(&lines), "a walk of every file within the interval: {lines:?}");
+        assert!(lines.iter().any(|l| l.contains("the refresh interval holds that walk back")), "{lines:?}");
+    }
+    // an edit of a file the watch knows, and a new file in a directory it knows: no interval
+    // holds them back
+    let m1 = r.root.join("pkg/m1.py");
+    fs::write(&m1, format!("{}\n\ndef edited_in_place():\n    return 1\n", fs::read_to_string(&m1).unwrap())).unwrap();
+    assert!(floor.text(id + 1, "find_symbol", find("edited_in_place")).contains("pkg/m1.py"), "an edit within the interval");
+    fs::write(r.root.join("pkg/late.py"), "def arrived_late():\n    return 1\n").unwrap();
+    assert!(floor.text(id + 2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "a named file within the interval");
+}
+
+/// New directories made straight after start-up, on an index built before the server (its
+/// first call answers before the watches are set): start-up's one walk, then the floor holds
+/// (macOS looks at every file at every call).
+#[test]
+fn new_directories_right_after_start_up_cost_one_walk_under_a_refresh_interval() {
+    let r = Repo::new("refresh_burst", 0);
+    for i in 0..40 {
+        let d = r.root.join(format!("d{i}"));
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join(format!("m{i}.py")), format!("def base_{i}():\n    return {i}\n")).unwrap();
+    }
+    let indexed = Command::new(BIN).arg("--root").arg(&r.root).arg("index").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+    let (mut floor, said) = Session::start_said(&r, &["serve", "--refresh-interval", "3600"]);
+    assert!(floor.text(1, "find_symbol", json!({"name": "base_1"})).contains("d1/m1.py"));
+    // no read and no burst until the directories come, so start-up's walk is still owed then
+    // (waiting for the watch by a burst of its own made the old rule pass)
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let (mut seen, mut walks, mut early, mut told) = (0, 0, 0, Vec::new());
+    for k in 0..5 {
+        while said.try_recv().is_ok() {}
+        let d = r.root.join(format!("d0/new_{k}"));
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("later.py"), format!("def later_{k}():\n    return {k}\n")).unwrap();
+        let mut lines = after_the_burst(&said);
+        seen += usize::from(floor.text(2 + k, "find_symbol", json!({"name": format!("later_{k}")})).contains(&format!("d0/new_{k}/later.py")));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        lines.extend(std::iter::from_fn(|| said.try_recv().ok()));
+        // a call before the watch is in place walks (on macOS every call does); the next pays
+        // start-up's walk
+        early += usize::from(lines.iter().any(|l| l.contains("the watch is not in place") || l.contains("FSEvents may number")));
+        walks += usize::from(walked(&lines));
+        told.push(format!("new_{k}: {lines:?}"));
+    }
+    // macOS: every call looks at every file. Windows: each call names the new directory's file, as
+    // in an_explicit_refresh_interval_is_a_floor. Linux: start-up's one walk sees one, the rest wait.
+    if cfg!(target_os = "linux") {
+        assert!(seen <= early + 1, "{seen} of 5 new directories seen under the floor, {early} before the watch; the calls said {told:#?}");
+    } else {
+        assert_eq!(seen, 5, "the calls said {told:#?}");
+    }
+    assert!(walks <= early + 1, "{walks} walks of every file for 5 new directories, {early} before the watch: one is start-up's; the calls said {told:#?}");
+}
+
+#[test]
+fn a_walk_the_watch_asks_for_comes_at_once_by_default() {
+    let r = Repo::new("refresh_default", 2);
+    let find = |n: &str| json!({"name": n});
     let mut default = Session::start(&r, &["serve"], &[]);
     assert!(default.text(1, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
-    // the watch names a file of a directory it knows: no interval holds that back
-    fs::write(r.root.join("pkg/late.py"), "def arrived_late():\n    return 1\n").unwrap();
-    assert!(floor.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "a named file within the interval");
-    assert!(default.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"));
-    // a new directory needs a walk of every file, which the floor holds back; on macOS every call
-    // looks at the tree, since FSEvents' order proves no change set, so nothing is held back
     fs::create_dir_all(r.root.join("pkg/new_dir")).unwrap();
     fs::write(r.root.join("pkg/new_dir/later.py"), "def arrived_later():\n    return 1\n").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
-    let seen = floor.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py");
-    assert_eq!(seen, cfg!(target_os = "macos"), "a walk within the interval on macOS alone");
-    assert!(default.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "a walk the watch asks for comes at once by default");
+    assert!(default.text(2, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "a walk the watch asks for comes at once by default");
 }
 
 /// Under `--refresh-interval` an edit of a file the watch knows and a new file in a directory it

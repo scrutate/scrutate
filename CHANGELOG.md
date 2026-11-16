@@ -348,7 +348,8 @@ incompatible index by itself, and that is never breaking.
   interval, and every call's change set waited with it, the files the watch named included. Now
   that walk is part of start-up and the interval never holds it, and a call whose walk the
   interval holds back still looks at the files the watch named; a new directory still waits for
-  the interval, as documented.
+  the interval, as documented. That start-up walk is one walk: new directories made before a call
+  took it no longer each get a walk of every file the interval does not hold back.
 - The language server answers definition and references in the spelling of the request's
   document when the editor names one repository in two ways (two folders, one through a link, or
   a file named through one), where every answer named the first folder's spelling.

@@ -857,10 +857,11 @@ Linux a directory got its first watch, new or made again at its path) the call l
 file instead, at once. The one
 exception is a `--refresh-interval` you give: it holds that walk back as below, so a new directory
 or a changed ignore rule can wait up to that interval before calls see it (not on macOS, where
-every call looks at every file whatever the interval). Even then a call looks at the files the
+every call looks at every file whatever the interval; on Windows the watch names the files made
+in a new directory, so calls see those at once, one `stat` each). Even then a call looks at the files the
 watch named (an edit, a new file in a directory the watch knows), and the one walk that follows
 the watches coming up at start is never held back. What waits for the next scan under
-`--refresh-interval` is a change only a scan can find: a new directory, an ignore-rule change,
+`--refresh-interval` is a change only a scan can find: a new directory on Linux, an ignore-rule change,
 and anything changed while the watch lost events. The other case is a
 change that makes no event at all (a write through a memory map, a bind mount that does not pass
 events on): a walk in the background, off the calls' path, finds those within 60 s, or within 50

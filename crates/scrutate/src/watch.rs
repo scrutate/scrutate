@@ -337,6 +337,9 @@ struct Shared {
     /// walk that follows the watches' first set, no refresh interval holds a walk back (a write
     /// made before the watches were in place has no event, and a walk alone finds it)
     walk_owed: AtomicBool,
+    /// the walk that pays that debt: a read whose applied token reaches it clears the debt, however
+    /// many walks were asked for since (u64::MAX until the watches are first set)
+    walk_owed_below: AtomicU64,
     noted: Mutex<Noted>,
     arrived: Condvar,
     #[cfg(target_os = "macos")]
@@ -408,6 +411,7 @@ impl Notes {
             safety_every: AtomicU64::new(SAFETY_EVERY.as_millis() as u64),
             order_proves: AtomicBool::new(ORDER_PROVES),
             walk_owed: AtomicBool::new(true),
+            walk_owed_below: AtomicU64::new(u64::MAX),
             noted: Mutex::default(),
             arrived: Condvar::new(),
             #[cfg(target_os = "macos")]
@@ -481,10 +485,12 @@ impl Notes {
         let moved = n.dirs > n.dirs_walked;
         let gained = |old: &Walked| moved || !walked.watched().is_subset(&old.watched()) || !old.poll_files.is_empty() || !walked.poll_files.is_empty();
         if n.walked.as_deref().is_none_or(|old| cfg!(target_os = "linux") && gained(old)) {
-            if n.walked.is_none() {
+            let first = n.walked.is_none();
+            n.walk_all("the watches were set");
+            if first {
+                self.0.walk_owed_below.store(n.walk_below, Ordering::Release);
                 self.0.walk_owed.store(true, Ordering::Release);
             }
-            n.walk_all("the watches were set");
         }
         n.dirs_walked = dirs;
         n.polled = walked.poll_files.iter().map(|p| (p.clone(), seen(p))).collect();
@@ -598,8 +604,8 @@ impl Freshness for Notes {
         if lock(&self.0.noted).walked.is_none() {
             return all("the watch is not in place", t.get());
         }
-        // a read that applied a walk since the watches were first set has had start-up's walk
-        if t.get() >= lock(&self.0.noted).walk_below {
+        // a read that applied the walk after the watches' first set has had start-up's walk
+        if t.get() >= self.0.walk_owed_below.load(Ordering::Acquire) {
             self.0.walk_owed.store(false, Ordering::Release);
         }
         if !self.0.order_proves.load(Ordering::Relaxed) {
