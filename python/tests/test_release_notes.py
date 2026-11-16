@@ -60,3 +60,17 @@ def test_links_to_the_repository_point_at_the_tag_and_code_stays_as_written():
     base = "https://github.com/scrutate/scrutate/blob/v0.1.0"
     assert f"[CLI]({base}/docs/CLI.md#grep)" in out and f"[x]({base}/crates/a.rs)" in out
     assert "[web](https://example.com/a)" in out and "[here](#added)" in out and "`[keep](docs/X.md)`" in out
+
+
+def test_a_link_the_rewrite_cannot_make_resolve_stops_the_release():
+    links = "\n[0.1.0]: https://github.com/scrutate/scrutate/releases/tag/v0.1.0\n"
+    def problems(entry):
+        return R.notes(HEAD + "## [Unreleased]\n\n## [0.1.0] - 2026-11-11\n\n### Added\n- " + entry + "\n" + links, "0.1.0")[1]
+    assert problems("[a](docs/x.md) and `code` and [b](docs/y.md).") == []
+    for entry in ['[t](docs/x.md "title")', "[s](<docs/a b.md>)", "[u](../x.md)"]:
+        assert [p.split(":")[0] for p in problems(entry)] == ["a link that does not resolve on a release page"], entry
+    assert problems("![i](docs/i.png)")[0].startswith("an image")
+    odd = ["the notes have an odd number of backticks: a code span is not closed, so their links cannot be checked"]
+    assert problems("a stray ` and [b](docs/y.md)") == odd
+    # a double-backtick span holding a backtick cannot be split apart: refused, not guessed at
+    assert problems("``[a](docs/x.md) has ` in it`` then [b](docs/y.md)") == odd

@@ -21,7 +21,22 @@ LINK = re.compile(r"^\[[^\]]+\]: \S")
 # states it, the figure is from tool reports (intuit/auto#2418; release-it cuts at 124,000)
 MAX_CHARS = 124_000
 # a link to a file of the repository (`](docs/CLI.md#x)`), not a URL, an anchor or an absolute path
-RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)")
+RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/|\.\./)([^)\s]+)\)")
+# what is left of a link after the rewrite that does not resolve on a release page
+UNRESOLVED = re.compile(r"\]\((?!https?://|#)")
+
+
+def link_problems(notes: str) -> list[str]:
+    """What the rewrite could not make resolve on a release page: a link it left relative (a
+    title, an angle link, `../`), an image (a blob URL serves a page, not the image), or an odd
+    number of backticks (code spans the rewrite cannot tell apart)."""
+    parts = notes.split("`")
+    if len(parts) % 2 == 0:
+        return ["the notes have an odd number of backticks: a code span is not closed, so their links cannot be checked"]
+    prose = "`".join(parts[0::2])
+    bad = [f"a link that does not resolve on a release page: ...{prose[m.start() - 30:m.end() + 40]}..." for m in UNRESOLVED.finditer(prose)]
+    bad += [f"an image, which a release page cannot show from the repository: ...{prose[m.start():m.end() + 40]}..." for m in re.finditer(r"!\[", prose)]
+    return bad
 
 
 def absolute(text: str, base: str) -> str:
@@ -70,6 +85,7 @@ def notes(text: str, version: str) -> tuple[str, list[str]]:
     repo = re.search(rf"^\[{re.escape(version)}\]: (\S+)/releases/tag/", text, re.M)
     if repo:
         out = absolute(out, f"{repo.group(1)}/blob/v{version}")
+        problems += link_problems(out)
     if len(out) > MAX_CHARS:
         problems.append(f"the notes of {version} are {len(out):,} characters, {len(out) - MAX_CHARS:,} over the {MAX_CHARS:,} a release body takes: shorten its section")
     return out, problems
