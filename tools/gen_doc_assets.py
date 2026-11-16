@@ -1151,27 +1151,35 @@ def check_links(path, text, problems):
 
 
 PAGES = {"docs/LEADERBOARD.md": "bench/make_leaderboard_md.py", "docs/BENCHMARKS.md": "bench/make_benchmarks_md.py"}
+# pages written from the tree alone (DEPENDENCIES.md from Cargo.toml and `cargo metadata --locked`), so a
+# lockfile change that skipped its script fails here; LANGUAGES.md needs two builds, so ci.yml's compat job checks it
+FROM_TREE = {"docs/DEPENDENCIES.md": "tools/gen_dependencies_md.py"}
 
 
 def regenerated_problems(path, text):
-    """Why `path`, a page of published numbers, differs from what its script writes from the result
-    files the page names (`<!-- inputs: ... -->`): a hand edit, or results changed since."""
-    script = PAGES[path]
-    m = re.search(r"^<!-- inputs: (.*) -->$", text, re.M)
-    if not m:
-        return [f"{path}: names no inputs (<!-- inputs: ... -->): write it with {script}"]
+    """Why `path`, a generated page, differs from what its script writes: from the result files the
+    page names (`<!-- inputs: ... -->`), or for a FROM_TREE page from the tree; a hand edit, or
+    results or the lockfile changed since."""
+    if path in FROM_TREE:
+        script, args = FROM_TREE[path], []
+    else:
+        script = PAGES[path]
+        m = re.search(r"^<!-- inputs: (.*) -->$", text, re.M)
+        if not m:
+            return [f"{path}: names no inputs (<!-- inputs: ... -->): write it with {script}"]
+        args = shlex.split(m.group(1))
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "page.md")
-        r = subprocess.run([sys.executable, os.path.join(ROOT, script), *shlex.split(m.group(1)), "--out", out], cwd=ROOT, capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, script), *args, "--out", out], cwd=ROOT, capture_output=True, text=True)
         if r.returncode:
-            return [f"{path}: {script} failed on the inputs the page names: {(r.stderr.strip().splitlines() or [''])[-1]}"]
+            return [f"{path}: {script} failed: {(r.stderr.strip().splitlines() or [''])[-1]}"]
         with open(out, encoding="utf-8") as f:
             new = f.read()
     if new == text:
         return []
     a, b = text.splitlines(), new.splitlines()
     n = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
-    return [f"{path}:{n + 1}: differs from what {script} writes from the inputs the page names; run it again"]
+    return [f"{path}:{n + 1}: differs from what {script} writes{'' if path in FROM_TREE else ' from the inputs the page names'}; run it again"]
 
 
 # README's typed claims of "all N": the sentence (whitespace folded), the LEADERBOARD.md section it counts
@@ -1378,7 +1386,7 @@ def main():
     check_content_revision(problems)
     check_platforms(problems)
     check_changelog(problems)
-    for path in PAGES:
+    for path in [*PAGES, *FROM_TREE]:
         text = files.get(path)
         if text is None:
             with open(os.path.join(ROOT, path), encoding="utf-8") as f:

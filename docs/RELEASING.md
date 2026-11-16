@@ -223,13 +223,13 @@ python3 bench/make_benchmarks_md.py $M/compare.json
 python3 bench/make_dashboard.py
 python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
-python3 tools/gen_languages_md.py        # when a language changed
+SCRUTATE_EXTRA_BIN=<a build with --features extra-langs> python3 tools/gen_languages_md.py   # when a language changed
 C=/some/scratch/demo && mkdir -p $C && git archive HEAD:crates/scrutate src | tar -x -C $C
 python3 tools/gen_assets.py capture --bin target/release/scrutate --repo $C                     # the social preview's output (it indexes $C)
 python3 tools/gen_assets.py capture-hero --bin target/release/scrutate --repo crates/scrutate   # the hero's searches and match spans
 python3 tools/gen_assets.py              # the README's images, from the two captures, the palette and rust-version;
                                          # then render social-preview.png again (the command is in the script's head)
-python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then --check: links, anchors, heads, the two pages
+python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then --check: links, anchors, heads, three pages
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
@@ -241,6 +241,14 @@ the release's own runs exist, the pages come from the runs under `bench/results/
 that they name. The README's "all N" counts (warm-cache, cold-cache, Linux-tree, indexed
 metrics) are checked against the PASS counts of the pages' sections, and a count sentence the
 check cannot find fails too; its ratios and percentages are typed: read them against the pages.
+
+`gen_doc_assets.py --check` also writes DEPENDENCIES.md again, from `Cargo.toml` and
+`cargo metadata --locked`, and fails on a difference, so a `Cargo.lock` change that skipped
+`gen_dependencies_md.py` (a Dependabot pull request among them) fails CI. LANGUAGES.md needs a
+default build and one with `--features extra-langs`: CI's extra-langs job builds both and runs
+`SCRUTATE_BIN=<default build> SCRUTATE_EXTRA_BIN=<extra-langs build> python3
+tools/gen_languages_md.py --check`, and the gate's `languages-page` step runs it on the builds it
+already has. A generator given `--check` writes nothing.
 
 ## 4. Documents that carry the numbers by hand
 

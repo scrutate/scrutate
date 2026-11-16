@@ -183,6 +183,8 @@ if [ "$mode" != "--quick" ]; then
   step release-build cargo build --release -p scrutate --locked
   # the grammar parsers keep their jump tables (GCC 15 drops them under tree-sitter's O0 pragma)
   [ -f tools/jump_tables.py ] && step jump-tables python3 tools/jump_tables.py "$target/release"
+  # ci.yml compat's LANGUAGES.md check: test-extra-langs left its build in the suites' target dir
+  [ "$mode" = "full" ] && step languages-page env SCRUTATE_BIN="$bin" SCRUTATE_EXTRA_BIN="$target/fasttest/release/scrutate" python3 tools/gen_languages_md.py --check
   step smoke smoke
   step python-bindings bindings
   step quality-floor "$py" bench/quality.py "$bin"

@@ -290,6 +290,12 @@ jobs:
       - name: ripgrep 15.2.0 for the tests that compare with it
         run: bash tools/ci_ripgrep.sh
       - run: cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
+      # LANGUAGES.md marks the grammars a default build lacks, so it needs that build beside the
+      # extra-langs one the tests above left in target/release
+      - name: LANGUAGES.md is what the two builds give
+        run: |
+          cargo build -p scrutate --locked
+          SCRUTATE_BIN=target/debug/scrutate SCRUTATE_EXTRA_BIN=target/release/scrutate python3 tools/gen_languages_md.py --check
       - name: build with the rust-version Cargo.toml declares
         env:
           RUSTFLAGS: "" # an older compiler does not know the newer lints

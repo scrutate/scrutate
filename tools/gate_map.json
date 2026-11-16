@@ -219,6 +219,10 @@
   "step": "cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast",
   "by": "gate: test-extra-langs"
  },
+ "ci.yml:compat:e1de3723df": {
+  "step": "LANGUAGES.md is what the two builds give",
+  "by": "gate: languages-page"
+ },
  "ci.yml:compat:00235584ef": {
   "step": "build with the rust-version Cargo.toml declares",
   "by": "gate: msrv-$msrv"

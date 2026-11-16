@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 
+from generated_page import write_or_check
 from third_party_notices import compiled_into, data_files
 
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
@@ -109,10 +110,10 @@ def main() -> int:
     out.append("- A dependency is added only with a written reason (what it replaces, size, maintenance, licence), and only under a permissive licence.\n"
                "- `Cargo.lock` is committed; CI builds with `--locked`; `cargo deny check` (advisories, licences, bans, sources) runs on every push to main, every pull request, once a week and on the tagged commit before a release; every release carries the SBOM.\n"
                "- C code in the dependency tree: SQLite (bundled), the tree-sitter runtime and grammars. No other native code; no networking crates.\n")
-    with open(os.path.join(ROOT, "docs", "DEPENDENCIES.md"), "w") as f:
-        f.write("\n".join(out) + "\n")
-    print(f"wrote docs/DEPENDENCIES.md ({shipped} shipped crates)", file=sys.stderr)
-    return 0
+    rc = write_or_check("docs/DEPENDENCIES.md", "\n".join(out) + "\n", "tools/gen_dependencies_md.py", sys.argv[1:])
+    if rc == 0 and "--check" not in sys.argv[1:]:
+        print(f"wrote docs/DEPENDENCIES.md ({shipped} shipped crates)", file=sys.stderr)
+    return rc
 
 
 if __name__ == "__main__":

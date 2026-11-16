@@ -1,4 +1,4 @@
-"""docs/LEADERBOARD.md and docs/BENCHMARKS.md are what their scripts write from the results they name."""
+"""docs/LEADERBOARD.md, docs/BENCHMARKS.md and docs/DEPENDENCIES.md are what their scripts write from the results or the tree they come from."""
 import json
 import os
 import sys
@@ -68,3 +68,26 @@ def test_the_generators_take_their_words_from_the_run_they_print():
     # the throughput line names the runs the settings hold; a file from before the option ran three
     assert L.throughput_runs({"throughput_runs": 10}) == 10
     assert L.throughput_runs({}) == 3
+
+
+def test_a_lockfile_page_edited_by_hand_is_named():
+    # DEPENDENCIES.md comes from Cargo.toml and `cargo metadata --locked`: a row changed by hand, or a
+    # lock changed without the script, differs from what it writes
+    assert D.regenerated_problems("docs/DEPENDENCIES.md", page("docs/DEPENDENCIES.md")) == []
+    lines = page("docs/DEPENDENCIES.md").split("\n")
+    row = next(i for i, line in enumerate(lines) if line.startswith("| anyhow | "))
+    lines[row] = lines[row].replace("| anyhow | 1.", "| anyhow | 9.", 1)
+    problems = D.regenerated_problems("docs/DEPENDENCIES.md", "\n".join(lines))
+    assert problems == [f"docs/DEPENDENCIES.md:{row + 1}: differs from what tools/gen_dependencies_md.py writes; run it again"]
+
+
+def test_a_generator_given_check_compares_and_never_writes(tmp_path):
+    import generated_page as G
+    page = tmp_path / "page.md"
+    page.write_text("one\ntwo\n")
+    assert G.write_or_check(str(page), "one\ntwo\n", "gen.py", ["--check"]) == 0
+    assert G.write_or_check(str(page), "one\nthree\n", "gen.py", ["--check"]) == 1
+    assert page.read_text() == "one\ntwo\n"
+    out = tmp_path / "out.md"
+    assert G.write_or_check(str(page), "one\nthree\n", "gen.py", ["--out", str(out)]) == 0
+    assert out.read_text() == "one\nthree\n" and page.read_text() == "one\ntwo\n"
