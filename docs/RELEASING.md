@@ -41,8 +41,10 @@ tag (less its `v`) and refuses a tag that does not match.
   the day of the tag, `## [Unreleased]` stays as an empty heading, and the link references for
   both headings sit at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
   `[X.Y.Z]: .../releases/tag/vX.Y.Z`). `python3 tools/release_notes.py X.Y.Z` prints the notes
-  the release gets and fails until this is done; the release workflow runs it before it
-  publishes, and a dry run fails on it too.
+  the release gets and fails until this is done, and while the notes are longer than 124,000
+  characters (GitHub refuses a release body over 125,000, which would stop the release only at
+  its last step, after the tag); the release workflow runs it before it publishes, and a dry run
+  fails on it too. Run it before the tag.
 
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
 locked `notify` and `notify-types` need. A `ci.yml` job runs `cargo check` with it, so a dependency update

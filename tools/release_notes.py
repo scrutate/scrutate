@@ -6,7 +6,8 @@ so that no release goes out with notes that leave its changes out, when:
   first, with the tag's date: docs/RELEASING.md, step 1);
 - there is no `## [VERSION]` section with entries, or there are two: a fold that added a heading
   and kept the old one would publish one of them alone;
-- the version has no link reference (`[VERSION]: URL`).
+- the version has no link reference (`[VERSION]: URL`);
+- the notes are longer than a GitHub release body takes (MAX_CHARS).
 
     python3 tools/release_notes.py 0.1.0 [--out notes.md] [--changelog CHANGELOG.md]
 """
@@ -15,6 +16,9 @@ import re
 import sys
 
 LINK = re.compile(r"^\[[^\]]+\]: \S")
+# GitHub refuses a release body over 125,000 characters ("body is too long"): no GitHub page
+# states it, the figure is from tool reports (intuit/auto#2418; release-it cuts at 124,000)
+MAX_CHARS = 124_000
 
 
 def sections(text: str) -> list[tuple[str, list[str]]]:
@@ -49,7 +53,10 @@ def notes(text: str, version: str) -> tuple[str, list[str]]:
         problems.append(f"CHANGELOG.md has no ## [{version}] section with entries")
     if not re.search(rf"^\[{re.escape(version)}\]: \S", text, re.M):
         problems.append(f"CHANGELOG.md has no link reference [{version}]: URL")
-    return "\n".join(body).strip() + "\n", problems
+    out = "\n".join(body).strip() + "\n"
+    if len(out) > MAX_CHARS:
+        problems.append(f"the notes of {version} are {len(out):,} characters, {len(out) - MAX_CHARS:,} over the {MAX_CHARS:,} a release body takes: shorten its section")
+    return out, problems
 
 
 def main(argv: list[str]) -> int:

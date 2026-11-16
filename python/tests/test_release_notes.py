@@ -38,3 +38,15 @@ def test_unreleased_in_any_spelling_with_entries_stops_the_release():
     for heading in ("## Unreleased", "## [unreleased]", "## UNRELEASED"):
         text = HEAD + heading + "\n\n- A change since.\n\n" + OLD + LINKS
         assert R.notes(text, "0.1.0")[1] == ["## [Unreleased] holds 1 lines of entries: fold them into ## [0.1.0] with the tag's date (docs/RELEASING.md, step 1)"], heading
+
+
+def test_notes_longer_than_a_release_body_takes_stop_the_release():
+    line = "- " + "x" * 97 + "\n"
+    def changelog(n):
+        return HEAD + "## [Unreleased]\n\n## [0.1.0] - 2026-11-17\n\n### Added\n" + line * n + LINKS
+    fits = (R.MAX_CHARS - len("## [0.1.0] - 2026-11-17\n\n### Added\n")) // len(line)
+    out, problems = R.notes(changelog(fits), "0.1.0")
+    assert problems == [] and len(out) <= R.MAX_CHARS
+    out, problems = R.notes(changelog(fits + 1), "0.1.0")
+    assert len(out) > R.MAX_CHARS
+    assert problems == [f"the notes of 0.1.0 are {len(out):,} characters, {len(out) - R.MAX_CHARS:,} over the 124,000 a release body takes: shorten its section"]
