@@ -154,7 +154,7 @@ Checks, at both ends:
   content revisions, the model signatures and the `SCRUTATE_RANKER` file's id taken the same way,
   every `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
   when all match its own.
-- A request is one line of at most 1 MB, read within 2 seconds of the greeting (a caller that
+- A request is one line of at most 1 MiB, read within 2 seconds of the greeting (a caller that
   sends a byte now and then is closed then too); on Windows the server first waits up to 2 seconds
   for the caller's first byte, so a request may take up to about 4 seconds there. The command line
   gives a session 2 seconds to take it, and each write of the server's answer waits at most 2
@@ -193,9 +193,11 @@ Edge cases:
   instance and offers nothing.
 - A killed server's stale socket: a connect is refused at once, and the next `serve` replaces it.
 - A moved root no longer matches the greeting; a deleted root takes the socket with it.
-- A session still making its first index, with no file in it yet, is not used. A call that meets
-  a write of the session's own process waits for it up to 250 ms, and one that meets another
-  process's write lock goes on with the index as it is; either answer says what is still pending.
+- A session still making its first index, with no file in it yet, is not used, nor is one for a
+  call whose root is not the tree the session now indexes (its root moved to another). A call
+  that meets a write of the session's own process waits for it up to 250 ms, and one that meets
+  another process's write lock goes on with the index as it is; either answer says what is still
+  pending.
   With every reader busy, a call waits for one, within the command line's 60 seconds.
 - `SCRUTATE_NO_SESSION=1` turns the use off and `SCRUTATE_SESSION_DEBUG=1` says on stderr why a
   call did not use a session.
