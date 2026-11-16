@@ -58,6 +58,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("resolve/mod.rs", "OWN_STORE", "per thread, a test hook"),
     ("resolve/mod.rs", "OWN_CAP", "per thread, a test hook"),
     ("resolve/mod.rs", "ROW_READS", "per thread, a test's count of index rows read"),
+    ("resolve/mod.rs", "LOADS", "per thread, a test's count of files a resolver loaded"),
     ("resolve/mod.rs", "PARSERS", "per thread, a tree-sitter parser per language, which keeps no file's state"),
     ("resolve/mod.rs", "GRAMMAR_KEYS", "each grammar as this build has it, the same for every root"),
     ("resolve/mod.rs", "TREES_FREED", "a count of parses dropped, of any root: a resolver empties its node-id caches when it moves"),
