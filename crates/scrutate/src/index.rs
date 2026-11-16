@@ -3114,11 +3114,10 @@ impl Index {
         Ok(rows)
     }
 
-    /// Id and qualified name of the definitions whose name key is `key`, in the order of
-    /// `symbols_named`, at most 10,000.
+    /// Id and qualified name of every definition whose name key is `key`, in the order of
+    /// `symbols_named`: the caller compares and filters them before any limit.
     pub fn qualnames_named(&self, key: &str, typed: &str) -> Result<Vec<(i64, String)>> {
-        let mut st =
-            self.db.prepare_cached(&format!("SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' {} LIMIT 10000", symbol_order("?2")))?;
+        let mut st = self.db.prepare_cached(&format!("SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' {}", symbol_order("?2")))?;
         let rows = st.query_map(params![key, typed], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }

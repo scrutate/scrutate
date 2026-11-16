@@ -247,3 +247,36 @@ fn a_filtered_search_short_at_its_bound_says_so() {
     eprintln!("filtered search at its bound: {found} of 10");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A name written as a path finds its definition by the stored qualified names however many share
+/// its last part: `zz::Holder::push` finds `Holder.push` indexed after 10,100 other methods `push`,
+/// where the lookup read only the first 10,000 of them and answered "(no results)".
+#[test]
+fn a_path_name_finds_its_definition_past_10000_of_its_last_part() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_qualnames_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    for i in 0..101 {
+        let body: String = (0..100).map(|k| format!("pub struct A{i}x{k};\nimpl A{i}x{k} {{\n    pub fn push(&self) {{}}\n}}\n\n")).collect();
+        fs::write(root.join(format!("src/a{i}.rs")), body).unwrap();
+    }
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    run(&["index"]);
+    fs::write(root.join("src/zz.rs"), "pub struct Holder;\nimpl Holder {\n    pub fn push(&self) {}\n}\n").unwrap();
+    run(&["index"]);
+    let text = run(&["symbol", "zz::Holder::push"]);
+    assert!(text.contains("src/zz.rs"), "{text}");
+    let _ = fs::remove_dir_all(&root);
+}
