@@ -921,8 +921,9 @@ mod wire {
             return Err(format!("the session differs: {theirs:?} where this is {me:?}"));
         }
         let w = r.get_mut();
-        writeln!(w, "{}", serde_json::to_string(request).map_err(|e| e.to_string())?).map_err(|e| format!("request not taken: {e}"))?;
+        // before the request: once the session has answered and closed, macOS refuses the option
         w.read_wait(ANSWER).map_err(|e| e.to_string())?;
+        writeln!(w, "{}", serde_json::to_string(request).map_err(|e| e.to_string())?).map_err(|e| format!("request not taken: {e}"))?;
         line.clear();
         r.read_line(&mut line).map_err(|e| format!("no answer: {e}"))?;
         let reply: Reply = serde_json::from_str(&line).map_err(|e| format!("answer: {e}"))?;
@@ -2372,6 +2373,64 @@ mod tests {
         std::fs::rename(base.join("cur.tmp"), &cur).unwrap();
         assert!(s.reopen().unwrap());
         assert_eq!(replies(&s), 1, "only the greeting once the root moved");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A session that answered and closed its end before the caller set how long to wait for the
+    /// answer: the answer is in the socket and is taken (macOS refuses a socket option, EINVAL,
+    /// once the other end has closed).
+    #[cfg(unix)]
+    #[test]
+    fn an_answer_sent_before_the_caller_waits_for_it_is_taken() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+        fn answered(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+            Ok(Printed { out: "answered\n".into(), ..Default::default() })
+        }
+        /// A caller whose request's last write returns only once the session has answered and
+        /// closed, as on a machine that runs the session first.
+        struct Late {
+            conn: UnixStream,
+            served: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Read for Late {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.conn.read(buf)
+            }
+        }
+        impl Write for Late {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                let n = self.conn.write(b)?;
+                if b.ends_with(b"\n") {
+                    if let Some(served) = self.served.take() {
+                        served.join().unwrap();
+                    }
+                }
+                Ok(n)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.conn.flush()
+            }
+        }
+        impl wire::Conn for Late {
+            fn read_wait(&mut self, d: Duration) -> std::io::Result<()> {
+                self.conn.set_read_timeout(Some(d))
+            }
+        }
+        let base = std::env::temp_dir().join(format!("scrutate_session_late_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(".git")).unwrap();
+        std::fs::write(base.join("a.py"), "def f():\n    return 1\n").unwrap();
+        let s = Arc::new(Session::open(&base, Every::given(Some(3600.0))).unwrap());
+        s.build().unwrap();
+        let root = s.root();
+        let hello = serde_json::to_string(&Identity::here(&root).unwrap()).unwrap();
+        let (caller, server) = UnixStream::pair().unwrap();
+        let (session, at) = (Arc::clone(&s), root.clone());
+        let served = std::thread::spawn(move || wire::serve_one(&session, server, &hello, &at, answered).unwrap());
+        let request = Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
+        let got = wire::exchange(Late { conn: caller, served: Some(served) }, &root, &request).map(|(p, _)| p.out);
+        assert_eq!(got, Ok("answered\n".to_string()));
         let _ = std::fs::remove_dir_all(base);
     }
 
