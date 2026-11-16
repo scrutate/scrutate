@@ -892,8 +892,10 @@ before it is passed (none starts with `-`) and resolved to
 a commit id, which every later call uses. Git sees this process's environment, a relative
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` made absolute against
 its working directory, where git reads such a value (`git::own_env`; a table in `git.rs` says
-where git reads each of the six), and a `GIT_DIR` without `GIT_WORK_TREE` refused unless it is
-the root's own git directory or names a `core.worktree`; or, built with `Git::with_env`, a caller's own values of the six variables that say where a repository's files
+where git reads each of the six), and a `GIT_DIR` without `GIT_WORK_TREE`
+refused unless it is the root's own git directory or names a `core.worktree` that holds the root
+(`Git::root_s_own_git_dir`, `tree_elsewhere`), read from the git directory's own `config` alone,
+as git reads it, never from an included file or the global one; or, built with `Git::with_env`, a caller's own values of the six variables that say where a repository's files
 are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
 process, its configuration and programs included; any other name is refused before git runs. On Windows
