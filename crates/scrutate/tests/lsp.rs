@@ -1120,3 +1120,227 @@ fn every_reader_of_names_takes_a_name_with_a_virama_whole() {
     drop(c);
     child.wait().unwrap();
 }
+
+/// Three modules in each of Python, TypeScript, Go and Rust, each importing the next: a function,
+/// a class or type with a method, and a function that uses the next module's three. -> (relative
+/// path, text) of each file, and the names of the definitions.
+fn agreement_tree() -> (Vec<(String, String)>, Vec<String>) {
+    const N: usize = 3;
+    let mut files = vec![
+        ("py/__init__.py".to_string(), String::new()),
+        ("go.mod".to_string(), "module example.com/gen\n\ngo 1.22\n".to_string()),
+        ("Cargo.toml".to_string(), "[package]\nname = \"gen\"\nversion = \"0.1.0\"\nedition = \"2021\"\n".to_string()),
+        ("src/lib.rs".to_string(), (0..N).map(|i| format!("pub mod m{i};\n")).collect()),
+    ];
+    let mut names = Vec::new();
+    for i in 0..N {
+        // the last module imports nothing and uses its own definitions
+        let (j, imports) = if i + 1 < N { (i + 1, true) } else { (i, false) };
+        let py_import = if imports { format!("from py.m{j} import pyf{j}, PyC{j}\n\n\n") } else { String::new() };
+        files.push((
+            format!("py/m{i}.py"),
+            format!(
+                "{py_import}def pyf{i}(x):\n    return pyf{j}(x) + 1\n\n\nclass PyC{i}:\n    def pym{i}(self):\n        return pyf{i}(2)\n\n\ndef pyuse{i}():\n    c = PyC{j}()\n    return c.pym{j}() + pyf{j}(3)\n"
+            ),
+        ));
+        let ts_import = if imports { format!("import {{ tsf{j}, TsC{j} }} from './m{j}';\n\n") } else { String::new() };
+        files.push((
+            format!("ts/m{i}.ts"),
+            format!(
+                "{ts_import}export function tsf{i}(x: number): number {{\n    return tsf{j}(x) + 1;\n}}\n\nexport class TsC{i} {{\n    tsm{i}(): number {{\n        return tsf{i}(2);\n    }}\n}}\n\nexport function tsuse{i}(): number {{\n    const c = new TsC{j}();\n    return c.tsm{j}() + tsf{j}(3);\n}}\n"
+            ),
+        ));
+        let (go_import, q) = if imports { (format!("import \"example.com/gen/gen/p{j}\"\n\n"), format!("p{j}.")) } else { (String::new(), String::new()) };
+        files.push((
+            format!("gen/p{i}/p.go"),
+            format!(
+                "package p{i}\n\n{go_import}func GoF{i}(x int) int {{\n\treturn {q}GoF{j}(x) + 1\n}}\n\ntype GoT{i} struct{{}}\n\nfunc (t GoT{i}) GoM{i}() int {{\n\treturn GoF{i}(2)\n}}\n\nfunc GoUse{i}() int {{\n\tvar t {q}GoT{j}\n\treturn t.GoM{j}() + {q}GoF{j}(3)\n}}\n"
+            ),
+        ));
+        let rs_import = if imports { format!("use crate::m{j}::{{rsf{j}, RsT{j}}};\n\n") } else { String::new() };
+        files.push((
+            format!("src/m{i}.rs"),
+            format!(
+                "{rs_import}pub fn rsf{i}(x: i32) -> i32 {{\n    rsf{j}(x) + 1\n}}\n\npub struct RsT{i};\n\nimpl RsT{i} {{\n    pub fn rsm{i}(&self) -> i32 {{\n        rsf{i}(2)\n    }}\n}}\n\npub fn rsuse{i}() -> i32 {{\n    let t = RsT{j};\n    t.rsm{j}() + rsf{j}(3)\n}}\n"
+            ),
+        ));
+        for n in ["pyf", "PyC", "pym", "pyuse", "tsf", "TsC", "tsm", "tsuse", "GoF", "GoT", "GoM", "GoUse", "rsf", "RsT", "rsm", "rsuse"] {
+            names.push(format!("{n}{i}"));
+        }
+    }
+    (files, names)
+}
+
+/// The language server agrees with the command line on every definition of a generated tree in
+/// four languages: `definition` from each use lands where `refs --def` puts the definition's name,
+/// `references` from the definition is what `refs --def` resolves to it (occurrences `refs` leaves
+/// unresolved have no place in LSP and are counted, not compared), `workspace/symbol` of the name
+/// is `symbol`'s definitions, and `documentSymbol` of each file is its `outline`.
+#[test]
+fn the_language_server_agrees_with_the_command_line() {
+    let r = Repo::new("agree");
+    let root = canon(&r.root);
+    let (files, names) = agreement_tree();
+    for (rel, text) in &files {
+        r.write(rel, text);
+    }
+    let cli = |args: &[&str]| -> Value {
+        let out = Command::new(BIN)
+            .args(args)
+            .arg("--json")
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{args:?}: {e}: {}", String::from_utf8_lossy(&out.stderr)))
+    };
+    let indexed = Command::new(BIN)
+        .arg("index")
+        .current_dir(&root)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("SCRUTATE_NO_SESSION", "1")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+    let mut child = Command::new(BIN)
+        .arg("lsp")
+        .current_dir(&root)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("SCRUTATE_NO_SESSION", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let prefix = format!("{}/", uri(&root));
+    // (relative path, 0-based line, 0-based character) of each location in an LSP answer
+    let at = |v: &Value| -> Vec<(String, u64, u64)> {
+        let mut out: Vec<_> = v
+            .as_array()
+            .unwrap_or_else(|| panic!("not a list: {v}"))
+            .iter()
+            .map(|l| {
+                let (u, range) = if l.get("location").is_some() { (&l["location"]["uri"], &l["location"]["range"]) } else { (&l["uri"], &l["range"]) };
+                let rel = u.as_str().unwrap().strip_prefix(&prefix).unwrap_or_else(|| panic!("outside the root: {u}")).to_string();
+                (rel, range["start"]["line"].as_u64().unwrap(), range["start"]["character"].as_u64().unwrap())
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    let mut differ: Vec<String> = Vec::new();
+    let (mut defs, mut uses, mut unresolved, mut siteless) = (0, 0, Vec::new(), Vec::new());
+    for name in &names {
+        let symbol = cli(&["symbol", name]);
+        // a method's name is qualified by its type (`PyC0.pym0`)
+        let found: Vec<(String, i64)> = symbol["result"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|d| d["name"].as_str().is_some_and(|n| n.rsplit('.').next() == Some(name.as_str())))
+            .map(|d| (d["path"].as_str().unwrap().to_string(), d["start"].as_i64().unwrap()))
+            .collect();
+        if found.is_empty() {
+            differ.push(format!("symbol {name}: no definition: {symbol}"));
+            continue;
+        }
+        for (path, start) in &found {
+            let refs = cli(&["refs", name, "--def", &format!("{path}:{start}")]);
+            let Some(def) = refs["result"]["definitions"].as_array().and_then(|d| d.first()) else {
+                differ.push(format!("refs {name} --def {path}:{start}: no definition: {refs}"));
+                continue;
+            };
+            for u in refs["result"]["unresolved"].as_array().into_iter().flatten() {
+                unresolved.push(format!(
+                    "{name} {}:{} ({})",
+                    u["path"].as_str().unwrap_or(""),
+                    u["line"],
+                    u["why"].as_str().or(u["reason"].as_str()).unwrap_or("")
+                ));
+            }
+            let occurrences: Vec<(String, u64, u64, String)> = def["references"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| {
+                    (
+                        o["path"].as_str().unwrap().to_string(),
+                        o["line"].as_u64().unwrap() - 1,
+                        o["column"].as_u64().unwrap() - 1,
+                        o["via"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect();
+            // a Rust `impl` block is listed by `symbol`, but uses resolve to the type, so `refs
+            // --def` gives it no occurrence, not even its own name: nothing to compare
+            let Some(site) = occurrences.iter().find(|o| o.3 == "definition").map(|o| (o.0.clone(), o.1, o.2)) else {
+                siteless.push(format!("{path}:{start} {}", def["kind"].as_str().unwrap_or("")));
+                continue;
+            };
+            defs += 1;
+            let mut want: Vec<(String, u64, u64)> = occurrences.iter().map(|o| (o.0.clone(), o.1, o.2)).collect();
+            want.sort();
+            let position = |p: &(String, u64, u64)| json!({"textDocument": {"uri": uri(&root.join(&p.0))}, "position": {"line": p.1, "character": p.2}});
+            let mut params = position(&site);
+            params["context"] = json!({"includeDeclaration": true});
+            let got = at(&c.request("textDocument/references", params)["result"]);
+            if got != want {
+                differ.push(format!("references of {name} at {site:?}: lsp {got:?}, refs --def {want:?}"));
+            }
+            for o in occurrences.iter().filter(|o| o.3 != "definition") {
+                uses += 1;
+                let p = (o.0.clone(), o.1, o.2);
+                let got = at(&c.request("textDocument/definition", position(&p))["result"]);
+                if got != vec![site.clone()] {
+                    differ.push(format!("definition of {name} from {p:?}: lsp {got:?}, refs --def {site:?}"));
+                }
+            }
+        }
+        // a definition's name is on its first line in this tree: `symbol`'s start is the line
+        // workspace/symbol's location gives
+        let mut want: Vec<(String, u64)> = found.iter().map(|(p, l)| (p.clone(), *l as u64 - 1)).collect();
+        want.sort();
+        let ws = c.request("workspace/symbol", json!({"query": name}))["result"].clone();
+        let exact: Value = ws.as_array().into_iter().flatten().filter(|s| s["name"] == json!(name)).cloned().collect();
+        let got: Vec<(String, u64)> = at(&exact).into_iter().map(|(p, l, _)| (p, l)).collect();
+        if got != want {
+            differ.push(format!("workspace/symbol {name}: lsp {got:?}, symbol {want:?}"));
+        }
+    }
+    let mut outlined = 0;
+    for (rel, _) in files.iter().filter(|(rel, _)| !rel.ends_with(".mod") && !rel.ends_with(".toml") && !rel.ends_with("__init__.py")) {
+        let outline = cli(&["outline", rel]);
+        let want: Vec<(String, i64)> =
+            outline["result"].as_array().unwrap().iter().map(|d| (d["name"].as_str().unwrap().to_string(), d["start"].as_i64().unwrap())).collect();
+        let doc = c.request("textDocument/documentSymbol", json!({"textDocument": {"uri": uri(&root.join(rel))}}))["result"].clone();
+        let mut got = Vec::new();
+        let mut stack: Vec<Value> = doc.as_array().cloned().unwrap_or_default().into_iter().rev().collect();
+        while let Some(s) = stack.pop() {
+            got.push((s["name"].as_str().unwrap().to_string(), s["range"]["start"]["line"].as_i64().unwrap() + 1));
+            stack.extend(s["children"].as_array().cloned().unwrap_or_default().into_iter().rev());
+        }
+        outlined += want.len();
+        if got != want {
+            differ.push(format!("documentSymbol of {rel}: lsp {got:?}, outline {want:?}"));
+        }
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+    println!(
+        "compared {defs} definitions of {} names, {uses} uses, {outlined} outline entries; {} definitions with no occurrence of their own: {siteless:?}; unresolved, which LSP has no place for: {unresolved:?}",
+        names.len(),
+        siteless.len()
+    );
+    assert!(differ.is_empty(), "{} differences:\n{}", differ.len(), differ.join("\n"));
+    // the tree is fixed, so are the counts: a change that skips the comparisons fails here
+    assert_eq!((defs, uses, outlined), (48, 75, 63), "definitions, uses and outline entries compared");
+    assert_eq!(siteless, ["src/m0.rs:9 impl", "src/m1.rs:9 impl", "src/m2.rs:7 impl"], "definitions with no occurrence of their own");
+}
