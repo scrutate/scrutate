@@ -1220,9 +1220,13 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
             found.iter().filter(|f| f.text).map(|f| f.stat.map_or((f.path.clone(), 0, 0, 0), |s| (f.path.clone(), s.size as u64, s.mtime, s.ctime))).collect()
         }
         (Some(paths), _) => {
+            let mut guard = crate::files::NamedGuard::new(root);
             let mut v: Vec<(String, u64, i64, i64)> = paths
                 .iter()
                 .filter_map(|p| {
+                    if guard.leaves_out(p) {
+                        return None;
+                    }
                     let full = root.join(p);
                     let m = std::fs::symlink_metadata(&full).ok().filter(|m| m.is_file())?;
                     let (size, mtime, ctime) = stamp(crate::index::Stat::of(&full, &m));

@@ -2280,7 +2280,9 @@ impl Index {
                     }
                 }
                 st.files_looked = paths.len();
-                paths.iter().filter(|p| file_inside(&self.root, p).is_some()).map(|p| (p.clone(), stat_of(p))).collect()
+                // a file the walks would leave out is gone, also when it was indexed before
+                let mut guard = crate::files::NamedGuard::new(&self.root);
+                paths.iter().filter(|p| file_inside(&self.root, p).is_some() && !guard.leaves_out(p)).map(|p| (p.clone(), stat_of(p))).collect()
             }
         };
         self.within_quota(only, &known, &files)?;

@@ -1721,3 +1721,104 @@ fn every_index_file_that_can_hold_text_reads_as_binary() {
     assert!(text.is_empty(), "index files that read as text:\n{}", text.join("\n"));
     let _ = fs::remove_dir_all(&root);
 }
+
+/// Kills a child process when dropped, so a failed assertion leaves no watch running.
+#[cfg(unix)]
+struct KillOnDrop(std::process::Child);
+
+#[cfg(unix)]
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// An index file written as text after a `watch` and a `serve --watch` started, and hard-linked
+/// under a repository name while they run, is in no later answer: the change reaches the indexes as
+/// named paths, not through a walk.
+#[cfg(unix)]
+#[test]
+fn an_index_file_linked_while_a_watch_runs_is_in_no_later_answer() {
+    use std::io::BufRead;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_watched_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("conf.py"), "def settings():\n    return 1\n").unwrap();
+    let root = canon(&root);
+    let home = root.with_extension("home");
+    let cmd = |args: &[&str]| {
+        let mut c = Command::new(BIN);
+        c.args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_CACHE_DIR", root.with_extension("cache"))
+            .env_remove("SCRUTATE_REDACT");
+        c
+    };
+    let run = |args: &[&str]| String::from_utf8_lossy(&cmd(args).stdin(Stdio::null()).output().unwrap().stdout).into_owned();
+    run(&["index"]);
+    // each process says on stderr when it watches
+    let start = |args: &[&str]| {
+        let mut child = cmd(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                let _ = tx.send(line);
+            }
+        });
+        while !rx.recv_timeout(Duration::from_secs(30)).expect("the watch starts").contains("watching") {}
+        child
+    };
+    let watch = KillOnDrop(start(&["watch"]));
+    let mut serve = KillOnDrop(start(&["serve", "--watch"]));
+    let mut stdin = serve.0.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(serve.0.stdout.take().unwrap());
+    let mut id = 0;
+    let mut ask = |tool: &str, args: Value| {
+        id += 1;
+        writeln!(stdin, "{}", json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": tool, "arguments": args}})).unwrap();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            assert!(stdout.read_line(&mut line).unwrap() > 0, "serve closed its output");
+            if serde_json::from_str::<Value>(&line).is_ok_and(|v| v["id"] == id) {
+                return line;
+            }
+        }
+    };
+    let secret = chars(&mut 65, &format!("{ALNUM}/+"), 40);
+    // a cache written as text, made after both started, so only its identity tells what it is
+    fs::create_dir_all(root.join(".scrutate/tsquery")).unwrap();
+    fs::write(root.join(".scrutate/tsquery/late.txt"), format!("def late_marker():\n    return \"{secret}\"\n")).unwrap();
+    fs::hard_link(root.join(".scrutate/tsquery/late.txt"), root.join("zzlate.py")).unwrap();
+    // a file of its own after it, to know when the watches have taken the change in
+    fs::write(root.join("fresh.py"), "def fresh_marker():\n    return 2\n").unwrap();
+    let mut seen = false;
+    for _ in 0..60 {
+        if ask("find_symbol", json!({"name": "fresh_marker"})).contains("fresh.py") && run(&["grep", "--index", "fresh_marker"]).contains("fresh.py") {
+            seen = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(seen, "the watches never took fresh.py in");
+    let mut answers = vec![
+        ("serve find_symbol", ask("find_symbol", json!({"name": "late_marker"}))),
+        ("serve search_code", ask("search_code", json!({"query": "late_marker"}))),
+        ("serve grep_code", ask("grep_code", json!({"pattern": "late_marker"}))),
+        ("serve references", ask("references", json!({"name": "late_marker"}))),
+    ];
+    for args in [&["grep", "--index", "late_marker"][..], &["grep", "--index", "--json", "late_marker"]] {
+        answers.push(("cli", run(args)));
+    }
+    drop(watch);
+    let leaks: Vec<String> = answers.iter().filter(|(_, a)| a.contains("zzlate") || a.contains(&secret)).map(|(w, a)| format!("{w}: {a}")).collect();
+    assert!(leaks.is_empty(), "{}", leaks.join("\n"));
+    let _ = fs::remove_dir_all(&root);
+}

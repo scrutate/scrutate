@@ -419,7 +419,11 @@ would have to open every entry to know it, so they do not. There, what keeps an 
 text out of their answers is that every file scrutate writes under `.scrutate/` that can hold a
 file's text has a NUL byte in its first kilobyte, so the walks see a binary file and skip it (a
 test holds every file there to that), and a repository file hard-linked into `.scrutate/` is
-still found by the walks while being refused by name. The walks know the index directories of
+still found by the walks while being refused by name. A file a watch or a session takes in by
+its name, with no walk (`watch`, `serve --watch`), is held to the rule on every platform: one
+that is an index file under another name is dropped from the indexes as gone. That costs nothing
+for a file with one link on Unix, and on Windows a handle per index file once per change set that
+names a file, since only the named files are asked about. The walks know the index directories of
 the searched paths and of the directories above them, not that of a nested repository inside the
 tree, where the binary header is what keeps its text out. Not covered: a link or a hard link made while the search runs
 (the walk is done before it starts); a hard link to an index file of a repository outside the

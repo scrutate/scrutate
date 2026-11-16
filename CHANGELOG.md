@@ -385,6 +385,9 @@ incompatible index by itself, and that is never breaking.
   refused with the index file it is and that removing the hard link, by its path, lets it be
   searched again. Every file under `.scrutate/` that can hold a file's text reads as binary,
   which keeps such a file out of the searches on Windows too ([Security](docs/SECURITY.md)).
+- `watch` and `serve --watch` drop from the indexes a file that is one of scrutate's index files
+  under another name when it comes in as a change, on every platform, where a hard link made while
+  they ran to an index file written after they started was indexed under its new name.
 - A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
   does the work itself, where a `serve` stopped or stuck at that point and a request over the
   socket's buffer (a long search with several `--alt`) left the call waiting for good.

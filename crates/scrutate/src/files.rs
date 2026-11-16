@@ -284,13 +284,53 @@ impl WalkGuard {
     pub fn leaves_out(&self, e: &ignore::DirEntry) -> bool {
         #[cfg(unix)]
         if let Some(twin) = self.0.as_ref().and_then(|ix| ix.twin(e)) {
-            static SAID: std::sync::Once = std::sync::Once::new();
-            SAID.call_once(|| eprintln!("[scrutate] {}", left_out_line(e.path(), twin)));
+            say_left_out(e.path(), twin);
             return true;
         }
         let _ = e;
         false
     }
+}
+
+/// The walks' rule for files named one at a time (a watch's or a session's change set), which no
+/// walk meets: a file that is one of the index files of `root` under another name is left out, so
+/// an index drops it as gone. On Unix a file with one link is none of them, so the index
+/// directories are listed only for a file with more; elsewhere they are listed once per change set
+/// that names an existing file, since only the named files are asked about, not every entry.
+pub struct NamedGuard {
+    root: PathBuf,
+    index: Option<IndexFiles>,
+}
+
+impl NamedGuard {
+    pub fn new(root: &Path) -> NamedGuard {
+        NamedGuard { root: root.to_path_buf(), index: None }
+    }
+
+    /// Whether `rel`, a path from the root, is left out.
+    pub fn leaves_out(&mut self, rel: &str) -> bool {
+        let full = self.root.join(rel);
+        if inside_index_dir_named(Path::new(rel)) || !std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file()) {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if !std::fs::metadata(&full).is_ok_and(|m| m.nlink() > 1) {
+                return false;
+            }
+        }
+        let root = &self.root;
+        let Some(twin) = self.index.get_or_insert_with(|| IndexFiles::near(root)).twin_of(&full) else { return false };
+        say_left_out(&full, &twin);
+        true
+    }
+}
+
+/// `left_out_line` on stderr, once per run.
+fn say_left_out(path: &Path, twin: &Path) {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| eprintln!("[scrutate] {}", left_out_line(path, twin)));
 }
 
 /// Why `shown`, a path that reaches `path`, is refused (`done`: "searched" or "read"): it lies in an
@@ -754,11 +794,12 @@ pub fn patch_look(root: &Path, kept: &KeptLook, changes: &crate::stores::Changes
     }
     let list = Arc::make_mut(list);
     let mut listed = crate::index::Listed::default();
+    let mut guard = NamedGuard::new(root);
     for rel in named {
         let at = list.binary_search_by(|f| f.path.as_str().cmp(rel));
         // as `look` finds it: a file the repository's walk lists, with a stat when it is code
         let full = root.join(rel);
-        let md = std::fs::symlink_metadata(&full).ok().filter(|m| m.is_file());
+        let md = std::fs::symlink_metadata(&full).ok().filter(|m| m.is_file()).filter(|_| !guard.leaves_out(rel));
         let code = n.code.contains(rel);
         let found = md.filter(|_| code || n.repo.contains(rel)).map(|md| Found {
             path: rel.clone(),
