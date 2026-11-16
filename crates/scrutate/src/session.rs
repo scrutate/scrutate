@@ -470,8 +470,14 @@ impl Session {
 
     /// `run_scanned`, with what the answer does not hold yet.
     pub fn run_scanned_pending(&self, op: &Op) -> Option<(UpdateStats, Result<Answer>, Pending)> {
+        self.run_scanned_for(op, None)
+    }
+
+    /// `run_scanned_pending` for a caller of the tree at `root`: None, with nothing run, when the
+    /// reader in hand is another tree's (the session followed its link since the caller came).
+    pub(crate) fn run_scanned_for(&self, op: &Op, root: Option<&Path>) -> Option<(UpdateStats, Result<Answer>, Pending)> {
         let r = self.call(&Arc::default(), None, None, |repo| {
-            if self.is_building() && !repo.ix.has_files()? {
+            if root.is_some_and(|r| repo.ix.root != r) || self.is_building() && !repo.ix.has_files()? {
                 return Ok(None);
             }
             let (st, pending) = if op.reads_index() { self.scan(repo, true)? } else { Default::default() };
@@ -987,11 +993,12 @@ mod unix {
         let mut line = Vec::new();
         BufReader::new(std::io::Read::take(&conn, MAX_REQUEST)).read_until(b'\n', &mut line)?;
         let request: Request = serde_json::from_slice(&line)?;
-        // greeted for `root`, which the session may have left since for another tree
+        // greeted for `root`, which the session may have left since for another tree; checked
+        // again on the reader the call runs on, which a move may swap in after this
         if session.root() != root {
             return Ok(());
         }
-        let printed = session.run_scanned_pending(&request.op).and_then(|(st, a, pending)| {
+        let printed = session.run_scanned_for(&request.op, Some(root)).and_then(|(st, a, pending)| {
             let mut p = answer(a.ok()?, &request, &session.root()).ok()?;
             if let Some(note) = pending.note() {
                 p.err.push_str(&format!("[scrutate] {note}\n"));
@@ -1185,6 +1192,32 @@ mod tests {
         assert!(a.is_ok_and(|a| !a.is_empty()), "the new tree's name");
         let (_, a) = s.run_scanned(&symbol("only_v1")).unwrap();
         assert!(a.is_ok_and(|a| a.is_empty()), "the old tree's name");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A call for one tree is run only on a reader of that tree: once the session followed its
+    /// link to another, a call for the old tree runs nothing, whatever the root read before it.
+    #[cfg(unix)]
+    #[test]
+    fn a_call_for_the_old_tree_runs_on_no_reader_of_the_new_one() {
+        let base = std::env::temp_dir().join(format!("scrutate_session_reader_root_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for dir in ["v1", "v2"] {
+            std::fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+            std::fs::write(base.join(dir).join("a.py"), "def f():\n    return 1\n").unwrap();
+        }
+        let cur = base.join("cur");
+        std::os::unix::fs::symlink("v1", &cur).unwrap();
+        let s = Session::open(&cur, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        let old = s.root();
+        let op = Op::Symbol { name: "f".into(), limit: 1, exact: true };
+        assert!(s.run_scanned_for(&op, Some(&old)).is_some(), "the old tree's call while the root is the old tree");
+        std::os::unix::fs::symlink("v2", base.join("cur.tmp")).unwrap();
+        std::fs::rename(base.join("cur.tmp"), &cur).unwrap();
+        assert!(s.reopen().unwrap());
+        assert!(s.run_scanned_for(&op, Some(&old)).is_none(), "the old tree's call ran on the new tree's reader");
+        assert!(s.run_scanned_for(&op, Some(&s.root())).is_some(), "the new tree's call");
         let _ = std::fs::remove_dir_all(base);
     }
 
