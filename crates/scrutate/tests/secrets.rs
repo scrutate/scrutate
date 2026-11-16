@@ -1587,6 +1587,19 @@ fn every_index_file_that_can_hold_text_reads_as_binary() {
     ] {
         scrutate::mcp::call_tool(&session, tool, &args, &settings, &Default::default());
     }
+    // edit_symbol under serve --allow-edits: a dry run, the edit applied with its hash, and a call
+    // after it, which brings the index up to date with the edited file
+    let edits = scrutate::mcp::Settings::new(None).allowing_edits();
+    let edit = |more: Value| {
+        let mut args = json!({"symbol": "settings_copy", "path": "copy.py", "new_text": "def settings_copy():\n    return 2\n"});
+        args.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+        scrutate::mcp::call_tool(&session, "edit_symbol", &args, &edits, &Default::default())
+    };
+    let dry = edit(json!({}));
+    let hash = dry.text.lines().find_map(|l| l.strip_prefix("hash: ")).unwrap_or_else(|| panic!("no hash in the dry run: {}", dry.text)).trim().to_string();
+    let applied = edit(json!({"apply": true, "hash": hash}));
+    assert!(!applied.is_error && fs::read_to_string(root.join("copy.py")).unwrap().contains("return 2"), "{}", applied.text);
+    scrutate::mcp::call_tool(&session, "find_symbol", &json!({"name": "settings_copy"}), &settings, &Default::default());
     drop(session);
     let dir = root.join(".scrutate");
     let mut text = Vec::new();
