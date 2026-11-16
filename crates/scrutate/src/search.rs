@@ -201,6 +201,8 @@ pub struct Searcher {
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
     /// a session's kept look of the tree, for a search the text index narrows (`stores::grep_files`)
     pub look: Option<crate::files::KeptLook>,
+    /// where dependency copies are kept (`SCRUTATE_CACHE_DIR` as read at open); None: the user cache
+    pub cache_dir: Option<std::path::PathBuf>,
 }
 
 /// A source of candidates. The candidates are the union of the sources' ids in `Source::ALL`
@@ -330,7 +332,7 @@ fn plain(name: &str) -> String {
 
 impl Searcher {
     pub fn new(ix: Index) -> Searcher {
-        Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default(), look: None }
+        Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default(), look: None, cache_dir: crate::packages::env_cache_dir() }
     }
 
     fn sync(&mut self) -> Result<()> {

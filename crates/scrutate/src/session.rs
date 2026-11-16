@@ -155,6 +155,8 @@ pub struct Session {
     /// the look of the tree a search narrowed by the text index starts from, patched with each
     /// change set before a read (`files::patch_look`), so it costs no walk while a watch vouches
     kept: crate::files::KeptLook,
+    /// where dependency copies are kept, for every reader: `SCRUTATE_CACHE_DIR` as read at open
+    cache_dir: RwLock<Option<PathBuf>>,
     /// what `watch` keeps for the reads, from `open_watched`
     notes: RwLock<Option<crate::fresh::Watching>>,
     /// the socket or pipe `listen` offers this session at, while it is the root's
@@ -213,6 +215,7 @@ impl Session {
             notes: RwLock::default(),
             listening: Mutex::default(),
             kept: Default::default(),
+            cache_dir: RwLock::new(crate::packages::env_cache_dir()),
             unwatch: Arc::default(),
         })
     }
@@ -330,6 +333,11 @@ impl Session {
         pool.idle.clear();
         pool.generation += 1;
         Ok(moved)
+    }
+
+    /// Keep dependency copies under `dir`, in place of what `SCRUTATE_CACHE_DIR` said at open.
+    pub fn set_cache_dir(&self, dir: PathBuf) {
+        *self.cache_dir.write().unwrap_or_else(|p| p.into_inner()) = Some(dir);
     }
 
     /// This session, told what changed by `fresh` instead of a walk.
@@ -517,6 +525,7 @@ impl Session {
         let Some((generation, mut repo)) = self.reader(cancel, wait)? else { return Err(anyhow::anyhow!("every reader is busy")) };
         repo.set_cancel(Arc::clone(cancel));
         repo.set_look(Some(Arc::clone(&self.kept)));
+        repo.cache_dir = self.cache_dir.read().unwrap_or_else(|p| p.into_inner()).clone();
         if let Some(count) = count {
             repo.set_count(Arc::clone(count));
         }
@@ -1585,13 +1594,14 @@ mod windows {
 
         /// A copy of this test process at Low integrity, the same user's token otherwise, running
         /// this test again: its process handle.
-        fn low_copy(name: &str) -> OwnedHandle {
+        fn low_copy(name: &str, env: &[(&str, &std::ffi::OsStr)]) -> OwnedHandle {
+            use std::os::windows::ffi::OsStrExt;
             use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
             use windows_sys::Win32::Security::{
                 DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TokenPrimary, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY,
                 TOKEN_DUPLICATE,
             };
-            use windows_sys::Win32::System::Threading::{CreateProcessAsUserW, PROCESS_INFORMATION, STARTUPINFOW};
+            use windows_sys::Win32::System::Threading::{CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW};
             const SE_GROUP_INTEGRITY: u32 = 0x20;
             // SAFETY: handles and buffers this function makes and keeps alive for each call
             unsafe {
@@ -1612,7 +1622,30 @@ mod windows {
                 let mut line = wide(&format!("\"{}\" --exact {name} --test-threads=1", exe.display()));
                 let si = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..std::mem::zeroed() };
                 let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
-                let made = CreateProcessAsUserW(low.as_raw_handle(), null(), line.as_mut_ptr(), null(), null(), 0, 0, null(), null(), &si, &mut pi);
+                // this process's environment and `env`, for the child alone: no variable of this
+                // process is set, so no other thread can read one half written. CreateProcess
+                // wants the block sorted by name without case, as std's Command sorts it.
+                let mut vars: Vec<_> = std::env::vars_os().filter(|(k, _)| !env.iter().any(|(e, _)| k.eq_ignore_ascii_case(e))).collect();
+                vars.extend(env.iter().map(|(k, v)| (std::ffi::OsString::from(k), v.to_os_string())));
+                vars.sort_by_key(|(k, _)| k.to_ascii_uppercase());
+                let mut block: Vec<u16> = Vec::new();
+                for (k, v) in &vars {
+                    block.extend(k.encode_wide().chain([u16::from(b'=')]).chain(v.encode_wide()).chain([0]));
+                }
+                block.push(0);
+                let made = CreateProcessAsUserW(
+                    low.as_raw_handle(),
+                    null(),
+                    line.as_mut_ptr(),
+                    null(),
+                    null(),
+                    0,
+                    CREATE_UNICODE_ENVIRONMENT,
+                    block.as_ptr().cast(),
+                    null(),
+                    &si,
+                    &mut pi,
+                );
                 assert_ne!(made, 0, "{}", Error::last_os_error());
                 drop(OwnedHandle::from_raw_handle(pi.hThread));
                 OwnedHandle::from_raw_handle(pi.hProcess)
@@ -1809,9 +1842,7 @@ mod windows {
                     let s = Arc::new(Session::open(&root, Every::given(Some(3600.0))).unwrap());
                     s.build().unwrap();
                     let _listening = listen(&s, never).expect("the session listens");
-                    std::env::set_var("LOW_READER_ROOT", &root);
-                    std::env::set_var("LOW_READER", "1");
-                    let low = low_copy(NAME);
+                    let low = low_copy(NAME, &[("LOW_READER_ROOT", root.as_os_str()), ("LOW_READER", "1".as_ref())]);
                     let t0 = Instant::now();
                     let code = loop {
                         if let Some(code) = exited(&low) {
@@ -1859,8 +1890,7 @@ mod windows {
                 // the user's command line: asks the session of the root while the Low copy runs
                 Ok("client") => {
                     let root = PathBuf::from(std::env::var_os("SQUAT_ROOT").unwrap());
-                    std::env::set_var("SQUAT_ROLE", "server");
-                    let low = low_copy(NAME);
+                    let low = low_copy(NAME, &[("SQUAT_ROLE", "server".as_ref())]);
                     let request =
                         Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
                     let t0 = Instant::now();

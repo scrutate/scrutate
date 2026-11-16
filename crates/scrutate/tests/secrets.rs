@@ -163,8 +163,6 @@ fn tree(test: &str) -> (PathBuf, Vec<(&'static str, String)>) {
     fs::write(root.join("node_modules/leftpad/package.json"), r#"{"name": "leftpad", "version": "1.0.0"}"#).unwrap();
     fs::write(root.join("node_modules/leftpad/index.js"), format!("function pad(s) {{\n  const TOKEN = \"{dep}\";\n  return TOKEN + s;\n}}\n")).unwrap();
     secrets.push(("github-token", dep));
-    // the copy goes beside the tree, never to the user's cache; no other test here reads it
-    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
     // a file that holds a marker's text and no secret: no redaction is counted for it
     fs::write(root.join("notes.py"), "NOTE = \"[redacted:github-token] is how answers show a token\"\n").unwrap();
     // as Claude Code has it: on Windows without the `\\?\` of canonicalize, which the hook declines
@@ -189,6 +187,8 @@ fn no_planted_secret_comes_back_through_a_tool_or_the_hook_and_each_is_marked() 
     let (root, secrets) = tree("tools");
     assert!(secrets.len() >= 60, "{}", secrets.len());
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    // a dependency's copy goes beside the tree, never to the user's cache
+    session.set_cache_dir(root.with_extension("cache"));
     let settings = scrutate::mcp::Settings::new(None);
     let mut seen = String::new();
     // every tool that returns text, in both forms, at a page of 24,000 bytes and pages of 700 that
@@ -1545,8 +1545,8 @@ fn a_file_that_is_an_index_file_under_another_name_is_left_out_of_every_walk() {
         }
     }
     // the MCP tools that walk the repository
-    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    session.set_cache_dir(root.with_extension("cache"));
     let settings = scrutate::mcp::Settings::new(None);
     for path in ["mine.py", "zzlink0.py", "zzlink1.txt"] {
         let c = scrutate::mcp::call_tool(&session, "read_code", &json!({"path": path}), &settings, &Default::default());
@@ -1675,8 +1675,8 @@ fn every_index_file_that_can_hold_text_reads_as_binary() {
     let _ = watch.kill();
     let _ = watch.wait();
     // the MCP tools, through a session
-    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    session.set_cache_dir(root.with_extension("cache"));
     let settings = scrutate::mcp::Settings::new(None);
     for (tool, args) in [
         ("impact", json!({})),

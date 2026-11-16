@@ -301,10 +301,16 @@ fn env_dir(k: &str) -> Option<PathBuf> {
     std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-/// Where the copies live: `SCRUTATE_CACHE_DIR`, else the platform's user cache.
-pub fn cache_dir() -> Result<PathBuf> {
-    if let Some(d) = env_dir("SCRUTATE_CACHE_DIR") {
-        return Ok(d);
+/// `SCRUTATE_CACHE_DIR`, read once where a searcher is opened and carried from there.
+pub fn env_cache_dir() -> Option<PathBuf> {
+    env_dir("SCRUTATE_CACHE_DIR")
+}
+
+/// Where the copies live: `given` (`SCRUTATE_CACHE_DIR` as the searcher read it), else the
+/// platform's user cache.
+pub fn cache_dir(given: Option<&Path>) -> Result<PathBuf> {
+    if let Some(d) = given {
+        return Ok(d.to_path_buf());
     }
     if let Some(d) = env_dir("XDG_CACHE_HOME") {
         return Ok(d.join("scrutate"));
@@ -668,8 +674,8 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
 /// be writable by no one else, or another user could swap a copy for one of their own; a
 /// directory of the cache that is open to others is closed (Unix: mode 0700). On Windows the
 /// cache is under the user's own profile, whose access the system gives that user alone.
-fn deps_dir() -> Result<PathBuf> {
-    let root = cache_dir()?;
+fn deps_dir(given: Option<&Path>) -> Result<PathBuf> {
+    let root = cache_dir(given)?;
     let deps = root.join("deps");
     private_dirs(&deps)?;
     #[cfg(unix)]
@@ -781,8 +787,8 @@ fn copy(l: &Locked, inst: &Installed, to: &Path, (max_files, max_bytes): (usize,
 /// A copy from a store the repository holds (`node_modules`, `.venv`) is keyed by the repository
 /// too, so what one repository installed is never read for another; a copy from a user's store
 /// (the cargo registry, the Go module cache) is shared by every repository at that version.
-fn cached(l: &Locked, inst: &Installed, caps: (usize, u64), root: &Path) -> Result<PathBuf> {
-    let eco = deps_dir()?.join(l.eco.key());
+fn cached(l: &Locked, inst: &Installed, caps: (usize, u64), root: &Path, cache: Option<&Path>) -> Result<PathBuf> {
+    let eco = deps_dir(cache)?.join(l.eco.key());
     let own = || {
         let k = crate::tscache::hash(&[root.to_string_lossy().as_bytes()]);
         k[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()
@@ -938,7 +944,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
         }
         From::Store => {
             let inst = installed(&root, &l)?;
-            let src = cached(&l, &inst, (MAX_FILES, MAX_BYTES), &root)?;
+            let src = cached(&l, &inst, (MAX_FILES, MAX_BYTES), &root, s.cache_dir.as_deref())?;
             let mut repo = crate::Repo::open_with(&src, crate::models::ModelSet::none())?;
             // a copy never changes once made, so it is indexed once and never looked at again
             let indexed = src.with_file_name("indexed");
@@ -1008,16 +1014,15 @@ mod tests {
         let dir = std::fs::canonicalize(&pkg).unwrap();
         let inst = Installed { base: dir.clone(), dir, files: None };
         let l = Locked { eco: Eco::Cargo, name: "p".into(), version: "1.0.0".into(), lockfile: "Cargo.lock", from: From::Store };
-        std::env::set_var("SCRUTATE_CACHE_DIR", top.join("cache"));
-        let e = cached(&l, &inst, (4, 1 << 20), &top).unwrap_err().to_string();
+        let cache = Some(top.join("cache"));
+        let e = cached(&l, &inst, (4, 1 << 20), &top, cache.as_deref()).unwrap_err().to_string();
         assert!(e.contains("cap of 4 files"), "{e}");
-        let e = cached(&l, &inst, (100, 20), &top).unwrap_err().to_string();
+        let e = cached(&l, &inst, (100, 20), &top, cache.as_deref()).unwrap_err().to_string();
         assert!(e.contains("cap"), "{e}");
         // nothing half made is left to be taken for a copy
         assert_eq!(std::fs::read_dir(top.join("cache/deps/cargo")).unwrap().count(), 0);
-        let src = cached(&l, &inst, (5, 1 << 20), &top).unwrap();
+        let src = cached(&l, &inst, (5, 1 << 20), &top, cache.as_deref()).unwrap();
         assert_eq!(std::fs::read_dir(src.join("src")).unwrap().count(), 5);
-        std::env::remove_var("SCRUTATE_CACHE_DIR");
         let _ = std::fs::remove_dir_all(&top);
     }
 }

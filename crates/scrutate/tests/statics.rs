@@ -139,3 +139,50 @@ fn every_mutable_static_is_listed_with_why_it_may_be_one_value() {
     assert!(gone.is_empty(), "listed statics that are no longer there: {gone:?}");
     assert!(found.len() > 30, "the scan found too few to be reading the sources: {}", found.len());
 }
+
+/// The files of the tree that write the process environment, and why no other thread can read it
+/// then: `set_var` and `remove_var` race with every thread that reads it (Rust 2024 makes them
+/// unsafe). A test hands a value to the code, or to a child with `Command::env`.
+const ENV_WRITERS: &[(&str, &str)] =
+    &[("crates/scrutate/src/config.rs", "once at start-up, before any thread exists"), ("crates/scrutate/tests/index_quota.rs", "the only test of its binary")];
+
+/// Whether `text` calls `set_var` or `remove_var` outside a `//` comment.
+fn writes_env(text: &str) -> bool {
+    text.lines().any(|l| {
+        let code = l.split("//").next().unwrap_or("");
+        code.contains("set_var(") || code.contains("remove_var(")
+    })
+}
+
+#[test]
+fn the_env_scan_sees_both_calls_and_not_a_comment() {
+    assert!(writes_env("    std::env::set_var(\"A\", \"1\");"));
+    assert!(writes_env("unsafe { env::remove_var(k) };"));
+    assert!(!writes_env("// std::env::set_var(\"A\", \"1\") would race"));
+    assert!(!writes_env("let v = std::env::var(\"A\");"));
+}
+
+#[test]
+fn the_environment_is_written_only_where_no_other_thread_reads_it() {
+    let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut found = BTreeSet::new();
+    let mut dirs: Vec<_> = ["crates", "fuzz", "vendor"].iter().map(|d| top.join(d)).collect();
+    while let Some(dir) = dirs.pop() {
+        for e in std::fs::read_dir(&dir).unwrap().map(Result::unwrap) {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().is_some_and(|n| n != "target") {
+                    dirs.push(p);
+                }
+            // this file names the two calls in its own test strings
+            } else if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("tests/statics.rs") && writes_env(&std::fs::read_to_string(&p).unwrap()) {
+                found.insert(p.strip_prefix(&top).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let listed: BTreeSet<String> = ENV_WRITERS.iter().map(|(f, _)| f.to_string()).collect();
+    assert_eq!(
+        found, listed,
+        "a file writes the process environment (hand the value to the code, or `Command::env` for a child), or a listed one no longer does"
+    );
+}
