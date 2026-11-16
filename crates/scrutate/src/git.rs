@@ -545,7 +545,13 @@ impl Git {
     /// the working tree runs no clean or process filter (git-lfs's among them). A file such a
     /// filter would turn back into its committed text is compared as it is on disk.
     fn no_filters(&self) -> Result<Vec<String>> {
-        let out = self.raw(&["config", "-z", "--get-regexp", r"^filter\."]).output().map_err(not_run)?.stdout;
+        let args = ["config", "-z", "--get-regexp", r"^filter\."];
+        let got = self.raw(&args).output().map_err(not_run)?;
+        // 1 is no such key; anything else left the filters unknown, and none could be emptied
+        if !got.status.success() && got.status.code() != Some(1) {
+            return Err(failed(&args, &reason(got.status, &got.stderr)));
+        }
+        let out = got.stdout;
         let mut names = BTreeSet::new();
         for entry in out.split(|&b| b == 0) {
             let key = String::from_utf8_lossy(entry.split(|&b| b == b'\n').next().unwrap_or_default()).into_owned();
@@ -573,7 +579,7 @@ impl Git {
         if ids.is_empty() {
             return Ok(out);
         }
-        let mut child = self.command(&["cat-file", "--batch"])?.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(not_run)?;
+        let mut child = self.command(&["cat-file", "--batch"])?.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(not_run)?;
         let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("git cat-file: no input"))?;
         let asked: String = ids.iter().map(|id| format!("{id}\n")).collect();
         // written beside the read, so a full pipe on either side does not stop both
@@ -581,7 +587,15 @@ impl Git {
         let mut bytes = Vec::new();
         child.stdout.take().ok_or_else(|| anyhow!("git cat-file: no output"))?.read_to_end(&mut bytes)?;
         let _ = writer.join();
-        child.wait()?;
+        let mut errors = Vec::new();
+        if let Some(mut e) = child.stderr.take() {
+            let _ = e.read_to_end(&mut errors);
+        }
+        // a git that died part way gives no copy of the rest: an empty file would read as a change
+        let status = child.wait()?;
+        if !status.success() {
+            return Err(failed(&["cat-file", "--batch"], &reason(status, &errors)));
+        }
         let mut rest = &bytes[..];
         for id in ids {
             let Some(nl) = rest.iter().position(|&b| b == b'\n') else { break };
@@ -589,6 +603,10 @@ impl Git {
             rest = &rest[nl + 1..];
             let mut parts = head.split(' ');
             let (_, kind, size) = (parts.next(), parts.next(), parts.next().and_then(|n| n.parse::<usize>().ok()));
+            // git says so on its output, exits 0 and writes no error: an absent copy is no empty file
+            if matches!(kind, Some("missing" | "ambiguous")) {
+                return Err(failed(&["cat-file", "--batch"], &head));
+            }
             if let (Some("blob"), Some(n)) = (kind, size) {
                 let n = n.min(rest.len());
                 out.insert(id.clone(), rest[..n].to_vec());
@@ -998,6 +1016,19 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         plain_dir(&std::fs::canonicalize(dir).unwrap())
+    }
+
+    /// An object git does not have is an error naming it, where `cat-file --batch` says `missing`
+    /// on its output, exits 0 and writes no error.
+    #[test]
+    fn a_base_copy_git_does_not_have_is_an_error_naming_it() {
+        let root = scratch("missing_blob");
+        repo(&root);
+        let git = Git::new(&root).unwrap();
+        let absent = "1234567890abcdef1234567890abcdef12345678".to_string();
+        let e = git.blobs(&BTreeSet::from([absent.clone()])).unwrap_err().to_string();
+        assert_eq!(e, format!("git cat-file: {absent} missing"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A repository with one empty commit, made with git's own configuration only; its HEAD commit.

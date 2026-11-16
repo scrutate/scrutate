@@ -1396,12 +1396,13 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
                 History { commits, note: (!notes.is_empty()).then(|| notes.join("; ")) }
             }
             Err(e) if e.is::<crate::git::LacksObjects>() => History { commits: Vec::new(), note: Some(e.to_string()) },
-            Err(_) => History { commits: Vec::new(), note: note("git could not follow these lines") },
+            // the reason git gave, or how it ended when it gave none
+            Err(e) => History { commits: Vec::new(), note: Some(format!("git could not follow these lines: {e}")) },
         },
         Ok(crate::git::AtHead::Changed) => History { commits: Vec::new(), note: note("changed since HEAD") },
         Ok(crate::git::AtHead::Absent) => History { commits: Vec::new(), note: note("not in HEAD") },
         Err(e) if e.is::<crate::git::LacksObjects>() => History { commits: Vec::new(), note: Some(e.to_string()) },
-        Err(_) => History { commits: Vec::new(), note: note("git could not read the file") },
+        Err(e) => History { commits: Vec::new(), note: Some(format!("git could not read the file: {e}")) },
     };
     // each history is a git of its own walking the file's past: they run at once
     let each = std::thread::scope(|sc| {

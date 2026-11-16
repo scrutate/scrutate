@@ -307,7 +307,8 @@ fn a_partial_clone_gives_the_history_note_impact_gives() {
     // a git that also names the promisor remote in extensions.partialClone would still read a clone
     let _ = Command::new("git").args(["config", "--unset-all", "extensions.partialclone"]).current_dir(&t.root).envs(GIT_ENV).status();
     t.git(&["config", "remote.origin.promisor", "no"]);
-    assert_eq!(note(&t), "git could not follow these lines");
+    let lost = note(&t);
+    assert!(lost.starts_with("git could not follow these lines: git log: ") && lost.contains("unable to read"), "{lost}");
     let config = t.root.join(".git/config");
     let text = fs::read_to_string(&config).unwrap();
     assert!(text.contains("\tpromisor = no\n"), "{text}");
@@ -401,6 +402,34 @@ fn a_forked_child_of_git_does_not_hold_the_lookup() {
     if alive(&pid) {
         let _ = Command::new("kill").arg(&pid).status();
         panic!("the child git left outlived the lookup");
+    }
+}
+
+/// A git that dies without a word while the history is read: the note says how it ended, as the
+/// error of every other git call does.
+#[cfg(unix)]
+#[test]
+fn a_git_that_crashes_while_the_history_is_read_is_named_in_the_note() {
+    let t = shaped("crashing");
+    for (case, says) in [
+        ("*\" log \"*) kill -SEGV $$;;", "git could not follow these lines: git log: ended by signal 11 (a crash) and gave no reason"),
+        ("*\" log \"*) exit 3;;", "git could not follow these lines: git log: exited with status 3 and gave no reason"),
+        // the lines are first looked up in HEAD's copy, through diff-index
+        ("*\" diff-index \"*) kill -SEGV $$;;", "git could not read the file: git diff-index: ended by signal 11 (a crash) and gave no reason"),
+    ] {
+        let (bin, path) = fake_git(&t, case);
+        let out = Command::new(BIN)
+            .args(["--root", t.root.to_str().unwrap(), "read", "--symbol", "f", "--history", "--json"])
+            .current_dir(&t.root)
+            .envs(GIT_ENV)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("PATH", path)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let _ = fs::remove_dir_all(&bin);
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&out.stderr)));
+        assert_eq!(v["result"]["definitions"][0]["history_note"], says, "{v}");
     }
 }
 

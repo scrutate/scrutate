@@ -365,6 +365,11 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `read --history`'s note for a git that failed says why (`git could not follow these lines: git
+  log: ended by signal 11 (a crash) and gave no reason`), where it said only that git could not;
+  and a git that dies while scrutate lists the filter drivers or reads the base copies, or a base
+  copy git does not have, is an error that says so, where the copies read as empty files and the
+  filters as none.
 - `impact --staged` and `review` name the window that holds a changed line outside every
   definition (`b.py:3-3 [window] b`), as the working-tree form does, where they named the whole
   file (`b.py [file]`).
