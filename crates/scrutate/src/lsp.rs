@@ -372,6 +372,13 @@ impl Folder {
         }
     }
 
+    /// The root its session holds now, which a link pointed at another tree moves.
+    fn follow(&mut self) {
+        if let Some(s) = &self.session {
+            self.root = s.root();
+        }
+    }
+
     /// Open the index and start its first build, once.
     fn open(&mut self) {
         if std::mem::replace(&mut self.opened, true) {
@@ -382,7 +389,8 @@ impl Folder {
             eprintln!("{why}");
             log(1, why);
         } else {
-            match Session::open_watched(&self.root, Every::given(None)) {
+            // by the name the editor gave: a link pointed at another tree is followed there
+            match Session::open_watched(&self.given, Every::given(None)) {
                 Ok(session) => {
                     // a watch that cannot start leaves requests walking the tree
                     let _ = session.watch(false);
@@ -750,6 +758,7 @@ impl Server {
     }
 
     fn notify(&mut self, method: &str, p: &Value) {
+        self.folders.iter_mut().for_each(Folder::follow);
         if method == "workspace/didChangeWorkspaceFolders" {
             self.change_folders(&p["event"]);
             return;
@@ -783,6 +792,7 @@ impl Server {
     }
 
     fn request(&mut self, method: &str, p: &Value) -> Reply {
+        self.folders.iter_mut().for_each(Folder::follow);
         if method == "initialize" {
             if self.initialized {
                 return Err((-32600, "already initialized".into()));

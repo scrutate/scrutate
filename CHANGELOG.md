@@ -306,6 +306,11 @@ incompatible index by itself, and that is never breaking.
 - `watch` started with a pipe for its input ends when the pipe does, with exit code 0, so it no
   longer outlives an agent or script that started it and was killed; from a terminal or with no
   input it runs as before.
+- `serve --watch`, the MCP server's watch, the language server and the Python bindings follow a
+  root reached through a link when the link is pointed at another tree (or replaced by a
+  directory, or a link it leads through is pointed elsewhere), as `watch` does, where they kept
+  answering from the old tree; a command line call made in the old tree is no longer answered by
+  that session.
 - A command line call gives up a running `serve` that takes no request for 2 s once it greeted and
   does the work itself, where a `serve` stopped or stuck at that point and a request over the
   socket's buffer (a long search with several `--alt`) left the call waiting for good.

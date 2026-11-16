@@ -212,7 +212,12 @@ impl Repo {
     /// The root opened again, as `open` opens it, with this repository's writer lock: for the tree
     /// its path names now.
     pub fn opened_again(&self) -> Result<Repo> {
-        Ok(Repo::around(crate::open(&self.root)?, Arc::clone(&self.writer)))
+        self.opened_at(&self.root)
+    }
+
+    /// `opened_again` for the tree at `root`, where a link the session follows now leads.
+    pub fn opened_at(&self, root: &Path) -> Result<Repo> {
+        Ok(Repo::around(crate::open(root)?, Arc::clone(&self.writer)))
     }
 
     /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read

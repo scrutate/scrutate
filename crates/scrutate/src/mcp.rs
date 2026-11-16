@@ -224,12 +224,12 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
             // of a value alone, as its line reads it
             let redact = crate::secrets::on(true);
             if redact {
-                crate::secrets::know_key_lines_at(session.root());
+                crate::secrets::know_key_lines_at(&session.root());
             }
-            let context = if redact { answer.redact_in_context(session.root(), offset, max_bytes) } else { Vec::new() };
+            let context = if redact { answer.redact_in_context(&session.root(), offset, max_bytes) } else { Vec::new() };
             let mut r = crate::secrets::Redactor::default();
-            let (mut text, shown, total) = answer.text_page(Some(session.root()), max_bytes, offset, form, redact.then_some(&mut r));
-            let mut structured = answer.structured(session.root(), text.len(), max_bytes, offset, shown, total);
+            let (mut text, shown, total) = answer.text_page(Some(&session.root()), max_bytes, offset, form, redact.then_some(&mut r));
+            let mut structured = answer.structured(&session.root(), text.len(), max_bytes, offset, shown, total);
             if redact {
                 let mut rj = crate::secrets::Redactor::default();
                 rj.redact_json(&mut structured);

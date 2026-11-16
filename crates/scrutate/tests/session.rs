@@ -430,6 +430,96 @@ fn a_session_that_reads_no_request_is_given_up_and_the_call_does_its_own_work() 
     assert_eq!((got.0, got.1.as_str()), (want.0, want.1.as_str()));
 }
 
+/// `serve --watch --root LINK` follows the link to the tree it names now (pointed elsewhere,
+/// replaced by a directory, a link to a link pointed elsewhere, dangling for a moment first), and
+/// a command line call made in the old tree is never answered from the new one.
+#[cfg(unix)]
+#[test]
+fn serve_watch_through_a_link_follows_it_and_the_old_tree_answers_for_itself() {
+    use std::os::unix::fs::symlink;
+    for case in ["retargeted", "replaced_by_a_directory", "link_to_a_link", "dangling_first"] {
+        let base = std::env::temp_dir().join(format!("scrutate_sess_follow_{case}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let base = canon(&base);
+        for (dir, body) in [("rel/v1", "def only_v1():\n    return 1\n"), ("rel/v2", "def only_v2():\n    return 2\n")] {
+            fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+            fs::write(base.join(dir).join("a.py"), body).unwrap();
+        }
+        let cur = base.join("cur");
+        if case == "link_to_a_link" {
+            symlink("rel/v1", base.join("mid")).unwrap();
+            symlink("mid", &cur).unwrap();
+        } else {
+            symlink("rel/v1", &cur).unwrap();
+        }
+        let mut child = Command::new(BIN)
+            .args(["serve", "--watch"])
+            .current_dir(&base)
+            .env("SCRUTATE_ROOT", &cur)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let (mut stdin, mut stdout) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
+        let mut n = 0;
+        let mut call = |name: &str| -> String {
+            n += 1;
+            let msg = json!({"jsonrpc": "2.0", "id": n, "method": "tools/call", "params": {"name": "find_symbol", "arguments": {"name": name}}});
+            writeln!(stdin, "{msg}").unwrap();
+            loop {
+                let mut line = String::new();
+                assert!(stdout.read_line(&mut line).unwrap() > 0, "{case}: the server closed stdout");
+                let v: Value = serde_json::from_str(&line).unwrap();
+                if v["id"] == n {
+                    return v["result"]["content"][0]["text"].as_str().unwrap_or("").to_string();
+                }
+            }
+        };
+        let t0 = Instant::now();
+        while !call("only_v1").contains("a.py") {
+            assert!(t0.elapsed() < Duration::from_secs(60), "{case}: the first build never answered");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        match case {
+            "retargeted" => {
+                symlink("rel/v2", base.join("cur.tmp")).unwrap();
+                fs::rename(base.join("cur.tmp"), &cur).unwrap();
+            }
+            "replaced_by_a_directory" => {
+                fs::remove_file(&cur).unwrap();
+                fs::rename(base.join("rel/v2"), &cur).unwrap();
+            }
+            "link_to_a_link" => {
+                symlink("rel/v2", base.join("mid.tmp")).unwrap();
+                fs::rename(base.join("mid.tmp"), base.join("mid")).unwrap();
+            }
+            _ => {
+                fs::remove_file(&cur).unwrap();
+                std::thread::sleep(Duration::from_millis(1000));
+                symlink("rel/v2", &cur).unwrap();
+            }
+        }
+        let t0 = Instant::now();
+        while !call("only_v2").contains("a.py") {
+            assert!(t0.elapsed() < Duration::from_secs(20), "{case}: only_v2 of the new tree never found");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert!(!call("only_v1").contains("a.py"), "{case}: only_v1 of the old tree still found");
+        // a command line call in the old tree: that tree's own answer, never the new tree's
+        let old = base.join("rel/v1");
+        let (code, out, err) = cli_with(BIN, &old, &["symbol", "only_v1"], &[("SCRUTATE_SESSION_DEBUG", "1")]);
+        assert!(code == 0 && out.contains("a.py"), "{case}: {out}{err}");
+        assert!(!err.contains("answered by the session"), "{case}: {err}");
+        let (code, out, err) = cli_with(BIN, &old, &["symbol", "only_v2"], &[]);
+        assert!(code == 1 && !out.contains("a.py"), "{case}: {out}{err}");
+        drop(stdin);
+        let _ = child.wait();
+        let _ = fs::remove_dir_all(&base);
+    }
+}
+
 #[test]
 fn a_second_server_on_the_root_leaves_the_first_ones_socket_alone_and_an_exit_removes_it() {
     let r = Repo::new("two");

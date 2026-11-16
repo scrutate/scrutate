@@ -19,10 +19,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::fresh::{Freshness, Token};
 use crate::index::{self, FileCount, UpdateStats};
@@ -129,7 +129,10 @@ struct Clock {
 }
 
 pub struct Session {
-    root: PathBuf,
+    /// the canonical root now: the tree `given` names, which a link pointed elsewhere moves
+    root: RwLock<PathBuf>,
+    /// the root as the session was opened with it, absolute, links kept
+    given: PathBuf,
     every: Every,
     max_readers: usize,
     /// writes
@@ -146,11 +149,13 @@ pub struct Session {
     scanning: Mutex<()>,
     /// the files the writes of `seed` read, the first build's among them
     written: Arc<FileCount>,
-    fresh: Box<dyn Freshness>,
+    fresh: RwLock<Box<dyn Freshness>>,
     /// the token of the newest change set applied
     applied: Mutex<Token>,
     /// what `watch` keeps for the reads, from `open_watched`
-    notes: Option<crate::fresh::Watching>,
+    notes: RwLock<Option<crate::fresh::Watching>>,
+    /// the socket `listen` offers this session at, while it is the root's
+    listening: Mutex<Option<PathBuf>>,
     /// ends that watch when the session is dropped
     unwatch: Arc<AtomicBool>,
 }
@@ -165,6 +170,14 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+fn read<T>(m: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    m.read().unwrap_or_else(|p| p.into_inner())
+}
+
+fn write<T>(m: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    m.write().unwrap_or_else(|p| p.into_inner())
+}
+
 fn caught<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| Err(Panicked.into()))
 }
@@ -176,9 +189,10 @@ impl Session {
         let written = Arc::new(FileCount::default());
         seed.set_count(Arc::clone(&written));
         let max_readers = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
-        let fresh = Box::new(crate::fresh::Walk::new(&seed.ix.root));
+        let fresh: Box<dyn Freshness> = Box::new(crate::fresh::Walk::new(&seed.ix.root));
         Ok(Session {
-            root: seed.ix.root.clone(),
+            root: RwLock::new(seed.ix.root.clone()),
+            given: std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf()),
             every,
             max_readers,
             writer: seed.writer(),
@@ -191,9 +205,10 @@ impl Session {
             clock: Mutex::default(),
             scanning: Mutex::new(()),
             written,
-            fresh,
+            fresh: RwLock::new(fresh),
             applied: Mutex::default(),
-            notes: None,
+            notes: RwLock::default(),
+            listening: Mutex::default(),
             unwatch: Arc::default(),
         })
     }
@@ -203,9 +218,9 @@ impl Session {
     /// tree as without one.
     pub fn open_watched(root: &Path, every: Every) -> Result<Arc<Session>> {
         let s = Session::open(root, every)?;
-        let (fresh, notes) = crate::fresh::for_session(s.root());
-        let mut s = s.with_freshness(fresh);
-        s.notes = notes;
+        let (fresh, notes) = crate::fresh::for_session(&s.root());
+        let s = s.with_freshness(fresh);
+        *write(&s.notes) = notes;
         Ok(Arc::new(s))
     }
 
@@ -222,11 +237,10 @@ impl Session {
                 s.release_replaced();
             }
         })?;
-        let notes = self.notes.clone();
-        if notes.is_none() && !apply {
+        if self.notes().is_none() && !apply {
             return Ok(());
         }
-        let (session, stop, root) = (Arc::downgrade(self), Arc::clone(&self.unwatch), self.root().to_path_buf());
+        let (session, stop, root) = (Arc::downgrade(self), Arc::clone(&self.unwatch), self.given.clone());
         std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
             let mut update = |changes: &Changes| match (apply, session.upgrade()) {
                 (true, Some(s)) => s.write(|repo| repo.update_stores(crate::stores::Writer::Watch, changes, false)).map(|_| ()),
@@ -243,6 +257,8 @@ impl Session {
             let mut ready = Some(ready);
             loop {
                 let ready = ready.take().unwrap_or(Box::new(|| {}));
+                // a reopen on another tree remakes them
+                let notes = session.upgrade().and_then(|s| s.notes());
                 let r = match &notes {
                     Some(n) => n.run(&root, &stop, ready, &mut update),
                     None => crate::watch::run(&root, &stop, ready, &mut update),
@@ -250,8 +266,16 @@ impl Session {
                 match r {
                     Err(e) if e.is::<crate::watch::RootReplaced>() => {
                         eprintln!("[scrutate] {}: root replaced; watching the new tree", crate::paths::plain_path(&root).display());
-                        match session.upgrade().map(|s| s.reopen()) {
-                            Some(Ok(())) => continue,
+                        match session.upgrade().map(|s| s.reopen().map(|moved| (s, moved))) {
+                            Some(Ok((s, moved))) => {
+                                // a watch that applies builds the new tree in its first update; one
+                                // that does not leaves it to this, or reads see its empty index
+                                if moved && !apply {
+                                    s.building();
+                                    let _ = s.build();
+                                }
+                                continue;
+                            }
                             Some(Err(e)) => eprintln!("[scrutate] watching stopped: the new tree could not be opened: {e:#}"),
                             None => {}
                         }
@@ -268,30 +292,45 @@ impl Session {
 
     /// The root's path names another tree now (`watch::RootReplaced`): its stores are opened
     /// afresh there, an index made if it has none (the next update builds it), and the readers of
-    /// the old tree are dropped, the busy ones when they come back.
-    pub fn reopen(&self) -> Result<()> {
+    /// the old tree are dropped, the busy ones when they come back. -> whether the root moved to
+    /// another tree (a link the session was opened through is pointed elsewhere).
+    pub fn reopen(&self) -> Result<bool> {
         let mut seed = lock(&self.seed);
-        let mut fresh = seed.opened_again()?;
+        let now = std::fs::canonicalize(&self.given).with_context(|| format!("open {}", self.given.display()))?;
+        let moved = now != self.root();
+        let mut fresh = if moved { seed.opened_at(&now)? } else { seed.opened_again()? };
         fresh.set_count(Arc::clone(&self.written));
         let opener = fresh.another()?;
         *seed = fresh;
         *lock(&self.opener) = opener;
+        if moved {
+            // no call made in the old tree is answered from this one
+            if let Some(socket) = lock(&self.listening).take() {
+                let _ = std::fs::remove_file(socket);
+            }
+            *write(&self.root) = now.clone();
+            if self.notes().is_some() {
+                let (fresh, notes) = crate::fresh::for_session(&now);
+                *write(&self.fresh) = fresh;
+                *write(&self.notes) = notes;
+            }
+        }
         let mut pool = lock(&self.pool);
         pool.open -= pool.idle.len();
         pool.idle.clear();
         pool.generation += 1;
-        Ok(())
+        Ok(moved)
     }
 
     /// This session, told what changed by `fresh` instead of a walk.
     pub fn with_freshness(mut self, fresh: Box<dyn Freshness>) -> Session {
-        self.fresh = fresh;
+        self.fresh = RwLock::new(fresh);
         self.applied = Mutex::default();
         self
     }
 
     fn changes(&self) -> (Changes, Token) {
-        self.fresh.changes_since(*lock(&self.applied))
+        read(&self.fresh).changes_since(*lock(&self.applied))
     }
 
     fn applied_up_to(&self, t: Token) {
@@ -300,8 +339,13 @@ impl Session {
     }
 
     /// The canonical root.
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn root(&self) -> PathBuf {
+        read(&self.root).clone()
+    }
+
+    /// The watch's notes for the reads, from `open_watched`.
+    fn notes(&self) -> Option<crate::fresh::Watching> {
+        read(&self.notes).clone()
     }
 
     /// Readers opened at most.
@@ -568,14 +612,18 @@ impl Session {
     /// A watch that asks for a walk gets it at once, unless the interval is a floor the user gave
     /// and the watch's change sets are a proof (the floor holds back what they cannot vouch for).
     fn walk_if_due(&self, repo: &mut Repo, token: Token, now: bool) -> Result<(UpdateStats, Pending)> {
-        let watching = self.fresh.watching();
-        let asked = now || self.fresh.owes_a_walk() || watching && (!self.every.floor || !self.fresh.order_proves());
+        let (watching, owed, proves) = {
+            let f = read(&self.fresh);
+            (f.watching(), f.owes_a_walk(), f.order_proves())
+        };
+        let asked = now || owed || watching && (!self.every.floor || !proves);
         let nothing = Ok((UpdateStats::default(), Pending::default()));
         if !asked && !self.due() {
             debug("the refresh interval holds that walk back");
             // what the watch named is applied whatever the interval; the walk stays owed
             let applied = *lock(&self.applied);
-            if let Some(n) = self.fresh.named_since(applied).filter(|n| !n.code.is_empty()) {
+            let named = read(&self.fresh).named_since(applied);
+            if let Some(n) = named.filter(|n| !n.code.is_empty()) {
                 let st = repo.refresh_named(&n.code)?.unwrap_or_default();
                 return Ok((st, Pending(repo.is_stale().then_some(Changes::Named(n)))));
             }
@@ -859,8 +907,9 @@ mod unix {
     /// index directory holds something else there): command line calls then do their own work.
     /// `answer` prints an answer as the command line does.
     pub fn listen(session: &Arc<Session>, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
-        let path = socket_path(session.root());
-        let Some(me) = Identity::here(session.root()) else {
+        let root = session.root();
+        let path = socket_path(&root);
+        let Some(me) = Identity::here(&root) else {
             debug("no identity to offer");
             return None;
         };
@@ -896,6 +945,7 @@ mod unix {
         let md = std::fs::symlink_metadata(&path).ok()?;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         let hello = serde_json::to_string(&me).ok()?;
+        *lock(&session.listening) = Some(path.clone());
         let session = Arc::clone(session);
         let open = Arc::new(AtomicUsize::new(0));
         std::thread::Builder::new()
@@ -903,8 +953,9 @@ mod unix {
             .spawn(move || {
                 for conn in listener.incoming() {
                     let Ok(conn) = conn else { continue };
-                    // another user's process gets nothing, not even the greeting
-                    if !same_user(&conn) || open.load(Ordering::Acquire) >= MAX_CONNECTIONS {
+                    // another user's process gets nothing, not even the greeting; once the session
+                    // has followed its root's link to another tree, no caller of this tree does
+                    if !same_user(&conn) || open.load(Ordering::Acquire) >= MAX_CONNECTIONS || session.root() != root {
                         continue;
                     }
                     open.fetch_add(1, Ordering::AcqRel);
@@ -930,7 +981,7 @@ mod unix {
         BufReader::new(std::io::Read::take(&conn, MAX_REQUEST)).read_until(b'\n', &mut line)?;
         let request: Request = serde_json::from_slice(&line)?;
         let printed = session.run_scanned_pending(&request.op).and_then(|(st, a, pending)| {
-            let mut p = answer(a.ok()?, &request, session.root()).ok()?;
+            let mut p = answer(a.ok()?, &request, &session.root()).ok()?;
             if let Some(note) = pending.note() {
                 p.err.push_str(&format!("[scrutate] {note}\n"));
             }
@@ -1095,6 +1146,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// A reader taken out on the old tree while the session follows its link to another one is
+    /// not given back, and the next call answers from the new tree.
+    #[cfg(unix)]
+    #[test]
+    fn a_reader_out_while_the_root_moves_to_another_tree_is_not_given_back() {
+        let base = std::env::temp_dir().join(format!("scrutate_session_moves_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for (dir, body) in [("v1", "def only_v1():\n    return 1\n"), ("v2", "def only_v2():\n    return 2\n")] {
+            std::fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+            std::fs::write(base.join(dir).join("a.py"), body).unwrap();
+        }
+        let cur = base.join("cur");
+        std::os::unix::fs::symlink("v1", &cur).unwrap();
+        let s = Session::open(&cur, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        s.read(&Arc::default(), false, |_| {
+            std::os::unix::fs::symlink("v2", base.join("cur.tmp")).unwrap();
+            std::fs::rename(base.join("cur.tmp"), &cur).unwrap();
+            s.reopen()
+        })
+        .unwrap();
+        assert!(lock(&s.pool).idle.is_empty(), "the old tree's reader went back into the pool");
+        assert_eq!(s.root(), std::fs::canonicalize(base.join("v2")).unwrap());
+        let symbol = |name: &str| Op::Symbol { name: name.into(), limit: 1, exact: true };
+        let (_, a) = s.run_scanned(&symbol("only_v2")).unwrap();
+        assert!(a.is_ok_and(|a| !a.is_empty()), "the new tree's name");
+        let (_, a) = s.run_scanned(&symbol("only_v1")).unwrap();
+        assert!(a.is_ok_and(|a| a.is_empty()), "the old tree's name");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     #[test]
     fn an_idle_reader_lets_go_of_segments_a_write_replaced() {
         let (root, s) = fixture("idle_segments");
@@ -1121,7 +1203,7 @@ mod tests {
         let held = || lock(&s.pool).idle.iter().filter_map(|r| r.ix.held_segments().map(<[String]>::to_vec)).collect::<Vec<_>>();
         let before = held();
         assert!(!before.is_empty(), "the reader holds the segments it searched");
-        let mut other = Repo::open(s.root()).unwrap();
+        let mut other = Repo::open(&s.root()).unwrap();
         for k in 0..3 {
             std::fs::write(root.join(format!("src/other{k}.py")), format!("def other_{k}():\n    return {k}\n")).unwrap();
             other.update(false).unwrap();
@@ -1130,16 +1212,16 @@ mod tests {
         drop(other);
         assert!(before.iter().all(|b| *b != now), "the other process replaced the segments: {before:?} -> {now:?}");
         let t0 = Instant::now();
-        while (held().iter().any(|h| *h != now) || !deleted_maps(s.root()).is_empty()) && t0.elapsed() < Duration::from_secs(20) {
+        while (held().iter().any(|h| *h != now) || !deleted_maps(&s.root()).is_empty()) && t0.elapsed() < Duration::from_secs(20) {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert!(
             held().iter().all(|h| *h == now),
             "an idle reader still holds {:?}, the index has {now:?}; deleted files mapped: {}",
             held(),
-            deleted_maps(s.root()).len()
+            deleted_maps(&s.root()).len()
         );
-        assert_eq!(deleted_maps(s.root()), Vec::<String>::new(), "deleted files of the index still mapped");
+        assert_eq!(deleted_maps(&s.root()), Vec::<String>::new(), "deleted files of the index still mapped");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1381,11 +1463,11 @@ mod tests {
         }
         std::fs::create_dir_all(root.join("src/d0")).unwrap();
         let s = Session::open_watched(&root, every).unwrap();
-        if let (Some(every), Some(notes)) = (safety, &s.notes) {
+        if let (Some(every), Some(notes)) = (safety, s.notes()) {
             notes.set_safety_every(every);
         }
         // these tests are of the change set, which macOS reads do without
-        if let Some(notes) = &s.notes {
+        if let Some(notes) = s.notes() {
             notes.set_order_proves(true);
         }
         s.build().unwrap();
@@ -1407,7 +1489,7 @@ mod tests {
     fn a_file_written_just_before_a_call_is_in_its_answer_every_time() {
         // no safety walk lands in the run: a second file looked at is a second look
         let (root, s) = watched_with("barrier", 1, Every::given(Some(3600.0)), Some(Duration::from_secs(3600)));
-        s.notes.as_ref().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
+        s.notes().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
         // the change set where a cookie proves it, else a look at the tree's 3 files
         let looked = if crate::watch::ORDER_PROVES { 1 } else { 3 };
         for i in 0..1000 {
@@ -1430,7 +1512,7 @@ mod tests {
         std::fs::write(root.join("src/w.py"), "def written_0():\n    return 0\n").unwrap();
         let s = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
         s.build().unwrap();
-        let notes = s.notes.clone().unwrap();
+        let notes = s.notes().unwrap();
         notes.in_place_without_a_watcher();
         notes.set_order_proves(false);
         let stop = Arc::new(AtomicBool::new(false));
@@ -1467,7 +1549,7 @@ mod tests {
         std::fs::write(root.join("src/w.py"), "def written_0():\n    return 0\n").unwrap();
         let s = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
         s.build().unwrap();
-        let notes = s.notes.clone().unwrap();
+        let notes = s.notes().unwrap();
         notes.in_place_without_a_watcher();
         notes.set_order_proves(false);
         for i in 1..=20 {
@@ -1495,7 +1577,7 @@ mod tests {
     #[test]
     fn lost_events_make_the_next_read_walk_and_its_answer_holds_the_change() {
         let (root, s) = watched("lost", 10, Every::given(Some(3600.0)));
-        s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
+        s.notes().unwrap().note(&Err(notify::Error::generic("a lost queue")));
         std::fs::write(root.join("src/d3/m3.py"), "def after_loss():\n    return 3\n").unwrap();
         let (st, a) = s.run_scanned(&Op::Symbol { name: "after_loss".into(), limit: 1, exact: true }).unwrap();
         assert_eq!(st.files_looked, 11, "a walk: {st:?}");
@@ -1529,7 +1611,7 @@ mod tests {
     fn a_walk_the_watch_asks_for_comes_at_once_unless_the_user_gave_a_floor() {
         for (floor, seen) in [(None, true), (Some(3600.0), false)] {
             let (root, s) = watched(&format!("asked_{seen}"), 10, Every::given(floor));
-            s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
+            s.notes().unwrap().note(&Err(notify::Error::generic("a lost queue")));
             // an edit the watch names is applied under a floor too
             std::fs::write(root.join("src/d3/m3.py"), "def edited_after_loss():\n    return 3\n").unwrap();
             let a = s.run(&Op::Symbol { name: "edited_after_loss".into(), limit: 1, exact: true }, &Arc::default()).unwrap();
@@ -1549,7 +1631,7 @@ mod tests {
     #[test]
     fn two_watched_sessions_of_one_root_in_one_process_keep_their_barriers() {
         let (root, s1) = watched("twin", 1, Every::given(Some(3600.0)));
-        s1.notes.as_ref().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
+        s1.notes().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
         let s2 = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
         s2.watch(false).unwrap();
         std::thread::sleep(Duration::from_millis(500));
@@ -1573,7 +1655,7 @@ mod tests {
     #[test]
     fn an_idle_second_watched_session_costs_the_first_no_answer() {
         let (root, s1) = watched("idle_twin", 1, Every::given(Some(3600.0)));
-        s1.notes.as_ref().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
+        s1.notes().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
         let s2 = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
         s2.watch(false).unwrap();
         std::thread::sleep(Duration::from_millis(500));
@@ -1592,7 +1674,7 @@ mod tests {
     #[test]
     fn a_read_leaves_no_cookie_behind() {
         let (root, s) = watched("cookies", 1, Every::given(Some(3600.0)));
-        let notes = s.notes.clone().unwrap();
+        let notes = s.notes().unwrap();
         for i in 0..1000 {
             let _ = s.run_scanned(&Op::Symbol { name: "made_0".into(), limit: 1, exact: true }).unwrap();
             assert_eq!(notes.cookies_kept(), 0, "after read {i}");

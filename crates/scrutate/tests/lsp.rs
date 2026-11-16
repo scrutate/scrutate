@@ -263,6 +263,92 @@ fn workspace_symbols_list_each_spelling_only_under_its_own_match() {
     child.wait().unwrap();
 }
 
+/// A folder the editor names through a link follows the link to the tree it names now: a link
+/// pointed at another tree, a link replaced by a directory, a link to a link pointed elsewhere,
+/// and a link that dangles for a moment first. A second folder stays as it is, and a document
+/// named by the old tree's own path is answered from nothing.
+#[cfg(unix)]
+#[test]
+fn a_folder_through_a_link_follows_the_link_to_its_new_tree() {
+    use std::os::unix::fs::symlink;
+    for case in ["retargeted", "replaced_by_a_directory", "link_to_a_link", "dangling_first"] {
+        let r = Repo::plain(&format!("follow_{case}"));
+        let v1 = "def foo_ll():\n    return 1\n\n\ndef only_v1():\n    return 4\n";
+        let v2 = "def foo_ll():\n    return 2\n\n\ndef only_v2():\n    return 3\n\n\ndef uses_v2():\n    return only_v2()\n";
+        for (dir, body) in [("rel/v1", v1), ("rel/v2", v2), ("other", "def in_other():\n    return 5\n")] {
+            r.write(&format!("{dir}/a.py"), body);
+            fs::create_dir_all(r.root.join(dir).join(".git")).unwrap();
+        }
+        let cur = r.root.join("cur");
+        if case == "link_to_a_link" {
+            symlink("rel/v1", r.root.join("mid")).unwrap();
+            symlink("mid", &cur).unwrap();
+        } else {
+            symlink("rel/v1", &cur).unwrap();
+        }
+        let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+        let folders = json!([{"uri": uri(&cur), "name": "cur"}, {"uri": uri(&r.root.join("other")), "name": "other"}]);
+        c.request("initialize", json!({"processId": null, "workspaceFolders": folders, "capabilities": {}}));
+        c.notify("initialized", json!({}));
+        let names = |c: &mut Client, q: &str| -> Option<usize> {
+            let ws = c.request("workspace/symbol", json!({"query": q}));
+            ws["result"].as_array().map(|a| a.iter().filter(|s| s["name"] == q).count())
+        };
+        let t0 = Instant::now();
+        while names(&mut c, "only_v1").is_none_or(|n| n == 0) || names(&mut c, "in_other").is_none_or(|n| n == 0) {
+            assert!(t0.elapsed() < Duration::from_secs(60), "{case}: the first builds never answered");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(names(&mut c, "only_v2"), Some(0), "{case}: v1 has no only_v2");
+        let old_doc = canon(r.root.join("rel/v1")).join("a.py");
+        match case {
+            "retargeted" => {
+                symlink("rel/v2", r.root.join("cur.tmp")).unwrap();
+                fs::rename(r.root.join("cur.tmp"), &cur).unwrap();
+            }
+            "replaced_by_a_directory" => {
+                fs::remove_file(&cur).unwrap();
+                fs::rename(r.root.join("rel/v2"), &cur).unwrap();
+            }
+            "link_to_a_link" => {
+                symlink("rel/v2", r.root.join("mid.tmp")).unwrap();
+                fs::rename(r.root.join("mid.tmp"), r.root.join("mid")).unwrap();
+            }
+            _ => {
+                fs::remove_file(&cur).unwrap();
+                std::thread::sleep(Duration::from_millis(1000));
+                symlink("rel/v2", &cur).unwrap();
+            }
+        }
+        let t0 = Instant::now();
+        while names(&mut c, "only_v2").is_none_or(|n| n == 0) {
+            assert!(t0.elapsed() < Duration::from_secs(20), "{case}: only_v2 of the new tree never found");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert_eq!(names(&mut c, "only_v1"), Some(0), "{case}: only_v1 of the old tree still found");
+        assert_eq!(names(&mut c, "in_other"), Some(1), "{case}: the other folder stopped answering");
+        // a document through the folder answers from the new tree, definition and references
+        let doc = cur.join("a.py");
+        c.notify("textDocument/didOpen", json!({"textDocument": {"uri": uri(&doc), "languageId": "python", "version": 1, "text": v2}}));
+        let at = json!({"textDocument": {"uri": uri(&doc)}, "position": {"line": 9, "character": 12}});
+        let def = c.request("textDocument/definition", at.clone());
+        assert!(def["result"].to_string().contains("a.py") && def["result"].to_string().contains("\"line\":4"), "{case}: {def}");
+        let refs = c.request(
+            "textDocument/references",
+            json!({"textDocument": at["textDocument"], "position": at["position"], "context": {"includeDeclaration": true}}),
+        );
+        assert_eq!(refs["result"].as_array().map(Vec::len), Some(2), "{case}: {refs}");
+        // the old tree by its own path belongs to no folder now
+        let def = c.request("textDocument/definition", json!({"textDocument": {"uri": uri(&old_doc)}, "position": {"line": 4, "character": 5}}));
+        assert!(def["result"].is_null() || def["result"].as_array().is_some_and(Vec::is_empty), "{case}: {def}");
+        c.request("shutdown", Value::Null);
+        c.notify("exit", Value::Null);
+        drop(c);
+        child.wait().unwrap();
+    }
+}
+
 /// The file a location names, from the repository top, after checking that it exists.
 fn real_file(top: &Path, loc: &Value) -> String {
     let p = scrutate::lsp::uri_to_path(loc["uri"].as_str().unwrap()).unwrap();
