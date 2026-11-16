@@ -9,6 +9,10 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `impact` and `review` list a renamed file's definitions whose callers still import it by the
+  old path, as deleted at the old path with the rename note right above them, and those callers
+  as calling a deleted definition, where a pure rename listed nothing though it broke the
+  importer. In JSON a rename note has `renamed_from`, the old path ([CLI](docs/CLI.md)).
 - `check` notes each entry of `.scrutate/seg` no segment list names, with its size and age (`unlisted`
   in `--json`), where it said OK and showed nothing; such an entry is a merge in progress or
   what a stopped writer left, and an update removes it once it is older than 10 minutes, a stray

@@ -676,10 +676,18 @@ line per item:
 Items sort by distance, path and line, the same every run. A file with no definitions to name
 gets a line under `notes`: a binary file, a submodule (its commits are not read), a file the
 index leaves out. A file moved to a path the index's rules leave out (a directory `.ignore` or
-`.gitignore` names) reads as deleted, its definitions and callers as `git rm` of it gives. `--json` gives the envelope, its `result` with `against`, `base` (the commit
+`.gitignore` names) reads as deleted, its definitions and callers as `git rm` of it gives. A file
+renamed within the index gets `renamed from OLD`, and a definition of it
+whose callers still name the old path (`from lib.util import helper` after `lib/util.py` became
+`lib/helpers.py`) no longer reaches them: it is listed as deleted at the old path, the rename
+note right above it, and its callers as calling a deleted definition, as for `git rm`; one whose
+importers still resolve is not listed. The first 1000 definitions of renamed files are
+checked so (each costs a lookup of its name's call sites); past that a note says how many were
+not (`unchecked` in JSON). `--json` gives the envelope, its `result` with `against`, `base` (the commit
 compared with), `staged`, `depth`, `changed` (each with `status`), `callers` (each with
-`distance`, `via`, the location of what it calls, `undecided` and `calls_deleted`), `tests`
-(`path`, `distance`, `via`), `notes`, `findings` (each with `kind`, `severity`, `path`, `start`,
+`distance`, `via`, the location of what it calls, `undecided` and `calls_deleted`), `tests` (`path`, `distance`, `via`), `notes` (each with `path`, `note` and, for a
+rename, `renamed_from`, the old path, and on the note of definitions past the first 1000,
+`unchecked`, how many), `findings` (each with `kind`, `severity`, `path`, `start`,
 `end`, `qualname`, `text`, the sentence, and `related`, the other definitions it names, each with
 `path`, `qualname`, `start` and `end`), `more_findings` and `stopped`. `--max-bytes` pages the text by whole lines,
 as the other answers. No change is exit code 1. Errors (exit 2): a directory outside a git

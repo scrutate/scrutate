@@ -479,7 +479,7 @@ pub fn output_schema(tool: &str) -> Value {
                 v
             };
             let test = obj(json!({"path": ty("string"), "distance": ty("integer"), "via": {"anyOf": [item(&[]), ty("null")]}}), &["path", "distance", "via"]);
-            let note = obj(json!({"path": ty("string"), "note": ty("string")}), &["path", "note"]);
+            let note = obj(json!({"path": ty("string"), "note": ty("string"), "renamed_from": ty("string"), "unchecked": ty("integer")}), &["path", "note"]);
             obj(
                 json!({
                     "against": ty("string"), "base": ty("string"), "staged": ty("boolean"), "depth": ty("integer"),
@@ -1543,7 +1543,12 @@ fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
         }
     };
     let mut out = vec![vec![Brief::head(format!("changed: {}", i.changed.len()))]];
-    out.extend(i.changed.iter().map(|c| vec![symbol(&c.hit, &format!(" ({})", c.status))]));
+    for (c, above) in i.changed.iter().zip(i.renames_above()) {
+        if let Some((new, old)) = above {
+            out.push(vec![Brief::path(new).then(" renamed from ").and(Brief::path(old))]);
+        }
+        out.push(vec![symbol(&c.hit, &format!(" ({})", c.status))]);
+    }
     out.push(vec![Brief::head(format!("callers: {} (depth {})", i.callers.len(), i.depth))]);
     out.extend(i.callers.iter().map(|c| {
         let mark = if c.calls_deleted {

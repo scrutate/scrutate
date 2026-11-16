@@ -82,6 +82,9 @@ pub enum Note {
     Said(&'static str),
     /// the path it was renamed from, which the pull request's author wrote
     Renamed(String),
+    /// of this many definitions of renamed files, the first `MOVED_CHECKED` were checked for
+    /// callers that still name the old path: (unchecked, all)
+    Unchecked(usize, usize),
 }
 
 impl Note {
@@ -90,6 +93,11 @@ impl Note {
         match self {
             Note::Said(s) => s.to_string(),
             Note::Renamed(old) => format!("renamed from {}", path(old)),
+            Note::Unchecked(n, all) => {
+                format!(
+                    "{n} of the renamed files' {all} definitions, past the first {MOVED_CHECKED}, were not checked for callers that still name the old path"
+                )
+            }
         }
     }
 }
@@ -134,12 +142,27 @@ fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact
         base_copies: Vec::new(),
         head_paths: Vec::new(),
         membership: None,
+        moved: Vec::new(),
     };
     let blobs = git.blobs(&entries.iter().flat_map(|e| b.blobs_wanted(e)).collect::<BTreeSet<_>>())?;
     for e in &entries {
         b.entry(e, &blobs)?;
     }
-    let Builder { mut changed, mut notes, files, base_copies, head_paths, .. } = b;
+    let Builder { mut changed, mut notes, files, base_copies, head_paths, moved, .. } = b;
+    // a definition of a renamed file whose callers named it by the old path: they no longer reach
+    // it, as if it were deleted (the rename note says where it went)
+    if !moved.is_empty() {
+        let mut names = Names::new(s)?;
+        if moved.len() > MOVED_CHECKED {
+            notes.push((moved[MOVED_CHECKED].path.clone(), Note::Unchecked(moved.len() - MOVED_CHECKED, moved.len())));
+        }
+        for h in moved.into_iter().take(MOVED_CHECKED) {
+            let listed = changed.iter().any(|c| c.status == "deleted" && c.hit.path == h.path && c.hit.start == h.start && c.hit.qualname == h.qualname);
+            if !listed && !names.callers_of_deleted(&h, 1)?.is_empty() {
+                changed.push(Changed { hit: h, status: "deleted" });
+            }
+        }
+    }
     changed.sort_by(|a, b| {
         (&a.hit.path, a.hit.start, a.hit.end, &a.hit.kind, &a.hit.qualname).cmp(&(&b.hit.path, b.hit.start, b.hit.end, &b.hit.kind, &b.hit.qualname))
     });
@@ -166,6 +189,10 @@ fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact
     (i.findings, i.more_findings) = crate::findings::find(s, &i)?;
     Ok(i)
 }
+
+/// Definitions of renamed files checked for callers that still name the old path: each costs a
+/// lookup of its name's call sites (about half a millisecond), so a package moved whole is cut here.
+const MOVED_CHECKED: usize = 1000;
 
 /// Kinds whose callers are not asked for: lines outside every definition, and a module.
 fn walkable(h: &Hit) -> bool {
@@ -340,6 +367,8 @@ struct Builder<'a> {
     head_paths: Vec<String>,
     /// the code index's walk rules, read once when a path needs them
     membership: Option<crate::files::Membership>,
+    /// the old side's definitions of files renamed within the index, at their old path
+    moved: Vec<Hit>,
 }
 
 impl Builder<'_> {
@@ -420,6 +449,11 @@ impl Builder<'_> {
             Some(old) => parsed(old, blob(&e.old_blob)),
             None => Vec::new(),
         };
+        if let (Some(old), Some(new)) = (&e.old, &e.new) {
+            if old != new {
+                self.moved.extend(old_defs.iter().filter(|d| !matches!(d.kind.as_str(), "window" | "module" | "file")).map(|d| d.hit(old)));
+            }
+        }
         let added = e.old.is_none();
         let ix = &self.s.ix;
         // the tree as it is: the index's definitions; the staged copy: a parse of it, matched to the index's
@@ -538,10 +572,13 @@ impl Impact {
             }
         };
         let mut out = vec![format!("changed: {}", self.changed.len())];
-        out.extend(self.changed.iter().map(|c| {
+        for (c, above) in self.changed.iter().zip(self.renames_above()) {
+            if let Some((new, old)) = above {
+                out.push(format!("{}  renamed from {}", shown(new), shown(old)));
+            }
             let at = if c.status == "deleted" && c.hit.kind != "file" { ", lines of the base" } else { "" };
-            format!("{}  ({}{at})", symbol(&c.hit), c.status)
-        }));
+            out.push(format!("{}  ({}{at})", symbol(&c.hit), c.status));
+        }
         out.push(format!("callers: {} (depth {})", self.callers.len(), self.depth));
         out.extend(self.callers.iter().map(|c| {
             let mark = if c.calls_deleted {
@@ -572,6 +609,24 @@ impl Impact {
             out.extend(self.notes.iter().map(|(p, n)| format!("{}  {}", shown(p), n.text(|p| shown(p).into_owned()))));
         }
         out
+    }
+
+    /// For each changed entry, the rename the text names right above it: (new path, old path) for
+    /// the first definition deleted from a renamed file's old path, which its callers still name.
+    pub fn renames_above(&self) -> Vec<Option<(&str, &str)>> {
+        let mut seen: HashSet<&str> = HashSet::new();
+        self.changed
+            .iter()
+            .map(|c| {
+                if c.status != "deleted" || !seen.insert(c.hit.path.as_str()) {
+                    return None;
+                }
+                self.notes.iter().find_map(|(new, n)| match n {
+                    Note::Renamed(old) if *old == c.hit.path => Some((new.as_str(), old.as_str())),
+                    _ => None,
+                })
+            })
+            .collect()
     }
 
     /// The duplicate findings, which come first in the list.
@@ -615,7 +670,14 @@ impl Impact {
                 with(with(with(v, "via", json!(c.via)), "undecided", json!(c.undecided)), "calls_deleted", json!(c.calls_deleted))
             }).collect::<Vec<_>>(),
             "tests": self.tests.iter().map(|t| json!({"path": t.path, "distance": t.distance, "via": t.via.as_ref().map(symbol)})).collect::<Vec<_>>(),
-            "notes": self.notes.iter().map(|(p, n)| json!({"path": p, "note": n.text(|p| shown(p).into_owned())})).collect::<Vec<_>>(),
+            "notes": self.notes.iter().map(|(p, n)| {
+                let v = json!({"path": p, "note": n.text(|p| shown(p).into_owned())});
+                match n {
+                    Note::Renamed(old) => with(v, "renamed_from", json!(old)),
+                    Note::Unchecked(n, _) => with(v, "unchecked", json!(n)),
+                    Note::Said(_) => v,
+                }
+            }).collect::<Vec<_>>(),
             "findings": self.findings.iter().map(|f| json!({
                 "kind": f.kind(), "severity": f.severity(), "path": f.path, "start": f.start, "end": f.end, "qualname": f.name, "text": f.text(),
                 "related": f.related().iter().map(|(path, name, start, end)| json!({"path": path, "qualname": name, "start": start, "end": end})).collect::<Vec<_>>(),

@@ -274,6 +274,88 @@ fn a_file_renamed_out_of_the_index_reads_as_deleted() {
     assert!(v["notes"].as_array().unwrap().iter().any(|n| n["path"] == "lib/core.py"), "{v}");
 }
 
+/// A module renamed within the index: a definition whose importer still names the old path no
+/// longer reaches it, and comes out as `git rm` gives it, the rename note right above it; one
+/// whose importers still resolve (updated in the same change, a Rust `mod` path) is not listed.
+#[test]
+fn a_renamed_module_lists_the_definitions_its_importers_lost() {
+    let module = |name: &str| {
+        let t = Tree::new(name);
+        t.git(&["init", "-q"]);
+        t.write("lib/__init__.py", "");
+        t.write("lib/util.py", "def helper():\n    return 1\n");
+        t.write("lib/app.py", "from lib.util import helper\n\n\ndef run():\n    return helper()\n");
+        t.write("tests/test_app.py", "from lib.app import run\n\n\ndef test_run():\n    assert run() == 1\n");
+        t.commit("first");
+        t.git(&["mv", "lib/util.py", "lib/helpers.py"]);
+        t
+    };
+    let deleted = |v: &Value| -> Vec<String> {
+        v["changed"].as_array().unwrap().iter().filter(|c| c["status"] == "deleted").map(|c| c["id"].as_str().unwrap().to_string()).collect()
+    };
+    // a pure rename
+    let t = module("renamed_pure");
+    let v = t.json(&["--staged"]);
+    assert_eq!(deleted(&v), ["lib/util.py:1-2"], "{v}");
+    assert_eq!(ids(&v, "callers"), ["lib/app.py:4-5", "tests/test_app.py:4-5"], "{v}");
+    assert_eq!(v["callers"][0]["calls_deleted"], true, "{v}");
+    assert_eq!(ids(&v, "tests"), ["tests/test_app.py"], "{v}");
+    let renamed = |n: &Value| n["path"] == "lib/helpers.py" && n["note"] == "renamed from lib/util.py" && n["renamed_from"] == "lib/util.py";
+    assert!(v["notes"].as_array().unwrap().iter().any(renamed), "{v}");
+    let text = t.impact(&["--staged"]);
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| *l == "lib/util.py:1-2  [function] helper  (deleted, lines of the base)").unwrap_or_else(|| panic!("{text}"));
+    assert_eq!(lines[at - 1], "lib/helpers.py  renamed from lib/util.py", "{text}");
+    // the importer updated in the same change
+    let t = module("renamed_importer_too");
+    t.write("lib/app.py", "from lib.helpers import helper\n\n\ndef run():\n    return helper()\n");
+    t.git(&["add", "-A"]);
+    let v = t.json(&["--staged"]);
+    assert!(deleted(&v).is_empty(), "{v}");
+    // renamed and edited: git's similarity under 100 percent
+    let t = module("renamed_edited");
+    t.write("lib/helpers.py", "def helper():\n    return 1\n\n\ndef other():\n    return 2\n");
+    t.git(&["add", "-A"]);
+    let v = t.json(&["--staged"]);
+    assert_eq!(deleted(&v), ["lib/util.py:1-2"], "{v}");
+    assert!(ids(&v, "callers").contains(&"lib/app.py:4-5".to_string()), "{v}");
+    // to a name the index still reads (lib/util.py.bak, the Auditor's first case): the same
+    let t = module("renamed_bak");
+    t.git(&["mv", "lib/helpers.py", "lib/util.py.bak"]);
+    let v = t.json(&["--staged"]);
+    assert_eq!(deleted(&v), ["lib/util.py:1-2"], "{v}");
+    // a package moved whole: 400 files of 10 definitions, the first 1000 checked, the rest counted
+    let t = Tree::new("renamed_package");
+    t.git(&["init", "-q"]);
+    t.write("old/__init__.py", "");
+    for f in 1..=400 {
+        let defs: String = (1..=10).map(|i| format!("def g{f}_{i}():\n    return {i}\n\n\n")).collect();
+        t.write(&format!("old/m{f}.py"), &defs);
+        t.write(&format!("app/u{f}.py"), &format!("from old.m{f} import g{f}_1\n\n\ndef use{f}():\n    return g{f}_1()\n"));
+    }
+    t.commit("first");
+    t.git(&["mv", "old", "new"]);
+    let v = t.json(&["--staged"]);
+    assert_eq!(deleted(&v).len(), 100, "{v}");
+    let past: Vec<&Value> = v["notes"].as_array().unwrap().iter().filter(|n| n.get("unchecked").is_some()).collect();
+    assert_eq!(past.len(), 1, "{v}");
+    assert_eq!(past[0]["unchecked"], 3000);
+    let line = "3000 of the renamed files' 4000 definitions, past the first 1000, were not checked for callers that still name the old path";
+    assert_eq!(past[0]["note"], line);
+    assert!(t.impact(&["--staged"]).lines().any(|l| l.ends_with(line)));
+    // a Rust module moved to its own directory: `mod util;` still finds it
+    let t = Tree::new("renamed_rust_mod");
+    t.git(&["init", "-q"]);
+    t.write("Cargo.toml", "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+    t.write("src/lib.rs", "mod util;\n\npub fn run() -> i32 {\n    util::helper()\n}\n");
+    t.write("src/util.rs", "pub fn helper() -> i32 {\n    1\n}\n");
+    t.commit("first");
+    fs::create_dir_all(t.root.join("src/util")).unwrap();
+    t.git(&["mv", "src/util.rs", "src/util/mod.rs"]);
+    let v = t.json(&["--staged"]);
+    assert!(deleted(&v).is_empty(), "{v}");
+}
+
 #[test]
 fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
     let t = chain("deletednamesake");
