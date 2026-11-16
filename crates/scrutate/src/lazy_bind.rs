@@ -15,7 +15,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
     fn write(fd: c_int, buf: *const c_void, n: usize) -> isize;
@@ -39,41 +39,47 @@ const RTLD_NOLOAD: c_int = 0x10;
 const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
 
 unsafe fn system() -> *mut c_void {
-    static SYSTEM: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-    let mut lib = SYSTEM.load(Ordering::Relaxed);
-    if lib.is_null() {
-        lib = dlopen(c"/usr/lib/libSystem.B.dylib".as_ptr(), RTLD_LAZY | RTLD_NOLOAD);
+    unsafe {
+        static SYSTEM: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+        let mut lib = SYSTEM.load(Ordering::Relaxed);
         if lib.is_null() {
-            lib = RTLD_DEFAULT;
+            lib = dlopen(c"/usr/lib/libSystem.B.dylib".as_ptr(), RTLD_LAZY | RTLD_NOLOAD);
+            if lib.is_null() {
+                lib = RTLD_DEFAULT;
+            }
+            SYSTEM.store(lib, Ordering::Relaxed);
         }
-        SYSTEM.store(lib, Ordering::Relaxed);
+        lib
     }
-    lib
 }
 
 unsafe fn find(name: *const c_char) -> *mut c_void {
-    let f = dlsym(system(), name);
-    if f.is_null() {
-        // nothing here may allocate or format: the caller can be any C function
-        let msg = b"scrutate: a system function is missing: ";
-        write(2, msg.as_ptr().cast(), msg.len());
-        let mut n = 0;
-        while *name.add(n) != 0 {
-            n += 1;
+    unsafe {
+        let f = dlsym(system(), name);
+        if f.is_null() {
+            // nothing here may allocate or format: the caller can be any C function
+            let msg = b"scrutate: a system function is missing: ";
+            write(2, msg.as_ptr().cast(), msg.len());
+            let mut n = 0;
+            while *name.add(n) != 0 {
+                n += 1;
+            }
+            write(2, name.cast(), n);
+            write(2, b"\n".as_ptr().cast(), 1);
+            abort();
         }
-        write(2, name.cast(), n);
-        write(2, b"\n".as_ptr().cast(), 1);
-        abort();
+        f
     }
-    f
 }
 
 /// Called by `_scrutate_lazy_bind` with a stub's name and slot; returns the function to jump to.
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn scrutate_lazy_resolve(name: *const c_char, slot: *const AtomicPtr<c_void>) -> *mut c_void {
-    let f = find(name);
-    (*slot).store(f, Ordering::Relaxed);
-    f
+    unsafe {
+        let f = find(name);
+        (*slot).store(f, Ordering::Relaxed);
+        f
+    }
 }
 
 /// The stubs not bound yet (for the tests).
@@ -91,15 +97,17 @@ fn table() -> &'static [Entry] {
 }
 
 /// `fork`, as the executable sees it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn scrutate_lazy_fork() -> c_int {
-    for e in table() {
-        if (*e.slot).load(Ordering::Relaxed).is_null() {
-            scrutate_lazy_resolve(e.name, e.slot);
+    unsafe {
+        for e in table() {
+            if (*e.slot).load(Ordering::Relaxed).is_null() {
+                scrutate_lazy_resolve(e.name, e.slot);
+            }
         }
+        let fork: unsafe extern "C" fn() -> c_int = std::mem::transmute(find(c"fork".as_ptr()));
+        fork()
     }
-    let fork: unsafe extern "C" fn() -> c_int = std::mem::transmute(find(c"fork".as_ptr()));
-    fork()
 }
 
 // `_scrutate_lazy_bind` keeps every argument register (x0-x7, the result pointer x8, q0-q7) and

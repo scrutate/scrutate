@@ -177,11 +177,7 @@ fn regex_cost(re: &Re, u: &[char], n: usize, chars: &[char]) -> Option<usize> {
 /// A pattern character against an end character of the line: 0 when equal, 1 when the line's is
 /// a word character substituted for it, else not allowed.
 fn end(p: char, u: char) -> Option<usize> {
-    if p == u {
-        Some(0)
-    } else {
-        word(u).then_some(1)
-    }
+    if p == u { Some(0) } else { word(u).then_some(1) }
 }
 
 /// The cost of `u` against the literal `p`: over pattern positions i <= j (i = j when u is one
@@ -258,11 +254,7 @@ impl Pattern {
                 Pattern::Literal(p) => literal_cost(&p.chars().collect::<Vec<_>>(), s).filter(|&c| c <= n),
                 Pattern::Regex(r) => {
                     let (lo, hi) = r.lengths();
-                    if s.len() + n < lo || hi.is_some_and(|hi| s.len() > hi + n) {
-                        None
-                    } else {
-                        regex_cost(r, s, n, &alphabet)
-                    }
+                    if s.len() + n < lo || hi.is_some_and(|hi| s.len() > hi + n) { None } else { regex_cost(r, s, n, &alphabet) }
                 }
             };
             memo.insert(s.to_vec(), c);

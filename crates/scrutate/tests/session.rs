@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 #[path = "support/tag.rs"]
 mod tag;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
@@ -376,10 +376,10 @@ fn an_edit_is_in_the_next_answer_through_the_session() {
     assert!(err.contains("indexed 1 changed files"), "{err}");
     // a definition renamed in place is gone from the next answer, and its new name is there
     fs::write(r.root.join("pkg/late.py"), "def renamed_now():\n    return 1\n").unwrap();
-    assert_eq!(r.through(&["symbol", "arrived_late"], &[]).0 .0, 1);
-    assert!(r.through(&["symbol", "renamed_now"], &[]).0 .1.starts_with("pkg/late.py:1-2"));
+    assert_eq!(r.through(&["symbol", "arrived_late"], &[]).0.0, 1);
+    assert!(r.through(&["symbol", "renamed_now"], &[]).0.1.starts_with("pkg/late.py:1-2"));
     fs::remove_file(r.root.join("pkg/late.py")).unwrap();
-    assert_eq!(r.through(&["symbol", "renamed_now"], &[]).0 .0, 1);
+    assert_eq!(r.through(&["symbol", "renamed_now"], &[]).0.0, 1);
 }
 
 #[test]

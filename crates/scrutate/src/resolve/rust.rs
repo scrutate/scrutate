@@ -91,11 +91,7 @@ impl Rules for Rust {
         let holder = f.kind() == "scoped_identifier"
             && f.child_by_field_name("name").is_some_and(|n| text(n, src) == "new")
             && f.child_by_field_name("path").is_some_and(|p| RUST_DEREF.contains(&text(p, src)));
-        if holder {
-            r.constructed(path, fi, Lang::Rust, v.child_by_field_name("arguments")?.named_child(0)?)
-        } else {
-            None
-        }
+        if holder { r.constructed(path, fi, Lang::Rust, v.child_by_field_name("arguments")?.named_child(0)?) } else { None }
     }
 
     fn constructed_name(r: &mut Resolver, path: &str, fi: &FileInfo, v: Node) -> Option<Ty> {
@@ -499,21 +495,13 @@ impl Resolver<'_> {
     /// Directory that stands for the module of a Rust file (`a/b.rs` and `a/b/mod.rs` -> `a/b`).
     pub(super) fn rust_mod_dir(path: &str) -> String {
         let base = path.rsplit('/').next().unwrap_or(path);
-        if matches!(base, "mod.rs" | "lib.rs" | "main.rs") {
-            dir_of(path).to_string()
-        } else {
-            join(dir_of(path), base.trim_end_matches(".rs"))
-        }
+        if matches!(base, "mod.rs" | "lib.rs" | "main.rs") { dir_of(path).to_string() } else { join(dir_of(path), base.trim_end_matches(".rs")) }
     }
 
     /// The directory a Rust file's own `mod` and `self::` start at: its module's, or its own
     /// directory when it is a crate root.
     fn rust_own_dir(&self, path: &str) -> String {
-        if self.rust_root_file(path) {
-            dir_of(path).to_string()
-        } else {
-            Self::rust_mod_dir(path)
-        }
+        if self.rust_root_file(path) { dir_of(path).to_string() } else { Self::rust_mod_dir(path) }
     }
 
     /// `build.rs` beside a `Cargo.toml`, or a file directly in a target folder: a crate root.
@@ -771,10 +759,8 @@ pub(super) fn cargo_package_name(toml: &str) -> Option<String> {
         let l = line.trim();
         if l.starts_with('[') {
             in_pkg = l == "[package]";
-        } else if in_pkg {
-            if let Some(v) = l.strip_prefix("name").map(str::trim_start).and_then(|v| v.strip_prefix('=')) {
-                return Some(v.trim().trim_matches('"').to_string());
-            }
+        } else if in_pkg && let Some(v) = l.strip_prefix("name").map(str::trim_start).and_then(|v| v.strip_prefix('=')) {
+            return Some(v.trim().trim_matches('"').to_string());
         }
     }
     None

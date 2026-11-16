@@ -43,7 +43,9 @@ fn put(root: &Path, rel: &str, text: &str) {
 }
 
 fn py(i: usize) -> String {
-    format!("import os\n\nclass Holder{i}:\n    def run_{i}(self, x):\n        return helper_{i}(x) + {i}\n\n\ndef helper_{i}(x):\n    \"\"\"Add one to x.\"\"\"\n    return os.path.join(str(x), 'v{i}')\n")
+    format!(
+        "import os\n\nclass Holder{i}:\n    def run_{i}(self, x):\n        return helper_{i}(x) + {i}\n\n\ndef helper_{i}(x):\n    \"\"\"Add one to x.\"\"\"\n    return os.path.join(str(x), 'v{i}')\n"
+    )
 }
 
 fn rs(i: usize) -> String {
@@ -491,7 +493,10 @@ fn damage_to_the_store_met_at_a_change_of_vector_model_builds_the_index_again() 
     for (name, damage) in [
         ("garbage", "UPDATE artifacts SET body = x'789c0300000000' WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')"),
         ("missing", "DELETE FROM artifacts WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')"),
-        ("other", "UPDATE artifacts SET body=(SELECT body FROM artifacts WHERE key=(SELECT art FROM files WHERE path='src/m0.py')) WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')"),
+        (
+            "other",
+            "UPDATE artifacts SET body=(SELECT body FROM artifacts WHERE key=(SELECT art FROM files WHERE path='src/m0.py')) WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')",
+        ),
     ] {
         let t = built_without_a_model(&format!("switch_damage_{name}"));
         open(&t.0, &models).damage_for_tests(damage).unwrap();

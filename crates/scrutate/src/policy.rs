@@ -3,8 +3,8 @@
 //! from the operating system; a test gives its own. The scheduler takes them once per search and
 //! once per look at the count, never per file.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What the thread rules read of the machine.
 pub(super) trait Machine: Sync {
@@ -119,21 +119,13 @@ impl Policy {
     /// Threads searching many files: the number asked for, or the cores (the performance cores
     /// where there are such).
     pub(super) fn threads(&self) -> usize {
-        if self.asked != 0 {
-            self.asked
-        } else {
-            self.threads
-        }
+        if self.asked != 0 { self.asked } else { self.threads }
     }
 
     /// Threads for one large file searched as ranges: every core, since that work is matching
     /// rather than opening files.
     pub(super) fn range_threads(&self) -> usize {
-        if self.asked != 0 {
-            self.asked
-        } else {
-            self.cores
-        }
+        if self.asked != 0 { self.asked } else { self.cores }
     }
 
     /// Threads searching the files a walking thread finds in roots without directories.
@@ -257,7 +249,7 @@ fn cores() -> (usize, Option<usize>) {
 
 #[cfg(target_os = "macos")]
 fn performance_cores() -> Option<usize> {
-    extern "C" {
+    unsafe extern "C" {
         fn sysctlbyname(name: *const std::ffi::c_char, oldp: *mut std::ffi::c_void, oldlenp: *mut usize, newp: *mut std::ffi::c_void, newlen: usize) -> i32;
     }
     let mut v: i32 = 0;

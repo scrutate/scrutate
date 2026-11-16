@@ -185,7 +185,7 @@ mod sys {
         flags: c_int,
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn semget(key: c_int, nsems: c_int, flags: c_int) -> c_int;
         fn semop(id: c_int, ops: *mut Sembuf, n: usize) -> c_int;
         fn semctl(id: c_int, num: c_int, cmd: c_int, ...) -> c_int;

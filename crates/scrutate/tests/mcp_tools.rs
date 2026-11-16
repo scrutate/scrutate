@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use scrutate::session::{Every, Session};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[path = "support/conforms.rs"]
 mod schema;
@@ -706,7 +706,10 @@ fn a_call_through_an_imported_module_is_not_a_call_of_a_local_namesake() {
         "module_calls",
         &[
             ("cls.py", "class Alpha:\n    def run(self):\n        return 1\n\n\ndef drive(a: Alpha):\n    return a.run()\n"),
-            ("other.py", "import subprocess\nimport os.path\n\n\ndef shell_out():\n    return subprocess.run(['ls'])\n\n\ndef join_it():\n    return os.path.join('a', 'b')\n"),
+            (
+                "other.py",
+                "import subprocess\nimport os.path\n\n\ndef shell_out():\n    return subprocess.run(['ls'])\n\n\ndef join_it():\n    return os.path.join('a', 'b')\n",
+            ),
             ("paths.py", "def join(a, b):\n    return a + b\n\n\ndef glue():\n    return join('a', 'b')\n"),
         ],
     );

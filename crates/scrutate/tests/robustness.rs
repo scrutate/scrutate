@@ -4,8 +4,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[path = "support/tag.rs"]
 mod tag;
@@ -98,7 +98,7 @@ fn hostile_text_shapes_never_panic() {
     r.write("longline.py", long.as_bytes()); // > MAX_FILE_BYTES: skipped by Engine B, searched by Engine A
     let short: String = (0..200_000).map(|i| format!("v{i} = {i}\n")).collect();
     r.write("manylines.py", short.as_bytes()); // ~2.5 MB: also skipped by Engine B
-                                               // deep nesting in several grammars
+    // deep nesting in several grammars
     r.write("deep.py", format!("x = {}1{}\n", "[".repeat(5000), "]".repeat(5000)).as_bytes());
     r.write("deep.json", format!("{}1{}", "[".repeat(20000), "]".repeat(20000)).as_bytes());
     r.write("deep.js", format!("let x = {}1{};\n", "(".repeat(5000), ")".repeat(5000)).as_bytes());
@@ -282,7 +282,7 @@ fn unreadable_files_are_reported_not_fatal() {
 }
 
 #[cfg(unix)]
-extern "C" {
+unsafe extern "C" {
     #[link_name = "geteuid"]
     fn libc_geteuid() -> u32;
 }

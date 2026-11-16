@@ -283,10 +283,10 @@ fn java_classes<'t>(fi: &FileInfo, node: Node<'t>) -> Vec<JClass<'t>> {
             if let Some(id) = java_def(fi, n) {
                 out.push(JClass::Named(id));
             }
-        } else if n.kind() == "class_body" {
-            if let Some(p) = n.parent().filter(|p| p.kind() == "object_creation_expression") {
-                out.push(JClass::Anon(p));
-            }
+        } else if n.kind() == "class_body"
+            && let Some(p) = n.parent().filter(|p| p.kind() == "object_creation_expression")
+        {
+            out.push(JClass::Anon(p));
         }
         a = n.parent();
     }
@@ -336,11 +336,7 @@ fn java_scope(b: Node) -> Option<Node> {
         "formal_parameter" | "resource" => p.parent()?.parent(),
         "variable_declarator" => {
             let d = p.parent()?;
-            if d.kind() == "spread_parameter" {
-                d.parent()?.parent()
-            } else {
-                d.parent()
-            }
+            if d.kind() == "spread_parameter" { d.parent()?.parent() } else { d.parent() }
         }
         "catch_formal_parameter" | "inferred_parameters" => p.parent(),
         "enhanced_for_statement" | "lambda_expression" => Some(p),
@@ -801,10 +797,10 @@ impl<'a> Resolver<'a> {
         let pkg = java_package(&fi.src);
         if let Some(mut files) = self.java_package_files(&pkg) {
             // the default package is one per directory, not one for the whole repository
-            if pkg.is_empty() {
-                if let Some(dir) = fi.defs.iter().find_map(|d| self.def_row(d.id)).map(|(p, _)| dir_of(&p).to_string()) {
-                    files.retain(|f| dir_of(f) == dir);
-                }
+            if pkg.is_empty()
+                && let Some(dir) = fi.defs.iter().find_map(|d| self.def_row(d.id)).map(|(p, _)| dir_of(&p).to_string())
+            {
+                files.retain(|f| dir_of(f) == dir);
             }
             if let Some(id) = self.java_top(&files, name) {
                 return Ok(id);
@@ -871,10 +867,10 @@ impl<'a> Resolver<'a> {
             };
         }
         for c in java_classes(fi, e) {
-            if let JClass::Named(id) = c {
-                if self.java_has_field(id, name, 0, &mut HashMap::new()) {
-                    return self.java_field_ty(id, name, 0, &mut HashMap::new());
-                }
+            if let JClass::Named(id) = c
+                && self.java_has_field(id, name, 0, &mut HashMap::new())
+            {
+                return self.java_field_ty(id, name, 0, &mut HashMap::new());
             }
         }
         None
@@ -937,10 +933,10 @@ impl<'a> Resolver<'a> {
             return None;
         }
         for b in self.java_bases(id).iter() {
-            if let Ok(bid) = *b {
-                if let Some(t) = self.java_field_ty(bid, name, depth + 1, seen).filter(|_| bid != id) {
-                    return Some(t);
-                }
+            if let Ok(bid) = *b
+                && let Some(t) = self.java_field_ty(bid, name, depth + 1, seen).filter(|_| bid != id)
+            {
+                return Some(t);
             }
         }
         None

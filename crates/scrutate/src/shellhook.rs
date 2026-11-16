@@ -9,7 +9,7 @@
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The first command of a command line, as far as the hook reads it.
 #[derive(Debug, PartialEq)]
@@ -840,7 +840,7 @@ fn rewrites_lines(argv: &[String]) -> Option<&str> {
 fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
     use std::os::fd::FromRawFd;
     use std::os::unix::process::CommandExt;
-    extern "C" {
+    unsafe extern "C" {
         fn pipe(fds: *mut i32) -> i32;
         fn fcntl(fd: i32, cmd: i32, ...) -> i32;
         fn fork() -> i32;
@@ -923,8 +923,8 @@ fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
 fn die_with_us_windows(child: Option<&std::process::Child>) -> Option<*mut std::ffi::c_void> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
     };
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
     // SAFETY: a job this function makes, given this process's pseudo handle or the child's own
@@ -974,23 +974,18 @@ fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, 
     };
     let mut t = text.to_string();
     let (prefix, rest) = crate::secrets::split_line(&t);
-    if crate::secrets::could_be_key_line(rest) {
-        if let Some((path, n)) = crate::secrets::grep_place(prefix) {
-            if let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok()) {
-                let end = if rest.ends_with('\n') { "\n" } else { "" };
-                t = format!("{prefix}{key}{end}");
-                *r.counts.entry("private-key").or_default() += k;
-            }
-        }
+    if crate::secrets::could_be_key_line(rest)
+        && let Some((path, n)) = crate::secrets::grep_place(prefix)
+        && let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok())
+    {
+        let end = if rest.ends_with('\n') { "\n" } else { "" };
+        t = format!("{prefix}{key}{end}");
+        *r.counts.entry("private-key").or_default() += k;
     }
     let (redacted, marks) = if public { r.redact_public(&t) } else { r.redact(&t) };
     let marks = marks.len();
     let t = redacted.into_owned();
-    if exact || marks > 0 || t != text {
-        t.into_bytes()
-    } else {
-        line.to_vec()
-    }
+    if exact || marks > 0 || t != text { t.into_bytes() } else { line.to_vec() }
 }
 
 /// Streams the child's standard output to ours, line by line, with secrets redacted. With a
@@ -1002,10 +997,8 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let mut reader = std::io::BufReader::new(out);
     let mut so = std::io::stdout().lock();
     let redact = crate::secrets::on(true);
-    if redact {
-        if let Ok(cwd) = std::env::current_dir() {
-            crate::secrets::know_key_lines_at(&cwd);
-        }
+    if redact && let Ok(cwd) = std::env::current_dir() {
+        crate::secrets::know_key_lines_at(&cwd);
     }
     let mut r = crate::secrets::Redactor::default();
     // a line of a key's body grep shows without its armour, read back from its file
@@ -1126,7 +1119,9 @@ pub fn run_main(args: &[String]) -> i32 {
         }
     }
     if let Some(flag) = rewrites_lines(argv) {
-        eprintln!("scrutate hook run: rg's {flag} changes each line before scrutate can find a secret in it: not run (`scrutate grep --json` gives JSON with secrets redacted)");
+        eprintln!(
+            "scrutate hook run: rg's {flag} changes each line before scrutate can find a secret in it: not run (`scrutate grep --json` gives JSON with secrets redacted)"
+        );
         return 2;
     }
     let Ok(exe) = std::env::current_exe() else { return 2 };

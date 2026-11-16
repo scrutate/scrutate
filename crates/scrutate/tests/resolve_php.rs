@@ -194,7 +194,10 @@ fn the_accept_fixture_resolves_a_method_through_a_typed_local() {
         "accept",
         &[
             ("app/Models/User.php", "<?php\nnamespace App\\Models;\n\nclass User\n{\n    public function name() { return \"u\"; }\n}\n"),
-            ("app/Http/Controller.php", "<?php\nnamespace App\\Http;\n\nuse App\\Models\\User;\n\nclass Controller\n{\n    public function show() { $u = new User(); return $u->name(); }\n}\n"),
+            (
+                "app/Http/Controller.php",
+                "<?php\nnamespace App\\Http;\n\nuse App\\Models\\User;\n\nclass Controller\n{\n    public function show() { $u = new User(); return $u->name(); }\n}\n",
+            ),
         ],
     );
     assert_eq!(r.resolved("name"), expect(&[("app/Http/Controller.php", 8, "app/Models/User.php"), ("app/Models/User.php", 6, "app/Models/User.php")]));

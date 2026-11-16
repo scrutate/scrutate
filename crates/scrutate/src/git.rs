@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
 use crate::fmt::echo;
 
@@ -824,11 +824,7 @@ impl std::error::Error for LacksObjects {}
 
 /// The error of a git that exited with `why`, the first line of its errors.
 fn failed(args: &[&str], why: &str) -> anyhow::Error {
-    if why.contains("lazy fetching disabled") {
-        LacksObjects(verb(args).to_string()).into()
-    } else {
-        anyhow!("git {}: {why}", verb(args))
-    }
+    if why.contains("lazy fetching disabled") { LacksObjects(verb(args).to_string()).into() } else { anyhow!("git {}: {why}", verb(args)) }
 }
 
 /// The git command `args` run, past the options in front of it (`-c` and its setting,
@@ -885,11 +881,7 @@ fn plain_value(name: &str, value: &str) -> String {
 fn plain_dir(root: &Path) -> PathBuf {
     let s = root.to_string_lossy();
     let p = crate::paths::plain(&s);
-    if p != s {
-        PathBuf::from(p.as_ref())
-    } else {
-        root.to_path_buf()
-    }
+    if p != s { PathBuf::from(p.as_ref()) } else { root.to_path_buf() }
 }
 
 #[cfg(test)]

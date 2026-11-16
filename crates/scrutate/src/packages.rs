@@ -8,8 +8,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, anyhow, bail};
+use serde_json::{Value, json};
 
 use crate::ops::{Answer, Op};
 use crate::search::Searcher;
@@ -318,10 +318,10 @@ pub fn cache_dir(given: Option<&Path>) -> Result<PathBuf> {
     if let Some(d) = env_dir("XDG_CACHE_HOME") {
         return Ok(d.join("scrutate"));
     }
-    if cfg!(windows) {
-        if let Some(d) = env_dir("LOCALAPPDATA") {
-            return Ok(d.join("scrutate"));
-        }
+    if cfg!(windows)
+        && let Some(d) = env_dir("LOCALAPPDATA")
+    {
+        return Ok(d.join("scrutate"));
     }
     let home = home().ok_or_else(|| anyhow!("no user cache directory: set SCRUTATE_CACHE_DIR"))?;
     Ok(if cfg!(target_os = "macos") { home.join("Library/Caches/scrutate") } else { home.join(".cache/scrutate") })
@@ -369,12 +369,12 @@ impl Dist {
 /// are the repository's own, reached through no link; and those that a link reaches.
 fn site_packages(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut found = vec![PathBuf::from(".venv/Lib/site-packages")];
-    if own(root, Path::new(".venv/lib")) {
-        if let Ok(rd) = std::fs::read_dir(root.join(".venv/lib")) {
-            let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| Path::new(".venv/lib").join(e.file_name()).join("site-packages")).collect();
-            dirs.sort();
-            found.extend(dirs);
-        }
+    if own(root, Path::new(".venv/lib"))
+        && let Ok(rd) = std::fs::read_dir(root.join(".venv/lib"))
+    {
+        let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| Path::new(".venv/lib").join(e.file_name()).join("site-packages")).collect();
+        dirs.sort();
+        found.extend(dirs);
     }
     let (mut mine, mut linked) = (Vec::new(), Vec::new());
     if !own(root, Path::new(".venv/lib")) && root.join(".venv/lib").is_dir() {
@@ -454,11 +454,7 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
         }
         Eco::Python => {
             let mine: Vec<String> = dists.iter().filter(|d| normalized(&d.name) == normalized(&l.name)).flat_map(Dist::tops).collect();
-            if mine.is_empty() {
-                vec![normalized(&l.name).replace('-', "_")]
-            } else {
-                mine
-            }
+            if mine.is_empty() { vec![normalized(&l.name).replace('-', "_")] } else { mine }
         }
     }
 }
@@ -924,11 +920,7 @@ fn shown_path_on(root: &Path, p: &Path, windows: bool) -> String {
         Err(_) => {
             let s = p.to_string_lossy();
             let s = crate::paths::plain_on(&s, windows);
-            if windows {
-                s.replace('\\', "/")
-            } else {
-                s.into_owned()
-            }
+            if windows { s.replace('\\', "/") } else { s.into_owned() }
         }
     }
 }
@@ -1111,7 +1103,9 @@ mod tests {
 
     #[test]
     fn go_mod_requires_and_replaces() {
-        let l = go_mod("module m\n\nrequire (\n\ta.com/x v1.0.0 // indirect\n\tb.com/y v2.0.0\n)\nrequire c.com/z v0.1.0\n\nreplace b.com/y => ./y\nreplace (\n\tc.com/z v0.1.0 => d.com/z v0.2.0\n)\n");
+        let l = go_mod(
+            "module m\n\nrequire (\n\ta.com/x v1.0.0 // indirect\n\tb.com/y v2.0.0\n)\nrequire c.com/z v0.1.0\n\nreplace b.com/y => ./y\nreplace (\n\tc.com/z v0.1.0 => d.com/z v0.2.0\n)\n",
+        );
         let got: Vec<(String, String, From)> = l.into_iter().map(|l| (l.name, l.version, l.from)).collect();
         assert_eq!(
             got,

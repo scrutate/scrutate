@@ -86,7 +86,10 @@ impl Repo {
                 format!("{SHAPES}/Circle.java"),
                 "package com.acme.shapes;\n\npublic class Circle implements Shape {\n    private final double r;\n\n    public Circle(double r) {\n        this.r = r;\n    }\n\n    public double area() {\n        return 3 * r * r;\n    }\n\n    public static Circle unit() {\n        return new Circle(1);\n    }\n\n    public Report summary() {\n        return new Report(area());\n    }\n}\n",
             ),
-            (format!("{SHAPES}/Square.java"), "package com.acme.shapes;\n\npublic class Square implements Shape {\n    public double area() {\n        return 4;\n    }\n}\n"),
+            (
+                format!("{SHAPES}/Square.java"),
+                "package com.acme.shapes;\n\npublic class Square implements Shape {\n    public double area() {\n        return 4;\n    }\n}\n",
+            ),
             (
                 format!("{SHAPES}/Report.java"),
                 "package com.acme.shapes;\n\npublic class Report {\n    private final double value;\n\n    public Report(double value) {\n        this.value = value;\n    }\n\n    public boolean ok() {\n        return value > 0;\n    }\n}\n",
@@ -130,11 +133,7 @@ impl Repo {
         assert_eq!(code, 0, "{out}");
         let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
         // an answer leaves in its envelope; `check` prints a report of its own
-        if v["schema"] == 2 {
-            v["result"].clone()
-        } else {
-            v
-        }
+        if v["schema"] == 2 { v["result"].clone() } else { v }
     }
     /// The relative `path:start` of each item of a `callers` or `callees` answer.
     fn names(&self, args: &[&str]) -> Vec<String> {

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 #[path = "support/tag.rs"]
 mod tag;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
@@ -52,11 +52,7 @@ impl Drop for Repo {
 
 fn uri(p: &Path) -> String {
     let s = p.to_string_lossy().replace('\\', "/");
-    if s.starts_with('/') {
-        format!("file://{s}")
-    } else {
-        format!("file:///{s}")
-    }
+    if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
 }
 
 struct Client {

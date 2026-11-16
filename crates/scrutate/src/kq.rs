@@ -324,10 +324,10 @@ impl Registry {
                 if kind != Kind::Dir && !keep(&path) {
                     continue;
                 }
-                if before.get(&e.file_name()).is_some_and(|k| *k != kind) {
-                    if let Some(&i) = self.by_path.get(&path) {
-                        self.forget(i);
-                    }
+                if before.get(&e.file_name()).is_some_and(|k| *k != kind)
+                    && let Some(&i) = self.by_path.get(&path)
+                {
+                    self.forget(i);
                 }
                 now.insert(e.file_name(), kind);
                 // a link, socket or pipe is named alone: its coming and going is the directory's note
@@ -371,11 +371,7 @@ impl Registry {
             let notes = self.drain_raw()?;
             // gone under us: no proof either way, so no kqueue
             let Some(&i) = self.by_path.get(probe) else { return Err(Off::Probe) };
-            if notes.iter().any(|&(j, f)| j == i && f & (libc::NOTE_WRITE | libc::NOTE_EXTEND) != 0) {
-                Ok(())
-            } else {
-                Err(Off::Probe)
-            }
+            if notes.iter().any(|&(j, f)| j == i && f & (libc::NOTE_WRITE | libc::NOTE_EXTEND) != 0) { Ok(()) } else { Err(Off::Probe) }
         })();
         if let Some(&i) = self.by_path.get(probe) {
             self.forget(i);

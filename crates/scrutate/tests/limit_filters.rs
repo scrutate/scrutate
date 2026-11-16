@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use scrutate::session::{Every, Session};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Rng(u64);
 

@@ -6,7 +6,7 @@
 //! ASCII byte, a UTF-8 encoded character, or a byte of invalid UTF-8 (which no position matches).
 //! Case folds as the regex engine folds it. Anchors and word boundaries are not supported.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use grep_matcher::{LineTerminator, Match, Matcher, NoCaptures, NoError};
 use regex_syntax::hir::{Class, Hir, HirKind};
 
@@ -315,11 +315,11 @@ impl FuzzyRegex {
             let gap = &units[units.partition_point(|&u| u < from)..units.partition_point(|&u| u < to)];
             let mut at = from;
             for s in rev.starts(line, gap, c) {
-                if s >= at {
-                    if let Some(e) = self.longest_from(line, s, to, c, &to_end) {
-                        out.push((s, e));
-                        at = e;
-                    }
+                if s >= at
+                    && let Some(e) = self.longest_from(line, s, to, c, &to_end)
+                {
+                    out.push((s, e));
+                    at = e;
                 }
             }
         })

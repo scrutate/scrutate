@@ -4,12 +4,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
 use crate::fmt::{echo, shown};
 use crate::index::{ChunkRow, Index};
-use crate::search::{Hit, Searcher, CODE_KINDS};
-use crate::text::{tokenize2, BODY_CAP};
+use crate::search::{CODE_KINDS, Hit, Searcher};
+use crate::text::{BODY_CAP, tokenize2};
 use crate::tscache::Key;
 
 /// The path and line a location names: `path:line`, or `path:start-end` as every answer prints
@@ -965,18 +965,20 @@ pub fn tsquery_each(
                     }
                     if *ok {
                         let raw = std::fs::read(path).ok();
-                        if let Some((raw, src)) = raw.as_deref().and_then(|raw| Some((raw, crate::index::decode_source(raw)?.into_owned()))) {
-                            if crate::parse::spec_for(rel, &src).map(|s| s.id) == Some(spec.id) {
-                                key = cached.map(|_| crate::tscache::key(&crate::index::content_hash(raw), rel));
-                                if let Some(caps) = hit(key) {
-                                    let _ = tx.send((i, key, caps, true));
-                                    return;
-                                }
-                                if gate_ref.as_ref().is_some_and(|g| !may_match(g, &src)) {
-                                    let _ = tx.send((i, key, Vec::new(), true));
-                                    return;
-                                }
-                                if let Some(tree) = parser.parse(src.as_bytes(), None) {
+                        if let Some((raw, src)) = raw.as_deref().and_then(|raw| Some((raw, crate::index::decode_source(raw)?.into_owned())))
+                            && crate::parse::spec_for(rel, &src).map(|s| s.id) == Some(spec.id)
+                        {
+                            key = cached.map(|_| crate::tscache::key(&crate::index::content_hash(raw), rel));
+                            if let Some(caps) = hit(key) {
+                                let _ = tx.send((i, key, caps, true));
+                                return;
+                            }
+                            if gate_ref.as_ref().is_some_and(|g| !may_match(g, &src)) {
+                                let _ = tx.send((i, key, Vec::new(), true));
+                                return;
+                            }
+                            match parser.parse(src.as_bytes(), None) {
+                                Some(tree) => {
                                     let mut cursor = tree_sitter::QueryCursor::new();
                                     cursor.set_match_limit(1 << 16);
                                     let mut matches = cursor.matches(q_ref, tree.root_node(), src.as_bytes());
@@ -999,7 +1001,8 @@ pub fn tsquery_each(
                                             break;
                                         }
                                     }
-                                } else {
+                                }
+                                _ => {
                                     complete = false;
                                 }
                             }
@@ -1348,12 +1351,14 @@ mod literal_gate {
                 if n.is_named() && !kinds.contains(&n.kind()) {
                     kinds.push(n.kind());
                 }
-                if n.child_count() == 0 {
-                    if let Ok(t) = n.utf8_text(src.as_bytes()) {
-                        if !t.is_empty() && t.len() < 20 && !t.contains(['"', '\\', '\n']) && texts.len() < 50 {
-                            texts.push(t.to_string());
-                        }
-                    }
+                if n.child_count() == 0
+                    && let Ok(t) = n.utf8_text(src.as_bytes())
+                    && !t.is_empty()
+                    && t.len() < 20
+                    && !t.contains(['"', '\\', '\n'])
+                    && texts.len() < 50
+                {
+                    texts.push(t.to_string());
                 }
                 stack.extend(n.children(&mut cursor));
             }

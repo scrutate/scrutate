@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::npy::{load_npz, load_npz_bytes};
 

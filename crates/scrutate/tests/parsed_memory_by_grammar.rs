@@ -85,10 +85,11 @@ fn bytes_a_node_of_a_grammar() {
             let p = e.path();
             if p.is_dir() {
                 dirs.push(p);
-            } else if p.extension().is_some_and(|x| x == ext.as_str()) && e.metadata().is_ok_and(|m| m.len() < 1 << 20) {
-                if let Ok(body) = std::fs::read_to_string(&p) {
-                    files.push((format!("f{}.{ext}", files.len()), body));
-                }
+            } else if p.extension().is_some_and(|x| x == ext.as_str())
+                && e.metadata().is_ok_and(|m| m.len() < 1 << 20)
+                && let Ok(body) = std::fs::read_to_string(&p)
+            {
+                files.push((format!("f{}.{ext}", files.len()), body));
             }
         }
     }

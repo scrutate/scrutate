@@ -208,10 +208,10 @@ pub fn root_from_args(args: &[String]) -> PathBuf {
         if let Some(v) = a.strip_prefix("--root=") {
             return PathBuf::from(v);
         }
-        if a == "--root" {
-            if let Some(v) = args.get(i + 1) {
-                return PathBuf::from(v);
-            }
+        if a == "--root"
+            && let Some(v) = args.get(i + 1)
+        {
+            return PathBuf::from(v);
         }
     }
     std::env::var_os("SCRUTATE_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))

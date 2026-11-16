@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
-use crate::langs::{self, head_word, ImportHow, LangSpec, NameRule};
+use crate::langs::{self, ImportHow, LangSpec, NameRule, head_word};
 use crate::text::split_lines;
 
 #[derive(Debug, Clone, Default)]
@@ -318,11 +318,7 @@ pub fn clean_comment(raw: &str) -> String {
 fn head(text: &str, n: usize) -> String {
     let end = text.match_indices('\n').nth(n - 1).map_or(text.len(), |(i, _)| i);
     let (s, cut) = cap_bytes(&text[..end]);
-    if cut || end < text.len() {
-        format!("{s}\n...")
-    } else {
-        s.to_string()
-    }
+    if cut || end < text.len() { format!("{s}\n...") } else { s.to_string() }
 }
 
 /// `text` cut to `MAX_CHUNK_BYTES` ("\n..." when cut).
@@ -397,11 +393,7 @@ fn kept_lines(s: &[u8], n: usize) -> usize {
         }
         whole += (i < MAX_CHUNK_BYTES) as usize;
     }
-    if s.len() <= MAX_CHUNK_BYTES {
-        usize::MAX
-    } else {
-        whole.max(1)
-    }
+    if s.len() <= MAX_CHUNK_BYTES { usize::MAX } else { whole.max(1) }
 }
 
 /// Brackets alone or a block's closing word: nothing to search for.
@@ -533,11 +525,7 @@ fn head_bytes(src: &[u8], a: usize, b: usize, n: usize, max: usize) -> String {
         }
         cut = true;
     }
-    if cut {
-        txt(src, a, e) + "\n..."
-    } else {
-        txt(src, a, e)
-    }
+    if cut { txt(src, a, e) + "\n..." } else { txt(src, a, e) }
 }
 
 /// End of the first line of src[a..b], at most 1 KB on: keywords sit at the start of a line.
@@ -579,10 +567,11 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
         return (lua_table_owner(node, src), name);
     }
     if lang == "lua" || lang == "elixir" {
-        if let Some(i) = name.rfind(|c| c == '.' || lang == "lua" && c == ':') {
-            if i > 0 && i + 1 < name.len() {
-                return (Some(name[..i].replace(':', ".")), name[i + 1..].to_string());
-            }
+        if let Some(i) = name.rfind(|c| c == '.' || lang == "lua" && c == ':')
+            && i > 0
+            && i + 1 < name.len()
+        {
+            return (Some(name[..i].replace(':', ".")), name[i + 1..].to_string());
         }
         return (None, name);
     }
@@ -602,10 +591,11 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
     if matches!(lang, "javascript" | "typescript" | "tsx") && matches!(node.kind(), "method_definition" | "pair") {
         return (object_owner(node, src), name);
     }
-    if matches!(lang, "javascript" | "typescript" | "tsx") && node.kind() == "assignment_expression" {
-        if let Some((owner, last)) = name.rsplit_once('.') {
-            return (Some(owner.to_string()), last.to_string());
-        }
+    if matches!(lang, "javascript" | "typescript" | "tsx")
+        && node.kind() == "assignment_expression"
+        && let Some((owner, last)) = name.rsplit_once('.')
+    {
+        return (Some(owner.to_string()), last.to_string());
     }
     if lang == "go" && node.kind() == "method_declaration" {
         let mut stack: Vec<Node> = node.child_by_field_name("receiver").into_iter().collect();
@@ -983,11 +973,7 @@ fn def_head<'t>(lang: &str, node: Node<'t>) -> Option<Node<'t>> {
     match lang {
         "elixir" => {
             let head = node.children(&mut node.walk()).find(|c| c.kind() == "arguments")?.named_child(0)?;
-            if head.kind() == "binary_operator" {
-                head.child_by_field_name("left")
-            } else {
-                Some(head)
-            }
+            if head.kind() == "binary_operator" { head.child_by_field_name("left") } else { Some(head) }
         }
         "scheme" | "racket" => node.named_child(1).filter(|n| n.kind() == "list"),
         "elisp" => node.child_by_field_name("parameters"),
@@ -1212,8 +1198,8 @@ fn dig<'t>(mut node: Node<'t>, field: &str, kinds: &[&str]) -> Option<Node<'t>> 
     // the innermost node reached may itself contain the identifier as a child (parenthesized declarators)
     last.and_then(|n| {
         let mut cur = n.walk();
-        let found = n.children(&mut cur).find(|c| kinds.contains(&c.kind()));
-        found
+
+        n.children(&mut cur).find(|c| kinds.contains(&c.kind()))
     })
     .or(last)
 }
@@ -1296,11 +1282,11 @@ pub fn normalize_module(raw: &str) -> String {
     loop {
         let mut changed = false;
         for w in IMPORT_WORDS {
-            if let Some(rest) = t.strip_prefix(w) {
-                if rest.starts_with(|c: char| c.is_whitespace() || c == '(') {
-                    t = rest.trim_start().trim_start_matches('(').to_string();
-                    changed = true;
-                }
+            if let Some(rest) = t.strip_prefix(w)
+                && rest.starts_with(|c: char| c.is_whitespace() || c == '(')
+            {
+                t = rest.trim_start().trim_start_matches('(').to_string();
+                changed = true;
             }
         }
         if !changed {
@@ -1907,11 +1893,12 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         if this_member && def_stack.is_empty() {
             matched = None;
         }
-        if matched.is_none() && js {
-            if let Some(kind) = crate::langs::js_default_export(node, src) {
-                let name = node.child_by_field_name("name").map(|n| txt(src, n.start_byte(), n.end_byte()));
-                matched = Some((kind, name.unwrap_or_else(|| default_export_name(path))));
-            }
+        if matched.is_none()
+            && js
+            && let Some(kind) = crate::langs::js_default_export(node, src)
+        {
+            let name = node.child_by_field_name("name").map(|n| txt(src, n.start_byte(), n.end_byte()));
+            matched = Some((kind, name.unwrap_or_else(|| default_export_name(path))));
         }
         let mut pushed_now = false;
         if matches!(matched, Some(("key", _))) && def_stack.len() >= 2 {
@@ -2087,10 +2074,10 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         open_heads += usize::from(heads.contains(&node.id()));
     }
     let mut mdoc = String::new();
-    if spec.docstring {
-        if let Some((s, _)) = py_docstring_node(tree.root_node()) {
-            mdoc = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
-        }
+    if spec.docstring
+        && let Some((s, _)) = py_docstring_node(tree.root_node())
+    {
+        mdoc = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
     }
     if spec.id == "vhdl" {
         let objects = vhdl_objects(tree.root_node(), src);
@@ -2581,12 +2568,12 @@ pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Pa
     if let Some(lang) = custom.for_path(path) {
         return (Parsed { chunks: finish(path, source, custom_chunks(lang, source), String::new(), Vec::new()), imports: Vec::new(), binds: None }, None);
     }
-    if let Some(spec) = spec_for(path, source) {
-        if let Some(((chunks, mdoc, imports, loose, binds), tree)) = grammar_chunks(spec, path, source, prev) {
-            // a parsed file is the grammar's verdict even when it holds no definitions: the
-            // keyword heuristics would invent symbols from prose ("namespace so the ...")
-            return (Parsed { chunks: finish(path, source, chunks, mdoc, loose), imports, binds }, tree);
-        }
+    if let Some(spec) = spec_for(path, source)
+        && let Some(((chunks, mdoc, imports, loose, binds), tree)) = grammar_chunks(spec, path, source, prev)
+    {
+        // a parsed file is the grammar's verdict even when it holds no definitions: the
+        // keyword heuristics would invent symbols from prose ("namespace so the ...")
+        return (Parsed { chunks: finish(path, source, chunks, mdoc, loose), imports, binds }, tree);
     }
     // prose has keyword-looking lines ("module will be called foo" in Kconfig help text)
     let base = basename(path);
@@ -2888,18 +2875,44 @@ mod tests {
         }
         let chain = |head: &str, link: &str| format!("{head}{}", link.repeat(40));
         let shapes: Vec<(&str, String)> = vec![
-            ("a.js", format!("{};\n{};\n{};\nnew X(1);\nnew  \n Y.Z(2);\na(b.c)();\na.b(c.d)(e.f);\nthis.#p();\nthis.#q.r();\nobj?.m();\nnaïve.mé();\n$a.$b();\nx.();\nnew ();\n(a.b)();\n", chain("a", "()"), chain("x", ".a()"), chain("x", "?.a()"))),
+            (
+                "a.js",
+                format!(
+                    "{};\n{};\n{};\nnew X(1);\nnew  \n Y.Z(2);\na(b.c)();\na.b(c.d)(e.f);\nthis.#p();\nthis.#q.r();\nobj?.m();\nnaïve.mé();\n$a.$b();\nx.();\nnew ();\n(a.b)();\n",
+                    chain("a", "()"),
+                    chain("x", ".a()"),
+                    chain("x", "?.a()")
+                ),
+            ),
             ("a.ts", format!("{};\nf<T>(x);\na.b<T>().c();\n", chain("x", ".a()"))),
             ("a.py", format!("{}\n{}\nf(b.c)()\nnaïve()\nx.y.z(1)\n", chain("a", "()"), chain("x", ".a()"))),
-            ("a.rs", format!("fn f() {{ {}; {}; a::b::c(); r#match(); println!(\"x\"); f::<T>(x); a:::b(); self.f()(); a::<T>::b(); x.r#try(); }}\n", chain("a", "()"), chain("x", ".a()"))),
+            (
+                "a.rs",
+                format!(
+                    "fn f() {{ {}; {}; a::b::c(); r#match(); println!(\"x\"); f::<T>(x); a:::b(); self.f()(); a::<T>::b(); x.r#try(); }}\n",
+                    chain("a", "()"),
+                    chain("x", ".a()")
+                ),
+            ),
             ("a.go", format!("package a\nfunc f() {{ {}; {}; fmt.Println(1); a.b.c() }}\n", chain("a", "()"), chain("x", ".a()"))),
             ("A.java", format!("class A {{ void f() {{ {}; new B(); a.b.c(); this.<T>m(); }} }}\n", chain("x", ".a()"))),
-            ("a.cpp", format!("void f() {{ {}; {}; a.operator+(b); p->~Shape(); x.operator()(1); operator<<(o, x); a::b::c(); p->q->r(); A::~A(); x.operator==(y); std::operator<<(o, x); a::operator new(1); x.template f<T>(); }}\n", chain("a", "()"), chain("x", ".a()"))),
+            (
+                "a.cpp",
+                format!(
+                    "void f() {{ {}; {}; a.operator+(b); p->~Shape(); x.operator()(1); operator<<(o, x); a::b::c(); p->q->r(); A::~A(); x.operator==(y); std::operator<<(o, x); a::operator new(1); x.template f<T>(); }}\n",
+                    chain("a", "()"),
+                    chain("x", ".a()")
+                ),
+            ),
             ("b.cpp", "void f() { a.operator()()()(); p->operator->*(q); x.operator<=>(y); x.operator  () (1); a.operator[](1)(2); }\n".to_string()),
             ("a.c", format!("void f() {{ {}; p->q(); s.f(); }}\n", chain("a", "()"))),
             ("a.d", "void f() { auto p = new Point(1, 2); a.b(); }\n".to_string()),
             ("a.sol", "contract C { function f() public { new D(1); a.b(); } }\n".to_string()),
-            ("Makefile", "x := $(call f,$(call g,1),2)\ny := $(call  h ,x)\nz := $(call\tk)\n$(info $(call m))\nw := $(subst a,b,$(call n,1))\nv := $(call , x)\n".to_string()),
+            (
+                "Makefile",
+                "x := $(call f,$(call g,1),2)\ny := $(call  h ,x)\nz := $(call\tk)\n$(info $(call m))\nw := $(subst a,b,$(call n,1))\nv := $(call , x)\n"
+                    .to_string(),
+            ),
             ("a.php", format!("<?php\n\\A\\b();\nA::b();\n$a->b();\n{};\na\\b\\c();\nA::b()::c();\n$a::b();\n", chain("$a", "->b()"))),
             ("a.r", format!("a$b()\na.b()\npkg::f()\n{}\nx@y()\n", chain("x", "$a()"))),
             ("a.sh", "a::b\nfoo-bar x\na.b c\n$x y\n".to_string()),

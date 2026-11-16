@@ -786,37 +786,41 @@ link to a file outside the package and a package directory that is a link out of
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
     `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
 
+  Edition 2024 writes `unsafe` on each `extern` block (`unsafe extern "C"`), on
+  `#[unsafe(no_mangle)]`, and as a block around the body of an `unsafe fn`
+  (`unsafe_op_in_unsafe_fn`): these mark the sites listed above and add none.
+
   `vendor/ignore` has none. `tools/unsafe_count.py` counts the `unsafe` keywords outside comments
   and strings in every file under `crates/` and `vendor/ignore`, and the security workflow fails
   when the counts differ from this table, so a new `unsafe` needs a line above:
 
   | File | `unsafe` |
   |---|---|
-  | `crates/scrutate/src/cli.rs` | 6 |
+  | `crates/scrutate/src/cli.rs` | 8 |
   | `crates/scrutate/src/config.rs` | 1 |
   | `crates/scrutate/src/foldfind.rs` | 2 |
-  | `crates/scrutate/src/hook.rs` | 2 |
-  | `crates/scrutate/src/index.rs` | 6 |
-  | `crates/scrutate/src/instant.rs` | 2 |
+  | `crates/scrutate/src/hook.rs` | 3 |
+  | `crates/scrutate/src/index.rs` | 7 |
+  | `crates/scrutate/src/instant.rs` | 3 |
   | `crates/scrutate/src/kq.rs` | 11 |
-  | `crates/scrutate/src/lazy_bind.rs` | 7 |
+  | `crates/scrutate/src/lazy_bind.rs` | 14 |
   | `crates/scrutate/src/lex.rs` | 1 |
   | `crates/scrutate/src/npy.rs` | 14 |
-  | `crates/scrutate/src/policy.rs` | 1 |
+  | `crates/scrutate/src/policy.rs` | 2 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
-  | `crates/scrutate/src/running.rs` | 12 |
-  | `crates/scrutate/src/session.rs` | 58 |
-  | `crates/scrutate/src/shellhook.rs` | 5 |
+  | `crates/scrutate/src/running.rs` | 13 |
+  | `crates/scrutate/src/session.rs` | 59 |
+  | `crates/scrutate/src/shellhook.rs` | 6 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
-  | `crates/scrutate/src/watch.rs` | 25 |
-  | `crates/scrutate/tests/cli.rs` | 1 |
+  | `crates/scrutate/src/watch.rs` | 28 |
+  | `crates/scrutate/tests/cli.rs` | 2 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
-  | `crates/scrutate/tests/intel_refs.rs` | 1 |
-  | `crates/scrutate/tests/lazy_bind.rs` | 10 |
-  | `crates/scrutate/tests/parse_index.rs` | 1 |
-  | `crates/scrutate/tests/robustness.rs` | 1 |
-  | `crates/scrutate/tests/running.rs` | 1 |
+  | `crates/scrutate/tests/intel_refs.rs` | 2 |
+  | `crates/scrutate/tests/lazy_bind.rs` | 12 |
+  | `crates/scrutate/tests/parse_index.rs` | 2 |
+  | `crates/scrutate/tests/robustness.rs` | 2 |
+  | `crates/scrutate/tests/running.rs` | 2 |
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.
 - **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as on wasi),

@@ -6,15 +6,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use sha1::{Digest, Sha1};
 
 use crate::artifacts::{Artifact, Found, Key};
-use crate::lex::{merge_segments, FileLex, LexStore, QVecs, SegmentBuilder};
+use crate::lex::{FileLex, LexStore, QVecs, SegmentBuilder, merge_segments};
 use crate::models::ModelSet;
-use crate::parse::{parse_file_with, PrevParse};
+use crate::parse::{PrevParse, parse_file_with};
 use crate::semantic::SemanticModel;
 use crate::text::name_key;
 
@@ -304,7 +304,16 @@ pub mod prof {
         let g = |c: &AtomicU64| c.load(Ordering::Relaxed) as f64 / 1e9;
         eprintln!(
             "[scrutate profile] wall {wall:.2}s | cpu: read {:.2}s parse {:.2}s (tree-sitter {:.2}s) tokenize {:.2}s encode {:.2}s pack {:.2}s | serial: model {:.2}s store {:.2}s insert {:.2}s segment {:.2}s",
-            g(&READ), g(&PARSE), g(&TREESITTER), g(&TOKENIZE), g(&ENCODE), g(&PACK), g(&MODEL), g(&LOOKUP), g(&INSERT), g(&SEGMENT)
+            g(&READ),
+            g(&PARSE),
+            g(&TREESITTER),
+            g(&TOKENIZE),
+            g(&ENCODE),
+            g(&PACK),
+            g(&MODEL),
+            g(&LOOKUP),
+            g(&INSERT),
+            g(&SEGMENT)
         );
     }
 }
@@ -337,11 +346,7 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
         let dup = crate::search::CODE_KINDS.contains(&c.kind).then(|| {
             // the body's words are already made when the body is the text below the signature line
             let below = c.text.split_once('\n').map_or("", |(_, b)| b);
-            if below.trim_start() == c.body {
-                crate::intel::DupKeys::of_tokens(&c.text, &body_toks)
-            } else {
-                crate::intel::DupKeys::of(&c.text)
-            }
+            if below.trim_start() == c.body { crate::intel::DupKeys::of_tokens(&c.text, &body_toks) } else { crate::intel::DupKeys::of(&c.text) }
         });
         chunks.push(crate::artifacts::Chunk {
             dup,
@@ -455,7 +460,7 @@ impl Listed {
 #[cfg(windows)]
 mod change_time {
     use std::collections::HashMap;
-    use std::ffi::{c_void, OsString};
+    use std::ffi::{OsString, c_void};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
@@ -476,7 +481,7 @@ mod change_time {
     type ByName = unsafe extern "system" fn(name: *const u16, class: i32, out: *mut c_void, size: u32) -> i32;
 
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetFileInformationByHandleEx(file: *mut c_void, class: i32, out: *mut c_void, size: u32) -> i32;
         fn LoadLibraryW(name: *const u16) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
@@ -1282,12 +1287,11 @@ fn add_art(db: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
     let has = |db: &Connection| db.prepare("SELECT 1 FROM pragma_table_info('files') WHERE name='art'").and_then(|mut q| q.exists([]));
-    if !has(db)? {
-        if let Err(e) = retry_busy(|| db.execute_batch(ART_COLUMN)) {
-            if !has(db)? {
-                return Err(e);
-            }
-        }
+    if !has(db)?
+        && let Err(e) = retry_busy(|| db.execute_batch(ART_COLUMN))
+        && !has(db)?
+    {
+        return Err(e);
     }
     retry_busy(|| db.execute_batch(ART_INDEX))
 }
@@ -2296,12 +2300,11 @@ impl Index {
                 continue;
             };
             let force = force || relang_file(rel);
-            if !force {
-                if let Some(k) = known.get(rel) {
-                    if stat.matches(k.0, k.1, k.2) {
-                        continue; // stat unchanged: no read, no hash
-                    }
-                }
+            if !force
+                && let Some(k) = known.get(rel)
+                && stat.matches(k.0, k.1, k.2)
+            {
+                continue; // stat unchanged: no read, no hash
             }
             let hash = match (force, known.contains_key(rel)) {
                 (false, true) => self.db.prepare_cached("SELECT hash FROM files WHERE path=?1")?.query_row([rel], |r| r.get::<_, String>(0)).optional()?,
@@ -2324,7 +2327,7 @@ impl Index {
             changed = true;
         }
         let mut next_id: i64 = self.meta("next_id").and_then(|v| v.parse().ok()).unwrap_or(1); // ids are never reused
-                                                                                               // what this update names or drops is stamped with the data version it commits
+        // what this update names or drops is stamped with the data version it commits
         let stamp = self.meta("data_version").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0) + 1;
         let mut kept = 0usize;
         for g in &gone {
@@ -2639,10 +2642,10 @@ impl Index {
     }
 
     fn refresh_with(&mut self, min_interval: f64, wait: bool) -> Result<Option<UpdateStats>> {
-        if let Some(last) = self.last_refresh {
-            if last.elapsed().as_secs_f64() < min_interval.min(10.0 * self.scan_cost) {
-                return Ok(None);
-            }
+        if let Some(last) = self.last_refresh
+            && last.elapsed().as_secs_f64() < min_interval.min(10.0 * self.scan_cost)
+        {
+            return Ok(None);
         }
         if let Some(n) = self.newer().filter(|n| n.readable) {
             n.note();
@@ -2936,12 +2939,12 @@ impl Index {
             let counts: Vec<(String, String, i64)> = gone.query_map([rel], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
             let mut less = self.db.prepare_cached("UPDATE names SET n=n-?3 WHERE name_key=?1 AND name=?2 RETURNING rowid, n")?;
             for (key, name, k) in counts {
-                if let Some((rowid, n)) = less.query_row(params![key, name, k], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).optional()? {
-                    if n <= 0 {
-                        // the trigram index is told what it held, then the row goes
-                        self.db.execute("INSERT INTO names_tri(names_tri,rowid,name_key) VALUES('delete',?1,?2)", params![rowid, key])?;
-                        self.db.execute("DELETE FROM names WHERE rowid=?1", [rowid])?;
-                    }
+                if let Some((rowid, n)) = less.query_row(params![key, name, k], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).optional()?
+                    && n <= 0
+                {
+                    // the trigram index is told what it held, then the row goes
+                    self.db.execute("INSERT INTO names_tri(names_tri,rowid,name_key) VALUES('delete',?1,?2)", params![rowid, key])?;
+                    self.db.execute("DELETE FROM names WHERE rowid=?1", [rowid])?;
                 }
             }
             self.db.execute("DELETE FROM refs WHERE chunk_id IN (SELECT id FROM chunks WHERE path=?1)", [rel])?;

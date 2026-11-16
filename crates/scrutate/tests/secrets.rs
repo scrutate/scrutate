@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use scrutate::session::{Every, Session};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
@@ -1166,7 +1166,7 @@ fn hook_run_refuses_a_search_that_can_reach_an_index_file_whatever_its_output_sh
 #[cfg(unix)]
 #[test]
 fn hook_run_holds_for_every_allowed_flag() {
-    use scrutate::shellhook::{allowed_flags, Takes};
+    use scrutate::shellhook::{Takes, allowed_flags};
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::symlink;
     let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_every_flag_{}", std::process::id()));

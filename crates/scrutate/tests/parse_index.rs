@@ -32,7 +32,7 @@ fn thread_cpu() -> Duration {
             sec: i64,
             nsec: i64,
         }
-        extern "C" {
+        unsafe extern "C" {
             fn clock_gettime(clock: i32, ts: *mut Timespec) -> i32;
         }
         // CLOCK_THREAD_CPUTIME_ID
@@ -147,11 +147,7 @@ fn a_staircase_of_nested_definitions_without_a_grammar_parses_in_time_linear_in_
     let head = |s: &str| {
         let end = s.match_indices('\n').nth(scrutate::parse::MAX_CHUNK_LINES - 1).map_or(s.len(), |(i, _)| i);
         let kept = &s[..s[..end].floor_char_boundary(scrutate::parse::MAX_CHUNK_BYTES)];
-        if kept.len() < s.len() {
-            format!("{kept}\n...")
-        } else {
-            s.to_string()
-        }
+        if kept.len() < s.len() { format!("{kept}\n...") } else { s.to_string() }
     };
     let cases = [(9, 4, 199), (9, 4, 200), (9, 4, 201), (9, 4, 300), (9, 3300, 9), (9, 3300, 10), (20000, 3000, 4), (20000, 3000, 5)];
     let more = [(40000, 9, 3), (9, 32766, 1), (9, 32767, 1), (9, 32768, 1), (9, 16383, 2), (9, 16384, 2), (9, 16382, 3)];
@@ -174,11 +170,7 @@ fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
     ] {
         let make = |n: usize| {
             let body: String = (0..n).map(|i| line.replace("{i}", &i.to_string()).replace("{{", "{").replace("}}", "}") + "\n").collect();
-            if path.ends_with(".go") {
-                format!("package p\n{body}")
-            } else {
-                body
-            }
+            if path.ends_with(".go") { format!("package p\n{body}") } else { body }
         };
         assert_parse_scales_linearly(path, 1000, make, |n, chunks| {
             assert_eq!(chunks.iter().filter(|c| c.kind == "function").count(), n, "{path}");
@@ -359,7 +351,10 @@ fn cpp_call_operators_haskell_operators_and_r6_methods_are_named_definitions() {
 
 #[test]
 fn rust_macros_and_trait_methods_without_a_body_are_symbols() {
-    let got = symbols("a.rs", "macro_rules! square {\n    ($x:expr) => { $x * $x };\n}\n\ntrait Runner {\n    fn run(&self) -> u32;\n    fn name(&self) -> String { String::new() }\n}\n");
+    let got = symbols(
+        "a.rs",
+        "macro_rules! square {\n    ($x:expr) => { $x * $x };\n}\n\ntrait Runner {\n    fn run(&self) -> u32;\n    fn name(&self) -> String { String::new() }\n}\n",
+    );
     assert!(has(&got, "macro", "square") && has(&got, "function", "Runner.run") && has(&got, "function", "Runner.name"), "{got:?}");
 }
 
@@ -579,8 +574,20 @@ fn the_comment_right_above_a_definition_is_its_documentation() {
         ("a.ex", "defmodule M do\n  # The timeout.\n  @timeout 5000\n  def f, do: @timeout\nend\n", "M.f", 3, ""),
         ("a.erl", "-module(a).\n\n%% Adds one.\n-spec f(integer()) -> integer().\nf(X) -> X + 1.\n", "f", 5, "Adds one."),
         // the language's own documentation form
-        ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc \"\"\"\n  Adds one.\n  \"\"\"\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 8, "Adds one."),
-        ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc ~S\"\"\"\n  Adds one.\n  \"\"\"\n  def f(x), do: x + 1\nend\n", "M", 1, "The module."),
+        (
+            "a.ex",
+            "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc \"\"\"\n  Adds one.\n  \"\"\"\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n",
+            "M.f",
+            8,
+            "Adds one.",
+        ),
+        (
+            "a.ex",
+            "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc ~S\"\"\"\n  Adds one.\n  \"\"\"\n  def f(x), do: x + 1\nend\n",
+            "M",
+            1,
+            "The module.",
+        ),
         ("a.ex", "defmodule M do\n  @doc ~S\"Adds one.\"\n  def f(x), do: x + 1\nend\n", "M.f", 2, "Adds one."),
         ("a.hs", "module A where\n\n-- | Adds one.\nadd :: Int -> Int\nadd x = x + 1\n", "add", 4, "Adds one."),
         ("a.hs", "module A where\n\n{-| Adds one.\n-}\nadd :: Int -> Int\nadd x = x + 1\n", "add", 5, "Adds one."),
@@ -593,7 +600,13 @@ fn the_comment_right_above_a_definition_is_its_documentation() {
         ("a.ex", "defmodule M do\n  @doc false\n  def f(x), do: x\nend\n", "M.f", 2, ""),
         ("a.erl", "-module(a).\n\n-doc \"Adds one.\".\n-spec f(integer()) -> integer().\nf(X) -> X + 1.\n", "f", 5, "Adds one."),
         ("a.erl", "-module(a).\n\n-doc \"\"\"\nAdds one.\n\"\"\".\nf(X) -> X + 1.\n", "f", 6, "Adds one."),
-        ("a.adb", "procedure A is\n   --  Adds one.\n   function F return Integer is\n   begin\n      return 1;\n   end F;\nbegin\n   null;\nend A;\n", "A.F", 3, "Adds one."),
+        (
+            "a.adb",
+            "procedure A is\n   --  Adds one.\n   function F return Integer is\n   begin\n      return 1;\n   end F;\nbegin\n   null;\nend A;\n",
+            "A.F",
+            3,
+            "Adds one.",
+        ),
         ("a.nix", "{\n  # Adds one.\n  add = x: x + 1;\n}\n", "add", 3, "Adds one."),
         ("a.tf", "# The web server.\nresource \"aws_instance\" \"web\" {\n  ami = \"x\"\n}\n", "resource aws_instance web", 2, "The web server."),
         ("a.yml", "# The target.\ntarget:\n  key: 1\n", "target", 2, "The target."),
@@ -969,7 +982,10 @@ fn constants_come_last_and_do_not_move_the_file_header() {
 fn constants_are_found_by_name_but_never_ranked() {
     let root = tree(
         "constants",
-        &[("src/lib.rs", "/// How many retries.\npub const RETRY_LIMIT: usize = 3;\n\n/// Retries a request up to the limit.\npub fn retry_request() -> usize {\n    RETRY_LIMIT\n}\n")],
+        &[(
+            "src/lib.rs",
+            "/// How many retries.\npub const RETRY_LIMIT: usize = 3;\n\n/// Retries a request up to the limit.\npub fn retry_request() -> usize {\n    RETRY_LIMIT\n}\n",
+        )],
     );
     let mut repo = scrutate::Repo::open(&root).unwrap();
     repo.update(false).unwrap();
@@ -1331,7 +1347,10 @@ fn an_assembly_label_holds_its_instructions_up_to_the_next_label_or_section() {
 
 #[test]
 fn a_definition_head_and_the_definition_macros_are_not_calls() {
-    let ex = parse_source("m.ex", "defmodule M do\n  use GenServer\n  import Enum\n  alias Foo.Bar\n  require Logger\n  def f(x), do: g(x)\n  defp p(x) when x > 0, do: f(x)\n  defguard is_big(x) when x > 100\nend\n");
+    let ex = parse_source(
+        "m.ex",
+        "defmodule M do\n  use GenServer\n  import Enum\n  alias Foo.Bar\n  require Logger\n  def f(x), do: g(x)\n  defp p(x) when x > 0, do: f(x)\n  defguard is_big(x) when x > 100\nend\n",
+    );
     assert!(find(&ex, "M").calls.is_empty(), "{:?}", find(&ex, "M").calls);
     assert_eq!(find(&ex, "M.f").calls.iter().collect::<Vec<_>>(), ["g"]);
     assert_eq!(find(&ex, "M.p").calls.iter().collect::<Vec<_>>(), ["f"]);
@@ -1508,7 +1527,10 @@ fn methods_of_an_object_literal_are_owned_by_what_holds_the_literal() {
 
 #[test]
 fn c_and_cpp_function_prototypes_are_function_symbols() {
-    let c = symbols("p.h", "int add(int a, int b);\nextern int x;\nint y;\nint (*fp)(int);\ntypedef int (*cb)(int);\nstatic char *name(void);\nvoid g(void) { foo(1); int h(int); }\n");
+    let c = symbols(
+        "p.h",
+        "int add(int a, int b);\nextern int x;\nint y;\nint (*fp)(int);\ntypedef int (*cb)(int);\nstatic char *name(void);\nvoid g(void) { foo(1); int h(int); }\n",
+    );
     let want = |v: &[(&str, &str)]| v.iter().map(|&(k, q)| (k.to_string(), q.to_string())).collect::<Vec<_>>();
     assert_eq!(c, want(&[("function", "add"), ("type", "cb"), ("function", "name"), ("function", "g")]));
     let cpp = parse_source(
@@ -1706,8 +1728,16 @@ fn every_language_records_its_imports_as_written() {
         ("m.c", "#include <stdio.h>\n#include \"x.h\"\nint a;\n", &["stdio.h", "x.h"]),
         ("m.cpp", "#include <vector>\n#include \"y.hpp\"\nint a;\n", &["vector", "y.hpp"]),
         ("m.glsl", "#include \"common.glsl\"\nvoid main() {}\n", &["common.glsl"]),
-        ("m.m", "#import <Foundation/Foundation.h>\n#include \"x.h\"\n@import UIKit;\n@import Foo.Bar;\n", &["Foundation/Foundation.h", "x.h", "UIKit", "Foo.Bar"]),
-        ("m.cs", "using System;\nusing System.Collections.Generic;\nusing IO = System.IO;\nusing static System.Math;\n", &["System", "System.Collections.Generic", "System.IO", "System.Math"]),
+        (
+            "m.m",
+            "#import <Foundation/Foundation.h>\n#include \"x.h\"\n@import UIKit;\n@import Foo.Bar;\n",
+            &["Foundation/Foundation.h", "x.h", "UIKit", "Foo.Bar"],
+        ),
+        (
+            "m.cs",
+            "using System;\nusing System.Collections.Generic;\nusing IO = System.IO;\nusing static System.Math;\n",
+            &["System", "System.Collections.Generic", "System.IO", "System.Math"],
+        ),
         (
             "m.rb",
             "require \"json\"\nrequire_relative \"lib/util\"\nload \"lib/util.rb\"\nYAML.load(\"--- a: 1\")\nRails.cache.load(\"user_key\")\nSettings.load(\"lib/util\")\nrequire \"x#{y}\"\n",
@@ -1719,7 +1749,11 @@ fn every_language_records_its_imports_as_written() {
             &["lib.php", "inc/db.php", "inc/view.php", "inc/x.php", "Foo\\Bar", "Foo\\bar", "Foo\\A", "Foo\\B", "Foo\\Baz"],
         ),
         ("m.sh", "source ./lib.sh\n. \"./env.sh\"\necho hi\n", &["./lib.sh", "./env.sh"]),
-        ("m.kt", "package p\nimport kotlin.math.max\nimport com.acme.Util as U\nimport com.acme.io.*\n", &["kotlin.math.max", "com.acme.Util", "com.acme.io.*"]),
+        (
+            "m.kt",
+            "package p\nimport kotlin.math.max\nimport com.acme.Util as U\nimport com.acme.io.*\n",
+            &["kotlin.math.max", "com.acme.Util", "com.acme.io.*"],
+        ),
         ("m.swift", "import Foundation\nimport UIKit\n", &["Foundation", "UIKit"]),
         ("m.scala", "import scala.collection.mutable\nimport a.b.{C, D}\n", &["scala.collection.mutable", "a.b"]),
         ("m.groovy", "import groovy.json.JsonSlurper\nimport static java.lang.Math.max\n", &["groovy.json.JsonSlurper", "java.lang.Math.max"]),

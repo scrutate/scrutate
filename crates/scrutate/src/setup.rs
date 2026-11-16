@@ -5,7 +5,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
 /// The agents `setup` knows.
@@ -264,11 +264,7 @@ fn create_tmp(tmp: &Path, target: &Path) -> std::io::Result<std::fs::File> {
 /// The arguments of the entry: the user's entry serves the repository the agent runs in, a
 /// project's entry names its repository.
 fn serve_args(o: Options, env: &Env) -> Vec<String> {
-    if o.project {
-        vec!["--root".into(), env.top.to_string_lossy().into_owned(), "serve".into()]
-    } else {
-        vec!["serve".into()]
-    }
+    if o.project { vec!["--root".into(), env.top.to_string_lossy().into_owned(), "serve".into()] } else { vec!["serve".into()] }
 }
 
 fn strings(v: &[String]) -> J {
@@ -1202,7 +1198,10 @@ mod tests {
     #[test]
     fn a_file_setup_made_is_deleted_and_a_bad_one_refused() {
         let made = set(None, &["mcpServers", NAME], &entry()).unwrap().unwrap();
-        assert_eq!(made, "{\n  \"mcpServers\": {\n    \"scrutate\": {\n      \"command\": \"/bin/scrutate\",\n      \"args\": [\n        \"serve\"\n      ]\n    }\n  }\n}\n");
+        assert_eq!(
+            made,
+            "{\n  \"mcpServers\": {\n    \"scrutate\": {\n      \"command\": \"/bin/scrutate\",\n      \"args\": [\n        \"serve\"\n      ]\n    }\n  }\n}\n"
+        );
         assert_eq!(unset(&made, &["mcpServers", NAME]).unwrap(), Some(None));
         assert!(set(Some("{\"a\": }"), &["mcpServers", NAME], &entry()).is_err());
         assert!(set(Some("{\"mcpServers\": 3}"), &["mcpServers", NAME], &entry()).is_err());

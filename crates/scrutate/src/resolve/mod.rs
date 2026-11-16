@@ -45,7 +45,7 @@ const LANGS: [Lang; 8] = [Lang::Python, Lang::Js, Lang::Rust, Lang::Go, Lang::Ja
 
 /// `$e` with `$r` naming the rule set of `$lang`.
 macro_rules! rules {
-    ($lang:expr, $r:ident => $e:expr) => {
+    ($lang:expr_2021, $r:ident => $e:expr_2021) => {
         match $lang {
             Lang::Python => {
                 type $r = python::Python;
@@ -380,7 +380,7 @@ impl FileInfo {
     }
 
     /// Its definitions named `name`, in the order of `defs`.
-    fn named<'f>(&'f self, name: &str) -> impl Iterator<Item = &'f Def> + Clone {
+    fn named<'f>(&'f self, name: &str) -> impl Iterator<Item = &'f Def> + Clone + use<'f> {
         let by_name = self.by_name.get_or_init(|| {
             let mut m: HashMap<String, Vec<usize>> = HashMap::new();
             for (i, d) in self.defs.iter().enumerate() {
@@ -972,7 +972,7 @@ fn is_local_binder(n: Node, src: &str) -> bool {
                 let field = if g.kind() == "type_switch_statement" { "alias" } else { "left" };
                 matches!(g.kind(), "short_var_declaration" | "range_clause" | "receive_statement" | "type_switch_statement")
                     && g.child_by_field_name(field).map(|l| l.id()) == Some(p.id())
-            })
+            });
         }
         // a Python `case` capture is one plain name; `case Color.RED` compares with a value
         "dotted_name" => return p.named_child_count() == 1 && p.parent().is_some_and(|g| matches!(g.kind(), "case_pattern" | "keyword_pattern")),
@@ -1049,10 +1049,10 @@ fn qualifier(n: Node) -> Option<Node> {
     const PAIRS: &[(&str, &str)] =
         &[("object", "attribute"), ("object", "property"), ("path", "name"), ("value", "field"), ("operand", "field"), ("package", "name"), ("module", "name")];
     for (obj, mem) in PAIRS {
-        if p.child_by_field_name(mem).map(|c| c.id()) == Some(n.id()) {
-            if let Some(o) = p.child_by_field_name(obj) {
-                return Some(o);
-            }
+        if p.child_by_field_name(mem).map(|c| c.id()) == Some(n.id())
+            && let Some(o) = p.child_by_field_name(obj)
+        {
+            return Some(o);
         }
     }
     None
@@ -1136,7 +1136,7 @@ fn decoded(mut bytes: Vec<u8>) -> (String, Raw) {
         text = src.strip_prefix('\u{FEFF}').unwrap_or(&src);
     }
     let raw = (!utf16 && !src.is_empty() && text.as_bytes() != bytes).then(|| {
-        let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
+        let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|&(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
         (bytes, starts)
     });
     (src, raw)
@@ -1600,10 +1600,11 @@ impl<'a> Resolver<'a> {
         if let Some(p) = node.parent() {
             let spec = crate::langs::detect(path, Some(&fi.src));
             let is_def_node = spec.is_some_and(|s| s.defs.iter().any(|d| d.node == p.kind()));
-            if is_def_node && p.child_by_field_name("name").map(|c| c.id()) == Some(node.id()) {
-                if let Some(d) = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start) {
-                    return Ok((d.id, "definition"));
-                }
+            if is_def_node
+                && p.child_by_field_name("name").map(|c| c.id()) == Some(node.id())
+                && let Some(d) = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start)
+            {
+                return Ok((d.id, "definition"));
             }
             if p.kind() == "keyword_argument" && p.child_by_field_name("name").map(|c| c.id()) == Some(node.id()) {
                 return Err("keyword argument");
@@ -1622,11 +1623,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn binding_failure(&mut self, path: &str, lang: Lang, b: &Binding) -> &'static str {
-        if b.module.is_empty() || self.module_files(path, lang, &b.module).is_some() {
-            "not found"
-        } else {
-            "external"
-        }
+        if b.module.is_empty() || self.module_files(path, lang, &b.module).is_some() { "not found" } else { "external" }
     }
 
     fn resolve_bare(&mut self, path: &str, fi: &FileInfo, lang: Lang, node: Node, name: &str, line: i64) -> Resolution {
@@ -1642,10 +1639,10 @@ impl<'a> Resolver<'a> {
         chain.sort_by_key(|&i| fi.defs[i].end - fi.defs[i].start);
         for (k, &s) in chain.iter().enumerate() {
             let kind = fi.defs[s].kind.as_str();
-            if SCOPE_KINDS.contains(&kind) || (k == 0 && CONTAINER_KINDS.contains(&kind)) {
-                if let Some(d) = fi.defs.iter().find(|d| d.name == name && d.parent == Some(s) && d.kind != "impl") {
-                    return Ok((d.id, "local"));
-                }
+            if (SCOPE_KINDS.contains(&kind) || (k == 0 && CONTAINER_KINDS.contains(&kind)))
+                && let Some(d) = fi.defs.iter().find(|d| d.name == name && d.parent == Some(s) && d.kind != "impl")
+            {
+                return Ok((d.id, "local"));
             }
         }
         // an import in the function around the use (Python `import os as name`, a `use` in a Rust body)
@@ -1667,17 +1664,17 @@ impl<'a> Resolver<'a> {
             };
         }
         for f in rules!(lang, R => R::package_files(self, path)) {
-            if f != path {
-                if let Some(d) = top_level(&self.file(&f), name) {
-                    return Ok((d.id, "package"));
-                }
+            if f != path
+                && let Some(d) = top_level(&self.file(&f), name)
+            {
+                return Ok((d.id, "package"));
             }
         }
         for b in fi.bindings.iter().filter(|b| b.local == "*") {
-            if let Some(files) = self.module_files(path, lang, &b.module) {
-                if let Some(id) = self.lookup_top(&files, name, 1) {
-                    return Ok((id, "import"));
-                }
+            if let Some(files) = self.module_files(path, lang, &b.module)
+                && let Some(id) = self.lookup_top(&files, name, 1)
+            {
+                return Ok((id, "import"));
             }
         }
         Err("not found")
@@ -1757,7 +1754,7 @@ impl<'a> Resolver<'a> {
                 Some(id) => cur = id,
                 // a module-level variable is a definition too: its type has the member
                 None if cur == head_def && !self.def_kind(cur).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str())) => {
-                    return self.through_type(path, fi, lang, q, name)
+                    return self.through_type(path, fi, lang, q, name);
                 }
                 None => return Err("not found"),
             }
@@ -1922,11 +1919,7 @@ impl<'a> Resolver<'a> {
                     0
                 } else if CONTAINER_TUPLES.contains(&n.as_str()) {
                     // `tuple[Other, ...]` holds one type throughout; `t[1]` of a fixed tuple, its second
-                    if matches!(args.get(1), Some(Some(Ty::Foreign(rest, _))) if rest == "...") {
-                        0
-                    } else {
-                        text(index?, src).trim().parse().ok()?
-                    }
+                    if matches!(args.get(1), Some(Some(Ty::Foreign(rest, _))) if rest == "...") { 0 } else { text(index?, src).trim().parse().ok()? }
                 } else {
                     return None;
                 };
@@ -2149,7 +2142,7 @@ impl<'a> Resolver<'a> {
                     fi,
                     lang,
                     v.child_by_field_name("operand").or_else(|| v.child_by_field_name("value")).or_else(|| v.named_child(0))?,
-                )
+                );
             }
             "call" | "call_expression" => {
                 let f = v.child_by_field_name("function")?;
@@ -2777,10 +2770,10 @@ impl Resolver<'_> {
             if let Some((_, p)) = in_body {
                 // the first iterable of a comprehension: its class body, if there is one around
                 let class = std::iter::successors(Some(p), |n| n.parent()).find(|n| FUNCTION_NODES.contains(&n.kind()) || n.kind() == "class_definition");
-                if let Some(body) = class.filter(|c| c.kind() == "class_definition").and_then(|c| c.child_by_field_name("body")) {
-                    if python_class_binds(body, name, src, node) {
-                        return true;
-                    }
+                if let Some(body) = class.filter(|c| c.kind() == "class_definition").and_then(|c| c.child_by_field_name("body"))
+                    && python_class_binds(body, name, src, node)
+                {
+                    return true;
                 }
             }
         }
@@ -2955,13 +2948,13 @@ fn enclosing_function(node: Node) -> Option<Node> {
 fn assignments(scope: Node, name: &str, src: &str) -> Vec<(usize, usize)> {
     let (mut out, mut stack) = (Vec::new(), vec![scope]);
     while let Some(n) = stack.pop() {
-        if matches!(n.kind(), "assignment_expression" | "assignment" | "assignment_statement") {
-            if let Some(l) = n.child_by_field_name("left") {
-                let mut cur = l.walk();
-                let hit = if l.kind() == "expression_list" { l.named_children(&mut cur).any(|x| text(x, src) == name) } else { text(l, src) == name };
-                if hit {
-                    out.push((n.start_byte(), n.end_byte()));
-                }
+        if matches!(n.kind(), "assignment_expression" | "assignment" | "assignment_statement")
+            && let Some(l) = n.child_by_field_name("left")
+        {
+            let mut cur = l.walk();
+            let hit = if l.kind() == "expression_list" { l.named_children(&mut cur).any(|x| text(x, src) == name) } else { text(l, src) == name };
+            if hit {
+                out.push((n.start_byte(), n.end_byte()));
             }
         }
         let mut cur = n.walk();
@@ -2977,11 +2970,7 @@ impl Resolver<'_> {
         let Some((path, qualname)) = self.def_row(id) else { return vec![id] };
         let fi = self.file(&path);
         let all: Vec<i64> = fi.defs.iter().filter(|d| d.qualname == qualname && d.kind == "method").map(|d| d.id).collect();
-        if all.contains(&id) {
-            all
-        } else {
-            vec![id]
-        }
+        if all.contains(&id) { all } else { vec![id] }
     }
 }
 
@@ -3800,19 +3789,28 @@ mod tests {
     fn workspace_packages_by_their_package_json_name() {
         let files: &[(&str, &str)] = &[
             ("package.json", "{\"name\": \"acme\", \"private\": true, \"workspaces\": [\"packages/*\"]}\n"),
-            ("packages/utils/package.json", "{\"name\": \"@acme/utils\", \"exports\": {\".\": \"./src/index.ts\", \"./math\": \"./src/math.ts\", \"./feat/*\": \"./src/feat/*.ts\"}}\n"),
+            (
+                "packages/utils/package.json",
+                "{\"name\": \"@acme/utils\", \"exports\": {\".\": \"./src/index.ts\", \"./math\": \"./src/math.ts\", \"./feat/*\": \"./src/feat/*.ts\"}}\n",
+            ),
             ("packages/utils/src/index.ts", "export function slugify(s: string) { return s; }\n"),
             ("packages/utils/src/math.ts", "export function half(n: number) { return n / 2; }\n"),
             ("packages/utils/src/feat/a.ts", "export function a() { return 1; }\n"),
             ("packages/legacy/package.json", "{\"name\": \"legacy\", \"main\": \"./dist/index.js\"}\n"),
             ("packages/legacy/src/index.ts", "export function old() { return 1; }\n"),
-            ("packages/cond/package.json", "{\"name\": \"cond\", \"exports\": {\".\": {\"require\": \"./src/req.js\", \"import\": \"./src/imp.js\", \"types\": \"./dist/index.d.ts\"}, \"./x\": {\"require\": \"./src/req.js\", \"import\": \"./src/imp.js\"}}}\n"),
+            (
+                "packages/cond/package.json",
+                "{\"name\": \"cond\", \"exports\": {\".\": {\"require\": \"./src/req.js\", \"import\": \"./src/imp.js\", \"types\": \"./dist/index.d.ts\"}, \"./x\": {\"require\": \"./src/req.js\", \"import\": \"./src/imp.js\"}}}\n",
+            ),
             ("packages/cond/src/index.ts", "export function c() { return 1; }\n"),
             ("packages/cond/src/req.js", "exports.r = 1;\n"),
             ("packages/cond/src/imp.js", "export const i = 1;\n"),
             ("packages/nested/package.json", "{\"name\": \"nested\", \"exports\": {\"import\": {\"types\": \"./lib/n.d.ts\", \"default\": \"./lib/n.js\"}}}\n"),
             ("packages/nested/lib/n.js", "export const n = 1;\n"),
-            ("packages/plat/package.json", "{\"name\": \"plat\", \"exports\": {\"browser\": \"./src/web.ts\", \"node\": {\"import\": {\"default\": \"./src/node.ts\"}}}}\n"),
+            (
+                "packages/plat/package.json",
+                "{\"name\": \"plat\", \"exports\": {\"browser\": \"./src/web.ts\", \"node\": {\"import\": {\"default\": \"./src/node.ts\"}}}}\n",
+            ),
             ("packages/plat/src/node.ts", "export const p = 1;\n"),
             ("packages/rt/package.json", "{\"name\": \"rt\", \"exports\": {\"deno\": \"./src/deno.ts\", \"browser\": \"./src/web.ts\"}}\n"),
             ("packages/rt/src/deno.ts", "export const r = 1;\n"),
@@ -3933,13 +3931,20 @@ mod tests {
                     "import { Point, Line } from './shapes';\n\nexport function built() {\n  const p = new Point();\n  return p.norm();\n}\n\nexport function annotated(q: Line) {\n  const r: Point = make();\n  return q.norm() + r.norm();\n}\n",
                 ),
             ],
-            &[("use.ts", "p.norm()", "norm", "shapes.ts Point.norm"), ("use.ts", "q.norm()", "norm", "shapes.ts Line.norm"), ("use.ts", "r.norm()", "norm", "shapes.ts Point.norm")],
+            &[
+                ("use.ts", "p.norm()", "norm", "shapes.ts Point.norm"),
+                ("use.ts", "q.norm()", "norm", "shapes.ts Line.norm"),
+                ("use.ts", "r.norm()", "norm", "shapes.ts Point.norm"),
+            ],
         );
         resolver_case(
             "vartype_rs",
             &[
                 ("lib.rs", "mod shapes;\nmod user;\n"),
-                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "shapes.rs",
+                    "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n",
+                ),
                 (
                     "user.rs",
                     "use crate::shapes::{Line, Point};\n\npub fn built() -> u32 {\n    let p = Point::new();\n    let l = Line {};\n    p.norm() + l.norm()\n}\n\npub fn annotated(q: &Line, r: &mut crate::shapes::Point) -> u32 {\n    q.norm() + r.norm()\n}\n",
@@ -4032,7 +4037,10 @@ mod tests {
             "shadow_rs",
             &[
                 ("lib.rs", "mod shapes;\nmod user;\n"),
-                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "shapes.rs",
+                    "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n",
+                ),
                 (
                     "user.rs",
                     "use crate::shapes::{Line, Point};\n\npub fn sibling(c: bool) -> u32 {\n    let p = Point::new();\n    if c {\n        let p = Line {};\n        p.norm() + 1;\n    }\n    p.norm() + 2\n}\n\npub fn enclosing(c: bool) -> u32 {\n    let p = Point::new();\n    if c {\n        let p = Line {};\n        if c {\n            return p.norm() + 3;\n        }\n    }\n    0\n}\n\npub fn closure() -> u32 {\n    let p = Point::new();\n    let f = |p: Line| p.norm() + 4;\n    p.norm() + 5\n}\n\npub fn branches(o: Option<Line>) -> u32 {\n    let p = Point::new();\n    if let Some(p) = o {\n        return p.norm() + 6;\n    }\n    let n = match o {\n        Some(p) => 1,\n        None => 2,\n    };\n    p.norm() + 7\n}\n\npub fn own_value() -> u32 {\n    let p = Point::new();\n    let p = p.norm() + 8;\n    p\n}\n",
@@ -4134,7 +4142,10 @@ mod tests {
             "closure_rs",
             &[
                 ("lib.rs", "mod shapes;\nmod user;\n"),
-                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "shapes.rs",
+                    "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n",
+                ),
                 (
                     "user.rs",
                     "use crate::shapes::{Line, Point};\n\npub fn closure(xs: &[u32]) -> u32 {\n    let p = Point::new();\n    xs.iter().map(|x| p.norm() + 1).sum()\n}\n\npub fn shadow(xs: &[Line]) -> u32 {\n    let p = Point::new();\n    xs.iter().map(|p| p.norm() + 2).sum()\n}\n\npub fn deep() -> u32 {\n    let p = Point::new();\n    let f = || {\n        let g = || p.norm() + 3;\n        g()\n    };\n    f()\n}\n\npub fn item() -> u32 {\n    let p = Point::new();\n    fn inner(p: &Line) -> u32 {\n        p.norm() + 4\n    }\n    fn other() -> u32 {\n        let f = || p.norm() + 5;\n        f()\n    }\n    0\n}\n",
@@ -4181,15 +4192,27 @@ mod tests {
         run("inner_ts", &[("shapes.ts", js_shapes), ("use.ts", &js_use.replace("(xs)", "(xs: any[])"))], calls("use.ts", "p.norm()", "norm", 11, &[]));
         run(
             "inner_py",
-            &[("shapes.py", "class Point:\n    def norm(self):\n        return 1\n"), ("use.py", "from shapes import Point\n\n\ndef f1(xs):\n    p = Point()\n    return list(map(lambda p=0: p.norm() + 1, xs))\n\n\ndef f2(xs):\n    p = Point()\n\n    def g():\n        for p in xs:\n            return p.norm() + 2\n    return g\n\n\ndef f3(o):\n    p = Point()\n\n    def g():\n        with open(o) as p:\n            return p.norm() + 3\n    return g\n\n\ndef f4():\n    p = Point()\n\n    def g():\n        try:\n            h()\n        except ValueError as p:\n            return p.norm() + 4\n    return g\n\n\ndef f5(xs):\n    p = Point()\n    return lambda: [p.norm() + 5 for p in xs]\n\n\ndef f6(xs):\n    p = Point()\n\n    def g():\n        if (p := xs[0]):\n            return p.norm() + 6\n    return g\n\n\ndef f7(o):\n    p = Point()\n\n    def g():\n        match o:\n            case p:\n                return p.norm() + 7\n    return g\n\n\ndef f8(xs):\n    p = Point()\n    return list(map(lambda *p: p.norm() + 8, xs))\n\n\ndef f9(xs):\n    p = Point()\n\n    def g():\n        for a, p in xs:\n            return p.norm() + 9\n    return g\n\n\ndef f10(o):\n    p = Point()\n\n    def g():\n        match o:\n            case [a, p]:\n                return p.norm() + 10\n    return g\n\n\ndef f11(o):\n    p = Point()\n\n    def g(*, p=None):\n        return p.norm() + 11\n    return g\n")],
+            &[
+                ("shapes.py", "class Point:\n    def norm(self):\n        return 1\n"),
+                (
+                    "use.py",
+                    "from shapes import Point\n\n\ndef f1(xs):\n    p = Point()\n    return list(map(lambda p=0: p.norm() + 1, xs))\n\n\ndef f2(xs):\n    p = Point()\n\n    def g():\n        for p in xs:\n            return p.norm() + 2\n    return g\n\n\ndef f3(o):\n    p = Point()\n\n    def g():\n        with open(o) as p:\n            return p.norm() + 3\n    return g\n\n\ndef f4():\n    p = Point()\n\n    def g():\n        try:\n            h()\n        except ValueError as p:\n            return p.norm() + 4\n    return g\n\n\ndef f5(xs):\n    p = Point()\n    return lambda: [p.norm() + 5 for p in xs]\n\n\ndef f6(xs):\n    p = Point()\n\n    def g():\n        if (p := xs[0]):\n            return p.norm() + 6\n    return g\n\n\ndef f7(o):\n    p = Point()\n\n    def g():\n        match o:\n            case p:\n                return p.norm() + 7\n    return g\n\n\ndef f8(xs):\n    p = Point()\n    return list(map(lambda *p: p.norm() + 8, xs))\n\n\ndef f9(xs):\n    p = Point()\n\n    def g():\n        for a, p in xs:\n            return p.norm() + 9\n    return g\n\n\ndef f10(o):\n    p = Point()\n\n    def g():\n        match o:\n            case [a, p]:\n                return p.norm() + 10\n    return g\n\n\ndef f11(o):\n    p = Point()\n\n    def g(*, p=None):\n        return p.norm() + 11\n    return g\n",
+                ),
+            ],
             calls("use.py", "p.norm()", "norm", 11, &[]),
         );
         run(
             "inner_rs",
             &[
                 ("lib.rs", "mod shapes;\nmod user;\n"),
-                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n"),
-                ("user.rs", "use crate::shapes::Point;\n\npub fn f(xs: &[(u32, u32)], o: Option<u32>) -> u32 {\n    let p = Point::new();\n    let g = || {\n        xs.iter().map(|(a, p)| p.norm() + 1).count();\n        if let Some(p) = o { p.norm() + 2; }\n        let mut it = xs.iter();\n        while let Some(p) = it.next() { p.norm() + 3; }\n        for p in xs { p.norm() + 4; }\n        match o { Some(p) => p.norm() + 5, None => 0 };\n        xs.iter().map(|&(a, p)| p.norm() + 6).count();\n        if let Some(ref p) = o { p.norm() + 7; }\n        match o { Some(p @ 1..=3) => p.norm() + 8, _ => 0 };\n        for (a, p) in xs { p.norm() + 9; }\n        0\n    };\n    g()\n}\n"),
+                (
+                    "shapes.rs",
+                    "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n",
+                ),
+                (
+                    "user.rs",
+                    "use crate::shapes::Point;\n\npub fn f(xs: &[(u32, u32)], o: Option<u32>) -> u32 {\n    let p = Point::new();\n    let g = || {\n        xs.iter().map(|(a, p)| p.norm() + 1).count();\n        if let Some(p) = o { p.norm() + 2; }\n        let mut it = xs.iter();\n        while let Some(p) = it.next() { p.norm() + 3; }\n        for p in xs { p.norm() + 4; }\n        match o { Some(p) => p.norm() + 5, None => 0 };\n        xs.iter().map(|&(a, p)| p.norm() + 6).count();\n        if let Some(ref p) = o { p.norm() + 7; }\n        match o { Some(p @ 1..=3) => p.norm() + 8, _ => 0 };\n        for (a, p) in xs { p.norm() + 9; }\n        0\n    };\n    g()\n}\n",
+                ),
             ],
             calls("user.rs", "p.norm()", "norm", 9, &[]),
         );
@@ -4198,7 +4221,10 @@ mod tests {
             &[
                 ("go.mod", "module example.com/m\n"),
                 ("shapes/point.go", "package shapes\n\ntype Point struct{}\n\nfunc (p *Point) Norm() int {\n\treturn 1\n}\n"),
-                ("main.go", "package main\n\nimport \"example.com/m/shapes\"\n\nfunc f(xs []int, x interface{}, ch chan int) int {\n\tp := &shapes.Point{}\n\tg := func() int {\n\t\th := func(p int) int { return p.Norm() + 1 }\n\t\tfor _, p := range xs {\n\t\t\tp.Norm() + 2\n\t\t}\n\t\tif p := x; p != nil {\n\t\t\tp.Norm() + 3\n\t\t}\n\t\tswitch p := x.(type) {\n\t\tdefault:\n\t\t\tp.Norm() + 4\n\t\t}\n\t\tk := func() (p int) { return p.Norm() + 5 }\n\t\tfor p := 0; p < 3; p++ {\n\t\t\tp.Norm() + 6\n\t\t}\n\t\tselect {\n\t\tcase p := <-ch:\n\t\t\tp.Norm() + 7\n\t\t}\n\t\tv := func(p ...int) int { return p.Norm() + 8 }\n\t\treturn h(0) + k() + v()\n\t}\n\treturn g()\n}\n"),
+                (
+                    "main.go",
+                    "package main\n\nimport \"example.com/m/shapes\"\n\nfunc f(xs []int, x interface{}, ch chan int) int {\n\tp := &shapes.Point{}\n\tg := func() int {\n\t\th := func(p int) int { return p.Norm() + 1 }\n\t\tfor _, p := range xs {\n\t\t\tp.Norm() + 2\n\t\t}\n\t\tif p := x; p != nil {\n\t\t\tp.Norm() + 3\n\t\t}\n\t\tswitch p := x.(type) {\n\t\tdefault:\n\t\t\tp.Norm() + 4\n\t\t}\n\t\tk := func() (p int) { return p.Norm() + 5 }\n\t\tfor p := 0; p < 3; p++ {\n\t\t\tp.Norm() + 6\n\t\t}\n\t\tselect {\n\t\tcase p := <-ch:\n\t\t\tp.Norm() + 7\n\t\t}\n\t\tv := func(p ...int) int { return p.Norm() + 8 }\n\t\treturn h(0) + k() + v()\n\t}\n\treturn g()\n}\n",
+                ),
             ],
             calls("main.go", "p.Norm()", "Norm", 8, &[1, 5, 8]),
         );
@@ -4266,7 +4292,10 @@ mod tests {
             "class_body_rs",
             &[
                 ("lib.rs", "mod shapes;\nmod user;\n"),
-                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "shapes.rs",
+                    "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n",
+                ),
                 (
                     "user.rs",
                     "use crate::shapes::{Line, Point};\n\nstruct S;\n\nimpl S {\n    const p: Line = Line;\n}\n\npub fn f() -> u32 {\n    let p = Point::new();\n    struct T;\n    impl T {\n        const p: Line = Line;\n    }\n    let g = || p.norm() + 1;\n    g()\n}\n\npub fn h() -> u32 {\n    p.norm() + 2\n}\n",
@@ -4307,12 +4336,10 @@ mod tests {
         );
         resolver_case(
             "infer_ts",
-            &[
-                (
-                    "shapes.ts",
-                    "export class Point {\n  norm() { return 1; }\n  twin(): Point { return new Point(); }\n}\nexport class Line {\n  norm() { return 2; }\n}\nexport function make(): Point {\n  return new Point();\n}\nexport class Holder {\n  line: Line = new Line();\n  get() { return this.line.norm(); }\n}\nexport const ORIGIN: Point = new Point();\nexport const BUILT = new Line();\nexport function useAll(xs: string[], n: Array<number>) {\n  const v = make();\n  return v.norm() + make().twin().norm() + ORIGIN.norm() + BUILT.norm() + xs.norm() + n.norm();\n}\n",
-                ),
-            ],
+            &[(
+                "shapes.ts",
+                "export class Point {\n  norm() { return 1; }\n  twin(): Point { return new Point(); }\n}\nexport class Line {\n  norm() { return 2; }\n}\nexport function make(): Point {\n  return new Point();\n}\nexport class Holder {\n  line: Line = new Line();\n  get() { return this.line.norm(); }\n}\nexport const ORIGIN: Point = new Point();\nexport const BUILT = new Line();\nexport function useAll(xs: string[], n: Array<number>) {\n  const v = make();\n  return v.norm() + make().twin().norm() + ORIGIN.norm() + BUILT.norm() + xs.norm() + n.norm();\n}\n",
+            )],
             &[
                 ("shapes.ts", "this.line.norm()", "norm", "shapes.ts Line.norm"),
                 ("shapes.ts", "v.norm()", "norm", "shapes.ts Point.norm"),
@@ -4401,8 +4428,14 @@ mod tests {
         resolver_case(
             "ret_ts",
             &[
-                ("report.ts", "export class Report {\n  static load(): Report { return new Report(); }\n  ok(): boolean { return true; }\n}\nexport class Builder {\n  summary(): Report { return new Report(); }\n}\nexport function make(): Builder { return new Builder(); }\nexport function mystery(y: number): number { return y; }\nexport function pick<T>(x: T): T { return x; }\n"),
-                ("user.ts", "import { Report, make, mystery, pick } from './report';\n\nexport function a(y: number) {\n  return mystery(y).ok() || Report.load().ok() || make().summary().ok() || new Report().ok() || pick(new Report()).ok();\n}\n"),
+                (
+                    "report.ts",
+                    "export class Report {\n  static load(): Report { return new Report(); }\n  ok(): boolean { return true; }\n}\nexport class Builder {\n  summary(): Report { return new Report(); }\n}\nexport function make(): Builder { return new Builder(); }\nexport function mystery(y: number): number { return y; }\nexport function pick<T>(x: T): T { return x; }\n",
+                ),
+                (
+                    "user.ts",
+                    "import { Report, make, mystery, pick } from './report';\n\nexport function a(y: number) {\n  return mystery(y).ok() || Report.load().ok() || make().summary().ok() || new Report().ok() || pick(new Report()).ok();\n}\n",
+                ),
                 ("aug.ts", "export interface Flagged {\n  flag(): boolean;\n}\nexport function b() {\n  return \"s\".ok() || [1].ok() || \"t\".flag();\n}\n"),
             ],
             &[
@@ -4420,16 +4453,29 @@ mod tests {
             "ret_js",
             &[
                 ("r.js", "export class Report {\n  ok() { return true; }\n}\n"),
-                ("use.js", "import { Report } from './r.js';\n\nfunction mystery() { return 1; }\n\nexport function a() {\n  return new Report().ok() + mystery().ok() + `t`.ok();\n}\n"),
+                (
+                    "use.js",
+                    "import { Report } from './r.js';\n\nfunction mystery() { return 1; }\n\nexport function a() {\n  return new Report().ok() + mystery().ok() + `t`.ok();\n}\n",
+                ),
             ],
-            &[("use.js", "new Report().ok()", "ok", "r.js Report.ok"), ("use.js", "mystery().ok()", "ok", "receiver"), ("use.js", "`t`.ok()", "ok", "external")],
+            &[
+                ("use.js", "new Report().ok()", "ok", "r.js Report.ok"),
+                ("use.js", "mystery().ok()", "ok", "receiver"),
+                ("use.js", "`t`.ok()", "ok", "external"),
+            ],
         );
         resolver_case(
             "ret_go",
             &[
                 ("go.mod", "module example.com/m\n"),
-                ("report/report.go", "package report\n\ntype Report struct{}\n\nfunc (r *Report) Ok() bool { return true }\n\nfunc NewReport() *Report { return &Report{} }\n\ntype Builder struct{}\n\nfunc (b Builder) Summary() Report { return Report{} }\n\nfunc Build() Builder { return Builder{} }\n\nfunc Mystery(y int) int { return y }\n"),
-                ("main.go", "package main\n\nimport \"example.com/m/report\"\n\nfunc main() {\n\t_ = report.NewReport().Ok()\n\t_ = report.Build().Summary().Ok()\n\t_ = report.Mystery(1).Ok()\n}\n"),
+                (
+                    "report/report.go",
+                    "package report\n\ntype Report struct{}\n\nfunc (r *Report) Ok() bool { return true }\n\nfunc NewReport() *Report { return &Report{} }\n\ntype Builder struct{}\n\nfunc (b Builder) Summary() Report { return Report{} }\n\nfunc Build() Builder { return Builder{} }\n\nfunc Mystery(y int) int { return y }\n",
+                ),
+                (
+                    "main.go",
+                    "package main\n\nimport \"example.com/m/report\"\n\nfunc main() {\n\t_ = report.NewReport().Ok()\n\t_ = report.Build().Summary().Ok()\n\t_ = report.Mystery(1).Ok()\n}\n",
+                ),
             ],
             &[
                 ("main.go", "NewReport().Ok()", "Ok", "report/report.go Report.Ok"),
@@ -4440,8 +4486,14 @@ mod tests {
         resolver_case(
             "ret_py",
             &[
-                ("report.py", "class Report:\n    def ok(self):\n        return True\n\n\nclass Builder:\n    def summary(self) -> Report:\n        return Report()\n\n\ndef make() -> Builder:\n    return Builder()\n\n\ndef mystery(y) -> int:\n    return y\n\n\ndef unknown(y):\n    return y\n"),
-                ("use.py", "from report import Report, make, mystery, unknown\n\n\ndef a(y):\n    return Report().ok() or make().summary().ok() or mystery(y).ok() or unknown(y).ok()\n"),
+                (
+                    "report.py",
+                    "class Report:\n    def ok(self):\n        return True\n\n\nclass Builder:\n    def summary(self) -> Report:\n        return Report()\n\n\ndef make() -> Builder:\n    return Builder()\n\n\ndef mystery(y) -> int:\n    return y\n\n\ndef unknown(y):\n    return y\n",
+                ),
+                (
+                    "use.py",
+                    "from report import Report, make, mystery, unknown\n\n\ndef a(y):\n    return Report().ok() or make().summary().ok() or mystery(y).ok() or unknown(y).ok()\n",
+                ),
             ],
             &[
                 ("use.py", "Report().ok()", "ok", "report.py Report.ok"),
@@ -4680,7 +4732,10 @@ mod tests {
                 ("p/a.go", "package p\n\nfunc Make() {}\n"),
                 ("p/b.go", "package p\n\nfunc use1() { Make() }\n"),
                 ("q/a.go", "package q\n\nfunc Make() {}\n"),
-                ("main.go", "package main\n\nimport (\n\t\"example.com/m/p\"\n\tqq \"example.com/m/q\"\n\t\"fmt\"\n)\n\nfunc main() { p.Make(); qq.Make(); fmt.Println() }\n"),
+                (
+                    "main.go",
+                    "package main\n\nimport (\n\t\"example.com/m/p\"\n\tqq \"example.com/m/q\"\n\t\"fmt\"\n)\n\nfunc main() { p.Make(); qq.Make(); fmt.Println() }\n",
+                ),
             ],
             &[
                 ("p/b.go", "{ Make() }", "Make", "p/a.go Make"),
@@ -4936,9 +4991,18 @@ public class Main extends Base {
         let files: Vec<(String, &str)> = vec![
             (format!("{shapes}/Shape.java"), JAVA_SHAPE),
             (format!("{shapes}/Circle.java"), JAVA_CIRCLE),
-            (format!("{shapes}/Square.java"), "package com.acme.shapes;\n\npublic class Square implements Shape {\n    public double area() {\n        return 4;\n    }\n\n    public String toString() {\n        return label();\n    }\n}\n"),
-            (format!("{shapes}/Report.java"), "package com.acme.shapes;\n\npublic record Report(double value) {\n    public boolean ok() {\n        return value > 0;\n    }\n}\n"),
-            (format!("{app}/Util.java"), "package com.acme.app;\n\npublic class Util {\n    public static int scale(int x) {\n        return x * 2;\n    }\n\n    public static int scale(int x, int y) {\n        return x * y;\n    }\n\n    public static void log(String s) {}\n}\n"),
+            (
+                format!("{shapes}/Square.java"),
+                "package com.acme.shapes;\n\npublic class Square implements Shape {\n    public double area() {\n        return 4;\n    }\n\n    public String toString() {\n        return label();\n    }\n}\n",
+            ),
+            (
+                format!("{shapes}/Report.java"),
+                "package com.acme.shapes;\n\npublic record Report(double value) {\n    public boolean ok() {\n        return value > 0;\n    }\n}\n",
+            ),
+            (
+                format!("{app}/Util.java"),
+                "package com.acme.app;\n\npublic class Util {\n    public static int scale(int x) {\n        return x * 2;\n    }\n\n    public static int scale(int x, int y) {\n        return x * y;\n    }\n\n    public static void log(String s) {}\n}\n",
+            ),
             (format!("{app}/Base.java"), "package com.acme.app;\n\npublic class Base {\n    void inherited() {}\n}\n"),
             (format!("{app}/Main.java"), JAVA_MAIN),
         ];

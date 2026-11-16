@@ -14,7 +14,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::index::{ChunkRow, Index};
 use crate::lex::tok_key;
-use crate::text::{literal_candidates, name_key, query_terms, query_wholes, Words, QUERY_STOP};
+use crate::text::{QUERY_STOP, Words, literal_candidates, name_key, query_terms, query_wholes};
 
 pub const PRUNE: usize = 200; // the learned ranker sees (at most) this many candidates
 pub const LEX_LIMIT: usize = 100;
@@ -653,14 +653,12 @@ impl Searcher {
             let key = (h.path.clone(), h.qualname.clone(), h.kind == "impl");
             // a window is a part of the definition it names: one hit per definition, its best part
             let grouped = !h.qualname.is_empty() && (CODE_KINDS.contains(&h.kind.as_str()) || h.kind == "window");
-            if grouped {
-                if let Some(&pi) = best_by_key.get(&key) {
-                    // overload / redefinition: keep the longer body
-                    if h.kind != "window" && picked[pi].kind != "window" && (h.end - h.start) > (picked[pi].end - picked[pi].start) {
-                        picked[pi] = h;
-                    }
-                    continue;
+            if grouped && let Some(&pi) = best_by_key.get(&key) {
+                // overload / redefinition: keep the longer body
+                if h.kind != "window" && picked[pi].kind != "window" && (h.end - h.start) > (picked[pi].end - picked[pi].start) {
+                    picked[pi] = h;
                 }
+                continue;
             }
             if matches!(h.kind.as_str(), "module" | "window") && picked.iter().any(|p| p.path == h.path && !(h.end < p.start || h.start > p.end)) {
                 continue;

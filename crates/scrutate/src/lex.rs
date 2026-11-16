@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use blake2::digest::consts::U8;
 use blake2::{Blake2b, Digest};
 use rayon::prelude::*;
@@ -497,7 +497,7 @@ pub fn merge_segments_with(stop: Stop, dest: &Path, segs: &[&Segment], alive: &[
     }
     let mut ids: Vec<i64> = Vec::new();
     for (s, a) in segs.iter().zip(alive) {
-        ids.extend(s.ids().iter().zip(a.iter()).filter(|(_, &al)| al).map(|(&i, _)| i));
+        ids.extend(s.ids().iter().zip(a.iter()).filter(|&(_, &al)| al).map(|(&i, _)| i));
     }
     let mut order: Vec<usize> = (0..ids.len()).collect();
     order.sort_by_key(|&i| ids[i]);
@@ -507,7 +507,7 @@ pub fn merge_segments_with(stop: Stop, dest: &Path, segs: &[&Segment], alive: &[
     }
     let mut dl_cat: Vec<f32> = Vec::new();
     for (s, a) in segs.iter().zip(alive) {
-        dl_cat.extend(s.dl().iter().zip(a.iter()).filter(|(_, &al)| al).map(|(&d, _)| d));
+        dl_cat.extend(s.dl().iter().zip(a.iter()).filter(|&(_, &al)| al).map(|(&d, _)| d));
     }
     let dl: Vec<f32> = order.iter().map(|&i| dl_cat[i]).collect();
     let (k, has_vec) = match vectors {
@@ -917,7 +917,7 @@ impl LexStore {
                 None => vec![true; s.n],
                 Some(live) => s.ids().iter().map(|id| live.binary_search(id).is_ok()).collect(),
             };
-            self.dlsum.push(s.dl().iter().zip(&a).filter(|(_, &al)| al).map(|(&d, _)| d as f64).sum());
+            self.dlsum.push(s.dl().iter().zip(&a).filter(|&(_, &al)| al).map(|(&d, _)| d as f64).sum());
             self.alive.push(a);
         }
         self.n_alive = self.alive.iter().map(|a| a.iter().filter(|&&x| x).count()).sum();
@@ -1023,7 +1023,7 @@ impl LexStore {
                 *seen.get_mut(d as usize).ok_or_else(damaged)? = true;
             }
         }
-        let got = seen.iter().zip(&self.alive[si]).filter(|(&s, &a)| s && a).count() as i64;
+        let got = seen.iter().zip(&self.alive[si]).filter(|&(&s, &a)| s && a).count() as i64;
         self.adf.insert((si, j), got);
         Ok(got)
     }
@@ -1048,11 +1048,7 @@ impl LexStore {
         let n = self.n_alive as f64;
         let idf = |&d: &i64| {
             let v = ((n - d as f64 + 0.5) / (d as f64 + 0.5)).ln();
-            if v.is_finite() && v > 0.0 {
-                v as f32
-            } else {
-                IDF_FLOOR
-            }
+            if v.is_finite() && v > 0.0 { v as f32 } else { IDF_FLOOR }
         };
         Ok(df.iter().map(idf).collect())
     }

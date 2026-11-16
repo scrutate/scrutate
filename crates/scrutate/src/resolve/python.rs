@@ -169,9 +169,9 @@ fn top_level_binder(fi: &FileInfo, name: &str) -> bool {
     let Some(tree) = fi.tree() else { return false };
     let root = tree.root_node();
     let mut cur = root.walk();
-    let found = root.named_children(&mut cur).any(|s| {
+
+    root.named_children(&mut cur).any(|s| {
         s.kind() == "expression_statement"
             && s.named_child(0).is_some_and(|a| a.kind() == "assignment" && a.child_by_field_name("left").is_some_and(|l| text(l, &fi.src) == name))
-    });
-    found
+    })
 }

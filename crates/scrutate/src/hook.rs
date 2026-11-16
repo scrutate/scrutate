@@ -7,12 +7,12 @@
 
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::instant::{self, Case, Files, Mode, Output, Pattern, Query, Record, Report};
 
@@ -288,11 +288,7 @@ fn under<'a>(p: &'a str, base: &str, windows: bool) -> Option<&'a str> {
         return None;
     }
     let rest = &p[base.len()..];
-    if rest.is_empty() {
-        Some(rest)
-    } else {
-        rest.strip_prefix(sep)
-    }
+    if rest.is_empty() { Some(rest) } else { rest.strip_prefix(sep) }
 }
 
 /// A path of Engine A's (`/` between its parts) as Grep prints it: `rat` of Claude Code, the
@@ -391,7 +387,7 @@ mod windows_policy {
     const KEY_READ: u32 = 0x2_0019;
 
     #[link(name = "advapi32")]
-    extern "system" {
+    unsafe extern "system" {
         fn RegOpenKeyExW(key: isize, sub: *const u16, options: u32, sam: u32, out: *mut *mut c_void) -> i32;
         fn RegCloseKey(key: *mut c_void) -> i32;
     }
@@ -489,12 +485,11 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
                     Record::Context(l) => (l, '-'),
                     _ => return None,
                 };
-                if ask.breaks {
-                    if let Some((p, n)) = &last {
-                        if *p != l.path || l.line > n + 1 {
-                            items.push(Item { prefix: String::new(), text: "--".into(), count: 0, at: None });
-                        }
-                    }
+                if ask.breaks
+                    && let Some((p, n)) = &last
+                    && (*p != l.path || l.line > n + 1)
+                {
+                    items.push(Item { prefix: String::new(), text: "--".into(), count: 0, at: None });
                 }
                 // a multi-line match is one record; Grep shows each of its lines with its number
                 let parts: Vec<&str> = l.text.strip_suffix('\n').unwrap_or(&l.text).split('\n').collect();
@@ -502,11 +497,7 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
                 for (k, part) in parts.iter().enumerate() {
                     let part = part.trim_end_matches('\r');
                     let text = if part.encode_utf16().count() > GREP_COLUMNS {
-                        if sep == ':' {
-                            "[Omitted long matching line]"
-                        } else {
-                            "[Omitted long context line]"
-                        }
+                        if sep == ':' { "[Omitted long matching line]" } else { "[Omitted long context line]" }
                     } else {
                         part
                     };
@@ -608,11 +599,7 @@ fn render(ask: &Ask, items: Vec<Item>, budget: usize) -> Answer {
         }
     };
     let grep = if page.is_empty() {
-        if ask.shape == Shape::Count {
-            format!("{empty}{post}")
-        } else {
-            empty.clone()
-        }
+        if ask.shape == Shape::Count { format!("{empty}{post}") } else { empty.clone() }
     } else {
         format!("{pre}{}{post}", page.join("\n"))
     };

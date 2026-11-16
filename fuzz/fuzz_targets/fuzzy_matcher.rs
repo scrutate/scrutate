@@ -13,8 +13,12 @@ fuzz_target!(|data: &[u8]| {
     let fold = data[1] & 1 == 1;
     let split = 2 + (data[2] as usize % 130).min(data.len() - 3);
     let (pat, hay) = data[3..].split_at((split - 2).min(data.len() - 3));
-    let Ok(p) = std::str::from_utf8(pat) else { return };
-    let Ok(m) = FuzzyMatcher::new(p, k, fold) else { return };
+    let Ok(p) = std::str::from_utf8(pat) else {
+        return;
+    };
+    let Ok(m) = FuzzyMatcher::new(p, k, fold) else {
+        return;
+    };
     let mut at = 0;
     while at <= hay.len() {
         match m.find_at(hay, at).unwrap() {

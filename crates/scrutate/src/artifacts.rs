@@ -16,11 +16,11 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::index::{ChunkRow, NewRow, TF_CAP};
 use crate::intel::DupKeys;
-use crate::lex::{tok_key, FileLex, QVecs, NF};
+use crate::lex::{FileLex, NF, QVecs, tok_key};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2};
 

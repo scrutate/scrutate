@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 
@@ -227,27 +227,28 @@ fn analyze(h: &Hir) -> Info {
         HirKind::Repetition(r) => {
             let sub = analyze(&r.sub);
             if r.min == 0 {
-                if r.max == Some(1) {
-                    if let Some(mut e) = sub.exact {
-                        e.push(Vec::new());
-                        if e.len() <= MAX_SET {
-                            return exact(e);
-                        }
+                if r.max == Some(1)
+                    && let Some(mut e) = sub.exact
+                {
+                    e.push(Vec::new());
+                    if e.len() <= MAX_SET {
+                        return exact(e);
                     }
                 }
                 return inexact(Q::All);
             }
-            if let (Some(e), Some(max)) = (&sub.exact, r.max) {
-                if max == r.min && r.min <= 4 {
-                    let mut acc = vec![Vec::new()];
-                    for _ in 0..r.min {
-                        match cross(&acc, e) {
-                            Some(x) => acc = x,
-                            None => return inexact(sub.query()),
-                        }
+            if let (Some(e), Some(max)) = (&sub.exact, r.max)
+                && max == r.min
+                && r.min <= 4
+            {
+                let mut acc = vec![Vec::new()];
+                for _ in 0..r.min {
+                    match cross(&acc, e) {
+                        Some(x) => acc = x,
+                        None => return inexact(sub.query()),
                     }
-                    return exact(acc);
                 }
+                return exact(acc);
             }
             // every match contains at least one match of the repeated part
             inexact(sub.query())
@@ -438,10 +439,10 @@ fn stream_masks(mut src: impl std::io::Read, piece: usize) -> std::io::Result<(i
                     Err(e) => return Err(e),
                 }
             }
-            if std::mem::take(&mut first) {
-                if let Some(flags) = direct(&buf[..len]) {
-                    return Ok(Some(flags));
-                }
+            if std::mem::take(&mut first)
+                && let Some(flags) = direct(&buf[..len])
+            {
+                return Ok(Some(flags));
             }
             let nul = buf[..len].iter().position(|&b| b == 0);
             let last = nul.is_some() || len < buf.len();
@@ -744,10 +745,10 @@ impl Segment {
 
 fn all_live(n: usize) -> Vec<u8> {
     let mut v = vec![0xFFu8; n.div_ceil(8)];
-    if !n.is_multiple_of(8) {
-        if let Some(last) = v.last_mut() {
-            *last = (1u8 << (n % 8)) - 1;
-        }
+    if !n.is_multiple_of(8)
+        && let Some(last) = v.last_mut()
+    {
+        *last = (1u8 << (n % 8)) - 1;
     }
     v
 }
@@ -1097,13 +1098,13 @@ pub(crate) fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
         let (out, roots) = (&out, &roots);
         let mut listed = crate::index::Listed::default();
         Box::new(move |entry| {
-            if let Ok(e) = entry {
-                if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                    let rel = instant::relative(e.path(), roots);
-                    let (size, mtime, ctime) = e.metadata().map(|m| stamp(listed.stat(e.path(), &m))).unwrap_or((0, 0, 0));
-                    if let Ok(mut v) = out.lock() {
-                        v.push((rel, size, mtime, ctime));
-                    }
+            if let Ok(e) = entry
+                && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+            {
+                let rel = instant::relative(e.path(), roots);
+                let (size, mtime, ctime) = e.metadata().map(|m| stamp(listed.stat(e.path(), &m))).unwrap_or((0, 0, 0));
+                if let Ok(mut v) = out.lock() {
+                    v.push((rel, size, mtime, ctime));
                 }
             }
             ignore::WalkState::Continue
@@ -1126,11 +1127,7 @@ pub(crate) fn walk_entries(start: &Path, depth: Option<usize>) -> (Vec<PathBuf>,
             if let Ok(e) = entry {
                 let (dir, file) = e.file_type().map_or((false, false), |t| (t.is_dir(), t.is_file()));
                 if let (true, Ok(mut v)) = (dir || file, out.lock()) {
-                    if dir {
-                        v.0.push(e.into_path())
-                    } else {
-                        v.1.push(e.into_path())
-                    }
+                    if dir { v.0.push(e.into_path()) } else { v.1.push(e.into_path()) }
                 }
             }
             ignore::WalkState::Continue

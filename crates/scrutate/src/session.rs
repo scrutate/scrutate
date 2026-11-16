@@ -24,12 +24,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
+use crate::Repo;
 use crate::fresh::{Freshness, Token};
 use crate::index::{self, FileCount, UpdateStats};
 use crate::ops::{Answer, Op};
 use crate::search::Searcher;
 use crate::stores::{self, Changes};
-use crate::Repo;
 
 /// How long a call waits for an index another process is building before it gives that answer
 /// (well under the 60 s after which Codex gives a call up).
@@ -810,9 +810,9 @@ pub fn socket_path(root: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
-pub use unix::{ask, listen, Listening};
+pub use unix::{Listening, ask, listen};
 #[cfg(windows)]
-pub use windows::{ask, listen, Listening};
+pub use windows::{Listening, ask, listen};
 
 /// No session use on wasi: a command line call does the work itself.
 #[cfg(not(any(unix, windows)))]
@@ -949,7 +949,7 @@ mod unix {
         }
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn geteuid() -> u32;
         fn fchdir(fd: i32) -> i32;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -1190,30 +1190,30 @@ mod windows {
     use std::ptr::{null, null_mut};
     use std::sync::atomic::AtomicUsize;
     use windows_sys::Win32::Foundation::{
-        GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
-        GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE,
+        GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1, SE_KERNEL_OBJECT,
     };
     use windows_sys::Win32::Security::{
-        GetAce, GetLengthSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsTokenRestricted, RevertToSelf, TokenIntegrityLevel,
-        TokenIsAppContainer, TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SYSTEM_MANDATORY_LABEL_ACE,
-        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
+        ACE_HEADER, ACL, GetAce, GetLengthSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsTokenRestricted, LABEL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES, SYSTEM_MANDATORY_LABEL_ACE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
+        TokenIntegrityLevel, TokenIsAppContainer, TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
-        SECURITY_SQOS_PRESENT,
-    };
-    use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, ImpersonateNamedPipeClient, WaitNamedPipeW, PIPE_READMODE_BYTE,
-        PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-    };
-    use windows_sys::Win32::System::Threading::{
-        CreateEventW, GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken, WaitForSingleObject, INFINITE,
-        PROCESS_QUERY_LIMITED_INFORMATION,
+        CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, ReadFile, SECURITY_IDENTIFICATION,
+        SECURITY_SQOS_PRESENT, WriteFile,
     };
     use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, ImpersonateNamedPipeClient, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, GetCurrentProcess, GetCurrentThread, INFINITE, OpenProcess, OpenProcessToken, OpenThreadToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        WaitForSingleObject,
+    };
 
     const BUFFER: u32 = 64 * 1024;
 
@@ -1572,7 +1572,7 @@ mod windows {
                 return Err(format!(
                     "the session runs with less trust: integrity {:#x} (this call {:#x}), sandboxed {}",
                     s.integrity, me.integrity, s.sandboxed
-                ))
+                ));
             }
             Some(_) => {}
             None => return Err("the session's process cannot be read".into()),
@@ -1599,10 +1599,10 @@ mod windows {
             use std::os::windows::ffi::OsStrExt;
             use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
             use windows_sys::Win32::Security::{
-                DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TokenPrimary, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY,
-                TOKEN_DUPLICATE,
+                DuplicateTokenEx, SID_AND_ATTRIBUTES, SecurityImpersonation, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
+                TokenPrimary,
             };
-            use windows_sys::Win32::System::Threading::{CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW};
+            use windows_sys::Win32::System::Threading::{CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, PROCESS_INFORMATION, STARTUPINFOW};
             const SE_GROUP_INTEGRITY: u32 = 0x20;
             // SAFETY: handles and buffers this function makes and keeps alive for each call
             unsafe {
@@ -2450,10 +2450,10 @@ mod tests {
         impl Write for Late {
             fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
                 let n = self.conn.write(b)?;
-                if b.ends_with(b"\n") {
-                    if let Some(served) = self.served.take() {
-                        served.join().unwrap();
-                    }
+                if b.ends_with(b"\n")
+                    && let Some(served) = self.served.take()
+                {
+                    served.join().unwrap();
                 }
                 Ok(n)
             }

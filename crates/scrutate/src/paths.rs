@@ -33,14 +33,12 @@ pub(crate) fn plain_path_on(path: &Path, windows: bool) -> Cow<'_, Path> {
 
 /// `plain` as it is on Windows (`windows`) or elsewhere.
 pub(crate) fn plain_on(path: &str, windows: bool) -> Cow<'_, str> {
-    if windows {
-        if let Some(rest) = path.strip_prefix(r"\\?\") {
-            if rest.as_bytes().get(1) == Some(&b':') {
-                return rest.into();
-            }
-            if rest.get(..4).is_some_and(|h| h.eq_ignore_ascii_case(r"UNC\")) {
-                return format!(r"\\{}", &rest[4..]).into();
-            }
+    if windows && let Some(rest) = path.strip_prefix(r"\\?\") {
+        if rest.as_bytes().get(1) == Some(&b':') {
+            return rest.into();
+        }
+        if rest.get(..4).is_some_and(|h| h.eq_ignore_ascii_case(r"UNC\")) {
+            return format!(r"\\{}", &rest[4..]).into();
         }
     }
     path.into()

@@ -3,8 +3,8 @@
 //! The CLI, the MCP server, `batch`, the Python bindings and the language server parse into `Op`
 //! and render `Answer`; none of them holds a default, a limit or an output format of its own.
 
-use anyhow::{anyhow, bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow, bail};
+use serde_json::{Value, json};
 
 use crate::fmt::{hit_blocks, hits_json};
 use crate::index::{ChunkRow, UpdateStats};
@@ -269,11 +269,7 @@ impl Op {
 
     /// The operation, keeping what `filter` admits when it names anything.
     pub fn scoped(self, filter: crate::filter::Filter) -> Op {
-        if filter.is_empty() {
-            self
-        } else {
-            Op::Scoped { op: Box::new(self), filter }
-        }
+        if filter.is_empty() { self } else { Op::Scoped { op: Box::new(self), filter } }
     }
 
     fn from_tool_unscoped(name: &str, args: &Value) -> Result<Op> {
@@ -332,7 +328,9 @@ impl Op {
             "read_code" => {
                 let (path, symbol) = (opt_text("path")?, opt_text("symbol")?);
                 if path.is_none() && symbol.is_none() {
-                    bail!("missing path or symbol: read_code takes path (a file; start and end pick lines) or symbol (a name, Class.method or a path:start-end location)");
+                    bail!(
+                        "missing path or symbol: read_code takes path (a file; start and end pick lines) or symbol (a name, Class.method or a path:start-end location)"
+                    );
                 }
                 let (start, end) = (line("start")?.unwrap_or(1), line("end")?);
                 if let Some(end) = end.filter(|e| *e < start) {
@@ -674,11 +672,7 @@ pub fn mark_hit_block(block: &str, vendored: &dyn Fn(&str) -> bool) -> String {
 
 /// The note line that names the vendored files of lines that quote code, or nothing.
 pub fn vendored_note(noted: &[String]) -> String {
-    if noted.is_empty() {
-        String::new()
-    } else {
-        format!("vendored: {}", noted.iter().map(|p| shown(p)).collect::<Vec<_>>().join(", "))
-    }
+    if noted.is_empty() { String::new() } else { format!("vendored: {}", noted.iter().map(|p| shown(p)).collect::<Vec<_>>().join(", ")) }
 }
 
 /// Where the first location of a vendored path in `line` ends. A line that starts with a line
@@ -1058,11 +1052,7 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
 /// directory and prints as `p` again; else `p` as written (a directory named `x\ty`).
 fn unescaped<'p>(root: &std::path::Path, p: &'p str) -> std::borrow::Cow<'p, str> {
     let back = crate::fmt::unshown(p);
-    if back != p && crate::fmt::shown(&back) == p && root.join(&*back).exists() {
-        back
-    } else {
-        std::borrow::Cow::Borrowed(p)
-    }
+    if back != p && crate::fmt::shown(&back) == p && root.join(&*back).exists() { back } else { std::borrow::Cow::Borrowed(p) }
 }
 
 /// `path` with the root as the index was given it (`<dir>/link`, macOS's `/tmp/x`) spelled as the
@@ -1099,11 +1089,7 @@ fn inside(root: &std::path::Path, path: &str) -> bool {
             c => out.push(c),
         }
     }
-    if cfg!(windows) {
-        under(&out.to_string_lossy(), &root.to_string_lossy())
-    } else {
-        out.starts_with(root)
-    }
+    if cfg!(windows) { under(&out.to_string_lossy(), &root.to_string_lossy()) } else { out.starts_with(root) }
 }
 
 /// On Windows one folder has several spellings (`\\?\C:\x` from `canonicalize`, `C:\x`, `c:/X`)
@@ -1619,27 +1605,15 @@ fn hit_line(h: &Hit) -> String {
 }
 
 fn symbol_name(c: &ChunkRow) -> &str {
-    if c.qualname.is_empty() {
-        &c.name
-    } else {
-        &c.qualname
-    }
+    if c.qualname.is_empty() { &c.name } else { &c.qualname }
 }
 
 fn sym_name(s: &crate::index::Symbol) -> &str {
-    if s.qualname.is_empty() {
-        &s.name
-    } else {
-        &s.qualname
-    }
+    if s.qualname.is_empty() { &s.name } else { &s.qualname }
 }
 
 fn hit_name(h: &Hit) -> &str {
-    if h.qualname.is_empty() {
-        &h.name
-    } else {
-        &h.qualname
-    }
+    if h.qualname.is_empty() { &h.name } else { &h.qualname }
 }
 
 /// A definition's own name, without the names it is inside (`Answer.text` is `text`), as text shows it.
@@ -2662,11 +2636,13 @@ impl Answer {
                         .chain(p.steps.iter().map(|s| {
                             let to = &s.to;
                             let guess = if s.tied { "" } else { " (by name)" };
-                            vec![Brief::text("  ")
-                                .then_line(&s.path, format!(":{}", s.line))
-                                .then(" -> ")
-                                .then_at(&to.path, to.start, to.end)
-                                .then(format!(" {}{guess}", named(hit_name(to))))]
+                            vec![
+                                Brief::text("  ")
+                                    .then_line(&s.path, format!(":{}", s.line))
+                                    .then(" -> ")
+                                    .then_at(&to.path, to.start, to.end)
+                                    .then(format!(" {}{guess}", named(hit_name(to)))),
+                            ]
                         }))
                         .collect(),
                 ),

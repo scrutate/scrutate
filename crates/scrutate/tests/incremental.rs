@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use scrutate::parse::{parse_file_with, PrevParse};
+use scrutate::parse::{PrevParse, parse_file_with};
 
 struct Rng(u64);
 

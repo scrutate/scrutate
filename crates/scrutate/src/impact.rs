@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
-use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, bail};
+use serde_json::{Value, json};
 
 use crate::findings::Finding;
 use crate::fmt::{echo, shown};
@@ -415,10 +415,10 @@ impl Builder<'_> {
         let path = e.new.as_deref().or(e.old.as_deref()).unwrap_or_default().to_string();
         self.files.extend(e.new.clone());
         self.head_paths.extend(e.new.clone());
-        if let (Some(old), Some(new)) = (&e.old, &e.new) {
-            if old != new {
-                self.notes.push((new.clone(), Note::Renamed(old.clone())));
-            }
+        if let (Some(old), Some(new)) = (&e.old, &e.new)
+            && old != new
+        {
+            self.notes.push((new.clone(), Note::Renamed(old.clone())));
         }
         if e.submodule {
             self.notes.push((path, Note::Said("a submodule: its commits are not read")));
@@ -457,10 +457,10 @@ impl Builder<'_> {
             Some(old) => parsed(old, blob(&e.old_blob)),
             None => Vec::new(),
         };
-        if let (Some(old), Some(new)) = (&e.old, &e.new) {
-            if old != new {
-                self.moved.extend(old_defs.iter().filter(|d| !matches!(d.kind.as_str(), "window" | "module" | "file")).map(|d| d.hit(old)));
-            }
+        if let (Some(old), Some(new)) = (&e.old, &e.new)
+            && old != new
+        {
+            self.moved.extend(old_defs.iter().filter(|d| !matches!(d.kind.as_str(), "window" | "module" | "file")).map(|d| d.hit(old)));
         }
         let added = e.old.is_none();
         let ix = &self.s.ix;
@@ -472,11 +472,7 @@ impl Builder<'_> {
                     .into_iter()
                     .map(|r| Def { kind: r.kind, name: r.name, qualname: r.qualname, start: r.start, end: r.end, id: r.id })
                     .collect();
-                if self.from_blobs && !e.untracked {
-                    (parsed(new, blob(&e.new_blob)), rows)
-                } else {
-                    (rows.clone(), rows)
-                }
+                if self.from_blobs && !e.untracked { (parsed(new, blob(&e.new_blob)), rows) } else { (rows.clone(), rows) }
             }
             None => (Vec::new(), Vec::new()),
         };
@@ -658,11 +654,7 @@ impl Impact {
     }
 
     pub fn stop_line(&self) -> String {
-        if self.stopped {
-            format!("(the walk stopped at {MAX_CALLERS} callers: pass a smaller depth)")
-        } else {
-            String::new()
-        }
+        if self.stopped { format!("(the walk stopped at {MAX_CALLERS} callers: pass a smaller depth)") } else { String::new() }
     }
 
     pub fn json(&self) -> Value {

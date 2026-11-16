@@ -173,9 +173,21 @@ fn each_agent_gets_one_entry_and_uninstall_takes_it_back() {
 fn every_other_byte_and_comment_stays_and_uninstall_restores_the_file() {
     let s = Scratch::new("keep");
     let files: [(&str, PathBuf, &str); 5] = [
-        ("claude", s.user_file("claude"), "{\n  \"numStartups\": 3,\n  \"mcpServers\": {\n    \"other\": {\n      \"type\": \"stdio\",\n      \"command\": \"x\",\n      \"args\": []\n    }\n  },\n  \"theme\": \"dark\"\n}"),
-        ("codex", s.user_file("codex"), "# my settings\nmodel = \"o4\" # the model\n\n[mcp_servers.other]\n# a server of mine\ncommand = \"y\"\nargs = [\"z\"]\n\n[profiles.fast]\nmodel = \"mini\"\n"),
-        ("opencode", s.base.join("config").join("opencode").join("opencode.jsonc"), "// opencode settings\n{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  /* mine */\n  \"mcp\": {\n    \"local-one\": {\"type\": \"local\", \"command\": [\"a\"], \"enabled\": false}, // keep\n  },\n}\n"),
+        (
+            "claude",
+            s.user_file("claude"),
+            "{\n  \"numStartups\": 3,\n  \"mcpServers\": {\n    \"other\": {\n      \"type\": \"stdio\",\n      \"command\": \"x\",\n      \"args\": []\n    }\n  },\n  \"theme\": \"dark\"\n}",
+        ),
+        (
+            "codex",
+            s.user_file("codex"),
+            "# my settings\nmodel = \"o4\" # the model\n\n[mcp_servers.other]\n# a server of mine\ncommand = \"y\"\nargs = [\"z\"]\n\n[profiles.fast]\nmodel = \"mini\"\n",
+        ),
+        (
+            "opencode",
+            s.base.join("config").join("opencode").join("opencode.jsonc"),
+            "// opencode settings\n{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  /* mine */\n  \"mcp\": {\n    \"local-one\": {\"type\": \"local\", \"command\": [\"a\"], \"enabled\": false}, // keep\n  },\n}\n",
+        ),
         ("cursor", s.user_file("cursor"), "{\"mcpServers\": {}}"),
         ("gemini", s.user_file("gemini"), "{\n\t\"theme\": \"GitHub\",\n\t\"general\": {\"vimMode\": true}\n}\n"),
     ];

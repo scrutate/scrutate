@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use notify::event::{CreateKind, DataChange, ModifyKind, RemoveKind};
 use notify::{Event, EventKind};
 #[cfg(not(target_os = "macos"))]
@@ -446,7 +446,7 @@ fn kq_keeps<'a>(root: &'a Path, code: &'a CodeWalk, walked: &'a Walked) -> impl 
 #[derive(Default)]
 struct Noted {
     /// the generation of the newest entry
-    gen: u64,
+    r#gen: u64,
     events: Vec<(u64, Event)>,
     /// a read that applied less than this walks the tree
     walk_below: u64,
@@ -467,8 +467,8 @@ impl Noted {
     /// Every read before the next one asks for a walk. The events stay: a walk the refresh
     /// interval holds back still applies what they name.
     fn walk_all(&mut self, why: &'static str) {
-        self.gen += 1;
-        self.walk_below = self.gen;
+        self.r#gen += 1;
+        self.walk_below = self.r#gen;
         self.why = why;
     }
 
@@ -781,8 +781,8 @@ impl Notes {
                     n.lost("too many changes since the last read");
                     return;
                 }
-                n.gen += 1;
-                let g = n.gen;
+                n.r#gen += 1;
+                let g = n.r#gen;
                 n.events.push((g, e.clone()));
             }
         }
@@ -990,8 +990,8 @@ impl Freshness for Notes {
         // change made before the call
         let own = || {
             let mut n = lock(&self.0.noted);
-            n.gen += 1;
-            n.gen
+            n.r#gen += 1;
+            n.r#gen
         };
         // proven: the kqueue drained what changed (macOS); else why it could not, for the look
         #[cfg(target_os = "macos")]
@@ -1006,13 +1006,11 @@ impl Freshness for Notes {
             // FSEvents may number a write after a cookie made later
             return all(why, own());
         }
-        if !proven {
-            if let Err(why) = self.barrier() {
-                return all(why, t.get());
-            }
+        if !proven && let Err(why) = self.barrier() {
+            return all(why, t.get());
         }
         let mut n = lock(&self.0.noted);
-        let now = n.gen;
+        let now = n.r#gen;
         let Some(walked) = n.walked.clone() else { return all("the watch stopped", now) };
         if t.get() < n.walk_below {
             return all(n.why, now);
@@ -1024,8 +1022,8 @@ impl Freshness for Notes {
         // again: a file written in it meanwhile has no event, and only a walk finds it
         if n.dirs > n.dirs_walked {
             // a new generation: no event moved it, and the walk is skipped for a token already applied
-            n.gen += 1;
-            return all("a directory came or went since the watches were set", n.gen);
+            n.r#gen += 1;
+            return all("a directory came or went since the watches were set", n.r#gen);
         }
         if n.polled.iter().any(|(p, s)| seen(p) != *s) {
             return all("a rule file no watch covers changed", now);
@@ -1210,7 +1208,7 @@ pub fn local(root: &Path) -> bool {
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::ffi::OsStrExt;
-        extern "C" {
+        unsafe extern "C" {
             #[cfg_attr(target_arch = "x86_64", link_name = "statfs$INODE64")]
             fn statfs(path: *const std::ffi::c_char, buf: *mut u64) -> std::ffi::c_int;
         }
@@ -1227,7 +1225,7 @@ pub fn local(root: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        extern "system" {
+        unsafe extern "system" {
             fn GetDriveTypeW(root: *const u16) -> u32;
         }
         const DRIVE_REMOTE: u32 = 4;
@@ -1643,7 +1641,7 @@ fn run_timer(root: &Path, given: &Path, stop: &AtomicBool, on_ready: impl FnOnce
 /// too, comes from `dlsym` on that handle, so the executable imports nothing new.
 #[cfg(target_os = "macos")]
 mod fsevents {
-    use std::ffi::{c_char, c_int, c_void, CStr, CString, OsStr};
+    use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
     use std::os::unix::ffi::OsStrExt;
     use std::path::Path;
     use std::ptr::null;
@@ -1652,7 +1650,7 @@ mod fsevents {
     use notify::event::{CreateKind, DataChange, Flag, ModifyKind, RemoveKind, RenameMode};
     use notify::{Event, EventKind};
 
-    extern "C" {
+    unsafe extern "C" {
         fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
         fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
     }

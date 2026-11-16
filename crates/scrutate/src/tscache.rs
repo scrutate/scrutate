@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use blake2::digest::consts::U16;
 use blake2::{Blake2b, Digest};
 

@@ -691,11 +691,7 @@ impl PublicBody {
 
 /// `text` as the rules read it: JSON may write `/` as `\/` (PHP does).
 fn seen(text: &str) -> Cow<'_, str> {
-    if text.contains("\\/") {
-        Cow::Owned(unslash(text).0)
-    } else {
-        Cow::Borrowed(text)
-    }
+    if text.contains("\\/") { Cow::Owned(unslash(text).0) } else { Cow::Borrowed(text) }
 }
 
 /// For each of `texts`, the byte ranges (as the rules read it) of the lines of a public key's or a
@@ -791,7 +787,7 @@ impl Redactor {
         for m in PREFILTER.find_overlapping_iter(seen) {
             wanted[starts.partition_point(|&s| s <= m.pattern().as_usize()) - 1] = true;
         }
-        for (r, _) in RULES.iter().zip(&wanted).filter(|(_, &w)| w) {
+        for (r, _) in RULES.iter().zip(&wanted).filter(|&(_, &w)| w) {
             for c in r.regex().captures_iter(seen) {
                 let Some(g) = c.get(r.group) else { continue };
                 if c.name("ann").is_some_and(|a| a.len() > TYPED_MAX) {

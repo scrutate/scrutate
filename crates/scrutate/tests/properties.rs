@@ -3,8 +3,8 @@
 
 use grep_matcher::Matcher;
 use proptest::prelude::*;
-use scrutate::instant::{ident_parts, identifier_regex, FuzzyMatcher};
-use scrutate::npy::{save, Npy};
+use scrutate::instant::{FuzzyMatcher, ident_parts, identifier_regex};
+use scrutate::npy::{Npy, save};
 use scrutate::parse::parse_source;
 use scrutate::text::{name_key, prefix_bytes, query_terms, tokenize2};
 

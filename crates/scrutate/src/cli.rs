@@ -4,8 +4,8 @@
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -64,7 +64,7 @@ mod interrupt {
                 }
             }
         }
-        extern "C" {
+        unsafe extern "C" {
             fn signal(sig: i32, handler: usize) -> usize;
             fn raise(sig: i32) -> i32;
         }
@@ -84,7 +84,7 @@ mod interrupt {
             i32::from(!fire())
         }
         #[link(name = "kernel32")]
-        extern "system" {
+        unsafe extern "system" {
             fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
         }
         if FLAG.set(flag).is_ok() {
@@ -1023,13 +1023,13 @@ fn climb(cwd: &Path, wide: impl Fn(&Path) -> Option<&'static str>) -> (Option<Pa
     let has_index = |d: &Path| d.join(crate::files::INDEX_DIR).is_dir();
     let mut nearest = None;
     for dir in cwd.ancestors() {
-        if dir != cwd && nearest.is_none() {
-            if let Some(what) = wide(dir) {
-                let why = has_index(dir).then(|| {
-                    format!("[scrutate] not using the index in {}: it is {what}; pass --root there to use it", crate::paths::plain_path(dir).display())
-                });
-                return (None, why);
-            }
+        if dir != cwd
+            && nearest.is_none()
+            && let Some(what) = wide(dir)
+        {
+            let why = has_index(dir)
+                .then(|| format!("[scrutate] not using the index in {}: it is {what}; pass --root there to use it", crate::paths::plain_path(dir).display()));
+            return (None, why);
         }
         if nearest.is_none() && has_index(dir) {
             nearest = Some(dir);
@@ -1149,11 +1149,7 @@ impl Here {
             return p.to_path_buf();
         }
         let up: PathBuf = if self.inside { self.below.iter().map(|_| "..").collect() } else { self.root.clone() };
-        if self.cwd.join(&up).join(p).exists() {
-            up.join(p)
-        } else {
-            p.to_path_buf()
-        }
+        if self.cwd.join(&up).join(p).exists() { up.join(p) } else { p.to_path_buf() }
     }
 }
 
@@ -1274,24 +1270,27 @@ pub fn run() -> Result<i32> {
     };
     // a file of another indexed repository (a path `search --also` printed) is answered from its index
     let mut outside = None;
-    if let Some(arg) = named_file(&cli.cmd) {
-        if let Named::Outside(abs) = here.named(arg) {
-            match abs.ancestors().find(|d| d.join(crate::files::INDEX_DIR).is_dir()) {
-                Some(top) => {
-                    cli.root = top.to_path_buf();
-                    found_index = Some(top.to_path_buf());
-                    here = Here::new(cwd.clone(), &cli.root);
-                }
-                None => outside = Some(format!("{} is outside the repository", crate::fmt::echo(arg))),
+    if let Some(arg) = named_file(&cli.cmd)
+        && let Named::Outside(abs) = here.named(arg)
+    {
+        match abs.ancestors().find(|d| d.join(crate::files::INDEX_DIR).is_dir()) {
+            Some(top) => {
+                cli.root = top.to_path_buf();
+                found_index = Some(top.to_path_buf());
+                here = Here::new(cwd.clone(), &cli.root);
             }
+            None => outside = Some(format!("{} is outside the repository", crate::fmt::echo(arg))),
         }
     }
     // `index` there is the user's stated wish; any other first build there is not
-    if uses_index && !root_given && found_index.is_none() && !matches!(cli.cmd, Cmd::Index { .. }) {
-        if let Some(why) = cwd.as_deref().and_then(no_first_build) {
-            eprintln!("{why}");
-            return Ok(2);
-        }
+    if uses_index
+        && !root_given
+        && found_index.is_none()
+        && !matches!(cli.cmd, Cmd::Index { .. })
+        && let Some(why) = cwd.as_deref().and_then(no_first_build)
+    {
+        eprintln!("{why}");
+        return Ok(2);
     }
     if let Some(top) = found_index {
         eprintln!("[scrutate] using the index in {}", crate::paths::plain_path(&top).display());
@@ -1542,11 +1541,7 @@ pub fn run() -> Result<i32> {
                 hits.extend(part.into_iter().map(|h| (h, i)));
             }
             let shown = |(h, i): &(crate::search::Hit, usize)| {
-                if *i == 0 {
-                    h.path.clone()
-                } else {
-                    format!("{}/{}", roots[*i].0.to_string_lossy().trim_end_matches('/'), h.path)
-                }
+                if *i == 0 { h.path.clone() } else { format!("{}/{}", roots[*i].0.to_string_lossy().trim_end_matches('/'), h.path) }
             };
             if roots.len() > 1 {
                 // the ranker's scores are comparable across repositories (same model, same features)
@@ -1603,10 +1598,9 @@ pub fn run() -> Result<i32> {
                         outln!("\ngrep globs, matched from {}: {}", crate::paths::plain_path(&cfg_root).display(), cfg_globs.join(", "));
                     }
                 }
-                None if root_given => outln!(
-                    "no configuration file (looked for $SCRUTATE_CONFIG, {}/{CONFIG_FILE}, $XDG_CONFIG_HOME/scrutate/config.toml)",
-                    cfg_root.display()
-                ),
+                None if root_given => {
+                    outln!("no configuration file (looked for $SCRUTATE_CONFIG, {}/{CONFIG_FILE}, $XDG_CONFIG_HOME/scrutate/config.toml)", cfg_root.display())
+                }
                 None => outln!(
                     "no configuration file (looked for $SCRUTATE_CONFIG, {CONFIG_FILE} here and in each directory above up to the repository top, $XDG_CONFIG_HOME/scrutate/config.toml)"
                 ),
@@ -1712,12 +1706,13 @@ pub fn run() -> Result<i32> {
                         None => writeln!(w, "{}: {} replaced", f.shown, f.replaced)?,
                     }
                 }
-            } else if let Err(e) = {
-                let mut diff = plan.diff();
-                CliRedact::new(&cli.root).text(&mut diff);
-                w.write_all(diff.as_bytes())
-            } {
-                if e.kind() != std::io::ErrorKind::BrokenPipe {
+            } else {
+                if let Err(e) = {
+                    let mut diff = plan.diff();
+                    CliRedact::new(&cli.root).text(&mut diff);
+                    w.write_all(diff.as_bytes())
+                } && e.kind() != std::io::ErrorKind::BrokenPipe
+                {
                     return Err(e.into());
                 }
             }
@@ -1790,10 +1785,10 @@ pub fn run() -> Result<i32> {
                     err = writeln!(w, "{note}").err();
                 }
             }
-            if let Some(e) = err {
-                if e.kind() != std::io::ErrorKind::BrokenPipe {
-                    return Err(e.into());
-                }
+            if let Some(e) = err
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(e.into());
             }
             let _ = w.flush();
             Ok(if missing {
@@ -1920,7 +1915,7 @@ pub fn run() -> Result<i32> {
 /// and module come from `path`), `{"text", "path"}` parses `text` so; `{"query"}` gives the
 /// query's terms, `{"split"}` a name's subwords and `{"stopwords": true}` the query stop list.
 fn views_command(file: &Path) -> Result<i32> {
-    use crate::text::{query_terms, raw_subwords, tokenize2, BODY_CAP, QUERY_STOP};
+    use crate::text::{BODY_CAP, QUERY_STOP, query_terms, raw_subwords, tokenize2};
     let mut out = json_lines(None);
     for line in std::io::BufReader::new(std::fs::File::open(file)?).lines() {
         let line = line?;
@@ -1986,11 +1981,7 @@ fn views_command(file: &Path) -> Result<i32> {
 /// why an argument names nothing in this index, said with an empty answer or an error.
 /// What a paged text may take, so that it and the newline the command line ends it with fit the limit.
 fn text_room(max_bytes: usize) -> usize {
-    if max_bytes == usize::MAX {
-        max_bytes
-    } else {
-        max_bytes.saturating_sub(1)
-    }
+    if max_bytes == usize::MAX { max_bytes } else { max_bytes.saturating_sub(1) }
 }
 
 fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
@@ -2175,7 +2166,7 @@ fn stdin_is_pipe() -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_PIPE};
+        use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_PIPE, GetFileType};
         // SAFETY: the process's own standard input handle, which GetFileType only reads
         unsafe { GetFileType(std::io::stdin().as_raw_handle() as _) == FILE_TYPE_PIPE }
     }
@@ -2577,8 +2568,10 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
             }
             if defer {
                 collected.push(r);
-            } else if let Err(e) = emit(&r, &mut w) {
-                if broken_pipe(&e) {
+            } else {
+                if let Err(e) = emit(&r, &mut w)
+                    && broken_pipe(&e)
+                {
                     pipe_closed = true;
                     cancel.store(true, Ordering::Relaxed);
                 }
@@ -2677,18 +2670,14 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         Out::Paged(p) => {
             let text = p.text();
             let mut so = std::io::stdout().lock();
-            if text.is_empty() {
-                Ok(())
-            } else {
-                writeln!(so, "{text}").and_then(|_| so.flush())
-            }
+            if text.is_empty() { Ok(()) } else { writeln!(so, "{text}").and_then(|_| so.flush()) }
         }
         Out::Stream(mut w) => w.flush(),
     };
-    if let Err(e) = flushed {
-        if e.kind() != std::io::ErrorKind::BrokenPipe {
-            return Err(e.into());
-        }
+    if let Err(e) = flushed
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(e.into());
     }
     if stats.cancelled && !q.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
@@ -2802,10 +2791,10 @@ fn grep_plain(q: &Query, f: &Files, out: GrepOutput, cancel: Arc<AtomicBool>, si
         }
         return Ok(if found { 0 } else { 1 }); // the reader went away (`| head`): stop quietly
     }
-    if let Err(e) = sink.flush() {
-        if e.kind() != std::io::ErrorKind::BrokenPipe {
-            return Err(e.into());
-        }
+    if let Err(e) = sink.flush()
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(e.into());
     }
     if out.stats {
         eprintln!(

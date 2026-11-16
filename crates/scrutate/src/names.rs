@@ -12,7 +12,7 @@ use anyhow::Result;
 
 use crate::answers::{Reading, Stored};
 use crate::index::{ChunkRow, Symbol};
-use crate::resolve::{join, Occurrence, Resolution, Resolved, Resolver};
+use crate::resolve::{Occurrence, Resolution, Resolved, Resolver, join};
 use crate::search::{Hit, Searcher};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -277,10 +277,10 @@ impl<'a> Names<'a> {
         occurrences.truncate(max_results as usize);
         let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         for o in &occurrences {
-            if let Ok((id, _)) = o.resolution {
-                if known.insert(id) {
-                    definitions.extend(s.ix.chunk(id)?);
-                }
+            if let Ok((id, _)) = o.resolution
+                && known.insert(id)
+            {
+                definitions.extend(s.ix.chunk(id)?);
             }
         }
         let mut first_overload = HashMap::new();
@@ -1400,11 +1400,7 @@ fn package(path: &str) -> &str {
 fn module_name(stem: &str) -> &str {
     let mut parts = stem.rsplit('/');
     let last = parts.next().unwrap_or(stem);
-    if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") {
-        parts.next().unwrap_or(last)
-    } else {
-        last
-    }
+    if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") { parts.next().unwrap_or(last) } else { last }
 }
 
 /// Whether `word` is in `text` where it is not part of a longer identifier.

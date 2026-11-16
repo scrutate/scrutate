@@ -14,10 +14,10 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 
-use crate::config::{at, LanguageCfg};
+use crate::config::{LanguageCfg, at};
 
 /// The kinds a definition pattern can give a symbol.
 pub const KINDS: &[&str] = &["class", "constant", "enum", "function", "impl", "interface", "macro", "method", "module", "struct", "trait", "type"];

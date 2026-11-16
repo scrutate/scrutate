@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::npy::load_npz_shared;
 
@@ -166,11 +166,7 @@ impl SemanticModel {
 
     fn normalize(z: Vec<f64>) -> Option<Vec<f32>> {
         let n = z.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if n > 0.0 {
-            Some(z.iter().map(|v| (v / n) as f32).collect())
-        } else {
-            None
-        }
+        if n > 0.0 { Some(z.iter().map(|v| (v / n) as f32).collect()) } else { None }
     }
 
     /// Unit vector of a chunk from the word counts of its two views (either may be empty): view A

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[path = "support/agreement.rs"]
 mod agreement;
@@ -78,11 +78,7 @@ impl Repo {
         assert_eq!(code, 0, "{args:?}: {out}{err}");
         let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
         // an answer leaves in its envelope; `check` prints a report of its own
-        if v["schema"] == 2 {
-            v["result"].clone()
-        } else {
-            v
-        }
+        if v["schema"] == 2 { v["result"].clone() } else { v }
     }
 
     /// `path:line` of every occurrence -> path of the definition it resolved to ("-" = unresolved).
@@ -327,10 +323,19 @@ fn a_call_of_a_class_is_a_call_of_its_constructor() {
     let r = Repo::new(
         "ctor",
         &[
-            ("geo.py", "class Point:\n    def __init__(self, x):\n        self.x = x\n\n\nclass Other:\n    def __init__(self):\n        pass\n\n\ndef make():\n    return Point(1)\n\n\ndef other():\n    return Other()\n"),
+            (
+                "geo.py",
+                "class Point:\n    def __init__(self, x):\n        self.x = x\n\n\nclass Other:\n    def __init__(self):\n        pass\n\n\ndef make():\n    return Point(1)\n\n\ndef other():\n    return Other()\n",
+            ),
             ("w.js", "class Widget {\n  constructor(n) {\n    this.n = n;\n  }\n}\n\nfunction build() {\n  return new Widget(1);\n}\n"),
-            ("Box.java", "public class Box {\n    private final int n;\n\n    public Box(int n) {\n        this.n = n;\n    }\n\n    static Box of() {\n        return new Box(1);\n    }\n}\n"),
-            ("inv.rb", "class Invoice\n  def initialize(n)\n    @n = n\n  end\nend\n\nclass Receipt\n  def initialize\n  end\nend\n\ndef bill\n  Invoice.new(1)\nend\n\ndef slip\n  Receipt.new\nend\n"),
+            (
+                "Box.java",
+                "public class Box {\n    private final int n;\n\n    public Box(int n) {\n        this.n = n;\n    }\n\n    static Box of() {\n        return new Box(1);\n    }\n}\n",
+            ),
+            (
+                "inv.rb",
+                "class Invoice\n  def initialize(n)\n    @n = n\n  end\nend\n\nclass Receipt\n  def initialize\n  end\nend\n\ndef bill\n  Invoice.new(1)\nend\n\ndef slip\n  Receipt.new\nend\n",
+            ),
         ],
     );
     assert_eq!(split_callers(&r, "Point.__init__"), (strs(&["make"]), strs(&[])));
@@ -713,7 +718,7 @@ fn run_timed(c: &mut Command) -> (String, Duration) {
             system: Timeval,
             rest: [i64; 14],
         }
-        extern "C" {
+        unsafe extern "C" {
             fn wait4(pid: i32, status: *mut i32, options: i32, usage: *mut Rusage) -> i32;
         }
         let zero = || Timeval { sec: 0, usec: 0 };

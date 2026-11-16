@@ -106,16 +106,16 @@ impl Resolver<'_> {
     /// A name with nothing in front: a local, a member of the class around, a name of the file or
     /// of a namespace around, then one of the files the file includes.
     fn c_bare(&mut self, path: &str, fi: &FileInfo, lang: Lang, node: Node, name: &str, line: i64) -> Resolution {
-        if !self.shadowed(lang, node, name, &fi.src) {
-            if let Some(class) = self.c_class_at(fi, line) {
-                if let Some(m) = self.member(class, name, 0) {
-                    return self.c_definition(m).map(|d| (d, "member")).ok_or("not found");
-                }
-                // a base the repository does not hold may declare it
-                let (_, missing) = self.c_base_names(class);
-                if missing {
-                    return Err("not found");
-                }
+        if !self.shadowed(lang, node, name, &fi.src)
+            && let Some(class) = self.c_class_at(fi, line)
+        {
+            if let Some(m) = self.member(class, name, 0) {
+                return self.c_definition(m).map(|d| (d, "member")).ok_or("not found");
+            }
+            // a base the repository does not hold may declare it
+            let (_, missing) = self.c_base_names(class);
+            if missing {
+                return Err("not found");
             }
         }
         match self.scoped_bare(path, fi, lang, node, name, line) {
@@ -301,11 +301,7 @@ impl Resolver<'_> {
             [one] => Some(one.id),
             _ => {
                 let mine: Vec<&Symbol> = defs.iter().filter(|d| stem(&d.path) == stem(&row.path)).collect();
-                if let [one] = mine[..] {
-                    Some(one.id)
-                } else {
-                    None
-                }
+                if let [one] = mine[..] { Some(one.id) } else { None }
             }
         }
     }

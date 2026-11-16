@@ -5,9 +5,9 @@
 #[path = "../src/lazy_bind.rs"]
 mod lazy_bind;
 
-use std::ffi::{c_char, c_int, c_void, CStr};
+use std::ffi::{CStr, c_char, c_int, c_void};
 
-extern "C" {
+unsafe extern "C" {
     fn snprintf(buf: *mut c_char, n: usize, fmt: *const c_char, ...) -> c_int;
     fn qsort(base: *mut c_void, n: usize, width: usize, cmp: extern "C" fn(*const c_void, *const c_void) -> c_int);
     fn powf(x: f32, y: f32) -> f32;
@@ -76,7 +76,7 @@ fn a_panic_unwinds_and_runs_destructors() {
 #[test]
 fn a_return_by_directory_descriptor_reaches_the_system() {
     use std::os::unix::io::AsRawFd;
-    extern "C" {
+    unsafe extern "C" {
         fn fchdir(fd: c_int) -> c_int;
     }
     let here = std::fs::File::open(".").unwrap();

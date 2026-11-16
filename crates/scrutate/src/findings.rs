@@ -9,7 +9,7 @@ use crate::fmt::plural;
 use crate::impact::Impact;
 use crate::index::Body;
 use crate::intel::{DupGroup, DupKeys, Focus, KeyRows};
-use crate::search::{Hit, Searcher, CODE_KINDS};
+use crate::search::{CODE_KINDS, Hit, Searcher};
 
 /// One finding, at the definition the change touched.
 pub struct Finding {
@@ -291,7 +291,7 @@ mod tests {
         Ok(head.into_iter().filter(|g| !old(g)).collect())
     }
 
-    use crate::intel::duplicates_tests::{files, tree, Spec};
+    use crate::intel::duplicates_tests::{Spec, files, tree};
     use proptest::prelude::*;
 
     /// A base tree and a head made from it: some definitions changed, maybe a new file.

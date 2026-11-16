@@ -1959,7 +1959,7 @@ fn interrupt_exits_130() {
             return;
         }
         // the system call, not a `kill` binary: minimal images have none
-        extern "C" {
+        unsafe extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
         assert_eq!(unsafe { kill(child.id() as i32, 2) }, 0, "SIGINT");

@@ -275,10 +275,10 @@ pub fn tokenize2(text: &str, cap: Option<usize>) -> (Vec<String>, Vec<String>) {
             unicode_tokens(w, &mut subs);
         }
         n += 1;
-        if let Some(c) = cap {
-            if n >= c {
-                break;
-            }
+        if let Some(c) = cap
+            && n >= c
+        {
+            break;
         }
     }
     (subs, wholes)

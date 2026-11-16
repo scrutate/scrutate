@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::index::Stat;
 use crate::names::Uses;
@@ -269,12 +269,13 @@ struct Counted(HashMap<PathBuf, (u64, u64)>);
 
 impl Counted {
     fn evict(&mut self, dir: &Path, keep: &Path, written: u64, budget: u64) {
-        if let Some((total, since)) = self.0.get_mut(dir) {
-            if total.saturating_add(written) <= budget && since.saturating_add(written) < budget / 8 {
-                *total += written;
-                *since += written;
-                return;
-            }
+        if let Some((total, since)) = self.0.get_mut(dir)
+            && total.saturating_add(written) <= budget
+            && since.saturating_add(written) < budget / 8
+        {
+            *total += written;
+            *since += written;
+            return;
         }
         let Ok(rd) = std::fs::read_dir(dir) else { return };
         let mut files: Vec<(SystemTime, u64, PathBuf)> = rd

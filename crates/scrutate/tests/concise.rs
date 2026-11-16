@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use scrutate::session::{Every, Session};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// git's own configuration is the only one read: no global or system file.
 const GIT_ENV: [(&str, &str); 2] = [("GIT_CONFIG_GLOBAL", "/dev/null"), ("GIT_CONFIG_NOSYSTEM", "1")];

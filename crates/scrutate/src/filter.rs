@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::instant::Files;
 

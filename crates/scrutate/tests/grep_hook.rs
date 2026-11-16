@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 const HEADER: &str = "Grep result:";
@@ -128,7 +128,7 @@ impl Drop for Tree {
 
 #[test]
 fn a_type_keeps_ignored_files_out_where_a_glob_brings_them_in() {
-    use scrutate::instant::{search, Files, Output, Pattern, Query, Record};
+    use scrutate::instant::{Files, Output, Pattern, Query, Record, search};
     let t = Tree::new("types");
     t.write(".gitignore", "gone.py\n");
     t.write("gone.py", "needle\n");
@@ -235,11 +235,7 @@ fn grep_lines(t: &Tree, input: &Value) -> Vec<String> {
                 for (k, part) in parts.iter().enumerate() {
                     let part = part.trim_end_matches('\r');
                     let part = if part.encode_utf16().count() > 500 {
-                        if kind == "match" {
-                            "[Omitted long matching line]"
-                        } else {
-                            "[Omitted long context line]"
-                        }
+                        if kind == "match" { "[Omitted long matching line]" } else { "[Omitted long context line]" }
                     } else {
                         part
                     };

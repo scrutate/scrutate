@@ -5,9 +5,9 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::findings::{What, MAX_DUPLICATES};
+use crate::findings::{MAX_DUPLICATES, What};
 use crate::fmt::{plural, shown};
 use crate::impact::Impact;
 use crate::intel::DupGroup;

@@ -21,11 +21,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use grep_matcher::{LineTerminator, Match as MatchSpan, Matcher, NoCaptures, NoError};
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch};
-use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
+use ignore::{WalkBuilder, WalkState, overrides::OverrideBuilder};
 
 #[path = "foldfind.rs"]
 mod foldfind;
@@ -35,7 +35,7 @@ mod policy;
 mod source;
 pub use policy::MAX_THREADS;
 use policy::{Machine, Policy, Shown, System};
-use source::{file_worker, FileWorker};
+use source::{FileWorker, file_worker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -416,11 +416,7 @@ pub(crate) fn wide_char(hay: &[u8], i: usize) -> (Option<char>, usize) {
 
 #[inline]
 fn unit_len(hay: &[u8], i: usize) -> usize {
-    if hay[i] < 0x80 {
-        1
-    } else {
-        wide_char(hay, i).1
-    }
+    if hay[i] < 0x80 { 1 } else { wide_char(hay, i).1 }
 }
 
 /// The characters equal to `c` under case folding: the simple case folding of the regex engine,
@@ -770,11 +766,11 @@ impl FuzzyMatcher {
             let gap = &units[units.partition_point(|&u| u < from)..units.partition_point(|&u| u < to)];
             let mut at = from;
             for s in self.starts(line, gap, c) {
-                if s >= at {
-                    if let Some(e) = self.longest_from(line, s, to, c) {
-                        out.push((s, e));
-                        at = e;
-                    }
+                if s >= at
+                    && let Some(e) = self.longest_from(line, s, to, c)
+                {
+                    out.push((s, e));
+                    at = e;
                 }
             }
         })
@@ -811,7 +807,7 @@ impl FuzzyMatcher {
     }
 
     /// Whether pattern position `j` holds the character at `line[i]`, and that character's length.
-    fn holds(&self, line: &[u8], i: usize) -> (impl Fn(usize) -> bool + '_, usize) {
+    fn holds(&self, line: &[u8], i: usize) -> (impl Fn(usize) -> bool + '_ + use<'_>, usize) {
         enum Eq<'a> {
             One(u128),
             Words(&'a [u64]),
@@ -864,11 +860,7 @@ impl FuzzyMatcher {
                 }
                 cur[j] = if t == 1 {
                     // the first character is never inserted
-                    if holds(j - 1) || word {
-                        on
-                    } else {
-                        NO
-                    }
+                    if holds(j - 1) || word { on } else { NO }
                 } else {
                     on.min(prev[j] + 1)
                 };
@@ -1132,8 +1124,8 @@ impl LineRegex {
 /// of a few literals.
 fn line_start(pattern: &str, insensitive: bool) -> Option<LineStart> {
     use regex_syntax::hir::{
-        literal::{ExtractKind, Extractor},
         Look,
+        literal::{ExtractKind, Extractor},
     };
     let hir = regex_syntax::ParserBuilder::new().case_insensitive(insensitive).multi_line(true).utf8(false).build().parse(pattern).ok()?;
     // `\A` and `\z` mean the line's ends when the searcher checks a line, the buffer's ends here
@@ -1990,11 +1982,7 @@ impl Collector<'_> {
     /// with the `\r` of a CRLF line kept; a record's text has neither.
     fn shown<'b>(&self, bytes: &'b [u8]) -> &'b [u8] {
         let line = bytes.strip_suffix(b"\n").unwrap_or(bytes);
-        if self.plain.is_some() {
-            line
-        } else {
-            line.strip_suffix(b"\r").unwrap_or(line)
-        }
+        if self.plain.is_some() { line } else { line.strip_suffix(b"\r").unwrap_or(line) }
     }
 
     /// The bytes plain output prints for a record's line, where `text` cannot hold them: not UTF-8
@@ -2436,10 +2424,10 @@ impl Counters {
 
     fn failed(&self, what: String) {
         self.errors.fetch_add(1, Ordering::Relaxed);
-        if let Ok(mut v) = self.failures.lock() {
-            if v.len() < 10 {
-                v.push(what);
-            }
+        if let Ok(mut v) = self.failures.lock()
+            && v.len() < 10
+        {
+            v.push(what);
         }
     }
 }
@@ -2532,11 +2520,11 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     let raw = label_bytes(path, r.labels, r.f);
     let r = &Run { raw: raw.as_ref(), ..*r };
     count_file(r, size);
-    if r.f.search_zip {
-        if let Some(kind) = crate::archive::Kind::of(&rel) {
-            search_archive(w, r, path, &rel, kind, named);
-            return;
-        }
+    if r.f.search_zip
+        && let Some(kind) = crate::archive::Kind::of(&rel)
+    {
+        search_archive(w, r, path, &rel, kind, named);
+        return;
     }
     if named && path.as_os_str() == "-" {
         source::search(w, r, &mut source::Stdin, rel, true);
@@ -3178,11 +3166,7 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
                     let named = f.paths_as_given && entry.depth() == 0;
                     search_one(fw, &s.run(&matcher, &tx), entry.path(), rel, size, named);
                     threads.after_file(&mut files);
-                    if stop.is_set() {
-                        WalkState::Quit
-                    } else {
-                        WalkState::Continue
-                    }
+                    if stop.is_set() { WalkState::Quit } else { WalkState::Continue }
                 })
             })
         });
@@ -3433,7 +3417,7 @@ fn on_pseudo_fs(p: &Path) -> bool {
 #[cfg(target_os = "linux")]
 pub(crate) fn fs_type(p: &Path) -> Option<u32> {
     use std::os::unix::ffi::OsStrExt;
-    extern "C" {
+    unsafe extern "C" {
         fn statfs(path: *const std::ffi::c_char, buf: *mut u64) -> std::ffi::c_int;
     }
     let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
@@ -3455,11 +3439,7 @@ fn label(path: &Path, roots: &[PathBuf], f: &Files) -> Arc<str> {
         return Arc::from(relative(path, roots));
     }
     let s = path.to_string_lossy();
-    if cfg!(windows) {
-        Arc::from(slashed(s))
-    } else {
-        Arc::from(&*s)
-    }
+    if cfg!(windows) { Arc::from(slashed(s)) } else { Arc::from(&*s) }
 }
 
 /// The bytes of `label(path, roots, f)` when `path` is not UTF-8, for output that must name the file
@@ -3496,11 +3476,7 @@ fn label_bytes(_path: &Path, _roots: &[PathBuf], _f: &Files) -> Option<Arc<[u8]>
 /// A path as reported: `/` between its parts. Only Windows has `\` as a separator; elsewhere it is
 /// a character of the name.
 pub fn slashed(s: std::borrow::Cow<'_, str>) -> String {
-    if cfg!(windows) {
-        windows_form(&s)
-    } else {
-        s.into_owned()
-    }
+    if cfg!(windows) { windows_form(&s) } else { s.into_owned() }
 }
 
 /// A Windows path as it is printed: plain (crate::paths), `/` between its parts.
@@ -3989,7 +3965,7 @@ mod tests {
                             "{what}: {:?} {:?} report {:?}, {threads} threads, split at {split_file_bytes}, plain {to_plain}",
                             o.pattern.text, o.pattern.mode, o.report
                         );
-                        assert_eq!(on_disk.2 .0, 1, "{shape}");
+                        assert_eq!(on_disk.2.0, 1, "{shape}");
                         assert!(on_disk == in_memory, "{shape}\non disk: {on_disk:?}\nin memory: {in_memory:?}");
                         runs += 1;
                     }

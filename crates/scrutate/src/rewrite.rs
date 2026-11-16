@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// One file the rewrite changes.
 pub struct FileChange {
@@ -316,9 +316,9 @@ mod nt {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows_sys::Wdk::Storage::FileSystem::{
-        FileRenameInformation, NtCreateFile, NtSetInformationFile, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+        FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT, FileRenameInformation, NtCreateFile, NtSetInformationFile,
     };
-    use windows_sys::Win32::Foundation::{RtlNtStatusToDosError, HANDLE, OBJ_CASE_INSENSITIVE, UNICODE_STRING};
+    use windows_sys::Win32::Foundation::{HANDLE, OBJ_CASE_INSENSITIVE, RtlNtStatusToDosError, UNICODE_STRING};
     use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE};
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -421,7 +421,7 @@ impl Dir {
     fn below(&self, below: &Path) -> std::io::Result<Dir> {
         #[cfg(unix)]
         {
-            use rustix::fs::{openat, Mode, OFlags};
+            use rustix::fs::{Mode, OFlags, openat};
             let mut d = openat(&self.0, ".", DIR_FLAGS, Mode::empty())?;
             for c in below.components() {
                 d = openat(&d, c.as_os_str(), DIR_FLAGS | OFlags::NOFOLLOW, Mode::empty())?;
@@ -444,7 +444,7 @@ impl Dir {
     fn regular(&self, name: &std::ffi::OsStr) -> std::io::Result<Option<std::fs::Permissions>> {
         #[cfg(unix)]
         {
-            use rustix::fs::{statat, AtFlags, FileType};
+            use rustix::fs::{AtFlags, FileType, statat};
             use std::os::unix::fs::PermissionsExt;
             let st = statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW)?;
             let file = FileType::from_raw_mode(st.st_mode as _) == FileType::RegularFile;
@@ -468,7 +468,7 @@ impl Dir {
         let mut out = Vec::new();
         #[cfg(unix)]
         {
-            use rustix::fs::{openat, Mode, OFlags};
+            use rustix::fs::{Mode, OFlags, openat};
             std::fs::File::from(openat(&self.0, name, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?).read_to_end(&mut out)?;
         }
         #[cfg(windows)]
@@ -482,7 +482,7 @@ impl Dir {
     fn create_new(&self, name: &str) -> std::io::Result<std::fs::File> {
         #[cfg(unix)]
         {
-            use rustix::fs::{openat, Mode, OFlags};
+            use rustix::fs::{Mode, OFlags, openat};
             let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
             Ok(std::fs::File::from(openat(&self.0, name, flags, Mode::RUSR | Mode::WUSR)?))
         }

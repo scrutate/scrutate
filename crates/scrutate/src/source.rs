@@ -277,11 +277,7 @@ fn starts_with_bom(b: &[u8]) -> bool {
 /// is met by then and nothing after it is ever read; copying the rest into the reader's buffer
 /// only cost time. (A named file's reader turns the NUL into a line break and reads on.)
 fn up_to_the_nul(b: &[u8], at: usize) -> &[u8] {
-    if at < (64 << 10) - 8 {
-        &b[..=at]
-    } else {
-        b
-    }
+    if at < (64 << 10) - 8 { &b[..=at] } else { b }
 }
 
 /// Whether the reader quits on the walked file `b`, first NUL at `at`, having searched no line:

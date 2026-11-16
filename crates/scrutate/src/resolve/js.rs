@@ -30,13 +30,9 @@ impl Rules for Js {
         if let Some(c) = class.filter(|c| c.kind() == "class") {
             let mut cur = c.walk();
             let heritage = c.children(&mut cur).find(|h| h.kind() == "class_heritage");
-            let base = heritage.and_then(|h| h.named_child(0)).and_then(|b| {
-                if b.kind() == "extends_clause" {
-                    b.child_by_field_name("value").or_else(|| b.named_child(0))
-                } else {
-                    Some(b)
-                }
-            });
+            let base = heritage
+                .and_then(|h| h.named_child(0))
+                .and_then(|b| if b.kind() == "extends_clause" { b.child_by_field_name("value").or_else(|| b.named_child(0)) } else { Some(b) });
             let Some(leaf) = base.and_then(type_name) else { return Some(Err("receiver")) };
             return Some(r.type_leaf(path, fi, Lang::Js, leaf, line).map(|(id, _)| (id, "super")));
         }

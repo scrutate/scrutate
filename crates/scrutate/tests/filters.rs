@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[path = "support/canon.rs"]
 mod canon;
@@ -242,11 +242,7 @@ fn zebras(name: &str, indexed: bool) -> Repo {
         files.push((format!("keep/k{i:02}.py"), format!("def other_{i}():\n    '''{}'''\n    return {i}\n", words("giraffe"))));
     }
     let files: Vec<(&str, String)> = files.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
-    if indexed {
-        Repo::new(name, &files)
-    } else {
-        Repo::unindexed(name, &files)
-    }
+    if indexed { Repo::new(name, &files) } else { Repo::unindexed(name, &files) }
 }
 
 #[test]
@@ -301,11 +297,7 @@ fn configs(indexed: bool, name: &str) -> Repo {
         ("js/geo.js", "function parse_config(t) {\n  return t;\n}\nmodule.exports = { parse_config };\n".to_string()),
         ("js/use.js", "const { parse_config } = require('./geo');\nfunction run(t) {\n  return parse_config(t);\n}\n".to_string()),
     ];
-    if indexed {
-        Repo::new(name, &files)
-    } else {
-        Repo::unindexed(name, &files)
-    }
+    if indexed { Repo::new(name, &files) } else { Repo::unindexed(name, &files) }
 }
 
 /// (path, outside_filter) of each definition, and the paths of the occurrences under them.

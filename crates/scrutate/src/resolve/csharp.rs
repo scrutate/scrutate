@@ -183,10 +183,10 @@ impl Resolver<'_> {
         }
         let statics: Vec<String> = fi.bindings.iter().filter(|b| b.local == "*" && b.item.is_some()).map(|b| b.module.clone()).collect();
         for m in statics {
-            if let Ok(c) = self.cs_dotted(&m) {
-                if let Some(found) = self.cs_member(c, name) {
-                    return Ok((found, "import"));
-                }
+            if let Ok(c) = self.cs_dotted(&m)
+                && let Some(found) = self.cs_member(c, name)
+            {
+                return Ok((found, "import"));
             }
         }
         Err(if self.cs_defined(name) { "not found" } else { "external" })

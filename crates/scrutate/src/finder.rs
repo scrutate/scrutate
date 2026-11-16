@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub const LIMIT: usize = 20;
@@ -122,10 +122,10 @@ fn rank_of(path: &str, q: &[char]) -> Option<(u8, &'static str, u32)> {
     if base == q || stem == q {
         return Some((0, "exact", 0));
     }
-    if !q.contains(&'/') {
-        if let Some(e) = quality(base, q) {
-            return Some((1, "basename", e));
-        }
+    if !q.contains(&'/')
+        && let Some(e) = quality(base, q)
+    {
+        return Some((1, "basename", e));
     }
     quality(&lower, q).map(|e| (2, "path", e))
 }
@@ -171,10 +171,10 @@ fn walk(root: &Path) -> Vec<String> {
     let Ok(w) = crate::instant::build_walker(&[root.to_path_buf()], &crate::files::repository_files(root)) else { return Vec::new() };
     w.run(|| {
         Box::new(|e| {
-            if let Some(e) = e.ok().filter(|e| e.file_type().is_some_and(|t| t.is_file())) {
-                if let Ok(rel) = e.path().strip_prefix(root) {
-                    found.lock().unwrap().push(crate::files::slashed(rel));
-                }
+            if let Some(e) = e.ok().filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+                && let Ok(rel) = e.path().strip_prefix(root)
+            {
+                found.lock().unwrap().push(crate::files::slashed(rel));
             }
             ignore::WalkState::Continue
         })

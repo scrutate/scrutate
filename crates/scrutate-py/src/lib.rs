@@ -11,7 +11,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::Duration;
 
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyRuntimeError, PyValueError};
@@ -329,13 +329,13 @@ fn grep(
     instant::overrides(&first, &f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
     // an unknown type is the call's error, not the first next()'s
     instant::file_types(&f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
-    if let instant::Paths::Walk(roots) = &f.paths {
-        if let Some(r) = roots.iter().find(|r| std::fs::metadata(r).is_err()) {
-            return Err(PyFileNotFoundError::new_err(format!(
-                "no such file or directory: {}",
-                r.display()
-            )));
-        }
+    if let instant::Paths::Walk(roots) = &f.paths
+        && let Some(r) = roots.iter().find(|r| std::fs::metadata(r).is_err())
+    {
+        return Err(PyFileNotFoundError::new_err(format!(
+            "no such file or directory: {}",
+            r.display()
+        )));
     }
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::sync_channel::<Vec<Match>>(64); // bounded: a slow consumer throttles the search

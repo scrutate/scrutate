@@ -89,11 +89,7 @@ fn php_names<'t>(n: Node<'t>) -> Vec<Node<'t>> {
 /// The full name a `use` binding names.
 fn php_full(b: &Binding) -> String {
     let item = b.item.as_deref().unwrap_or("");
-    if b.module.is_empty() {
-        item.to_string()
-    } else {
-        format!("{}\\{item}", b.module)
-    }
+    if b.module.is_empty() { item.to_string() } else { format!("{}\\{item}", b.module) }
 }
 
 /// The namespace that holds 0-based line `row` of the file: the braced `namespace` block around
@@ -136,11 +132,7 @@ fn php_qualify(fi: &FileInfo, at: Node, written: &str) -> String {
     }
     let rel = written.strip_prefix("namespace\\").unwrap_or(written);
     let ns = php_namespace(fi, at.start_position().row);
-    if ns.is_empty() {
-        rel.to_string()
-    } else {
-        format!("{ns}\\{rel}")
-    }
+    if ns.is_empty() { rel.to_string() } else { format!("{ns}\\{rel}") }
 }
 
 /// The variables named `var` in `scope` that are bound before a use sees them: an assignment
@@ -184,7 +176,7 @@ impl Resolver<'_> {
         match p.kind() {
             // `public $name;` declares a property
             "variable_name" if p.parent().is_some_and(|g| matches!(g.kind(), "property_element" | "property_promotion_parameter")) => {
-                return Err("field or key")
+                return Err("field or key");
             }
             // `User::$current` reads a static property
             "variable_name" if p.parent().is_some_and(|g| g.kind() == "scoped_property_access_expression") => return Err("field or key"),
@@ -446,8 +438,8 @@ impl Resolver<'_> {
         let captured = scope.named_children(&mut c2).filter(|c| c.kind() == "anonymous_function_use_clause").find_map(|u| {
             let mut c3 = u.walk();
             // `use (&$u)` holds the variable in a by_ref node
-            let found = u.named_children(&mut c3).map(|v| if v.kind() == "by_ref" { v.named_child(0).unwrap_or(v) } else { v }).find(|v| text(*v, src) == var);
-            found
+
+            u.named_children(&mut c3).map(|v| if v.kind() == "by_ref" { v.named_child(0).unwrap_or(v) } else { v }).find(|v| text(*v, src) == var)
         });
         match captured {
             Some(v) => self.php_variable_above(fi, v, scope),

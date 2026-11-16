@@ -6,10 +6,10 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
-use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 
 use crate::index::ChunkRow;
 use crate::names::Names;
@@ -47,10 +47,10 @@ pub fn read_message(r: &mut impl BufRead) -> Result<Option<Vec<u8>>> {
             }
             continue;
         }
-        if let Some((k, v)) = l.split_once(':') {
-            if k.trim().eq_ignore_ascii_case("content-length") {
-                len = Some(v.trim().parse().context("bad Content-Length header")?);
-            }
+        if let Some((k, v)) = l.split_once(':')
+            && k.trim().eq_ignore_ascii_case("content-length")
+        {
+            len = Some(v.trim().parse().context("bad Content-Length header")?);
         }
     }
     let n = len.unwrap_or(0);

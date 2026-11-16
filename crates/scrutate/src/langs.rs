@@ -301,11 +301,7 @@ fn haskell_name(node: Node, src: &[u8]) -> Option<String> {
 fn heading_text(node: Node, src: &[u8]) -> Option<String> {
     let t = text(src, node.start_byte(), node.end_byte());
     let line = t.lines().next().unwrap_or("").trim().trim_start_matches('#').trim();
-    if line.is_empty() {
-        None
-    } else {
-        Some(line.to_string())
-    }
+    if line.is_empty() { None } else { Some(line.to_string()) }
 }
 
 /// A function declared without a body at file or namespace scope (`int add(int, int);`).
@@ -1849,10 +1845,10 @@ fn erlang_fun_name(node: Node, src: &[u8]) -> Option<String> {
     // fun_decl > function_clause > (name: atom)
     let mut cur = node.walk();
     for ch in node.children(&mut cur) {
-        if ch.kind() == "function_clause" {
-            if let Some(n) = ch.child_by_field_name("name") {
-                return Some(text(src, n.start_byte(), n.end_byte()));
-            }
+        if ch.kind() == "function_clause"
+            && let Some(n) = ch.child_by_field_name("name")
+        {
+            return Some(text(src, n.start_byte(), n.end_byte()));
         }
     }
     None
@@ -2012,11 +2008,7 @@ fn hcl_block_name(node: Node, src: &[u8]) -> Option<String> {
             _ => {}
         }
     }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" "))
-    }
+    if parts.is_empty() { None } else { Some(parts.join(" ")) }
 }
 
 /// A Pascal procedure with a body is named by its header; the header is not a second symbol.
@@ -2289,11 +2281,7 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     let lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
     let head = crate::text::prefix_bytes(source, 4000);
     let id = if lower.ends_with(".m") {
-        if ["@interface", "@implementation", "#import", "@end", "@protocol"].iter().any(|k| head.contains(k)) {
-            "objc"
-        } else {
-            "matlab"
-        }
+        if ["@interface", "@implementation", "#import", "@end", "@protocol"].iter().any(|k| head.contains(k)) { "objc" } else { "matlab" }
     } else if lower.ends_with(".h") {
         if OBJC_HEADER.is_match(source) {
             "objc"
@@ -2306,17 +2294,9 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
         // a unit or program header is Pascal whatever directives follow (`{$mode objfpc}`); else
         // a `$` is taken for a Puppet variable
         let pascal_words = ["procedure ", "function ", "begin", "end;", "unit ", "program "].iter().any(|k| source.contains(k));
-        if PASCAL_HEADER.is_match(head) || (pascal_words && !head.contains("$")) {
-            "pascal"
-        } else {
-            "puppet"
-        }
+        if PASCAL_HEADER.is_match(head) || (pascal_words && !head.contains("$")) { "pascal" } else { "puppet" }
     } else if lower.ends_with(".cls") {
-        if head.contains("\\NeedsTeXFormat") || head.contains("\\ProvidesClass") {
-            "latex"
-        } else {
-            "apex"
-        }
+        if head.contains("\\NeedsTeXFormat") || head.contains("\\ProvidesClass") { "latex" } else { "apex" }
     } else {
         return None;
     };

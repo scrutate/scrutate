@@ -44,11 +44,7 @@ impl Repo {
         assert_eq!(code, 0, "{out}");
         let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
         // an answer leaves in its envelope; `check` prints a report of its own
-        if v["schema"] == 2 {
-            v["result"].clone()
-        } else {
-            v
-        }
+        if v["schema"] == 2 { v["result"].clone() } else { v }
     }
     /// (path, line) of every occurrence -> path of the definition it resolved to ("-" = unresolved).
     fn resolved(&self, name: &str) -> BTreeMap<(String, u64), String> {
@@ -291,7 +287,10 @@ fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
         "rs_trait_default",
         &[
             ("Cargo.toml", "[package]\nname = \"td\"\nversion = \"0.1.0\"\n"),
-            ("src/lib.rs", "pub trait Greet {\n    fn hello(&self) -> u8 {\n        1\n    }\n}\npub struct S;\nimpl Greet for S {}\n\npub fn run(s: S) -> u8 {\n    s.hello()\n        + S.hello()\n}\n"),
+            (
+                "src/lib.rs",
+                "pub trait Greet {\n    fn hello(&self) -> u8 {\n        1\n    }\n}\npub struct S;\nimpl Greet for S {}\n\npub fn run(s: S) -> u8 {\n    s.hello()\n        + S.hello()\n}\n",
+            ),
         ],
     );
     assert_eq!(r.refs_of("hello", "src/lib.rs:2"), ["src/lib.rs:10", "src/lib.rs:11", "src/lib.rs:2"]);
@@ -399,7 +398,16 @@ fn python_a_class_attribute_hides_an_import_in_the_class_body_only() {
 
 #[test]
 fn python_class_body_bindings_follow_the_order_and_scopes_python_runs_them_in() {
-    let r = Repo::new("py_class_scopes", &[("util.py", "def helper():\n    return 1\n"), ("k.py", "from util import helper as h\n\nclass A:\n    if True:\n        h = 5\n    a = h\n\nclass B:\n    h, x = 1, 2\n    b = h\n\nclass C:\n    def h(self):\n        return 1\n    c = h\n\nclass D:\n    h = h\n\nclass E:\n    h = 5\n    e = [h for _ in range(2)]\n\nclass F:\n    for h in range(2):\n        pass\n    f = h\n\nclass G:\n    h: int = 5\n    g = h\n")]);
+    let r = Repo::new(
+        "py_class_scopes",
+        &[
+            ("util.py", "def helper():\n    return 1\n"),
+            (
+                "k.py",
+                "from util import helper as h\n\nclass A:\n    if True:\n        h = 5\n    a = h\n\nclass B:\n    h, x = 1, 2\n    b = h\n\nclass C:\n    def h(self):\n        return 1\n    c = h\n\nclass D:\n    h = h\n\nclass E:\n    h = 5\n    e = [h for _ in range(2)]\n\nclass F:\n    for h in range(2):\n        pass\n    f = h\n\nclass G:\n    h: int = 5\n    g = h\n",
+            ),
+        ],
+    );
     // the import is read by `h = h`'s right side (line 18) and inside a comprehension (line 22);
     // every other `h` is bound in its class body first: in an `if`, a tuple, a `for`, an annotation
     assert_eq!(r.refs_of("helper", "util.py:1"), ["k.py:1", "k.py:18", "k.py:22", "util.py:1"]);
@@ -414,7 +422,10 @@ fn go_two_areas() {
             ("circle/area.go", "package circle\n\nfunc Area() int { return 1 }\n"),
             ("square/area.go", "package square\n\nfunc Area() int { return 2 }\n"),
             ("square/twice.go", "package square\n\nfunc Twice() int { return Area() * 2 }\n"),
-            ("main.go", "package main\n\nimport (\n\t\"example.com/shapes/circle\"\n\tsq \"example.com/shapes/square\"\n)\n\nfunc main() {\n\tprintln(circle.Area())\n\tprintln(sq.Area())\n}\n"),
+            (
+                "main.go",
+                "package main\n\nimport (\n\t\"example.com/shapes/circle\"\n\tsq \"example.com/shapes/square\"\n)\n\nfunc main() {\n\tprintln(circle.Area())\n\tprintln(sq.Area())\n}\n",
+            ),
         ],
     );
     let (c, s) = ("circle/area.go", "square/area.go");
@@ -537,7 +548,10 @@ fn a_std_method_on_a_call_result_is_external_and_a_macro_argument_is_undecided()
         &[
             ("Cargo.toml", "[package]\nname = \"rep\"\nversion = \"0.1.0\"\n"),
             ("src/lib.rs", "pub mod report;\npub mod meta;\npub mod user;\n"),
-            ("src/report.rs", "pub struct Report;\n\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub fn text() -> u8 {\n    1\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn ok(&self) -> bool {\n        false\n    }\n}\n"),
+            (
+                "src/report.rs",
+                "pub struct Report;\n\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub fn text() -> u8 {\n    1\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn ok(&self) -> bool {\n        false\n    }\n}\n",
+            ),
             ("src/meta.rs", "pub fn meta(file: &std::fs::File) -> bool {\n    file.metadata().ok().is_some()\n}\n"),
             (
                 "src/user.rs",
@@ -561,7 +575,10 @@ fn a_std_method_on_a_call_result_is_external_and_a_macro_argument_is_undecided()
 fn javascript_this_in_a_method_under_a_quoted_key_is_the_object_literal() {
     let r = Repo::new(
         "js_quoted_key",
-        &[("a.js", "const api = {\n  \"get\": function () {\n    return this.put();\n  },\n  \"del\"() {\n    return this.put();\n  },\n  put() {\n    return 1;\n  },\n};\n")],
+        &[(
+            "a.js",
+            "const api = {\n  \"get\": function () {\n    return this.put();\n  },\n  \"del\"() {\n    return this.put();\n  },\n  put() {\n    return 1;\n  },\n};\n",
+        )],
     );
     assert_eq!(r.refs_of("put", "a.js:8"), ["a.js:3", "a.js:6", "a.js:8"]);
 }

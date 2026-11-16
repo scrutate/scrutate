@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -99,7 +99,7 @@ impl Search {
     /// `false` when the search has ended. Sent with kill(2) at once: a shell started to send it
     /// takes long enough on a fast machine for the search to end before it arrives.
     fn try_signal(&self, sig: &str) -> bool {
-        extern "C" {
+        unsafe extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
         // macOS numbers

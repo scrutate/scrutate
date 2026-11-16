@@ -14,11 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::index::FileCount;
 use crate::ops;
-use crate::session::{Panicked, Session, BUILD_WAIT};
+use crate::session::{BUILD_WAIT, Panicked, Session};
 
 /// Revisions that open with the `initialize` handshake.
 const HANDSHAKE_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -387,12 +387,14 @@ fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, 
         let message = format!("{name}: files read");
         Some(std::thread::scope(|s| {
             let ticker = (!reporter.token.is_null()).then(|| {
-                s.spawn(|| loop {
-                    std::thread::park_timeout(PROGRESS_LOOK);
-                    if finished.load(Ordering::Acquire) || gone() {
-                        break;
+                s.spawn(|| {
+                    loop {
+                        std::thread::park_timeout(PROGRESS_LOOK);
+                        if finished.load(Ordering::Acquire) || gone() {
+                            break;
+                        }
+                        reporter.report(count.get(), &message);
                     }
-                    reporter.report(count.get(), &message);
                 })
             });
             let c = call_counted(session, &name, &args, settings, &cancelled, &count);
@@ -489,11 +491,7 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
                         let replies = Mutex::new(Vec::new());
                         // progress notifications go out at once; the batch's answers go out together
                         let sink = |m: Value| {
-                            if m.get("method").is_some() {
-                                send(m)
-                            } else {
-                                replies.lock().unwrap_or_else(|p| p.into_inner()).push(m)
-                            }
+                            if m.get("method").is_some() { send(m) } else { replies.lock().unwrap_or_else(|p| p.into_inner()).push(m) }
                         };
                         std::thread::scope(|inner| batch.into_iter().for_each(|m| server.handle(inner, &sink, m)));
                         let replies = replies.into_inner().unwrap_or_else(|p| p.into_inner());

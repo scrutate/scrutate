@@ -2,8 +2,8 @@
 //! diff unless asked to write, written only when the file's hash is the one the caller saw, and
 //! only when the new file parses and keeps every definition outside the edit.
 
-use anyhow::{anyhow, bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow, bail};
+use serde_json::{Value, json};
 
 use crate::ops::{Answer, Op};
 use crate::search::Searcher;
@@ -340,10 +340,8 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     others_kept((&before, &old, &target), (&after, &new, edited), new_end)?;
     let plan = one.plan(new.clone().into_bytes(), span);
     let diff = plan.diff();
-    if apply {
-        if let Some(why) = plan.write().into_iter().flatten().next() {
-            bail!("{why}");
-        }
+    if apply && let Some(why) = plan.write().into_iter().flatten().next() {
+        bail!("{why}");
     }
     let hash = if apply { content_hash(new.as_bytes()) } else { now };
     Ok(Answer::Edit(Box::new(Edited { path: rel, old: (target.start, target.end), new: (edited.start, edited.end), applied: apply, hash, diff })))

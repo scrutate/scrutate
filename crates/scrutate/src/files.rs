@@ -379,10 +379,10 @@ impl WalkGuard {
                 }
             }
             Some(Guard::Lazy(g)) => {
-                if e.depth() == 1 {
-                    if let Some(root) = e.path().parent() {
-                        g.enter(root);
-                    }
+                if e.depth() == 1
+                    && let Some(root) = e.path().parent()
+                {
+                    g.enter(root);
                 }
                 if g.any.load(std::sync::atomic::Ordering::Acquire) {
                     let ix = g.ix.read().unwrap_or_else(|p| p.into_inner());
