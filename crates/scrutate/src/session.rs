@@ -2976,6 +2976,142 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Names moving between kinds (absent, a file, a directory, a link to a file, a link to a
+    /// directory) and writes inside them, under a watched session: every definition the tree
+    /// holds is found, and none it no longer holds, after each step. Fixed seeds, so a miss
+    /// comes back the same way.
+    #[cfg(unix)]
+    #[test]
+    fn kind_changes_answer_as_the_tree_is() {
+        let mut pairs = std::collections::BTreeMap::new();
+        for seed in [11, 12] {
+            for (pair, n) in kind_changes(seed, 100) {
+                *pairs.entry(pair).or_insert(0) += n;
+            }
+        }
+        // each ordered pair of the five kinds, a link to a file or a directory to a file among them
+        assert_eq!(pairs.len(), 20, "ordered kind pairs drawn: {pairs:?}");
+    }
+
+    #[cfg(unix)]
+    fn kind_changes(seed: u64, steps: usize) -> std::collections::BTreeMap<(&'static str, &'static str), usize> {
+        const KINDS: [&str; 5] = ["absent", "file", "dir", "lfile", "ldir"];
+        let base = std::env::temp_dir().join(format!("scrutate_kinds_{seed}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("t/.git")).unwrap();
+        std::fs::create_dir_all(base.join("outside/odir")).unwrap();
+        let base = std::fs::canonicalize(&base).unwrap();
+        let (root, out) = (base.join("t"), base.join("outside"));
+        std::fs::write(out.join("o.py"), "def outside_file_zq():\n    return 1\n").unwrap();
+        std::fs::write(out.join("odir/q.py"), "def outside_dir_zq():\n    return 1\n").unwrap();
+        for i in 0..20 {
+            std::fs::create_dir_all(root.join(format!("d{i}"))).unwrap();
+            std::fs::write(root.join(format!("d{i}/m{i}.py")), format!("def base_{i}_zq():\n    return {i}\n")).unwrap();
+        }
+        {
+            let mut repo = crate::stores::Repo::open(&root).unwrap();
+            repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
+        }
+        let s = Session::open_watched(&root, Every::given(None)).unwrap();
+        if let Some(notes) = s.notes().filter(|_| crate::watch::ORDER_PROVES) {
+            notes.set_order_proves(true);
+        }
+        s.watch(false).unwrap();
+        let t0 = Instant::now();
+        while !read(&s.fresh).watching() || !read(&s.fresh).order_proves() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started, or the change sets never came to prove the order (macOS: no kqueue)");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let has = |name: &str| s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty());
+        let _ = has("base_1_zq");
+        let mut state = seed;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state >> 33
+        };
+        let slots: Vec<PathBuf> = (0..8).map(|i| root.join(format!("d{i}/s{i}.py"))).collect();
+        let (mut kind, mut defs, mut hist) = (vec![0usize; 8], vec![Vec::<String>::new(); 8], vec![Vec::<&str>::new(); 8]);
+        let (mut gone, mut made, mut missing, mut stale) = (Vec::<String>::new(), 0, Vec::new(), Vec::new());
+        let mut pairs = std::collections::BTreeMap::new();
+        for step in 0..steps {
+            let sl = next() as usize % slots.len();
+            let p = &slots[sl];
+            fn write_inside(p: &Path, kind: usize, made: &mut usize, defs: &mut Vec<String>, gone: &mut Vec<String>) {
+                *made += 1;
+                let n = format!("w{made}_zq");
+                if kind == 1 {
+                    gone.append(defs);
+                    std::fs::write(p, format!("def {n}():\n    return 2\n")).unwrap();
+                } else {
+                    std::fs::write(p.join(format!("b{made}.py")), format!("def {n}():\n    return 2\n")).unwrap();
+                }
+                defs.push(n);
+            }
+            if (kind[sl] == 1 || kind[sl] == 2) && next() % 10 < 3 {
+                write_inside(p, kind[sl], &mut made, &mut defs[sl], &mut gone);
+            } else {
+                let others: Vec<usize> = (0..KINDS.len()).filter(|&k| k != kind[sl]).collect();
+                let new = others[next() as usize % others.len()];
+                match std::fs::symlink_metadata(p) {
+                    Ok(m) if m.is_dir() => std::fs::remove_dir_all(p).unwrap(),
+                    Ok(_) => std::fs::remove_file(p).unwrap(),
+                    Err(_) => {}
+                }
+                gone.append(&mut defs[sl]);
+                made += 1;
+                match new {
+                    1 => {
+                        std::fs::write(p, format!("def f{made}_zq():\n    return 1\n")).unwrap();
+                        defs[sl].push(format!("f{made}_zq"));
+                    }
+                    2 => {
+                        std::fs::create_dir(p).unwrap();
+                        std::fs::write(p.join("a.py"), format!("def in{made}_zq():\n    return 1\n")).unwrap();
+                        defs[sl].push(format!("in{made}_zq"));
+                    }
+                    3 => std::os::unix::fs::symlink(out.join("o.py"), p).unwrap(),
+                    4 => std::os::unix::fs::symlink(out.join("odir"), p).unwrap(),
+                    _ => {}
+                }
+                *pairs.entry((KINDS[kind[sl]], KINDS[new])).or_insert(0) += 1;
+                kind[sl] = new;
+                hist[sl].push(KINDS[new]);
+                if new == 2 && next() % 2 == 0 {
+                    write_inside(p, 2, &mut made, &mut defs[sl], &mut gone);
+                }
+            }
+            std::thread::sleep(Duration::from_millis([0, 50, 200][next() as usize % 3]));
+            for (i, ds) in defs.iter().enumerate() {
+                missing.extend(ds.iter().filter(|n| !has(n)).map(|n| format!("step {step}: {n} at s{i} ({})", hist[i].join("->"))));
+            }
+            stale.extend(gone.iter().rev().take(12).filter(|n| has(n)).map(|n| format!("step {step}: {n}")));
+        }
+        assert!(missing.is_empty() && stale.is_empty(), "seed {seed}: missing {missing:#?}, stale {stale:#?}");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&base);
+        pairs
+    }
+
+    /// A watched file that becomes a symlink and then a file again (a checkout to a branch where
+    /// the path is a link, and back) is gone, then a new file.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_that_becomes_a_symlink_and_a_file_again_is_seen() {
+        let (root, s) = kqueue_in_place("kq_file_link_file");
+        let f = root.join("src/f.py");
+        std::fs::write(&f, "def first_f():\n    return 0\n").unwrap();
+        watching_by_kqueue(&s);
+        assert!(found(&s, "first_f"));
+        std::fs::remove_file(&f).unwrap();
+        std::os::unix::fs::symlink("../outside.py", &f).unwrap();
+        assert!(!found(&s, "first_f"), "the file a symlink replaced is gone");
+        std::fs::remove_file(&f).unwrap();
+        std::fs::write(&f, "def back_f():\n    return 1\n").unwrap();
+        assert!(found(&s, "back_f"), "the file that replaced the symlink");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A symlink that becomes a file at its path (as `git checkout` does when a path stops being
     /// a link) is a new file to the next read.
     #[cfg(target_os = "macos")]
