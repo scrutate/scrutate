@@ -224,6 +224,10 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang], (
         if let Some(spec) = crate::langs::spec_for(&probe).or_else(named) {
             return Err(err(span.clone(), format!("extension {e:?} belongs to the built-in language {}", spec.id)));
         }
+        // one that built-in languages share (`.m`) is told apart by what each file holds
+        if let Some((_, ids)) = crate::langs::BY_CONTENT.iter().find(|(x, _)| *x == ext) {
+            return Err(err(span.clone(), format!("extension {e:?} belongs to the built-in languages {}", ids.join(" and "))));
+        }
         if !crate::parse::is_indexable(&probe) {
             return Err(err(span.clone(), format!("extension {e:?} marks data the index never reads")));
         }

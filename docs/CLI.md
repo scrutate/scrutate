@@ -1503,7 +1503,8 @@ definitions = [
   alias (`py`, `js`, `sh` ...), or a name another table already took.
 - `extensions`: one or more, without the dot, matched without regard to case. Refused: an
   extension a built-in language owns, as one of its extensions or the end of a file name it
-  claims (`txt` for `CMakeLists.txt`, `xml` for `pom.xml`), so that the parser, the resolver and
+  claims (`txt` for `CMakeLists.txt`, `xml` for `pom.xml`), or that built-in languages share and
+  tell apart by what the file holds (`m`, `h`, `pp`, `cls`), so that the parser, the resolver and
   the language server agree on what a file is; one the index never reads (`csv`, `log`, `lock`
   ...); and one another custom language owns.
 - `line_comment` (optional): the mark that starts a comment line.
