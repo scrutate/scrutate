@@ -33,8 +33,10 @@ fn instantiates(o: &Occurrence, word: &str) -> bool {
 /// (importing file, line, module as written)
 pub type Importer = (String, i64, String);
 
-/// The most occurrences `references` with kinds resolves to find max_results of the kept kinds,
-/// or max_results when it is larger: about nine seconds on the Linux tree.
+/// The most occurrences a narrowed `references` (kinds, `--def`) reads to find max_results of the
+/// kept definitions, or max_results when it is larger: a count, never a clock. On the Linux tree a
+/// read that runs to it took 3 to 19 seconds by the name (`refs kfree --def mm/slub.c:6781`: 19.1 s,
+/// 458 MB).
 pub const REFS_KIND_RESOLVE_MAX: u64 = 10_000;
 
 /// One request's view of what the names of the repository refer to.
@@ -145,7 +147,7 @@ impl<'a> Names<'a> {
             None => walk,
         };
         // an alias in such a language (`use function Lib\phpfn as pf`) is used in any case too
-        let (mut occurrences, notes, mut truncated, narrowed) = loop {
+        let (mut occurrences, notes, mut truncated, mut narrowed) = loop {
             if any_case {
                 q.pattern.case = crate::instant::Case::Insensitive;
             }
@@ -256,6 +258,9 @@ impl<'a> Names<'a> {
         // PHP `new self()`, `new static()` and `new parent()` make the class they stand for
         let php_classes = definitions.iter().any(|d| d.kind == "class" && langs.id(&d.path) == Some("php"));
         let ident = |c: Option<char>| c.is_some_and(crate::ident::is_continue);
+        // what the alias and constructor passes find, each marked when it is a copy of an occurrence
+        // retied to a constructor, kept or not by the same gate as the main read's
+        let mut extra: Vec<(Occurrence, bool)> = Vec::new();
         for path in importing {
             let mut aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
             let sites: HashSet<usize> = aliases.iter().flat_map(|(_, _, s)| s.iter().copied()).collect();
@@ -291,8 +296,7 @@ impl<'a> Names<'a> {
                             continue;
                         }
                         let text = line.trim_end_matches('\r').into();
-                        occurrences.push(Occurrence { path: path.clone(), line: i as u64 + 1, column: col as u64 + 1, text, at: col, resolution });
-                        truncated |= occurrences.len() as u64 > max_results;
+                        extra.push((Occurrence { path: path.clone(), line: i as u64 + 1, column: col as u64 + 1, text, at: col, resolution }, false));
                     }
                 }
             }
@@ -308,15 +312,54 @@ impl<'a> Names<'a> {
             }
             for word in spelled {
                 let made = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if id == class.id) && instantiates(o, &word);
-                let of_class: Vec<Occurrence> = if word == bare.as_str() {
+                // a narrowed read kept only its own occurrences: the class's are read again
+                let of_class: Vec<Occurrence> = if word == bare.as_str() && kinds.is_none() {
                     occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
                 } else {
-                    self.instantiations(&word, max_results)?.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
+                    self.instantiations(&word, read_max)?.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
                 };
-                occurrences.extend(of_class);
+                extra.extend(of_class.into_iter().map(|o| (o, true)));
             }
         }
-        occurrences.truncate(max_results as usize);
+        // one gate for both passes: a file the filter refuses gives nothing, an occurrence already
+        // listed is not listed again, and one not kept is counted aside; a kept one is never cut
+        // for one that is not, and truncated says a kept one lies past max_results
+        let by_file = scope.filter(|f| f.has_files());
+        let key = |o: &Occurrence| (o.path.clone(), o.line, o.column, o.resolution.ok().map(|r| r.0));
+        let mut listed: HashSet<_> = occurrences.iter().map(key).collect();
+        for (o, copy) in extra {
+            if by_file.is_some_and(|f| !f.admits_path(&o.path)) || !listed.insert(key(&o)) {
+                continue;
+            }
+            let kept = match (kinds, o.resolution) {
+                (None, _) => true,
+                (Some(f), Ok((id, why))) => match kind_of.get(&(id, why)) {
+                    Some(&k) => k,
+                    None => {
+                        let k = s.ix.chunk(id)?.is_some_and(|d| f(&d, why));
+                        kind_of.insert((id, why), k);
+                        k
+                    }
+                },
+                (Some(_), Err(_)) => false,
+            };
+            if kept {
+                occurrences.push(o);
+            } else if !copy {
+                if o.resolution.is_ok() {
+                    narrowed.elsewhere += 1;
+                } else {
+                    narrowed.unresolved_count += 1;
+                    if (narrowed.unresolved.len() as u64) < max_results {
+                        narrowed.unresolved.push(o);
+                    }
+                }
+            }
+        }
+        if occurrences.len() as u64 > max_results {
+            occurrences.truncate(max_results as usize);
+            truncated = true;
+        }
         let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         for o in &occurrences {
             if let Ok((id, _)) = o.resolution

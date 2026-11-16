@@ -1592,7 +1592,7 @@ fn resolved_reason(name: &str, refs: &crate::resolve::Resolved) -> Option<String
     } else {
         refs.bounded.map(|n| {
             format!(
-                "{n} occurrences were resolved and fewer than max_results were of the definitions asked for (at most {} are resolved): narrow the name or the files",
+                "{n} occurrences were read and fewer than max_results were of the definitions asked for (at most {} are read): narrow the name or the files",
                 crate::names::REFS_KIND_RESOLVE_MAX
             )
         })
@@ -3069,7 +3069,7 @@ mod tests {
     fn a_references_answer_stopped_at_its_bound_says_why() {
         let answer = |refs: crate::resolve::Resolved| Answer::Resolved { name: "a0".into(), refs, only: None, max_results: 5 };
         let a = answer(crate::resolve::Resolved { truncated: true, bounded: Some(10_000), ..Default::default() });
-        assert!(a.text().contains("10000 occurrences were resolved") && !a.text().contains("raise max_results"), "{}", a.text());
+        assert!(a.text().contains("10000 occurrences were read") && !a.text().contains("raise max_results"), "{}", a.text());
         assert!(a.json()["stopped_reason"].as_str().is_some_and(|r| r.contains("narrow the name or the files")));
         let a = answer(crate::resolve::Resolved { no_kind: true, ..Default::default() });
         assert!(a.text().contains("no definition named a0 is of those kinds"), "{}", a.text());

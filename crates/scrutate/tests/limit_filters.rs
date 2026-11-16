@@ -494,7 +494,7 @@ fn references_with_kinds_stop_at_their_bound_and_say_why() {
     assert!(none["result"]["stopped_reason"].as_str().is_some_and(|r| r.contains("no definition named a0 is of those kinds")), "{none}");
     // the method's uses come after 10,050 of the function's: the read stops at its bound and says so
     let text = run(&["refs", "a0", "--kind", "method", "--max-results", "5"]);
-    assert!(text.contains("10000 occurrences were resolved") && !text.contains("raise max_results"), "{text}");
+    assert!(text.contains("10000 occurrences were read") && !text.contains("raise max_results"), "{text}");
     // that answer holds none, and says it stopped rather than that there are none
     let stopped: Value = serde_json::from_str(&run(&["refs", "a0", "--kind", "method", "--max-results", "5", "--json"])).unwrap();
     assert!(
@@ -575,7 +575,7 @@ fn references_def_counts_the_occurrences_of_that_definition() {
             .stdout,
     )
     .into_owned();
-    assert!(text.contains("10000 occurrences were resolved"), "{text}");
+    assert!(text.contains("10000 occurrences were read"), "{text}");
     let v = run(&["refs", "Thing", "--def", "zz/last.py", "--max-results", "5", "--json"]);
     assert!(
         v["result"]["truncated"] == json!(true) && v["result"]["stopped_reason"].as_str().is_some_and(|r| r.contains("narrow the name or the files")),
@@ -652,5 +652,75 @@ fn a_narrowed_answer_shows_the_unresolved_uses() {
         assert!(r.text.contains("u.py:2:"), "{args}: {}", r.text);
         assert_eq!(r.structured["result"]["unresolved"].as_array().map(Vec::len), Some(1), "{args}: {}", r.structured);
     }
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A narrowed answer at max_results one below, at and one above a definition's own count is the
+/// first of its whole answer, cut exactly when more exist: uses through an alias of another
+/// definition (`tb()`) never take a slot (Reviewer 4's shape), and a constructor's uses are its
+/// class's instantiations under --def too.
+#[test]
+fn an_alias_or_a_constructor_of_another_definition_never_takes_a_slot() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_alias_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let files = [
+        ("a.py", "def thing():\n    return 1\n".to_string()),
+        ("b.py", "class K:\n    pass\n\n\ndef thing():\n    return 2\n".to_string()),
+        ("ua.py", format!("from a import thing as ta\n\n\ndef use():\n{}", "    ta()\n".repeat(3))),
+        ("ub.py", format!("from b import thing as tb\n\n\ndef use():\n{}", "    tb()\n".repeat(4))),
+        ("da.py", "from a import thing\n\n\ndef use():\n    thing()\n".to_string()),
+        ("P.java", "class P {\n    P() {\n    }\n}\n".to_string()),
+        ("Main.java", "class Main {\n    void f() {\n        new P();\n        new P();\n    }\n}\n".to_string()),
+    ];
+    for (p, t) in &files {
+        fs::write(root.join(p), t).unwrap();
+    }
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let run = |args: Vec<String>| -> Value {
+        let out =
+            std::process::Command::new(BIN).args(&args).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {args:?}: {}", String::from_utf8_lossy(&out.stdout)))
+    };
+    let rows = |v: &Value| -> Vec<String> {
+        v["result"]["definitions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|d| d["references"].as_array().into_iter().flatten())
+            .map(|o| format!("{}:{}:{}", o["path"].as_str().unwrap_or(""), o["line"], o["column"]))
+            .collect()
+    };
+    let mut failed = Vec::new();
+    for (name, args) in [
+        ("thing", vec!["--def", "a.py"]),
+        ("thing", vec!["--def", "b.py"]),
+        ("thing", vec!["--kind", "function"]),
+        ("thing", vec![]),
+        ("P", vec!["--def", "P.java:2"]),
+    ] {
+        let with = |m: usize| -> Vec<String> {
+            ["refs", name]
+                .iter()
+                .map(|s| s.to_string())
+                .chain(args.iter().map(|s| s.to_string()))
+                .chain(["--max-results".into(), m.to_string(), "--json".into()])
+                .collect()
+        };
+        let whole = rows(&run(with(5000)));
+        // the constructor's own line and the two `new P()`
+        if name == "P" && whole.len() != 3 {
+            failed.push(format!("the constructor's uses: {whole:?}"));
+        }
+        for m in [whole.len().saturating_sub(1).max(1), whole.len(), whole.len() + 1] {
+            let v = run(with(m));
+            let (got, cut) = (rows(&v), v["result"]["truncated"] == json!(true));
+            if got[..] != whole[..whole.len().min(m)] || cut != (whole.len() > m) {
+                failed.push(format!("{name} {args:?} at {m}: {got:?} truncated {cut}, whole {whole:?}"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
     let _ = fs::remove_dir_all(&root);
 }

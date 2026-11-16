@@ -352,8 +352,10 @@ the file filters keep; with `--def`, `--max-results` counts the occurrences that
 definition, under the same bound as `--kind`. With `--kind`, `--max-results` counts only the occurrences of the kinds it
 keeps: a kind is known once an occurrence is resolved, so the search resolves occurrences until
 that many are kept, at most 10,000 (or `--max-results` when larger), dropping the others as it
-goes, and an answer cut there says how many it resolved; narrow the files with `-g`, `-t` or
-`--lang`, which narrow the search before anything is resolved. When no definition of the name has
+goes, and an answer cut there says how many it read. The bound is a count: on the Linux tree a
+read that runs to it took 3 to 19 seconds by the name (`refs kfree --def mm/slub.c:6781
+--max-results 20`: 19.1 s and 458 MB, its 17 uses past the bound). Narrow the files with `-g`,
+`-t` or `--lang`, which narrow the search before anything is resolved. When no definition of the name has
 one of the kinds, the answer is empty at once and says so.
 
 The code index holds every file the ignore rules let through, hidden files included, except:
