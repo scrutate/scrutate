@@ -296,6 +296,25 @@ fn a_python_package_is_read_from_the_venv_by_its_import_name() {
 }
 
 #[test]
+fn distributions_that_share_a_namespace_package_are_each_reached_by_their_first_two_parts() {
+    let t = Tree::new("uv_namespace");
+    t.uv_lock(&[("google-auth", "2.35.0"), ("protobuf", "5.28.2")]);
+    // `google` has no __init__.py: both distributions put their packages under it
+    t.wheel("google-auth", "2.35.0", &[("google/auth/__init__.py", "def default(scopes=None):\n    return scopes\n"), ("google/oauth2/__init__.py", "")]);
+    t.wheel("protobuf", "5.28.2", &[("google/protobuf/__init__.py", ""), ("google/protobuf/message.py", "class Message:\n    pass\n")]);
+    let (code, out, err) = t.run(&["symbol", "--deps", "google.protobuf.message.Message"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("protobuf 5.28.2 (uv.lock)") && out.contains("site-packages/google/protobuf/message.py:1-2"), "{out}");
+    let (code, out, err) = t.run(&["symbol", "--deps", "google.auth.default"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("google-auth 2.35.0 (uv.lock)") && out.contains("site-packages/google/auth/__init__.py:1-2"), "{out}");
+    // `google` alone still names both
+    let (code, _, err) = t.run(&["symbol", "--deps", "google.Message"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("names two packages"), "{err}");
+}
+
+#[test]
 fn a_go_module_is_read_from_the_module_cache_at_the_version_go_mod_requires() {
     let t = Tree::new("go");
     t.go_mod("require (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tgithub.com/BurntSushi/toml v1.4.0 // indirect\n)");

@@ -328,14 +328,21 @@ struct Dist {
 }
 
 impl Dist {
-    /// The names it is imported by: the first part of each file outside its metadata.
+    /// The names it is imported by: the first part of each file outside its metadata, and under a
+    /// namespace package (a first part with no `__init__.py`, which several distributions share,
+    /// as google-auth and protobuf share `google`) the first two parts too.
     fn tops(&self) -> Vec<String> {
+        let inits: std::collections::HashSet<&str> = self.files.iter().filter_map(|f| f.strip_suffix("/__init__.py")).filter(|t| !t.contains('/')).collect();
+        let module = |t: &str| t.strip_suffix(".py").unwrap_or(t).to_string();
         let mut out: Vec<String> = self
             .files
             .iter()
-            .filter_map(|f| f.split('/').next())
-            .filter(|t| !t.ends_with(".dist-info") && !t.ends_with(".data") && *t != "__pycache__" && *t != "..")
-            .map(|t| t.strip_suffix(".py").unwrap_or(t).to_string())
+            .flat_map(|f| {
+                let mut parts = f.split('/');
+                let top = parts.next().filter(|t| !t.ends_with(".dist-info") && !t.ends_with(".data") && *t != "__pycache__" && *t != "..");
+                let below = parts.next().filter(|s| top.is_some_and(|t| !inits.contains(t)) && *s != "__pycache__");
+                top.map(module).into_iter().chain(below.zip(top).map(|(s, t)| format!("{t}.{}", module(s))))
+            })
             .collect();
         out.sort();
         out.dedup();

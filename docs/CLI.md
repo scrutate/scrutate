@@ -804,7 +804,7 @@ path}, "answer": ...}`.
 |---|---|---|
 | `Cargo.lock` | `$CARGO_HOME/registry/src/*/NAME-VERSION` (default `~/.cargo`) | `cargo fetch` |
 | `package-lock.json` (v1 to v3; the top level of `node_modules` only) | `node_modules/NAME`, whose `package.json` must give the version | `npm ci` |
-| `uv.lock`, `poetry.lock` | `.venv`'s `site-packages`, the `NAME-VERSION.dist-info` whose `RECORD` lists the files; the import names are the first parts of those files | `uv sync`, `poetry install --sync` |
+| `uv.lock`, `poetry.lock` | `.venv`'s `site-packages`, the `NAME-VERSION.dist-info` whose `RECORD` lists the files; the import names are the first parts of those files, and under a namespace package (a first part with no `__init__.py`, as `google` is for google-auth and protobuf) the first two (`google.protobuf`) | `uv sync`, `poetry install --sync` |
 | `go.mod` (`require`, and `replace` with another module) | `$GOMODCACHE/MODULE@VERSION`, an upper-case letter as `!` and its lower case (default `$GOPATH/pkg/mod`, then `~/go/pkg/mod`) | `go mod download` |
 
 The version is never another one: when the installed package has another version than the lock
