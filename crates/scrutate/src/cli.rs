@@ -214,11 +214,11 @@ pub struct GrepArgs {
     /// select non-matching lines
     #[arg(short = 'v', long)]
     pub invert_match: bool,
-    /// print only the paths of files with matches
-    #[arg(short = 'l', long)]
+    /// print only the paths of files with matches; of -l and -c the later wins
+    #[arg(short = 'l', long, overrides_with = "count")]
     pub files_with_matches: bool,
     /// print only the number of matching lines per file
-    #[arg(short = 'c', long)]
+    #[arg(short = 'c', long, overrides_with = "files_with_matches")]
     pub count: bool,
     /// print the file's path with each line and count (the default unless one file is the only
     /// path given); of -H and -I the later wins
@@ -454,7 +454,7 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
             return None;
         }
         seen |= 1 << i;
-        // of -i and -S, -H and -I, -n and -N the later wins
+        // of -i and -S, -l and -c, -H and -I, -n and -N the later wins
         match i {
             0 => g.fixed_strings = true,
             1 => g.ident = true,
@@ -465,8 +465,8 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
             6 => g.word = true,
             7 => g.multiline = true,
             8 => g.invert_match = true,
-            9 => g.files_with_matches = true,
-            10 => g.count = true,
+            9 => (g.files_with_matches, g.count) = (true, false),
+            10 => (g.count, g.files_with_matches) = (true, false),
             11 => (g.with_filename, g.no_filename) = (true, false),
             12 => (g.no_filename, g.with_filename) = (true, false),
             13 => (g.line_number, g.no_line_number) = (true, false),
@@ -1418,7 +1418,6 @@ pub fn run() -> Result<i32> {
             let q = Query {
                 pattern: Pattern { text: pattern, mode, case, word, multiline, ..Pattern::default() },
                 invert: invert_match,
-                // -c with -l prints the count of the one match -l stops at
                 report: if files_with_matches {
                     Report::Files
                 } else if count {
