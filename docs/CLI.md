@@ -1087,8 +1087,8 @@ Per tool:
   left out of each schema and named once, with types and defaults, in the server's
   `instructions`. Every other argument name, type, enum, default and `required` is the full
   list's, and a call is checked as without the option. On this repository's server the full
-  list is 17,055 bytes and the short one 5,657, plus 218 bytes of instructions (the list before
-  `response_format` was 13,968).
+  list is 19,663 bytes and the short one 6,730 (the `tools/list` result as compact JSON), plus
+  218 bytes of instructions.
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
   `structuredContent` to every result, beside its text: the envelope with `complete`
   (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints with
@@ -1668,7 +1668,10 @@ after `--` too. Anything else exits 2 and runs nothing. A program is looked up
 in the directories of its `PATH` given as absolute paths and outside the current directory and its
 git work tree, never the current directory, a relative entry, a repository's own `bin` or
 scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
-`LD_AUDIT` and every `DYLD_*` variable removed. Scrutate's own index directory is never shown (its files hold the repository's text, see
+`LD_AUDIT` and every `DYLD_*` variable removed. An `rg` whose arguments `scrutate grep` takes (they
+parse, and every path they name is there) runs this binary's own `grep` instead, with every
+`SCRUTATE_*` variable removed and `SCRUTATE_CONFIG` set to the null device, so the output is the
+one `rg` gives. Scrutate's own index directory is never shown (its files hold the repository's text, see
 [Security](SECURITY.md)), decided before the search runs, by file identity, never by reading its output: the files of
 the `.scrutate` directories of the current directory, of those above it and of every one inside
 the searched paths are known by device and inode (on Windows by the file handle's volume and
