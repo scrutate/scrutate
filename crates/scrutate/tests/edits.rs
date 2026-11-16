@@ -667,3 +667,15 @@ fn a_c_or_cpp_type_ending_in_a_semicolon_is_edited() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// A new text that does not parse is refused naming the error it adds, not one the file had: an
+/// old error on line 3, an edit on line 20 that adds one.
+#[test]
+fn a_parse_error_is_named_where_the_edit_made_it() {
+    let filler: String = (4..20).map(|i| format!("function g{i}() {{ return {i} }}\n")).collect();
+    let text = format!("function a() {{ return 1 }}\n\nlet q = ;\n{filler}function f() {{ return 2 }}\n");
+    let mut s = Server::start("parse_error_line", &[("m.js", text.as_str())], &["--allow-edits"]);
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "f", "path": "m.js", "new_text": "function f() { return 2 +; }\n"}));
+    assert!(err && out.contains("does not parse: an error at line 20 of the edited file"), "{out}");
+    assert_eq!(s.file("m.js"), text);
+}

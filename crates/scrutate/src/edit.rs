@@ -124,22 +124,22 @@ fn outside_of<'a>(defs: &'a [Def], src: &str, t: &Def) -> Vec<(&'a str, &'static
         .collect()
 }
 
-/// The error and missing nodes of a tree, and the line of the first.
-fn errors(root: tree_sitter::Node) -> (usize, usize) {
-    let (mut n, mut first) = (0, usize::MAX);
+/// The error and missing nodes of a tree, each as its first byte and line, in file order.
+fn errors(root: tree_sitter::Node) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
     let mut stack = vec![root];
     while let Some(x) = stack.pop() {
         if !x.has_error() {
             continue;
         }
         if x.is_error() || x.is_missing() {
-            n += 1;
-            first = first.min(x.start_position().row + 1);
+            out.push((x.start_byte(), x.start_position().row + 1));
         }
         let mut c = x.walk();
         stack.extend(x.children(&mut c));
     }
-    (n, first)
+    out.sort_unstable();
+    out
 }
 
 /// `range` widened to each node around it that holds it alone and lies within the lines `a..b`
@@ -310,8 +310,13 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let Some(t1) = parser.parse(&new, None) else { bail!("{rel} did not parse") };
     let in_span = crate::rewrite::broken(t1.root_node(), span.2, span.3) && !crate::rewrite::broken(t0.root_node(), a, b);
     let (e0, e1) = (errors(t0.root_node()), errors(t1.root_node()));
-    if in_span || e1.0 > e0.0 {
-        bail!("the new text does not parse: an error at line {} of the edited file; nothing written", e1.1);
+    if in_span || e1.len() > e0.len() {
+        // the first error the old file did not have (outside the replaced lines, where it was
+        // before), one in the new text first: an error the file had already is not the edit's
+        let had: std::collections::HashSet<usize> = e0.iter().filter(|e| e.0 < a || e.0 >= b).map(|e| if e.0 >= b { e.0 - b + span.3 } else { e.0 }).collect();
+        let fresh: Vec<&(usize, usize)> = e1.iter().filter(|e| !had.contains(&e.0)).collect();
+        let at = fresh.iter().find(|e| (span.2..span.3).contains(&e.0)).or(fresh.first()).map(|e| e.1).or(e1.first().map(|e| e.1)).unwrap_or(0);
+        bail!("the new text does not parse: an error at line {at} of the edited file; nothing written");
     }
     // one definition of the same name and kind where the old one began, every other one as it was
     let new_end = target.start + (repl.matches('\n').count() as i64).max(1) - 1;

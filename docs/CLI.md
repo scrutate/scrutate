@@ -1165,8 +1165,10 @@ it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewri
 `hash:`, 16 hex digits of the file's content hash. `apply: true` writes only with that `hash`,
 and only while the file still has it: a file changed since is refused with its current hash and
 nothing written. Before it writes, the new file is parsed with its language and the edit is
-refused, with the reason, when it adds a parse error or a missing node; when the new text does
-not define the same name and kind where the old definition began (an edit never renames); when
+refused, with the reason, when it adds a parse error or a missing node (the answer names the
+line of the first one the old file did not have, in the new text when there is one there); when
+the new text does not define the same name and kind where the old definition began (an edit
+never renames); when
 it defines another definition beside it (the body twice, a second function); or when a
 definition outside it is gone, moved or changed: one around it (the class of a method) keeps its
 name and kind, every other one its text too. A definition declared together with another
