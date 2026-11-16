@@ -247,6 +247,10 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
                 text.push_str(&format!("\n[{note}]"));
                 structured["pending"] = json;
             }
+            if let Some(note) = ops::capped(name, args) {
+                text.push_str(&format!("\n[{note}]"));
+                structured["capped"] = json!({"max_results": ops::RESULTS_MAX});
+            }
             Called { text, structured, is_error: false }
         }
         Err(e) if e.is::<crate::index::BeingBuilt>() => Called::note(STILL_BUILDING.to_string(), false),
@@ -657,6 +661,23 @@ mod tests {
     fn call(calls: &Calls, id: i64, progress: Value) -> Call {
         let id = json!(id);
         Call { name: "find_symbol".into(), args: json!({"name": "make_point"}), stateless: true, structured: true, progress, cancelled: calls.begin(&id), id }
+    }
+
+    /// grep_code and references take at most 5,000 results, and say when they lowered the number.
+    #[test]
+    fn a_max_results_over_the_cap_is_lowered_and_the_answer_says_so() {
+        let (root, session, _) = fixture("capped");
+        let call = |tool: &str, args: Value| call_tool(&session, tool, &args, &Settings::new(None), &Arc::default());
+        for (tool, args) in
+            [("grep_code", json!({"pattern": "make_point", "max_results": 9000})), ("references", json!({"name": "make_point", "max_results": 9000}))]
+        {
+            let called = call(tool, args);
+            assert!(!called.is_error && called.text.contains("[max_results is at most 5000: 9000 was asked, 5000 used]"), "{tool}: {}", called.text);
+            assert_eq!(called.structured["capped"], json!({"max_results": 5000}), "{tool}");
+        }
+        let called = call("grep_code", json!({"pattern": "make_point", "max_results": 5000}));
+        assert!(!called.text.contains("at most") && called.structured.get("capped").is_none(), "{}", called.text);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A call while a write of the server's own runs on answers from the committed index once the

@@ -179,6 +179,16 @@ pub enum Op {
     },
 }
 
+/// The most `max_results` grep_code and references take; a larger number is lowered to it.
+pub const RESULTS_MAX: u64 = 5000;
+
+/// What an answer says when the tool lowered `max_results` to `RESULTS_MAX`.
+pub fn capped(tool: &str, args: &Value) -> Option<String> {
+    let asked = args.get("max_results")?.as_u64()?;
+    (matches!(tool, "grep_code" | "references") && asked > RESULTS_MAX)
+        .then(|| format!("max_results is at most {RESULTS_MAX}: {asked} was asked, {RESULTS_MAX} used"))
+}
+
 impl Op {
     /// The operation an MCP tool call or a `batch` line names, defaults filled in and limits
     /// clamped (the caller is a program: an absurd limit is cut, not refused).
@@ -257,7 +267,7 @@ impl Op {
                             .ok_or_else(|| wrong("globs", "an array of strings"))?,
                     },
                 },
-                max_results: count("max_results", GREP_MAX, 5000)?,
+                max_results: count("max_results", GREP_MAX, RESULTS_MAX)?,
             },
             "find_symbol" => Op::Symbol { name: text("name")?, limit: count("limit", SYMBOL_LIMIT as u64, 500)? as usize, exact: flag("exact")? },
             "callers" => Op::Callers { name: text("name")?, limit: count("limit", CALLERS_LIMIT as u64, 500)? as usize },
@@ -282,7 +292,7 @@ impl Op {
                 if name.trim().is_empty() {
                     bail!("name is empty");
                 }
-                Op::Refs { name, max_results: count("max_results", REFS_MAX, 5000)?, textual: flag("textual")?, def: opt_text("def")? }
+                Op::Refs { name, max_results: count("max_results", REFS_MAX, RESULTS_MAX)?, textual: flag("textual")?, def: opt_text("def")? }
             }
             "similar_code" => Op::Similar { target: text("target")?, k: count("k", SIMILAR_K as u64, 50)? as usize },
             "duplicates" => Op::Dupes {
@@ -529,12 +539,13 @@ pub fn output_schema(tool: &str) -> Value {
     let complete = json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result then holds the items of this page (null when the call failed)"});
     let page = |d: &str| json!({"type": "integer", "minimum": 0, "description": d});
     let next = json!({"type": ["integer", "null"], "minimum": 0, "description": "the offset to call again with for the next page; null on the last"});
+    let capped = json!({"type": "object", "properties": {"max_results": ty("integer")}, "description": "present when max_results asked for more than the tool takes: the number used"});
     let mut pending = obj(json!({"files": list(ty("string")), "all": ty("boolean")}), &["files", "all"]);
     pending["description"] =
         json!("present when an index update was still running: the changed files this answer does not hold yet (all: any file changed since the last scan)");
     obj(
         json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped,
-            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending}),
+            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending, "capped": capped}),
         &["schema", "complete", "result"],
     )
 }
