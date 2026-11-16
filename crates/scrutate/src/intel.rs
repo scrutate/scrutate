@@ -76,7 +76,9 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
 
 // ------------------------------------------------------------------------- duplicates (MinHash LSH)
 const HASHES: usize = 64;
-pub(crate) const BANDS: usize = 16; // 16 bands x 4 rows: pairs with Jaccard >= 0.7 collide with probability ~0.98
+pub(crate) const BANDS: usize = 16;
+/// The MinHash values each band joins into its key.
+pub(crate) const ROWS: usize = HASHES / BANDS;
 /// The most distinct bodies a MinHash bucket may hold and be compared pair by pair: a bucket of m
 /// costs m squared comparisons, so a larger one is not compared and its bodies are named.
 pub(crate) const MAX_BUCKET: usize = 64;
@@ -117,8 +119,28 @@ impl DupKeys {
 }
 
 fn band_keys(mh: &[u64; HASHES]) -> [u64; BANDS] {
-    let rows_per_band = HASHES / BANDS;
-    std::array::from_fn(|b| mh[b * rows_per_band..(b + 1) * rows_per_band].iter().fold(0xcbf29ce484222325u64, |key, v| mix64(key ^ *v)))
+    std::array::from_fn(|b| mh[b * ROWS..(b + 1) * ROWS].iter().fold(0xcbf29ce484222325u64, |key, v| mix64(key ^ *v)))
+}
+
+/// The share of the pairs at similarity `j` that `dupes` compares: a band holds a pair with
+/// probability j^ROWS, and a pair no band holds shares no bucket.
+pub fn found_share(j: f64) -> f64 {
+    1.0 - (1.0 - j.powi(ROWS as i32)).powi(BANDS as i32)
+}
+
+/// The similarity at which `found_share` reaches 99%: an answer to a lower threshold says that
+/// near pairs are sampled.
+pub fn sampling_floor() -> f64 {
+    let (mut lo, mut hi) = (0.0f64, 1.0f64);
+    for _ in 0..60 {
+        let mid = (lo + hi) / 2.0;
+        if found_share(mid) < 0.99 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    hi
 }
 
 fn mix64(mut x: u64) -> u64 {
@@ -180,12 +202,19 @@ pub struct Dupes {
     /// one place for each distinct body of a bucket of more than `MAX_BUCKET` distinct bodies, in
     /// path and line order: a near pair among them that shares no other bucket is not in the answer
     pub crowded: Vec<(String, String, i64, i64)>,
+    /// with a threshold under `sampling_floor()`: the threshold, and the share of the pairs at
+    /// it that are found
+    pub sampled: Option<(f32, f64)>,
 }
 
 /// Duplicate and near-duplicate functions: the same body text up to whitespace, then MinHash/LSH
 /// candidates verified by Jaccard similarity of word 3-gram sets (>= `threshold`; 1 = exact only).
 pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Dupes> {
-    duplicates(ix, &KeyRows::load(ix, min_tokens)?, None, threshold, limit)
+    let mut d = duplicates(ix, &KeyRows::load(ix, min_tokens)?, None, threshold, limit)?;
+    if threshold < 1.0 && f64::from(threshold) < sampling_floor() {
+        d.sampled = Some((threshold, found_share(f64::from(threshold))));
+    }
+    Ok(d)
 }
 
 /// What `exact` duplicates share: the body below the signature line, runs of whitespace squeezed.
@@ -424,7 +453,7 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
     // members last: the exact groups come from a hash map, and a cut must not depend on its order
     out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(b.similarity.partial_cmp(&a.similarity).unwrap()).then_with(|| a.members.cmp(&b.members)));
     out.truncate(limit);
-    Ok(Dupes { groups: out, crowded: crowded_places(ix, &rows, &crowded, &place)? })
+    Ok(Dupes { groups: out, crowded: crowded_places(ix, &rows, &crowded, &place)?, sampled: None })
 }
 
 /// One place for each distinct body of the crowded buckets, the first of its copies by place, in
@@ -941,6 +970,36 @@ pub(crate) mod duplicates_tests {
             drop(ix);
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn under_the_sampling_floor_the_answer_says_how_many_pairs_at_its_threshold_it_finds() {
+        // 200 pairs of 38-word bodies, the last 12 words of one of their own: Jaccard 24/48 = 0.5
+        let mut next = 0;
+        let mut fresh = |n: usize| {
+            next += n;
+            (next - n..next).map(word).collect::<Vec<String>>()
+        };
+        let mut files = Vec::new();
+        for i in 0..200 {
+            let a = fresh(38);
+            let b: Vec<String> = a[..26].iter().cloned().chain(fresh(12)).collect();
+            files.push((format!("p{i:03}_a.py"), a));
+            files.push((format!("p{i:03}_b.py"), b));
+        }
+        let (root, ix) = index_of("sampling", &files);
+        let got = dupes(&ix, 30, 0.5, usize::MAX).unwrap();
+        let (threshold, share) = got.sampled.unwrap();
+        assert_eq!(threshold, 0.5);
+        assert!((share - found_share(0.5)).abs() < 1e-12 && (share - 0.644).abs() < 0.001, "{share}");
+        let found = got.groups.iter().filter(|g| g.kind == "near" && g.members[0].0[..4] == g.members[1].0[..4]).count();
+        assert_eq!(found, got.groups.len(), "a pair of bodies with no word in common");
+        // about 129 of 200; the band holds four standard deviations of a binomial at 0.644
+        assert!((100..=158).contains(&found), "{found} of 200");
+        assert_eq!(dupes(&ix, 30, 0.75, usize::MAX).unwrap().sampled, None);
+        assert_eq!(dupes(&ix, 30, 1.0, usize::MAX).unwrap().sampled, None);
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

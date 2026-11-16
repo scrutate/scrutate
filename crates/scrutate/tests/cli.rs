@@ -3381,3 +3381,22 @@ fn dupes_finds_a_near_copy_of_much_copied_code_and_names_what_a_crowded_bucket_l
     assert!(v["crowded"]["functions"].as_u64().is_some_and(|n| (1..=90).contains(&n)), "{out}");
     assert_eq!(v["crowded"]["first"].as_array().map(Vec::len), Some(5), "{out}");
 }
+
+#[test]
+fn dupes_under_the_sampling_floor_says_what_share_of_the_pairs_at_its_threshold_it_finds() {
+    let r = Repo::new("dupes_sampling");
+    let body: Vec<String> = (0..40).map(word).collect();
+    r.write("a.py", listing(&body).as_bytes());
+    r.write("b.py", listing(&body).as_bytes());
+    let (code, out, _) = r.run(&["dupes", "--threshold", "0.5"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(out.lines().last(), Some("(near pairs are found by sampling: about 64% of pairs at 0.50 are found)"), "{out}");
+    let (_, out, _) = r.run(&["dupes", "--threshold", "0.5", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["sampling"]["threshold"], 0.5, "{out}");
+    assert!(v["sampling"]["found"].as_f64().is_some_and(|f| (f - 0.644).abs() < 0.001), "{out}");
+    for args in [&["dupes"][..], &["dupes", "--threshold", "0.75", "--json"], &["dupes", "--threshold", "1"]] {
+        let (_, out, _) = r.run(args);
+        assert!(!out.contains("sampling"), "{args:?}: {out}");
+    }
+}

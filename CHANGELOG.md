@@ -9,6 +9,12 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `dupes` and `duplicates` under a lowered `--threshold` say how much of what was asked they
+  find: near pairs come from MinHash buckets, 16 bands of 4 rows, so a pair at similarity J is
+  found with probability 1 - (1 - J^4)^16. Under the similarity at which that reaches 99%, a last
+  line says so (`(near pairs are found by sampling: about 64% of pairs at 0.50 are found)`), with
+  `sampling` in the JSON and the MCP result and `sampled` in the Python bindings; the default
+  threshold has no such line ([CLI](docs/CLI.md)).
 - On Windows an index command uses a running `serve`'s session too, through a named pipe
   (`\\.\pipe\scrutate-session-` and a hash of the user's SID and the root), with the bytes and exit
   code a fresh process prints, as through the socket on Unix. Only a local process of the same

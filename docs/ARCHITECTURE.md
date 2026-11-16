@@ -1081,7 +1081,7 @@ server's nineteen tools (twenty with `serve --allow-edits`), `batch` and the Pyt
 `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their own), and render answers; none has
 a default or output format of its own (they had drifted: three different limits for `callers`,
 references textual in one and resolved in another). The JSON form leaves in one envelope
-(`Answer::envelope`: `schema`, `result`, `stopped_at`, and a `dupes` answer's `crowded`), which `--json`, a `batch` record and the
+(`Answer::envelope`: `schema`, `result`, `stopped_at`, and a `dupes` answer's `crowded` and `sampling`), which `--json`, a `batch` record and the
 MCP structured result print (the MCP result adds `complete`, and on a page `offset`,
 `next_offset` and `total`). A tool's JSON arguments are parsed in one place (`Op::from_tool`), used by the MCP server,
 `batch`, the CLI's `read` and the bindings' `Repo.call`. The language server asks the same

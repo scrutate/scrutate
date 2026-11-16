@@ -617,7 +617,8 @@ pub fn output_schema(tool: &str) -> Value {
         json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped,
             "stopped_reason": {"type": "string", "description": "present when a bounded read stopped short of the limit: why, and what narrows it"},
             "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending, "capped": capped,
-            "crowded": {"type": "object", "description": format!("duplicates: present when functions fell in a MinHash bucket of more than {} bodies, where a near pair among them that shares no other bucket is not in this answer: how many functions, and the first of them", crate::intel::MAX_BUCKET)}}),
+            "crowded": {"type": "object", "description": format!("duplicates: present when functions fell in a MinHash bucket of more than {} bodies, where a near pair among them that shares no other bucket is not in this answer: how many functions, and the first of them", crate::intel::MAX_BUCKET)},
+            "sampling": {"type": "object", "description": "duplicates: present when the threshold is under the similarity at which sampling finds 99% of near pairs: the threshold, and the share of the pairs at it that are found"}}),
         &["schema", "complete", "result"],
     )
 }
@@ -1614,19 +1615,24 @@ fn bound_reason(how: &str) -> bool {
 /// How many of the functions in a crowded bucket the closing line of a `dupes` answer names.
 const CROWDED_SHOWN: usize = 5;
 
-/// The closing line of a `dupes` answer with buckets too crowded to compare, else empty.
+/// The closing lines of a `dupes` answer: the functions in buckets too crowded to compare, and
+/// under the sampling floor, the share of the pairs at the threshold it finds.
 fn dupes_notes(d: &Dupes) -> String {
     let n = d.crowded.len();
-    if n == 0 {
-        return String::new();
-    }
-    let first: Vec<String> = d.crowded.iter().take(CROWDED_SHOWN).map(|(p, q, a, b)| format!("{}:{a}-{b} {}", shown(p), shown(q))).collect();
-    format!(
-        "({n} function{} in a MinHash bucket of more than {} bodies; a near pair among them that shares no other bucket is not in this answer; first: {})",
-        if n == 1 { " fell" } else { "s fell" },
-        crate::intel::MAX_BUCKET,
-        first.join(", ")
-    )
+    let crowded = if n == 0 {
+        String::new()
+    } else {
+        let first: Vec<String> = d.crowded.iter().take(CROWDED_SHOWN).map(|(p, q, a, b)| format!("{}:{a}-{b} {}", shown(p), shown(q))).collect();
+        format!(
+            "({n} function{} in a MinHash bucket of more than {} bodies; a near pair among them that shares no other bucket is not in this answer; first: {})",
+            if n == 1 { " fell" } else { "s fell" },
+            crate::intel::MAX_BUCKET,
+            first.join(", ")
+        )
+    };
+    let sampled =
+        d.sampled.map(|(t, share)| format!("(near pairs are found by sampling: about {:.0}% of pairs at {t:.2} are found)", share * 100.0)).unwrap_or_default();
+    joined(crowded, sampled)
 }
 
 /// After member `k` of a near pair that stands for an exact group: how many copies it is one of.
@@ -2916,13 +2922,17 @@ impl Answer {
         {
             v["skipped"] = json!({"why": "over 1 MB", "paths": large.iter().map(|t| &t.path).collect::<Vec<_>>()});
         }
-        if let Answer::Dupes(d, _) = self
-            && !d.crowded.is_empty()
-        {
-            v["crowded"] = json!({
-                "functions": d.crowded.len(),
-                "first": d.crowded.iter().take(CROWDED_SHOWN).map(|(p, q, a, b)| json!({"path": p, "qualname": q, "start": a, "end": b})).collect::<Vec<_>>(),
-            });
+        if let Answer::Dupes(d, _) = self {
+            if !d.crowded.is_empty() {
+                v["crowded"] = json!({
+                    "functions": d.crowded.len(),
+                    "first": d.crowded.iter().take(CROWDED_SHOWN).map(|(p, q, a, b)| json!({"path": p, "qualname": q, "start": a, "end": b})).collect::<Vec<_>>(),
+                });
+            }
+            if let Some((t, share)) = d.sampled {
+                // the threshold as it was given, not as an f32 widens to f64
+                v["sampling"] = json!({"threshold": (f64::from(t) * 1e6).round() / 1e6, "found": share});
+            }
         }
         v
     }

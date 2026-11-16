@@ -1324,3 +1324,14 @@ fn duplicates_name_the_functions_a_crowded_bucket_kept_them_from_comparing() {
     let c = call_tool(&r.session, "duplicates", &json!({"limit": 5}));
     assert!(c.structured["crowded"]["functions"].as_u64().is_some_and(|n| n > 0), "{}", c.structured);
 }
+
+#[test]
+fn duplicates_under_the_sampling_floor_say_what_share_of_the_pairs_they_find() {
+    let body = listing(&(0..40).map(word).collect::<Vec<String>>());
+    let mut r = Repo::new("dupes_sampling", &[("a.py", body.as_str()), ("b.py", body.as_str())]);
+    let text = r.ok("duplicates", json!({"threshold": 0.5}));
+    assert_eq!(text.lines().last(), Some("(near pairs are found by sampling: about 64% of pairs at 0.50 are found)"), "{text}");
+    let c = call_tool(&r.session, "duplicates", &json!({"threshold": 0.5}));
+    assert_eq!(c.structured["sampling"]["threshold"], 0.5, "{}", c.structured);
+    assert!(!r.ok("duplicates", json!({})).contains("sampling"));
+}

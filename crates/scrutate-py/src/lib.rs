@@ -664,8 +664,9 @@ impl Repo {
     }
 
     /// Duplicate and near-duplicate functions, as a `Results` list of JSON-compatible dicts:
-    /// `stopped_at` is `limit` when there were more, and `crowded` the functions in a bucket too
-    /// crowded to compare, one (path, qualname, start, end) per body.
+    /// `stopped_at` is `limit` when there were more, `crowded` the functions in a bucket too
+    /// crowded to compare, one (path, qualname, start, end) per body, and `sampled`, under the
+    /// sampling floor, the threshold and the share of the pairs at it that are found.
     #[pyo3(signature = (min_tokens=scrutate::ops::DUPES_MIN_TOKENS, threshold=scrutate::ops::DUPES_THRESHOLD, limit=scrutate::ops::DUPES_LIMIT))]
     fn duplicates<'py>(
         &self,
@@ -699,6 +700,7 @@ impl Repo {
             .collect::<PyResult<Vec<_>>>()?;
         let out = results(py, dicts, stopped)?;
         out.setattr("crowded", answer.crowded)?;
+        out.setattr("sampled", answer.sampled)?;
         Ok(out)
     }
 
