@@ -42,6 +42,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("index.rs", "STOP", "the process's stop flag, which ends every wait for a lock of any root"),
     ("instant.rs", "JOINED", "per thread, a reused path buffer"),
     ("instant.rs", "HELD", "per thread, the batches of the file being searched"),
+    ("instant.rs", "FUZZY_READ", "per thread, a test's count of bytes the fuzzy matcher read"),
     ("instant.rs", "ONE_LINE", "per thread, search statistics for tests"),
     ("instant.rs", "NO_ONE_LINE", "per thread, search statistics for tests"),
     ("instant.rs", "MOST_QUEUED", "per thread, search statistics for tests"),

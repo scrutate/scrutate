@@ -645,13 +645,8 @@ impl FuzzyMatcher {
     }
 
     /// Byte range of the line containing `pos` within `hay[at..]`.
-    fn line_bounds(hay: &[u8], at: usize, pos: usize) -> (usize, usize) {
-        let start = hay[at..pos].iter().rposition(|&b| b == b'\n').map(|i| at + i + 1).unwrap_or(at);
-        let end = hay[pos..].iter().position(|&b| b == b'\n').map(|i| pos + i).unwrap_or(hay.len());
-        (start, end)
-    }
-
-    /// First match end in `hay[at..]`: candidate lines from the prefilter, verified with Myers.
+    /// First match end in `hay[at..]`: candidate lines from the prefilter, verified with Myers. Each
+    /// candidate line is read from its start to the match, or to its end when none is there, once.
     fn first_end_filtered(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
         let Some(ac) = &self.prefilter else {
             return self.first_end(hay, at);
@@ -659,11 +654,15 @@ impl FuzzyMatcher {
         let mut from = at;
         while from < hay.len() {
             let found = ac.find(&hay[from..])?;
-            let (ls, le) = Self::line_bounds(hay, from, from + found.start());
-            if let Some((end, d)) = self.first_end(&hay[..le], ls) {
-                return Some((end, d));
+            let pos = from + found.start();
+            let ls = hay[from..pos].iter().rposition(|&b| b == b'\n').map_or(from, |i| from + i + 1);
+            let (end, stop) = self.scan(hay, ls, true);
+            #[cfg(test)]
+            FUZZY_READ.with(|c| c.set(c.get() + (pos - from) + (stop - ls)));
+            if end.is_some() {
+                return end;
             }
-            from = le + 1;
+            from = stop + 1;
         }
         None
     }
@@ -672,6 +671,11 @@ impl FuzzyMatcher {
     /// on while the next character still ends a match with no more edits (`abcd` within one edit is
     /// `abcd` whole, not `abc` with a deletion).
     fn first_end(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
+        self.scan(hay, at, false).0
+    }
+
+    /// `first_end`, and where it stopped reading; with `one_line`, it stops at the first line break.
+    fn scan(&self, hay: &[u8], at: usize, one_line: bool) -> (Option<(usize, usize)>, usize) {
         let mut i = at;
         let mut found: Option<(usize, usize)> = None;
         if let Some(b) = &self.long {
@@ -680,8 +684,8 @@ impl FuzzyMatcher {
             let mut score = self.m as isize;
             while i < hay.len() {
                 if hay[i] == b'\n' {
-                    if found.is_some() {
-                        return found;
+                    if found.is_some() || one_line {
+                        return (found, i);
                     }
                     (pv, mv) = fwd.start();
                     score = self.m as isize;
@@ -693,12 +697,12 @@ impl FuzzyMatcher {
                 i += n;
                 match found {
                     Some((_, best)) if score <= best as isize => found = Some((i, score as usize)),
-                    Some(_) => return found,
+                    Some(_) => return (found, i),
                     None if score <= self.k as isize => found = Some((i, score as usize)),
                     None => {}
                 }
             }
-            return found;
+            return (found, i);
         }
         let m = self.m;
         let top = 1u128 << (m - 1);
@@ -710,8 +714,8 @@ impl FuzzyMatcher {
             let c = hay[i];
             let (eq, n) = if c < 0x80 {
                 if c == b'\n' {
-                    if found.is_some() {
-                        return found;
+                    if found.is_some() || one_line {
+                        return (found, i);
                     }
                     pv = mask;
                     mv = 0;
@@ -727,12 +731,12 @@ impl FuzzyMatcher {
             i += n;
             match found {
                 Some((_, best)) if score <= best as isize => found = Some((i, score as usize)),
-                Some(_) => return found,
+                Some(_) => return (found, i),
                 None if score <= self.k as isize => found = Some((i, score as usize)),
                 None => {}
             }
         }
-        found
+        (found, i)
     }
 
     /// Start of the match that ends at `end` with distance `d`: run the algorithm on the reversed
@@ -2457,6 +2461,12 @@ fn drain(rx: mpsc::Receiver<Vec<Record>>, c: &Counters, mut on_hit: impl FnMut(R
     tests::MOST_QUEUED.with(|m| m.set(m.get().max(c.most_queued.load(Ordering::Relaxed))));
     #[cfg(not(test))]
     let _ = c;
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The bytes the fuzzy literal matcher's prefilter path read on this thread.
+    static FUZZY_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(target_os = "wasi")]
@@ -4206,6 +4216,27 @@ mod tests {
         assert_eq!(fuzzy_find("token", 1, "a tomen b"), Some((2, 7))); // one substitution
         assert_eq!(fuzzy_find("token", 0, "nothing"), None);
         assert_eq!(fuzzy_find("token", 1, "tok\nen"), None); // never across lines
+    }
+
+    #[test]
+    fn a_long_line_of_fuzzy_matches_is_read_once() {
+        let read = |n: usize| {
+            let m = FuzzyMatcher::new("abcd", 1, false).unwrap();
+            assert!(m.prefilter.is_some());
+            let hay = "abcd ".repeat(n).into_bytes();
+            FUZZY_READ.with(|c| c.set(0));
+            let (mut at, mut found) = (0, 0);
+            while let Some(s) = m.find_at(&hay, at).unwrap() {
+                found += 1;
+                at = s.end();
+            }
+            assert_eq!(found, n);
+            FUZZY_READ.with(|c| c.get())
+        };
+        let (one, two) = (read(5_000), read(10_000));
+        // every byte about once: twice the line, twice the bytes read
+        assert!(one <= 2 * 5 * 5_000, "{one} bytes read for 25,000");
+        assert!(two <= 2 * one + 64, "{one} then {two}");
     }
 
     #[test]

@@ -840,6 +840,9 @@ incompatible index by itself, and that is never breaking.
   modes do more work at a match's end: on the Linux tree's `kernel/`, 2.5% more instructions for
   `--fuzzy=1 kmalloc`, 10.8% for `--fuzzy=2 return`, 4.3% for `--fuzzy-regex=1 kmal+oc` and 5.6%
   for `--fuzzy-regex=1 'ret[a-z]*n'` ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `grep --fuzzy` reads a long line full of matches once: each match read on to the line's end
+  again, so 100,000 matches on one line took 125.8 G instructions, now 0.77 G
+  ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - An internal error advises `scrutate index --force` only in a process that opened an index:
   `grep` without `--index`, `hook`, `setup` and the other commands without one now only ask for a
   report; with `--index` the text index counts.
