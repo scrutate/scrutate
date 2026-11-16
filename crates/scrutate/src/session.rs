@@ -1452,6 +1452,12 @@ mod windows {
                         Ok(_) => true,
                         Err(e) => e.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32),
                     };
+                    // the session has followed its root's link to another tree: no caller of this
+                    // tree is answered, and the pipe's name goes with its last instance
+                    if session.root() != root {
+                        debug(&format!("stops listening at {shown}: the root moved to another tree"));
+                        break;
+                    }
                     // the next caller finds an instance waiting while this one is served
                     next = instance(&name, &sddl, false).map_err(|e| debug(&format!("stops listening at {shown}: {e}"))).ok();
                     if !connected {
@@ -1641,6 +1647,52 @@ mod windows {
                 instance(&wide(&format!(r"\\.\pipe\scrutate-label-test-{}-plain", std::process::id())), &wide(&format!("D:P(A;;GA;;;{sid})")), true).unwrap();
             // no label of its own: Medium, as Windows reads it
             assert_eq!(label_of(plain.as_raw_handle()), Some(0x2000));
+        }
+
+        /// Once the session's root moves to another tree (a link it was opened through is pointed
+        /// elsewhere), a call made in the old tree is no longer answered through the pipe.
+        #[test]
+        fn a_call_in_the_old_tree_is_not_answered_once_the_root_moves() {
+            const NAME: &str = "session::windows::tests::a_call_in_the_old_tree_is_not_answered_once_the_root_moves";
+            // a greeting must not be missed on a busy runner: a process of its own waits longer for it
+            if std::env::var_os("SCRUTATE_TEST_MOVES").is_none() {
+                let out = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", NAME, "--test-threads=1"])
+                    .env("SCRUTATE_TEST_MOVES", "1")
+                    .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+                    .output()
+                    .unwrap();
+                let said = String::from_utf8_lossy(&out.stdout);
+                assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+                return;
+            }
+            fn answered(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+                Ok(Printed { out: "answered\n".into(), ..Default::default() })
+            }
+            let base = std::env::temp_dir().join(format!("scrutate_pipe_moves_{}", std::process::id()));
+            for dir in ["v1", "v2"] {
+                std::fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+                std::fs::write(base.join(dir).join("a.py"), "def f():\n    return 1\n").unwrap();
+            }
+            let cur = base.join("cur");
+            // the runners can make links; a desktop without the privilege skips
+            if let Err(e) = std::os::windows::fs::symlink_dir(base.join("v1"), &cur) {
+                assert!(std::env::var_os("GITHUB_ACTIONS").is_none(), "{e}");
+                eprintln!("skipped: no link: {e}");
+                return;
+            }
+            let s = Arc::new(Session::open(&cur, Every::given(Some(3600.0))).unwrap());
+            s.build().unwrap();
+            let _listening = listen(&s, answered).expect("the session listens");
+            let v1 = std::fs::canonicalize(base.join("v1")).unwrap();
+            let request =
+                Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
+            assert_eq!(asked(&v1, &request).map(|a| a.map(|(p, _)| p.out)), Ok(Some("answered\n".to_string())));
+            std::fs::remove_dir(&cur).unwrap();
+            std::os::windows::fs::symlink_dir(base.join("v2"), &cur).unwrap();
+            assert!(s.reopen().unwrap(), "the root moved");
+            let got = asked(&v1, &request);
+            assert!(!matches!(got, Ok(Some(_))), "a call in the old tree was answered from the new one: {got:?}");
         }
 
         // fails under Wine, which has no integrity levels: the copy exits 4

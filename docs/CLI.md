@@ -1160,8 +1160,9 @@ directory, also through a moment when it names nothing; on Windows a junction is
 way, which no test covers there; `serve --watch` and the
 watch of the MCP server, the language server and the Python bindings do the same, each opened
 by the path as given (the MCP server's `--root`, the editor's folder). When their root moves to
-another tree, `serve` removes its session socket in the old tree and answers no caller of that
-tree, so a command line call made there does its own work. Other processes can read and update the same index meanwhile; the indexes' own
+another tree, `serve` removes its session socket in the old tree (on Windows it stops listening
+on the old tree's pipe) and answers no caller of that tree, so a command line call made there
+does its own work. Other processes can read and update the same index meanwhile; the indexes' own
 locks order the writers, and stopping the process mid-update leaves the previous state in place.
 
 `serve --watch` runs the same watcher in a background thread while the server answers; when the

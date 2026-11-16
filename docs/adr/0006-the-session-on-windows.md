@@ -55,6 +55,10 @@ path is also one path to test.
   stays trusted: any process of the same user at the client's level or above, an elevated one
   included, as any such process could read the repository and run scrutate itself. The client opens the pipe with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`,
   so a server can learn who the caller is but never act as the caller.
+- **A root that moves stops the old pipe.** When the session follows the link it was opened
+  through to another tree, the listener takes no caller of the old tree's pipe and makes no new
+  instance, so that name goes with its last handle and a call made in the old tree does its own
+  work, as the socket is removed on Unix.
 - **First server wins.** The first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`. A
   second `serve` on the root, or anything that holds the name already, makes that create fail, and
   that server offers nothing; its command line calls go to the first, as on Unix.
