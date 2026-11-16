@@ -140,8 +140,11 @@ fn quality(text: &[char], q: &[char]) -> Option<u32> {
         return Some(1);
     }
     let k = (q.len() / 4).min(3);
+    if k == 0 {
+        return None;
+    }
     let e = edits(text, q);
-    (k > 0 && e <= k).then_some(1 + e as u32)
+    (e <= k).then_some(1 + e as u32)
 }
 
 /// The fewest edits (insertion, deletion, substitution, a swap of neighbours) that turn `q` into
@@ -150,9 +153,10 @@ fn edits(text: &[char], q: &[char]) -> usize {
     let m = q.len();
     let mut before: Vec<usize> = (0..=m).collect();
     let mut prev = before.clone();
+    // column 0 stays 0 in all three rows, and every other cell is written before it is read
+    let mut cur = before.clone();
     let mut best = m;
     for j in 0..text.len() {
-        let mut cur = vec![0; m + 1];
         for i in 1..=m {
             cur[i] = (prev[i - 1] + usize::from(q[i - 1] != text[j])).min(prev[i] + 1).min(cur[i - 1] + 1);
             if i > 1 && j > 0 && q[i - 1] == text[j - 1] && q[i - 2] == text[j] {
@@ -160,7 +164,8 @@ fn edits(text: &[char], q: &[char]) -> usize {
             }
         }
         best = best.min(cur[m]);
-        before = std::mem::replace(&mut prev, cur);
+        std::mem::swap(&mut before, &mut prev);
+        std::mem::swap(&mut prev, &mut cur);
     }
     best
 }
