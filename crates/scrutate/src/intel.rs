@@ -973,6 +973,20 @@ pub(crate) mod duplicates_tests {
     }
 
     #[test]
+    fn the_sampling_figures_cli_md_states_follow_from_the_bands() {
+        let cli = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/CLI.md")).expect("docs/CLI.md beside the crate");
+        // "practically every": over 99% at the default threshold
+        assert!(cli.contains("at the default threshold practically every near pair is found"));
+        assert!(found_share(f64::from(crate::ops::DUPES_THRESHOLD)) > 0.99, "{}", found_share(f64::from(crate::ops::DUPES_THRESHOLD)));
+        // "about two in three" at 0.5: within 5 points of 2/3
+        assert!(cli.contains("at `--threshold 0.5` about two in three of the pairs at that similarity are"));
+        assert!((found_share(0.5) - 2.0 / 3.0).abs() < 0.05, "{}", found_share(0.5));
+        assert!(f64::from(crate::ops::DUPES_THRESHOLD) >= sampling_floor(), "the default threshold would carry the sampling note");
+        // the cap the page names is the one the search keeps
+        assert!(cli.contains(&format!("A bucket of more than {MAX_BUCKET} bodies is not compared pair by pair")));
+    }
+
+    #[test]
     fn under_the_sampling_floor_the_answer_says_how_many_pairs_at_its_threshold_it_finds() {
         // 200 pairs of 38-word bodies, the last 12 words of one of their own: Jaccard 24/48 = 0.5
         let mut next = 0;

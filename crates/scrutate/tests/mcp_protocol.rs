@@ -549,6 +549,8 @@ fn the_short_tool_list_keeps_every_tool_argument_type_default_and_check() {
     }
     let bytes = |v: &Value| v.to_string().len();
     assert!(bytes(&short) * 2 <= bytes(&full), "{} bytes short, {} detailed", bytes(&short), bytes(&full));
+    // the budgets docs/CLI.md states, about 15% over the lists' size
+    assert!(bytes(&full) < 24_000 && bytes(&short) < 7_800, "{} bytes detailed, {} short", bytes(&full), bytes(&short));
     let hello = |args: &[&str]| {
         Session::start(&r, args, &[]).ask(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))["result"]["instructions"]
             .as_str()
@@ -557,7 +559,9 @@ fn the_short_tool_list_keeps_every_tool_argument_type_default_and_check() {
     };
     let told = hello(&["serve", "--short-tools"]);
     assert!(told.contains("response_format") && told.contains("max_bytes") && told.contains("offset"), "{told}");
-    assert!(!hello(&["serve"]).contains("max_bytes (an integer"));
+    let plain = hello(&["serve"]);
+    assert!(told.len() < plain.len() + 260, "the shared arguments add {} bytes of instructions", told.len() - plain.len());
+    assert!(!plain.contains("max_bytes (an integer"));
     // the same calls fail with the same errors
     let calls = [
         ("find_symbol", json!({"name": 7})),

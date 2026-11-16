@@ -145,8 +145,8 @@ incompatible index by itself, and that is never breaking.
   outline of long names) ([CLI](docs/CLI.md)). The
   Python `Repo.call` reads it too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short tool list with the same
-  tools, arguments and checks: 6,730 bytes against 19,663 (the `tools/list` result as compact
-  JSON).
+  tools, arguments and checks, in at most half the bytes of the full one (the `tools/list` result
+  as compact JSON; [CLI](docs/CLI.md) gives the budgets the tests hold).
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes an MCP server entry that runs this
   binary into the agent's user file (or with `--project` the repository's), editing it in place;
   `--uninstall` restores it byte for byte, `--dry-run` writes nothing, `--instructions` adds a
