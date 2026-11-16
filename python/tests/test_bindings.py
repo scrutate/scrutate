@@ -28,6 +28,24 @@ def repo(tmp_path):
     return tmp_path
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a directory link needs a privilege on Windows")
+def test_a_root_through_a_link_follows_the_link_to_its_new_tree(tmp_path):
+    for d, body in (("v1", "def only_v1():\n    return 1\n"), ("v2", "def only_v2():\n    return 2\n")):
+        (tmp_path / d / ".git").mkdir(parents=True)
+        (tmp_path / d / "a.py").write_text(body)
+    cur = tmp_path / "cur"
+    cur.symlink_to("v1")
+    r = scrutate.Repo(str(cur))
+    assert r.symbol("only_v1")
+    (tmp_path / "cur.tmp").symlink_to("v2")
+    os.replace(tmp_path / "cur.tmp", cur)
+    deadline = time.time() + 20
+    while not r.symbol("only_v2"):
+        assert time.time() < deadline, "only_v2 of the new tree never found"
+        time.sleep(0.2)
+    assert not r.symbol("only_v1")
+
+
 def test_grep_streams_and_matches_cli(repo):
     it = scrutate.grep("import os", [str(repo)], mode="literal")
     first = next(it)
