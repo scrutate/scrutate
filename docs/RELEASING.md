@@ -25,19 +25,24 @@ test results and artifacts all name one binary by its SHA-256.
 |---|---|---|
 | `crates/scrutate/Cargo.toml`, `crates/scrutate-py/Cargo.toml` | version | yes |
 | `vendor/ignore/Cargo.toml` and the `ignore` line of `crates/scrutate/Cargo.toml` | the version of `scrutate-ignore`, kept apart from scrutate's: raise it when `vendor/ignore` changed since it was last published, since crates.io never takes a version twice | no |
-| `Cargo.lock` (both packages) | version | no |
+| `Cargo.lock` (`scrutate`, `scrutate-py`, `scrutate-ignore`) | version | no, but every `--locked` build of `release.yml` fails on a stale one |
 | `integrations/vscode/package.json` and its lock file | version | yes |
 | `integrations/gitlab/.gitlab-ci.yml`, `integrations/bitbucket/bitbucket-pipelines.yml` | version | yes |
 | `packaging/homebrew/scrutate.rb` | version | yes (the URL) |
 | `packaging/scoop/scrutate.json` | version | yes |
 | the winget manifests and their directory name | version | yes |
 | the examples in the GitHub Action and pre-commit READMEs | version | yes |
-| the title of `docs/DELIVERY.md`, the scope line of `docs/SECURITY.md` | the date of the version's `CHANGELOG.md` heading | yes |
+| the title of `docs/DELIVERY.md` (its version too, which no check reads), the scope line of `docs/SECURITY.md` | the date of the version's `CHANGELOG.md` heading | yes |
 | `CITATION.cff` | `version`, and `date-released` (the `CHANGELOG.md` heading's date) | yes |
 
 The check fails when a file differs from the version, or a date from the version's
 `CHANGELOG.md` heading. The release workflow runs it first on the
 tag (less its `v`) and refuses a tag that does not match.
+
+The wheel jobs also compare `crates/scrutate-py/LICENSE-APACHE` and `LICENSE-MIT` with the root's
+(`cmp`, in `release.yml`'s step "notices of the crates compiled into the wheel"). A difference
+fails every wheel job, after the tag. The Python job of `ci.yml` makes the same comparison on
+every push to main and every pull request, so a difference shows before the tag.
 
 - [ ] `CHANGELOG.md`: during a release's work every change goes under `## [Unreleased]`, and
   `docs/changes/X.Y.Z-summary.md` says what the release is (what it does, its platforms, its
@@ -49,12 +54,19 @@ tag (less its `v`) and refuses a tag that does not match.
   which the archives pack; leaves `## [Unreleased]` as an empty heading; puts the link references
   for both headings at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
   `[X.Y.Z]: .../releases/tag/vX.Y.Z`); and writes the date into DELIVERY.md, SECURITY.md and
-  CITATION.cff. Nothing is deleted. It writes nothing when the summary file is missing or nothing is
-  written under `## [Unreleased]`. `python3 tools/release_notes.py X.Y.Z` then prints the notes
+  CITATION.cff. Nothing is deleted. It writes nothing when the summary file is missing, nothing is
+  written under `## [Unreleased]`, the date is not YYYY-MM-DD, or `docs/changes/X.Y.Z.md` exists.
+  It writes `docs/changes/X.Y.Z.md` and `CHANGELOG.md` before it looks for the date in DELIVERY.md,
+  SECURITY.md and CITATION.cff, one after the other. A file where it finds no date stops it with
+  the files before it written, so undo the fold before you run it again:
+  `git checkout -- CHANGELOG.md docs/DELIVERY.md docs/SECURITY.md CITATION.cff` and
+  `rm docs/changes/X.Y.Z.md`. That undo also drops edits not yet committed, so commit
+  CHANGELOG.md and those three files before the fold. `python3 tools/release_notes.py X.Y.Z` then prints the notes
   the release gets, its links pointing at the tag's tree. It fails until the fold is done, while
   the notes are longer than 124,000 characters (GitHub refuses a release body over 125,000, which
-  would stop the release only at its last step, after the tag), and on a link it cannot make
-  resolve on a release page. The release workflow runs it before it publishes, and a dry run
+  would stop the release only at its last step, after the tag), on a link it cannot make resolve
+  on a release page, on an image, on a code span left open (an odd number of backticks), on two
+  sections for the version, and on a missing `[X.Y.Z]:` link reference. The release workflow runs it before it publishes, and a dry run
   fails on it too. Run it before the tag.
 
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
@@ -259,7 +271,7 @@ uv pip install --python $V/bin/python --reinstall $W/*cp39-abi3*.whl
 $V/bin/python tools/gen_test_results.py --differential-cases 2000 --reproducible --wheels $W
 ```
 
-`cargo test` runs `tests/ranking_pins.rs`, which pins the features and scores of a small tree bit
+`cargo test` runs `crates/scrutate/tests/ranking_pins.rs`, which pins the features and scores of a small tree bit
 for bit, and `bench/quality.py` checks ranking quality against `bench/quality/floor.json`
 (docs/QUALITY.md). The parity runs against the Python reference engine (networkx, 21
 repositories) ended with that engine; no gate needs networkx, `rich`, `mcp` or the benchmark
@@ -290,7 +302,7 @@ tools/linux_x86_cross_verify.sh ~/.cache/scrutate-bench/x86work
 tools/windows_cross_check.sh
 tools/macos_x86_verify.sh
 tools/release_local.sh                                  # dist/ on macOS
-uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --draft   # Scoop, winget
+uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --draft   # Scoop, winget, the Homebrew formula's hash
 ```
 
 `--draft` lets the all-zero sha256 placeholders through; drop it once the manifests carry the
@@ -313,17 +325,26 @@ last.
 
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
 checks the version, then runs all of `ci.yml` and `security.yml` on the tagged commit
-(`workflow_call`); the release job waits for both runs and for the binaries and wheels. The package definitions in `packaging/`
-need the release checksums (packaging/README.md). The two `-linux-gnu` binaries build on Ubuntu
+(`workflow_call`); the release job waits for both runs and for the binaries, the wheels and the VS Code extension.
+Beyond the version check, these steps can stop a release after the tag:
+
+- each binary job installs ripgrep 15.2.0 (`tools/ci_ripgrep.sh`) for the tests that compare
+  with it, then runs `cargo test --release --locked` for its target;
+- the package step and each wheel job write `THIRD_PARTY_NOTICES.txt` with
+  `tools/third_party_notices.py`, and the wheel jobs compare the licence copies (step 1);
+- the VS Code job runs `npm ci` and `@vscode/vsce package` in `integrations/vscode`;
+- the release is made with `gh release create --verify-tag`, so the tag must be on GitHub.
+
+The package definitions in `packaging/` need the release checksums (packaging/README.md). The two `-linux-gnu` binaries build on Ubuntu
 22.04 runners, and a step fails when one asks for a glibc newer than 2.34. When GitHub retires
 that image, build them in a container of that glibc or older, never on a newer runner (Ubuntu
 24.04 asks for 2.39).
 
 The release workflow has not run. A manual run (`gh workflow run release.yml`) builds, tests and
-packages the binaries and the three wheel kinds on every platform, installs each wheel, and
+packages the binaries and the three wheel kinds on every platform, installs each wheel and runs
+`tools/gil_probe.py` and one search with it (the Linux wheels are manylinux 2.34), and
 publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs (six per wheel kind); 4
-binary and 12 wheel jobs are on macOS and Windows runners, whose minutes count ten and two times
-on a private repository.
+binary and 12 wheel jobs are on macOS and Windows runners.
 
 A dry run rehearses the tag path before the first tag:
 
@@ -332,18 +353,19 @@ gh workflow run release.yml --ref main -f dry_run=true
 gh run watch "$(gh run list --workflow release.yml -L 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` and
-`security.yml` too. Its sign-and-publish job stops at the notes step while `## [Unreleased]`
+It takes the version from `crates/scrutate/Cargo.toml` and runs every job but `pypi`,
+`marketplace` and `openvsx`, which run on a tag only; `ci.yml` and `security.yml` run too. Its sign-and-publish job stops at the notes step while `## [Unreleased]`
 holds entries, as a tag would (step 1): on `main` before the fold, that is the expected end of a
 dry run, not a broken pipeline. The sign-and-publish job runs in the `rehearsal` environment: it attests every
 file (real, public attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
 `refs/tags/v0.1.0` rejects them), makes a draft release `rehearsal-<run id>` with every file,
-checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for this
+checks that the draft holds one asset per file it was given and that `gh attestation verify` passes on `SHA256SUMS` for this
 workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag if one
 exists. The files stay as the run's artifacts for 7 days.
 
 The repository is on GitHub, public, `main` only. Run 43013926055 of `ci.yml` (on `9384c18`) is
-the first green one; all 12 jobs of a push passed:
+the first green one; all 12 jobs of a push passed (the table is that run's jobs; `ci.yml` has
+more since):
 
 | Kind | Jobs |
 |---|---|
@@ -365,7 +387,8 @@ Before the first tag, set in the repository settings:
 | immutable releases, push protection, CodeQL default setup | |
 
 The release job makes a draft, attaches every file, then publishes, the order immutable releases
-need. Its notes are the version's section of `CHANGELOG.md`. The files are the archives, the
+need. Its notes are the version's section of `CHANGELOG.md`. The files are the archives, each
+archive's `.sha256`, the
 `.deb` and `.rpm` of the two `-linux-gnu` jobs (`packaging/linux/build-packages.sh`), the wheels, the VS Code extension (`scrutate-<version>.vsix`, packaged with `@vscode/vsce` 4.1.1),
 the SBOM and `SHA256SUMS`.
 
@@ -410,7 +433,6 @@ shows the Sponsor button. The "Sponsor and hire" section of README.md links the 
 changed funding link goes in both.
 
 After the release, take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`. Version
-updates pause until then because each Dependabot pull request runs `ci.yml` on six runners, and
-on a private repository macOS minutes count ten times. A `rust-stemmers` bump can change stems:
-merge it only when `tests/ranking_pins.rs` and `bench/quality.py` still pass, or with the pins
+updates pause until then because each Dependabot pull request runs `ci.yml` on six runners. A `rust-stemmers` bump can change stems:
+merge it only when `crates/scrutate/tests/ranking_pins.rs` and `bench/quality.py` still pass, or with the pins
 recorded again on purpose.
