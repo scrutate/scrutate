@@ -474,7 +474,7 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
     }
     let edits = scrutate::mcp::Settings::new(None).allowing_edits();
     let cancel = Arc::default();
-    let (mut applied, mut refused, mut tainted_cases) = (0, 0, 0);
+    let (mut applied, mut refused, mut tainted_cases, mut led_cases) = (0, 0, 0, 0);
     // (language, kind) -> (targets reached, applied, refused)
     let mut reached: std::collections::BTreeMap<(String, &str), (usize, usize, usize)> = Default::default();
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
@@ -541,6 +541,27 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
         if c.alone && refused_alone(c.kind()).is_some() {
             broken.push(format!("{}: {} is refused by design but its dry run passed: {}", c.file, c.kind(), dry.text));
         }
+        // the same new text with a comment before it documents the definition, and applies
+        {
+            let first = c.new_text().lines().next().unwrap_or("");
+            let indent = &first[..first.len() - first.trim_start().len()];
+            let note = match c.file.rsplit('.').next().unwrap_or("") {
+                "rs" => "/// lead",
+                "py" => "# lead",
+                "js" | "ts" | "java" => "/** lead */",
+                _ => "// lead",
+            };
+            let mut led = args.clone();
+            led["new_text"] = json!(format!("{indent}{note}\n{}", c.new_text()));
+            let got = call(led);
+            led_cases += 1;
+            if got.is_error {
+                broken.push(format!("{}: the new text with a comment before it was refused: {}", c.file, got.text));
+            } else if replaced(&c.text, &got.text, &c.file) != c.lines() {
+                // no line outside the target's own goes (these targets have no doc comment above)
+                broken.push(format!("{}: the new text with a comment before it replaced other lines: {}", c.file, got.text));
+            }
+        }
         let hash = dry.text.lines().find_map(|l| l.strip_prefix("hash: ")).unwrap_or_else(|| panic!("{}", dry.text)).trim().to_string();
         let mut apply = args;
         apply["apply"] = json!(true);
@@ -585,7 +606,10 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
             }
         }
     }
-    eprintln!("edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}; {tainted_cases} tainted new texts refused", cases.len());
+    eprintln!(
+        "edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}; {tainted_cases} tainted new texts refused; {led_cases} led by a comment applied",
+        cases.len()
+    );
     for ((lang, kind), (n, a, r)) in &reached {
         eprintln!("  {lang:<5} {kind:<26} targets {n:>3}  applied {a:>3}  refused {r:>3}");
     }

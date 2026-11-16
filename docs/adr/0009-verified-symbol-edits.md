@@ -47,7 +47,10 @@ command line calls use cannot carry one to a running server (one without the fla
   one node beside comments, attributes and a lone `;`, so a new text can neither add a statement
   nor leave a comment or string open to swallow the code after it. An attribute or a doc comment
   may stand only before that node: after it, one would mark the next item (a Rust `#[cfg(any())]`
-  compiles it out), so only plain comments and a lone `;` may follow it. A definition declared together with it (`const a = 1, b = 2`,
+  compiles it out), so only plain comments and a lone `;` may follow it. A new text that opens with
+  comments documents the definition, which may begin that many lines lower: a doc comment in the
+  language's own form (one table in edit.rs) replaces the doc comment right above it, which the
+  index's range leaves out, and any other comment above is kept. A definition declared together with it (`const a = 1, b = 2`,
   one declaration for both) is refused, as is one whose extent the parse does not give when
   another definition starts or ends on its lines. An edit that fails a check is refused with the
   check that failed.

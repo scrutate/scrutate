@@ -157,11 +157,23 @@ fn errors(root: tree_sitter::Node) -> Vec<(usize, usize)> {
     out
 }
 
+/// What `outside_changed` saw when nothing outside changed: the bytes of the comment the new
+/// bytes open with, if one, and the line (from 0) of the one node.
+type Seen = (Option<(usize, usize)>, usize);
+
 /// What the new tree changed outside the replaced bytes, `old` `a..b` and `new` `c..d`: at the
 /// root and at each node down to the one that holds the definition, every child before and after
 /// them must be the old one (after them, shifted by the edit), and at that level the new bytes hold
-/// one node beside comments, attributes and a lone `;`. None when nothing outside changed.
-fn outside_changed(t0: tree_sitter::Node, old: &str, (a, b): (usize, usize), t1: tree_sitter::Node, new: &str, (c, d): (usize, usize)) -> Option<&'static str> {
+/// one node beside comments, attributes and a lone `;`. When nothing outside changed: the bytes of
+/// the comment the new bytes open with, when they do, and the line (from 0) where the one node starts.
+fn outside_changed(
+    t0: tree_sitter::Node,
+    old: &str,
+    (a, b): (usize, usize),
+    t1: tree_sitter::Node,
+    new: &str,
+    (c, d): (usize, usize),
+) -> Result<Seen, &'static str> {
     let trim = |src: &str, (x, y): (usize, usize)| {
         let t = &src[x..y];
         (x + (t.len() - t.trim_start().len()), y - (t.len() - t.trim_end().len()))
@@ -184,10 +196,10 @@ fn outside_changed(t0: tree_sitter::Node, old: &str, (a, b): (usize, usize), t1:
             p.kind_id() == q.kind_id() && p.start_byte() as isize + by == q.start_byte() as isize && p.end_byte() as isize + by == q.end_byte() as isize
         };
         if k1.len() < before || !k0[..before].iter().zip(&k1[..before]).all(|(p, q)| same(p, q, 0)) {
-            return Some("changes code before it");
+            return Err("changes code before it");
         }
         if k1.len() < before + after || !k0[k0.len() - after..].iter().zip(&k1[k1.len() - after..]).all(|(p, q)| same(p, q, shift)) {
-            return Some("changes code after it");
+            return Err("changes code after it");
         }
         let (m0, m1) = (&k0[before..k0.len() - after], &k1[before..k1.len() - after]);
         // a node around the definition (a class, its body), not the definition's own lines
@@ -203,26 +215,91 @@ fn outside_changed(t0: tree_sitter::Node, old: &str, (a, b): (usize, usize), t1:
                     (x0, x1) = (*one, *two);
                     continue;
                 }
-                [two, ..] if kept(two) => return Some("adds code outside the definition"),
-                _ => return Some("changes code before it"),
+                [two, ..] if kept(two) => return Err("adds code outside the definition"),
+                _ => return Err("changes code before it"),
             }
         }
         if m1.iter().any(|n| n.start_byte() < c.min(whole.0)) {
-            return Some("changes code before it");
+            return Err("changes code before it");
         }
         if m1.iter().any(|n| n.end_byte() > d.max(whole.1)) {
-            return Some("changes code after it");
+            return Err("changes code after it");
         }
         let held: Vec<usize> = (0..m1.len()).filter(|&i| !trivia(&m1[i], new)).collect();
-        let [at] = held[..] else { return Some("adds code outside the definition") };
+        let [at] = held[..] else { return Err("adds code outside the definition") };
         // an attribute or a doc comment marks what follows it: after the definition, the next item
         let doc = |n: &tree_sitter::Node| {
             let t = new[n.byte_range()].trim_start();
             (t.starts_with("///") && !t.starts_with("////")) || t.starts_with("//!") || (t.starts_with("/**") && !t.starts_with("/**/")) || t.starts_with("/*!")
         };
         let marker = |n: &tree_sitter::Node| n.kind().contains("attribute") || (n.kind().contains("comment") && doc(n));
-        return m1[at + 1..].iter().any(marker).then_some("leaves an attribute or a doc comment after the definition, which would mark the code after it");
+        if m1[at + 1..].iter().any(marker) {
+            return Err("leaves an attribute or a doc comment after the definition, which would mark the code after it");
+        }
+        return Ok((m1[0].kind().contains("comment").then(|| (m1[0].start_byte(), m1[0].end_byte())), m1[at].start_position().row));
     }
+}
+
+/// Comment forms: the line ones (`///`) and the block ones (`/**`).
+type Forms = (&'static [&'static str], &'static [&'static str]);
+
+/// A language's doc-comment forms, the line ones and the block ones: the comments right above a
+/// definition that document it. Python has none (its docstring is in the body), nor has any
+/// grammar left out here; Go's is any `//` block directly above a declaration.
+fn doc_forms(lang: &str) -> Option<Forms> {
+    Some(match lang {
+        "rust" | "swift" | "c" | "cpp" | "cuda" | "objc" => (&["///"], &["/**"]),
+        "javascript" | "typescript" | "tsx" | "java" | "php" | "kotlin" | "scala" | "groovy" | "dart" => (&[], &["/**"]),
+        "csharp" => (&["///"], &[]),
+        "go" => (&["//"], &[]),
+        _ => return None,
+    })
+}
+
+/// `text`, a comment, is in one of the `forms`: never an inner or file-level one (`//!`, `/*!`).
+fn is_doc(text: &str, (lines, blocks): (&[&str], &[&str])) -> bool {
+    let t = text.trim_start();
+    if t.starts_with("//!") || t.starts_with("/*!") {
+        return false;
+    }
+    lines.iter().any(|p| t.starts_with(p) && (*p == "//" || !t[p.len()..].starts_with('/')))
+        || blocks.iter().any(|p| t.starts_with(p) && !t.starts_with("/**/"))
+}
+
+/// The doc comment right above byte `a` (a line's start): whole-line comments in the language's
+/// `forms`, with no blank line between, none of them on the file's first line or a `#!` line:
+/// their first byte and how many lines they take, when there is one.
+fn comments_above(root: tree_sitter::Node, src: &str, a: usize, forms: (&[&str], &[&str])) -> Option<(usize, i64)> {
+    let (mut top, mut lines) = (a, 0);
+    while top > 0 {
+        let start = src[..top - 1].rfind('\n').map_or(0, |i| i + 1);
+        let line = &src[start..top];
+        if line.trim().is_empty() {
+            break;
+        }
+        let at = start + (line.len() - line.trim_start().len());
+        let Some(mut c) = root.descendant_for_byte_range(at, at) else { break };
+        while !c.kind().contains("comment") {
+            let Some(p) = c.parent() else { break };
+            c = p;
+        }
+        // a comment of its own lines, nothing before it on its first or after it on its last
+        let first = src[..c.start_byte()].rfind('\n').map_or(0, |i| i + 1);
+        if !c.kind().contains("comment")
+            || !src[first..c.start_byte()].trim().is_empty()
+            || !src[c.end_byte().min(top)..top].trim().is_empty()
+            || c.end_byte() > top
+        {
+            break;
+        }
+        // a block with a line of another kind is no doc comment, nor one that opens the file
+        if !is_doc(&src[c.byte_range()], forms) || src[first..top].lines().any(|l| l.trim_start().starts_with("#!")) || first == 0 {
+            return None;
+        }
+        lines += src[first..top].matches('\n').count() as i64;
+        top = first;
+    }
+    (top < a).then_some((top, lines))
 }
 
 /// `range` widened to each node around it that holds it alone and lies within the lines `a..b`
@@ -347,7 +424,7 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let line_at = |l: i64| starts.get((l - 1) as usize).copied().unwrap_or(old.len());
     let (a, b) = (line_at(target.start), line_at(target.end + 1));
     // a byte-order mark opens the file, not its first definition
-    let a = if a == 0 && old.starts_with('\u{feff}') { '\u{feff}'.len_utf8() } else { a };
+    let mut a = if a == 0 && old.starts_with('\u{feff}') { '\u{feff}'.len_utf8() } else { a };
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&(spec.language)())?;
     let Some(t0) = parser.parse(&old, None) else { bail!("{rel} did not parse") };
@@ -398,10 +475,23 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     if old[a..b].ends_with('\n') && !repl.ends_with('\n') {
         repl.push_str(eol);
     }
-    let new = format!("{}{repl}{}", &old[..a], &old[b..]);
+    let mut new = format!("{}{repl}{}", &old[..a], &old[b..]);
+    let Some(mut t1) = parser.parse(&new, None) else { bail!("{rel} did not parse") };
+    // a new text that opens with a comment takes the place of the comments right above the
+    // definition (its documentation, which the definition's lines leave out), never adds a second
+    let mut from = target.start;
+    if let Some(forms) = doc_forms(spec.id)
+        && let Ok((Some((x, y)), _)) = outside_changed(t0.root_node(), &old, (a, b), t1.root_node(), &new, (a, a + repl.len()))
+        && is_doc(&new[x..y], forms)
+        && let Some((up, lines)) = comments_above(t0.root_node(), &old, a, forms)
+    {
+        (a, from) = (up, target.start - lines);
+        new = format!("{}{repl}{}", &old[..a], &old[b..]);
+        let Some(t) = parser.parse(&new, None) else { bail!("{rel} did not parse") };
+        t1 = t;
+    }
     let span = (a, b, a, a + repl.len());
     // the new file parses as well as the old one did
-    let Some(t1) = parser.parse(&new, None) else { bail!("{rel} did not parse") };
     let in_span = crate::rewrite::broken(t1.root_node(), span.2, span.3) && !crate::rewrite::broken(t0.root_node(), a, b);
     let (e0, e1) = (errors(t0.root_node()), errors(t1.root_node()));
     if in_span || e1.len() > e0.len() {
@@ -413,9 +503,16 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
         bail!("the new text does not parse: an error at line {at} of the edited file; nothing written");
     }
     // one definition of the same name and kind where the old one began, every other one as it was
-    let new_end = target.start + (repl.matches('\n').count() as i64).max(1) - 1;
+    let new_end = from + (repl.matches('\n').count() as i64).max(1) - 1;
     let after = defs(&rel, &new);
-    let Some(edited) = after.iter().find(|d| d.start == target.start && d.qualname == target.qualname && d.kind == target.kind) else {
+    // only comments and attributes before the definition's node: it may begin as many lines lower
+    let lead = outside_changed(t0.root_node(), &old, (a, b), t1.root_node(), &new, (span.2, span.3)).map_or(0, |(_, row)| (row as i64 + 1 - from).max(0));
+    let Some(edited) = after.iter().find(|d| d.start >= from && d.start <= from + lead && d.qualname == target.qualname && d.kind == target.kind) else {
+        // the definition is there, lower than comments and attributes account for: code before it
+        let lower = after.iter().any(|d| d.qualname == target.qualname && d.kind == target.kind && d.start > from + lead && d.start <= new_end);
+        if let (true, Err(what)) = (lower, outside_changed(t0.root_node(), &old, (a, b), t1.root_node(), &new, (span.2, span.3))) {
+            bail!("the new text {what} ({}, {rel}:{}): edit_symbol replaces one definition and nothing else; nothing written", target.qualname, target.start);
+        }
         bail!(
             "the new text does not define {} ({}) where it began, at line {}: edit_symbol replaces a definition and never renames it; nothing written",
             target.qualname,
@@ -425,7 +522,7 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     };
     others_kept((&before, &old, &target), (&after, &new, edited), new_end)?;
     // every node outside the replaced lines as it was, and the lines hold the definition alone
-    if let Some(what) = outside_changed(t0.root_node(), &old, (a, b), t1.root_node(), &new, (span.2, span.3)) {
+    if let Err(what) = outside_changed(t0.root_node(), &old, (a, b), t1.root_node(), &new, (span.2, span.3)) {
         bail!("the new text {what} ({}, {rel}:{}): edit_symbol replaces one definition and nothing else; nothing written", target.qualname, target.start);
     }
     let plan = one.plan(new.clone().into_bytes(), span);
@@ -434,7 +531,7 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
         bail!("{why}");
     }
     let hash = if apply { content_hash(new.as_bytes()) } else { now };
-    Ok(Answer::Edit(Box::new(Edited { path: rel, old: (target.start, target.end), new: (edited.start, edited.end), applied: apply, hash, diff })))
+    Ok(Answer::Edit(Box::new(Edited { path: rel, old: (from, target.end), new: (edited.start, edited.end), applied: apply, hash, diff })))
 }
 
 #[cfg(test)]

@@ -815,3 +815,214 @@ fn a_marker_after_the_definition_is_refused_and_one_before_it_is_kept() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// A new text may document the definition: comments (and attributes) before it move it as many
+/// lines down, and a doc comment the definition has already, which its own lines leave out, is
+/// replaced by the new one, so one stands above it, never two. A doc comment the new text leaves
+/// out is kept. Code before the definition, or another name, is still refused.
+#[test]
+fn a_doc_comment_in_the_new_text_documents_the_definition_once() {
+    let rs = "fn f() -> u8 { 1 }\n\nfn g() -> u8 { 2 }\n";
+    let st = "struct S(u8);\n\nfn g() -> u8 { 2 }\n";
+    let js = "function f() { return 1 }\nfunction g() { return 2 }\n";
+    let applies = vec![
+        ("a.rs", st, "S", "/// an S\nstruct S(u8);\n", "/// an S\nstruct S(u8);\n\nfn g() -> u8 { 2 }\n"),
+        ("b.rs", rs, "f", "/// f\nfn f() -> u8 { 5 }\n", "/// f\nfn f() -> u8 { 5 }\n\nfn g() -> u8 { 2 }\n"),
+        ("c.js", js, "f", "/** f */\nfunction f() { return 5 }\n", "/** f */\nfunction f() { return 5 }\nfunction g() { return 2 }\n"),
+        (
+            "d.ts",
+            "function f(): number { return 1 }\nfunction g(): number { return 2 }\n",
+            "f",
+            "/** f */\nfunction f(): number { return 5 }\n",
+            "/** f */\nfunction f(): number { return 5 }\nfunction g(): number { return 2 }\n",
+        ),
+        (
+            "E.java",
+            "class C {\n    int m() { return 1; }\n    int n() { return 2; }\n}\n",
+            "C.m",
+            "    /** m */\n    int m() { return 5; }\n",
+            "class C {\n    /** m */\n    int m() { return 5; }\n    int n() { return 2; }\n}\n",
+        ),
+        (
+            "f.go",
+            "package p\n\nfunc A() int { return 0 }\n\nfunc F() int { return 1 }\n",
+            // by its location: a Go file's module chunk answers to the name too
+            "f.go:5",
+            "// F gives five.\nfunc F() int { return 5 }\n",
+            "package p\n\nfunc A() int { return 0 }\n\n// F gives five.\nfunc F() int { return 5 }\n",
+        ),
+        (
+            "g.py",
+            "def f():\n    return 1\n\ndef g():\n    return 2\n",
+            "f",
+            "# f gives five\ndef f():\n    return 5\n",
+            "# f gives five\ndef f():\n    return 5\n\ndef g():\n    return 2\n",
+        ),
+        (
+            "h.cs",
+            "class C {\n    int M() { return 1; }\n    int N() { return 2; }\n}\n",
+            "C.M",
+            "    /// M\n    int M() { return 5; }\n",
+            "class C {\n    /// M\n    int M() { return 5; }\n    int N() { return 2; }\n}\n",
+        ),
+        (
+            "i.php",
+            "<?php\nfunction f() { return 1; }\nfunction g() { return 2; }\n",
+            "f",
+            "/** f */\nfunction f() { return 5; }\n",
+            "<?php\n/** f */\nfunction f() { return 5; }\nfunction g() { return 2; }\n",
+        ),
+        (
+            "j.rs",
+            "fn h() {}\n\n/// old\nstruct S(u8);\n",
+            "S",
+            "/// new, and\n/// longer\nstruct S(u8);\n",
+            "fn h() {}\n\n/// new, and\n/// longer\nstruct S(u8);\n",
+        ),
+        ("k.rs", "fn h() {}\n\n/// old\n/// two\nstruct S(u8);\n", "S", "/// short\nstruct S(u8);\n", "fn h() {}\n\n/// short\nstruct S(u8);\n"),
+        ("l.rs", "/// kept\nstruct S(u8);\n\nfn g() -> u8 { 2 }\n", "S", "struct S(u16);\n", "/// kept\nstruct S(u16);\n\nfn g() -> u8 { 2 }\n"),
+        ("m.rs", st, "S", "/// an S\n#[derive(Debug)]\nstruct S(u8);\n", "/// an S\n#[derive(Debug)]\nstruct S(u8);\n\nfn g() -> u8 { 2 }\n"),
+        (
+            "n.rs",
+            "struct T;\nimpl T {\n    fn m(&self) -> u8 { 1 }\n}\n",
+            "T.m",
+            "    /// m\n    fn m(&self) -> u8 { 5 }\n",
+            "struct T;\nimpl T {\n    /// m\n    fn m(&self) -> u8 { 5 }\n}\n",
+        ),
+    ];
+    // a comment the item has already, replaced; one with a blank line between stays
+    let had = [
+        ("r1.rs", "fn h() {}\n\n// old\nstruct S(u8);\n", "S", "// new\nstruct S(u8);\n", "fn h() {}\n\n// old\n// new\nstruct S(u8);\n"),
+        (
+            "r2.rs",
+            "fn g() {}\n\n#[inline]\nfn f() -> u8 { 1 }\n",
+            "f",
+            "/// f\n#[inline]\nfn f() -> u8 { 5 }\n",
+            "fn g() {}\n\n/// f\n#[inline]\nfn f() -> u8 { 5 }\n",
+        ),
+        (
+            "r3.rs",
+            "fn g() {}\n\n/// old\n#[inline]\nfn f() -> u8 { 1 }\n",
+            "f",
+            "/// new\n#[inline]\nfn f() -> u8 { 5 }\n",
+            "fn g() {}\n\n/// new\n#[inline]\nfn f() -> u8 { 5 }\n",
+        ),
+        (
+            "r4.js",
+            "function g() {}\n/** old */\nfunction f() { return 1 }\n",
+            "f",
+            "/** new */\nfunction f() { return 5 }\n",
+            "function g() {}\n/** new */\nfunction f() { return 5 }\n",
+        ),
+        (
+            "r5.py",
+            "def g():\n    pass\n\n# old\ndef f():\n    return 1\n",
+            "f",
+            "# new\ndef f():\n    return 5\n",
+            "def g():\n    pass\n\n# old\n# new\ndef f():\n    return 5\n",
+        ),
+        (
+            "r6.go",
+            "package p\n\nfunc A() int { return 0 }\n\n// F old\nfunc F() int { return 1 }\n",
+            "r6.go:6",
+            "// F new\nfunc F() int { return 5 }\n",
+            "package p\n\nfunc A() int { return 0 }\n\n// F new\nfunc F() int { return 5 }\n",
+        ),
+        (
+            "R7.java",
+            "class C {\n    /** old */\n    int m() { return 1; }\n}\n",
+            "C.m",
+            "    /** new */\n    int m() { return 5; }\n",
+            "class C {\n    /** new */\n    int m() { return 5; }\n}\n",
+        ),
+        ("r8.rs", "/// far\n\nstruct S(u8);\n", "S", "/// near\nstruct S(u8);\n", "/// far\n\n/// near\nstruct S(u8);\n"),
+        // only a doc comment in the language's own form, never one that opens the file, is replaced
+        (
+            "s1.rs",
+            "// Copyright 2026 Acme\n// SPDX-License-Identifier: MIT\nfn f() -> u8 { 1 }\n",
+            "f",
+            "/// doc\nfn f() -> u8 { 5 }\n",
+            "// Copyright 2026 Acme\n// SPDX-License-Identifier: MIT\n/// doc\nfn f() -> u8 { 5 }\n",
+        ),
+        (
+            "s2.c",
+            "/* Copyright 2026 Acme */\nint f(void) { return 1; }\n",
+            "f",
+            "/** f */\nint f(void) { return 5; }\n",
+            "/* Copyright 2026 Acme */\n/** f */\nint f(void) { return 5; }\n",
+        ),
+        (
+            "s3.py",
+            "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\ndef f():\n    return 1\n",
+            "f",
+            "# f\ndef f():\n    return 5\n",
+            "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n# f\ndef f():\n    return 5\n",
+        ),
+        ("s4.rs", "//! The crate's docs.\nfn f() -> u8 { 1 }\n", "f", "/// f\nfn f() -> u8 { 5 }\n", "//! The crate's docs.\n/// f\nfn f() -> u8 { 5 }\n"),
+        (
+            "s5.rs",
+            "fn g() {}\n\n// ---- helpers ----\nfn f() -> u8 { 1 }\n",
+            "f",
+            "/// f\nfn f() -> u8 { 5 }\n",
+            "fn g() {}\n\n// ---- helpers ----\n/// f\nfn f() -> u8 { 5 }\n",
+        ),
+        ("s6.rs", "fn h() {}\n\n/// old\nstruct S(u8);\n", "S", "// new\nstruct S(u8);\n", "fn h() {}\n\n/// old\n// new\nstruct S(u8);\n"),
+        ("s7.go", "// top\nfunc F() int { return 1 }\n", "s7.go:2", "// F new\nfunc F() int { return 5 }\n", "// top\n// F new\nfunc F() int { return 5 }\n"),
+        (
+            "s8.c",
+            "int g(void) { return 0; }\n/** old */\nint f(void) { return 1; }\n",
+            "f",
+            "/** new */\nint f(void) { return 5; }\n",
+            "int g(void) { return 0; }\n/** new */\nint f(void) { return 5; }\n",
+        ),
+        (
+            "s9.c",
+            "int g(void) { return 0; }\n/* plain */\nint f(void) { return 1; }\n",
+            "f",
+            "/** f */\nint f(void) { return 5; }\n",
+            "int g(void) { return 0; }\n/* plain */\n/** f */\nint f(void) { return 5; }\n",
+        ),
+        (
+            "t1.rs",
+            "fn h() {}\n\n/// one\n// plain\n/// two\nstruct S(u8);\n",
+            "S",
+            "/// new\nstruct S(u8);\n",
+            "fn h() {}\n\n/// one\n// plain\n/// two\n/// new\nstruct S(u8);\n",
+        ),
+    ];
+    let applies: Vec<_> = applies.into_iter().chain(had).collect();
+    let refused = [
+        ("o.js", js, "f", "console.log(1);\nfunction f() { return 5 }\n"),
+        ("p.js", js, "f", "/** f */\nconsole.log(1);\nfunction f() { return 5 }\n"),
+        ("q.rs", rs, "f", "/// f\nfn f2() -> u8 { 5 }\n"),
+    ];
+    let files: Vec<(&str, &str)> = applies.iter().map(|c| (c.0, c.1)).chain(refused.iter().map(|c| (c.0, c.1))).collect();
+    let mut s = Server::start("doc_comments", &files, &["--allow-edits"]);
+    let mut failed = Vec::new();
+    for (file, _, name, new_text, want) in applies {
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file}: refused: {dry}"));
+            continue;
+        }
+        // the comment a new one replaces is in the diff, taken away
+        if file == "j.rs" && !dry.contains("\n-/// old\n") {
+            failed.push(format!("{file}: the replaced comment is not in the diff: {dry}"));
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        if err || s.file(file) != want {
+            failed.push(format!("{file}: {out}\n{:?}", s.file(file)));
+        }
+    }
+    for (file, text, name, new_text) in refused {
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if !(err && out.contains("nothing written")) || s.file(file) != text {
+            failed.push(format!("{file}: not refused: {out}"));
+        }
+        // a refusal names its cause: only a new name is a rename
+        if out.contains("never renames it") != (file == "q.rs") {
+            failed.push(format!("{file}: the refusal does not name its cause: {out}"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

@@ -1218,8 +1218,16 @@ replaced with it; the dry run's diff shows it. So is a lone `;` right after the 
 last line (`struct P {...};` in C and C++, a template's too, `interface I {...};` in
 TypeScript); a declarator there (`struct P {...} p;`) is other code. A comment that runs on past
 those lines is other code. The definitions nested in it may change. A definition's
-range is the index's, its attributes and comment block included, so `new_text` replaces them
-too. The new text takes the line ending of the definition's first line (`\r\n` stays `\r\n`,
+range is the index's: its attributes are in it, so `new_text` replaces them too, and the comments
+above it are not. `edit_symbol` keeps the comment above a definition unless `new_text` brings its
+own doc comment: a `new_text` that opens with the language's doc-comment form (Rust, Swift, C and
+C++ `///` or `/** */`; JavaScript, TypeScript, Java, PHP, Kotlin, Scala, Groovy and Dart `/** */`;
+C# `///`; Go any `//` block, so a banner directly above a Go function goes with it) replaces the
+doc comment right above the definition when every line of it is in that form, no blank line
+between, and it neither opens the file nor is an inner (`//!`, `/*!`) or `#!` line; the dry run's
+diff shows it taken away. Otherwise (Python, whose doc is the docstring, a licence header, a
+banner) the new comment lands right above the definition and the old lines stay. A definition that
+had none moves down by those lines. Taking a comment away is an edit of the file's lines. The new text takes the line ending of the definition's first line (`\r\n` stays `\r\n`,
 and one `\r\n` line elsewhere in a `\n` file changes nothing), and the rest of the
 file is written byte for byte as it was. The file is written as `tsquery --rewrite --write`
 writes one: opened through its directory with no link on the way, its bytes checked to still be
