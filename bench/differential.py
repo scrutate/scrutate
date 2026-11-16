@@ -196,13 +196,24 @@ def late_nul(root: str) -> list[str]:
     return out
 
 
+def searched_none(cmd: list[str], cwd: str) -> bool:
+    """Whether rg's run of `cmd` in `cwd`, which exited 2, searched no file: rg says so only without
+    --no-messages, and a read error exits 2 as well (--json prints a summary either way)."""
+    r = subprocess.run([x for x in cmd if x != "--no-messages"], cwd=cwd, capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
+    return r.returncode == 2 and b"No files were searched" in r.stderr
+
+
 def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False) -> tuple[int, bytes]:
     """`cmd` (rg, its flags, then PATTERN), with each file of `late` answered as rg answers
     it searched alone, with a fresh buffer: scrutate's rule, which no walk order can change. The
     rest is rg's run without those files. `by_path`: put the output back in path order (`--sort`)."""
     if not late:
         return run_json(cmd, root)
-    rc, out = run_json([*cmd[:-1], *(x for rel in late for x in ("-g", "!/" + rel)), cmd[-1]], root)
+    rest = [*cmd[:-1], *(x for rel in late for x in ("-g", "!/" + rel)), cmd[-1]]
+    rc, out = run_json(rest, root)
+    # one rg over the tree exits as its searched parts do: 2 on an error even beside a match (rg
+    # without -q), else 0 on a match, else 1; a part that searched no file (all late) adds nothing
+    codes = [] if rc == 2 and searched_none(rest, root) else [rc]
     parts = [out]
     for rel in late:
         with tempfile.TemporaryDirectory() as t:
@@ -218,8 +229,10 @@ def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False) ->
             if os.path.isdir(os.path.join(root, ".git")):
                 os.makedirs(os.path.join(t, ".git"), exist_ok=True)
             rc1, o1 = run_json(cmd, t)
-        rc = 0 if 0 in (rc, rc1) else max(rc, rc1)
+            if not (rc1 == 2 and searched_none(cmd, t)):
+                codes.append(rc1)
         parts.append(o1)
+    rc = 2 if 2 in codes or not codes else 0 if 0 in codes else 1
     if not by_path:
         return rc, b"".join(parts)
     groups: dict[bytes, list[bytes]] = {}
