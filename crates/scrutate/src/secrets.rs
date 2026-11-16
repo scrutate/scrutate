@@ -363,12 +363,28 @@ fn generic(secret: &str, whole: &str, before: &str) -> bool {
         && real_value(secret, whole, before)
         && !NUMBER.is_match(secret)
         && !IDENTIFIER.is_match(secret)
-        && !NOT_A_PASSWORD.is_match(secret)
+        && !names_a_thing(secret)
 }
 
 /// A quoted value that names a thing: a file path with an extension (`config/secret_settings.toml`)
 /// or words run together in camel case, a year or a count after them (`TokenRefreshed2024`).
-static NOT_A_PASSWORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:[\w.-]*[/\\][\w./\\-]*\.[A-Za-z0-9]{1,5}|(?:[A-Z][a-z]+){2,}[0-9]{0,4})$").unwrap());
+static NOT_A_PASSWORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[\w.-]*[/\\][\w./\\-]*\.([A-Za-z][A-Za-z0-9]{0,4})|(?:[A-Z][a-z]+){2,}[0-9]{0,4})$").unwrap());
+
+/// The extensions a quoted path is taken to end in, compared without case.
+const PATH_EXTENSIONS: &str = "bash bat bin c cc cer cfg cjs cmd conf cpp crt cs css csv dat db der dtb dts dtsi env fw go gz h hpp htm html img ini jar java jks js json jsx key kt lock log lua md mjs p12 pem pfx php pl png ps1 pub py rb rs scss sh so sql svg swift tar tgz toml ts tsx txt xml yaml yml zip";
+
+/// Whether `secret` reads as the name of a thing (`NOT_A_PASSWORD`): a path only with a known
+/// extension and no part that mixes both cases with digits, as a generated password does.
+fn names_a_thing(secret: &str) -> bool {
+    let mixed =
+        |seg: &str| seg.chars().any(|c| c.is_ascii_uppercase()) && seg.chars().any(|c| c.is_ascii_lowercase()) && seg.chars().any(|c| c.is_ascii_digit());
+    let Some(c) = NOT_A_PASSWORD.captures(secret) else { return false };
+    match c.get(1) {
+        Some(ext) => PATH_EXTENSIONS.split(' ').any(|e| ext.as_str().eq_ignore_ascii_case(e)) && !secret.split(['/', '\\', '.']).any(mixed),
+        None => true,
+    }
+}
 
 /// A name in one case joined by `_`, `-` or `.` (`NL80211_AUTHTYPE_SAE`, `keypad_row0`,
 /// `x2apic_state`): code and device trees name things so; a random secret mixes cases.
@@ -449,7 +465,7 @@ fn env_value(secret: &str, whole: &str, before: &str) -> bool {
 /// A quoted secret: no placeholder, URL, number or one-case name, and a digit or a symbol in it.
 fn quoted(secret: &str, whole: &str, before: &str) -> bool {
     secret.len() <= 150
-        && !NOT_A_PASSWORD.is_match(secret)
+        && !names_a_thing(secret)
         && env_value(secret, whole, before)
         && !secret.contains("://")
         && !NUMBER.is_match(secret)
@@ -1538,6 +1554,37 @@ mod tests {
         for (line, secret) in [(format!("https://app:{a}@db.example.com/"), &a), (format!("{prog} -u deploy:{b} https://api.example.com/"), &b)] {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
+        }
+    }
+
+    /// A quoted secret is redacted unless it reads as a file path: one with a known extension,
+    /// none of whose parts mixes both cases with digits.
+    #[test]
+    fn a_quoted_secret_is_redacted_unless_it_reads_as_a_path() {
+        // built here, so the tree holds no credential a scanner reads
+        for (name, parts) in [
+            ("DB_PASSWORD", ["P4ss", "/w0rd.2024"]),
+            ("password", ["x9Kq", "/Lm2.zR7"]),
+            ("api_secret", ["Zq81", "/fw.9K"]),
+            ("password", ["Q7ZK", "/R2M.x9"]),
+            ("api_secret", ["k3vq", "/m8w.zt"]),
+        ] {
+            let secret = parts.concat();
+            let line = format!("{name} = \"{secret}\"");
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
+        }
+        for line in [
+            "secret_file = PathBuf::from(\"config/secret_settings.toml\")",
+            "key_path = \"certs/Server.pem\"",
+            "token_file = \"/run/secrets/api-token.txt\"",
+            "secret_conf = \"config/app.toml\"",
+            "password_file = \"./a/b.json\"",
+            "token_src = \"../lib/m.rs\"",
+            "secret_main = \"src/main.rs\"",
+        ] {
+            let (out, marks) = redact(line);
+            assert!(marks.is_empty(), "{line} -> {out}");
         }
     }
 
