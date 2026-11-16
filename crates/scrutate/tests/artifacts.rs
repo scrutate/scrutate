@@ -294,6 +294,31 @@ fn a_segment_the_main_checkout_removed_while_it_was_copied_is_not_taken_into_a_w
 }
 
 #[test]
+fn a_segment_left_by_a_lost_database_is_not_taken_for_the_main_checkouts() {
+    let models = ModelSet::none();
+    let t = Tmp::new("stale_segment");
+    let (main, wt) = linked(&t.0);
+    for i in 0..6 {
+        put(&wt, &format!("src/m{i}.py"), &format!("def unrelated_{i}():\n    return 'nothing alike'\n"));
+    }
+    let mut w = open(&wt, &models);
+    w.update(false).unwrap();
+    drop(w);
+    // the database gone, as by hand or a wipe cut short: its segments stay, named as the main checkout names its own
+    fs::remove_file(wt.join(".scrutate/index.db")).unwrap();
+    for i in 0..6 {
+        put(&wt, &format!("src/m{i}.py"), &py(i));
+    }
+    let mut m = open(&main, &models);
+    m.update(false).unwrap();
+    drop(m);
+    let mut w = open(&wt, &models);
+    w.update(false).unwrap();
+    assert_eq!(w.parsed, 0, "seeded from the main checkout");
+    same(&dump(w), &fresh(&wt, Arc::clone(&models)));
+}
+
+#[test]
 fn a_link_that_is_not_confirmed_both_ways_or_a_linked_index_directory_is_not_followed() {
     let models = ModelSet::none();
     let t = Tmp::new("unconfirmed");
