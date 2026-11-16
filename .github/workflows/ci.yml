@@ -36,7 +36,8 @@ jobs:
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # the Intel Mac is the slowest runner: 45 minutes at b45fb37c, the tests alone 38 at e2d39d85
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
