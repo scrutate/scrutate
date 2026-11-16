@@ -45,6 +45,9 @@ impl Off {
     }
 }
 
+/// Files the user cannot read that one drain tries to watch again.
+const SHUT_TRIES: usize = 32;
+
 /// What a drain found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Change {
@@ -91,8 +94,9 @@ pub(crate) struct Registry {
     budget: std::sync::Arc<Budget>,
     dev: u64,
     /// files whose watch the system refused for want of the user's access: no note comes for
-    /// them, so each drain tries again
+    /// them, so each drain tries `SHUT_TRIES` of them again, in turn from `shut_next`
     shut: std::collections::BTreeSet<PathBuf>,
+    shut_next: PathBuf,
     /// entries of paths that are gone, for the next new path: a tree's temporary files come and
     /// go between rebuilds, and their names would stay
     free: Vec<usize>,
@@ -187,7 +191,17 @@ impl Registry {
         // SAFETY: a descriptor kqueue just returned, owned from here on
         let kq = unsafe { OwnedFd::from_raw_fd(fd) };
         let dev = std::fs::metadata(root).map_err(|_| Off::Refused)?.dev();
-        Ok(Registry { kq, entries: Vec::new(), by_path: HashMap::new(), open: 0, budget, dev, shut: Default::default(), free: Vec::new() })
+        Ok(Registry {
+            kq,
+            entries: Vec::new(),
+            by_path: HashMap::new(),
+            open: 0,
+            budget,
+            dev,
+            shut: Default::default(),
+            shut_next: PathBuf::new(),
+            free: Vec::new(),
+        })
     }
 
     /// The watches in place.
@@ -399,8 +413,19 @@ impl Registry {
 
     fn drain_into(&mut self, keep: &dyn Fn(&Path) -> bool, freed: &mut Vec<usize>) -> Result<Vec<Change>, Off> {
         let mut out = Vec::new();
-        // one open each: a file whose access came back is watched and named from now on
-        for path in std::mem::take(&mut self.shut) {
+        // one open each, a few each drain (10,000 such files cost 156 ms a drain tried all at
+        // once): a file whose access came back is watched and named from now on, within
+        // len / SHUT_TRIES drains, or sooner by the safety walk
+        let after = |p: &PathBuf, from: &PathBuf| p > from;
+        let mut tries: Vec<PathBuf> = self.shut.iter().filter(|p| after(p, &self.shut_next)).take(SHUT_TRIES).cloned().collect();
+        if tries.len() < SHUT_TRIES {
+            tries.extend(self.shut.iter().take(SHUT_TRIES - tries.len()).filter(|p| !tries.contains(p)).cloned().collect::<Vec<_>>());
+        }
+        if let Some(last) = tries.last() {
+            self.shut_next = last.clone();
+        }
+        for path in tries {
+            self.shut.remove(&path);
             self.add(&path, false)?;
             if self.by_path.get(&path).is_some_and(|&i| self.entries[i].fd.is_some()) {
                 out.push(Change::Modified(path));
@@ -546,6 +571,63 @@ mod tests {
         assert!(r.drain(&all).unwrap().contains(&Change::Modified(root.join("src/new.py"))));
         std::fs::remove_file(root.join("src/new.py")).unwrap();
         assert!(r.drain(&all).unwrap().contains(&Change::Removed(root.join("src/new.py"))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_file_whose_access_comes_back_is_named_within_a_few_drains_however_many_are_shut() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tree("shutturn");
+        let n = SHUT_TRIES * 3 + 5;
+        for i in 0..n {
+            let p = root.join(format!("src/s{i:03}.py"));
+            std::fs::write(&p, "s = 1\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let mut r = registry(&root, None);
+        assert_eq!(r.shut.len(), n);
+        // the last in turn, so every drain before it tries others
+        let back = root.join(format!("src/s{:03}.py", n - 1));
+        std::fs::set_permissions(&back, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let drains = (1..=n.div_ceil(SHUT_TRIES)).find(|_| r.drain(&all).unwrap().contains(&Change::Modified(back.clone())));
+        assert!(drains.is_some(), "never named in {} drains", n.div_ceil(SHUT_TRIES));
+        assert_eq!(r.shut.len(), n - 1);
+        for i in 0..n {
+            let _ = std::fs::set_permissions(root.join(format!("src/s{i:03}.py")), std::fs::Permissions::from_mode(0o644));
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "a measurement: cargo test -- --ignored --nocapture shut_files_cost"]
+    fn shut_files_cost() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tree("shutcost");
+        for i in 0..10_000 {
+            let p = root.join(format!("src/s{i}.py"));
+            std::fs::write(&p, "s = 1\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let mut r = registry(&root, None);
+        assert_eq!(r.shut.len(), 10_000);
+        let mut took = Vec::new();
+        for _ in 0..20 {
+            let t0 = std::time::Instant::now();
+            r.drain(&all).unwrap();
+            took.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        took.sort_by(f64::total_cmp);
+        eprintln!("drain with 10,000 shut files: median {:.2} ms, min {:.2}, max {:.2}", took[10], took[0], took[19]);
+        let mut e = registry(&root, None);
+        e.shut.clear();
+        let t0 = std::time::Instant::now();
+        for _ in 0..20 {
+            e.drain(&all).unwrap();
+        }
+        eprintln!("drain with none: {:.3} ms each", t0.elapsed().as_secs_f64() * 1000.0 / 20.0);
+        for i in 0..10_000 {
+            let _ = std::fs::set_permissions(root.join(format!("src/s{i}.py")), std::fs::Permissions::from_mode(0o644));
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

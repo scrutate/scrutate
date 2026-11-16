@@ -941,8 +941,8 @@ where it is 61,440, about 29,700; one budget for the process, so two sessions in
 on a volume whose probe write gives no note, or for a tree that
 spans devices, every call looks at every file instead
 ([ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)). A file the user cannot read gets
-no watch and leaves the others in place: each call tries it again (one `open`), and names it
-once it can be read.
+no watch and leaves the others in place: each call tries up to 32 such files again, in turn
+(one `open` each), and names one once it can be read.
 When the watch cannot vouch for fewer files (it is not in place yet, it lost events or reported an
 error, an ignore rule or a directory changed, the cookie's event took more than a second, or on
 Linux a directory got its first watch, new or made again at its path) the call looks at every
