@@ -370,6 +370,28 @@ fn arguments_of_the_wrong_type_are_errors() {
     assert_ne!(r.ok("find_symbol", json!({"name": "dup_name", "limit": null})), "", "null is the same as leaving it out");
 }
 
+/// A name a tool needs, given but empty or only white space, is refused as empty, never answered
+/// about every name; left out, it is missing.
+#[test]
+fn an_empty_or_blank_name_is_refused_as_empty() {
+    let mut r = two_dup_names();
+    for blank in ["", "   ", "\t"] {
+        for (tool, given, key) in [
+            ("find_symbol", json!({"name": blank}), "name"),
+            ("references", json!({"name": blank}), "name"),
+            ("callers", json!({"name": blank}), "name"),
+            ("callees", json!({"name": blank}), "name"),
+            ("call_path", json!({"from": blank, "to": "dup_name"}), "from"),
+            ("call_path", json!({"from": "dup_name", "to": blank}), "to"),
+            ("read_code", json!({"symbol": blank}), "symbol"),
+        ] {
+            let e = r.err(tool, given.clone());
+            assert!(e.contains(&format!("{key} is empty")), "{tool} {given}: {e}");
+        }
+    }
+    assert!(r.err("find_symbol", json!({})).contains("missing required argument name"));
+}
+
 #[test]
 fn every_tool_that_takes_a_path_accepts_the_spellings_read_code_does() {
     let mut r = Repo::new("paths", &[("pkg/a.py", "import pkg.b\n\ndef fa():\n    return 1\n"), ("pkg/b.py", "def fb():\n    return 2\n")]);

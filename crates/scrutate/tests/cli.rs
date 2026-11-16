@@ -1993,6 +1993,29 @@ fn errors_are_json_when_asked() {
     assert!(err.starts_with("scrutate: error: "), "{err}");
 }
 
+/// A name the command needs that is empty or only white space is refused as empty, not answered
+/// with the definitions of every name it prefixes.
+#[test]
+fn an_empty_or_blank_name_is_refused_as_empty() {
+    let r = Repo::new("blankname");
+    r.write("a.py", b"def dup_name():\n    return 1\n");
+    r.run(&["index"]);
+    for blank in ["", "   "] {
+        for (args, what) in [
+            (vec!["symbol", blank], "name is empty"),
+            (vec!["refs", blank], "name is empty"),
+            (vec!["callers", blank], "name is empty"),
+            (vec!["callees", blank], "name is empty"),
+            (vec!["path", blank, "dup_name"], "from is empty"),
+            (vec!["path", "dup_name", blank], "to is empty"),
+            (vec!["read", "--symbol", blank], "symbol is empty"),
+        ] {
+            let (code, out, err) = r.run(&args);
+            assert!(code == 2 && out.is_empty() && err.contains(what), "{args:?}: {code} {out} {err}");
+        }
+    }
+}
+
 #[test]
 fn a_file_searched_in_ranges_equals_one_pass() {
     let r = Repo::new("split");

@@ -343,11 +343,7 @@ impl Op {
             "dependencies" => Op::Deps { path: text("path")? },
             "dependents" => Op::Rdeps { target: text("target")? },
             "references" => {
-                let name = text("name")?;
-                if name.trim().is_empty() {
-                    bail!("name is empty");
-                }
-                Op::Refs { name, max_results: count("max_results", REFS_MAX, RESULTS_MAX)?, textual: flag("textual")?, def: opt_text("def")? }
+                Op::Refs { name: text("name")?, max_results: count("max_results", REFS_MAX, RESULTS_MAX)?, textual: flag("textual")?, def: opt_text("def")? }
             }
             "similar_code" => Op::Similar { target: text("target")?, k: count("k", SIMILAR_K as u64, 50)? as usize },
             "duplicates" => Op::Dupes {
@@ -847,7 +843,25 @@ pub fn files(root: &std::path::Path, query: &str, limit: usize) -> Result<Answer
 /// Run one operation on the index as it is; `Repo::run` brings the index up to date first. Every
 /// read of it comes from one commit: a writer's commit meanwhile shows in the next operation.
 pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
+    op.refuse_blank()?;
     in_snapshot(s, |s| run_in(s, op))
+}
+
+impl Op {
+    /// A name the operation needs that is given but empty, or only white space, is refused.
+    fn refuse_blank(&self) -> Result<()> {
+        let blank = |s: &str| s.trim().is_empty();
+        match self {
+            Op::Scoped { op, .. } => op.refuse_blank(),
+            Op::Symbol { name, .. } | Op::Callers { name, .. } | Op::Callees { name, .. } | Op::Refs { name, .. } | Op::Package { name, .. } if blank(name) => {
+                bail!("name is empty")
+            }
+            Op::Path { from, .. } if blank(from) => bail!("from is empty"),
+            Op::Path { to, .. } if blank(to) => bail!("to is empty"),
+            Op::Read { symbol: Some(s), .. } if blank(s) => bail!("symbol is empty"),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// `f` on `s` with every read of the code index from one commit (`Index::begin_read`).
