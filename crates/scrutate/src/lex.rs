@@ -101,10 +101,35 @@ pub struct Ivf {
     pub nclusters: usize,
 }
 
+/// The arrays every segment is read from, by file stem.
+pub fn core_files() -> Vec<String> {
+    let mut v: Vec<String> = ["ids", "dl", "keys", "df"].map(String::from).into();
+    for p in ["ptr", "doc", "tf"] {
+        v.extend((0..NF).map(|c| format!("{p}{c}")));
+    }
+    v
+}
+
+/// The arrays a segment has whole or not at all: its vectors, and its IVF lists.
+pub const FILE_GROUPS: [&[&str]; 2] = [&["vec", "vscale"], &["ivf_order", "ivf_cent", "ivf_ptr", "ivf_inv"]];
+
+/// Whether every file `Segment::open` reads is there: a removal that stopped midway leaves a
+/// directory that lacks some.
+pub fn is_whole(path: &Path) -> bool {
+    let has = |s: &str| path.join(format!("{s}.npy")).is_file();
+    core_files().iter().all(|s| has(s)) && FILE_GROUPS.iter().all(|g| g.iter().all(|s| has(s)) || !g.iter().any(|s| has(s)))
+}
+
 impl Segment {
     pub fn open(path: &Path) -> Result<Segment> {
         let ld = |name: &str| Npy::open(&path.join(format!("{name}.npy")));
-        let ids = ld("ids")?;
+        let mut core = std::collections::HashMap::new();
+        for s in core_files() {
+            let a = ld(&s)?;
+            core.insert(s, a);
+        }
+        let mut take = |s: &str| core.remove(s).expect("a name core_files lists");
+        let ids = take("ids");
         let n = ids.len();
         let vp = path.join("vec.npy");
         let vec = if vp.exists() { Some(Npy::open(&vp)?) } else { None };
@@ -121,12 +146,12 @@ impl Segment {
         let seg = Segment {
             path: path.to_path_buf(),
             ids,
-            dl: ld("dl")?,
-            keys: ld("keys")?,
-            df: ld("df")?,
-            ptr: (0..NF).map(|c| ld(&format!("ptr{c}"))).collect::<Result<_>>()?,
-            doc: (0..NF).map(|c| ld(&format!("doc{c}"))).collect::<Result<_>>()?,
-            tf: (0..NF).map(|c| ld(&format!("tf{c}"))).collect::<Result<_>>()?,
+            dl: take("dl"),
+            keys: take("keys"),
+            df: take("df"),
+            ptr: (0..NF).map(|c| take(&format!("ptr{c}"))).collect(),
+            doc: (0..NF).map(|c| take(&format!("doc{c}"))).collect(),
+            tf: (0..NF).map(|c| take(&format!("tf{c}"))).collect(),
             vec,
             vscale,
             n,
@@ -1303,6 +1328,36 @@ impl LexStore {
 
 #[cfg(test)]
 mod tests {
+    /// A segment is whole with every file `Segment::open` reads, and with each group there whole or
+    /// not at all; a group with one file of it gone, or a core file gone, is not.
+    #[test]
+    fn a_segment_lacking_any_file_it_is_read_from_is_not_whole() {
+        let dir = std::env::temp_dir().join(format!("scrutate_seg_whole_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let touch = |s: &str| std::fs::write(dir.join(format!("{s}.npy")), b"").unwrap();
+        let gone = |s: &str| std::fs::remove_file(dir.join(format!("{s}.npy"))).unwrap();
+        core_files().iter().for_each(|s| touch(s));
+        assert!(is_whole(&dir));
+        for s in core_files() {
+            gone(&s);
+            assert!(!is_whole(&dir), "{s} gone");
+            touch(&s);
+        }
+        for g in FILE_GROUPS {
+            g.iter().for_each(|s| touch(s));
+            assert!(is_whole(&dir));
+            for s in g {
+                gone(s);
+                assert!(!is_whole(&dir), "{s} gone, the rest of its group there");
+                touch(s);
+            }
+            g.iter().for_each(|s| gone(s));
+            assert!(is_whole(&dir), "a segment without {g:?} at all");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     /// The semantic pool from an allow set is the unfiltered pool's order kept to the chunks it

@@ -2772,8 +2772,8 @@ impl Index {
         // gc removes a directory the list does not name once its age passes GC_AGE_S by the wall
         // clock, which can pass between the merge and this lock (a suspend, a clock step): a list
         // naming a merged segment that is gone would make the next read rebuild everything
-        // a file every segment has, not the directory: a removal that stopped midway leaves that
-        let merged_gone = new_names.iter().any(|n| !names.contains(n) && !self.seg_dir.join(n).join("ids.npy").is_file());
+        // every file a segment is read from, not the directory: a removal that stopped midway leaves that
+        let merged_gone = new_names.iter().any(|n| !names.contains(n) && !crate::lex::is_whole(&self.seg_dir.join(n)));
         if self.segments() != names || merged_gone {
             // another writer changed the manifest while we were merging: our plan is stale. Drop the
             // merged segment (nothing refers to it) and let the next update compact again.
@@ -4039,41 +4039,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A merged segment whose removal stopped midway (its directory there, `ids.npy` gone) counts
-    /// as gone: the compaction gives up its plan, as for a directory removed whole.
+    /// A merged segment whose removal stopped midway (its directory there, any one file it is read
+    /// from gone) counts as gone: the compaction gives up its plan, as for a directory removed whole.
     #[test]
     fn a_compaction_whose_merged_segment_is_half_removed_gives_up_its_plan() {
-        let root = std::env::temp_dir().join(format!("scrutate_ix_merged_half_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
-        // a second file keeps the first segment partly alive, so the compaction merges
-        std::fs::write(root.join("b.py"), "def beta(x):\n    return x\n").unwrap();
-        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
-        ix.update(false).unwrap();
-        let seg = ix.seg_dir.clone();
-        let db = root.join(".scrutate/index.db");
-        super::AFTER_MERGE.with(|h| {
-            *h.borrow_mut() = Some(Box::new(move || {
-                let c = rusqlite::Connection::open(&db).unwrap();
-                let listed: String = c.query_row("SELECT value FROM meta WHERE key='segments'", [], |r| r.get(0)).unwrap();
-                let listed: Vec<String> = serde_json::from_str(&listed).unwrap();
-                for e in std::fs::read_dir(&seg).unwrap().flatten() {
-                    if !listed.contains(&e.file_name().to_string_lossy().into_owned()) {
-                        std::fs::remove_file(e.path().join("ids.npy")).unwrap();
+        let mut victim = 0;
+        loop {
+            let root = std::env::temp_dir().join(format!("scrutate_ix_merged_half_{}_{victim}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+            // a second file keeps the first segment partly alive, so the compaction merges
+            std::fs::write(root.join("b.py"), "def beta(x):\n    return x\n").unwrap();
+            // the vectors too, so their files are among those removed in turn
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::from_env()).unwrap();
+            ix.update(false).unwrap();
+            let (seg, db) = (ix.seg_dir.clone(), root.join(".scrutate/index.db"));
+            let removed = std::rc::Rc::new(std::cell::RefCell::new(None::<(String, usize)>));
+            let r = std::rc::Rc::clone(&removed);
+            super::AFTER_MERGE.with(|h| {
+                *h.borrow_mut() = Some(Box::new(move || {
+                    let c = rusqlite::Connection::open(&db).unwrap();
+                    let listed: String = c.query_row("SELECT value FROM meta WHERE key='segments'", [], |r| r.get(0)).unwrap();
+                    let listed: Vec<String> = serde_json::from_str(&listed).unwrap();
+                    for e in std::fs::read_dir(&seg).unwrap().flatten() {
+                        if !listed.contains(&e.file_name().to_string_lossy().into_owned()) {
+                            let mut files: Vec<_> = std::fs::read_dir(e.path()).unwrap().flatten().map(|f| f.path()).collect();
+                            files.sort();
+                            if let Some(f) = files.get(victim) {
+                                std::fs::remove_file(f).unwrap();
+                            }
+                            *r.borrow_mut() =
+                                Some((files.get(victim).map_or(String::new(), |f| f.file_name().unwrap().to_string_lossy().into_owned()), files.len()));
+                        }
                     }
-                }
-            }))
-        });
-        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
-        ix.update(false).unwrap();
-        let after = ix.segments();
-        assert!(after.iter().all(|n| ix.seg_dir.join(n).join("ids.npy").is_file()), "the list names a half-removed segment: {after:?}");
-        assert!(ix.check(false).unwrap().problems.is_empty());
-        let st = ix.update(false).unwrap();
-        assert_eq!(st.files_changed, 0, "the next update rebuilt the index: {st:?}");
-        drop(ix);
-        let _ = std::fs::remove_dir_all(&root);
+                }))
+            });
+            std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+            ix.update(false).unwrap();
+            let (name, count) = removed.borrow().clone().expect("the compaction merged no segment");
+            assert!(count > 1, "the merged segment has {count} files");
+            let stem = name.trim_end_matches(".npy");
+            assert!(
+                crate::lex::core_files().iter().any(|f| f == stem) || crate::lex::FILE_GROUPS.iter().any(|g| g.contains(&stem)),
+                "{name} is a segment file the merged-gone check does not ask for"
+            );
+            let after = ix.segments();
+            assert!(after.iter().all(|n| crate::lex::is_whole(&ix.seg_dir.join(n))), "{name} removed: the list names a half-removed segment: {after:?}");
+            assert!(ix.check(false).unwrap().problems.is_empty(), "{name} removed");
+            let st = ix.update(false).unwrap();
+            assert_eq!(st.files_changed, 0, "{name} removed: the next update rebuilt the index: {st:?}");
+            drop(ix);
+            let _ = std::fs::remove_dir_all(&root);
+            victim += 1;
+            if victim == count {
+                break;
+            }
+        }
     }
 
     /// A compaction left for later that then fails rolls back what it began: the write lock is
