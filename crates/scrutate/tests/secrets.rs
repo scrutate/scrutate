@@ -1999,3 +1999,81 @@ fn read_code_by_symbol_refuses_a_left_out_path_spelt_from_the_root_as_given() {
     }
     let _ = fs::remove_dir_all(&base);
 }
+
+/// On a file system that ignores case (APFS, NTFS) a directory argument spelt in another case is
+/// the same directory. On macOS the walks climb from what canonicalize gives, the case on disk,
+/// so a hard link of an index file under it is in no answer and hook run refuses the search. On
+/// Windows the walks do not check identity, and a path in another case that names that file is
+/// refused by name.
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn an_argument_in_another_case_is_guarded_as_the_directory_it_is() {
+    const LINKED: &str = "remove the hard link, by its path";
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_case_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let repo = base.join("Repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join(".scrutate/tsquery")).unwrap();
+    fs::create_dir_all(repo.join("Src")).unwrap();
+    fs::write(repo.join("Src/a.txt"), "hello\n").unwrap();
+    fs::write(repo.join(".scrutate/tsquery/c.txt"), "hello from the cache\n").unwrap();
+    fs::hard_link(repo.join(".scrutate/tsquery/c.txt"), repo.join("Src/linked.txt")).unwrap();
+    if !base.join("repo/src/a.txt").exists() {
+        eprintln!("skipped: this file system tells case apart");
+        return;
+    }
+    let base = canon(&base);
+    let home = base.with_extension("home");
+    let run = |dir: &Path, args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("LOCALAPPDATA", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_CACHE_DIR", base.with_extension("cache"))
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let mut wrong = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        let others: Vec<String> = (0..20)
+            .map(|i| {
+                let rel = format!("others/o{i}.txt");
+                fs::create_dir_all(base.join("others")).unwrap();
+                fs::write(base.join(&rel), "hello\n").unwrap();
+                rel
+            })
+            .collect();
+        for arg in ["REPO/SRC", "repo/src", "rEpO/sRc/", "Repo/SRC"] {
+            for many in [false, true] {
+                let mut args = vec![arg];
+                if many {
+                    args.extend(others.iter().map(String::as_str));
+                }
+                let what = format!("{arg} with {} arguments", args.len());
+                let (_, out, _) = run(&base, &[&["grep", "-c", "hello"][..], &args].concat());
+                if !out.contains("a.txt:1") || out.to_lowercase().contains("linked") {
+                    wrong.push(format!("grep {what}: {out}"));
+                }
+                let (code, out, _) = run(&base, &[&["hook", "run", "--piped", "--", "grep", "-r", "-c", "hello"][..], &args].concat());
+                if code != Some(2) || out.to_lowercase().contains("linked") {
+                    wrong.push(format!("hook run grep -r {what}: {code:?} {out}"));
+                }
+            }
+        }
+    }
+    // a path in another case that names the hard link itself is refused by name everywhere
+    let (code, _, err) = run(&base.join("Repo"), &["read", "SRC/LINKED.TXT"]);
+    if code == Some(0) || !err.contains(LINKED) {
+        wrong.push(format!("read SRC/LINKED.TXT: {code:?} {err}"));
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let _ = fs::remove_dir_all(&base);
+}
