@@ -2,6 +2,8 @@ cff-version: 1.2.0
 message: "If you use scrutate in your work, please cite it as below."
 type: software
 title: Scrutate
+version: 0.1.0
+date-released: "2026-11-11"
 abstract: >-
   Universal instant code search and persistent code intelligence, in one Rust binary.
   Engine A searches any folder with no index; Engine B indexes a repository for ranked

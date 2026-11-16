@@ -17,5 +17,8 @@ def test_a_date_the_fold_left_behind_stops_the_release(tmp_path):
     (tmp_path / "CHANGELOG.md").write_text("## [Unreleased]\n\n## [0.1.0] - 2026-11-30\n\n- The first release.\n")
     (tmp_path / "docs/DELIVERY.md").write_text("# Delivery index: Scrutate 0.1.0 (2026-11-30)\n")
     (tmp_path / "docs/SECURITY.md").write_text("Scope: the binary, as\nbuilt from this repository on 2026-11-11. More.\n")
+    (tmp_path / "CITATION.cff").write_text('title: Scrutate\nversion: 0.1.0\ndate-released: "2026-11-30"\n')
     assert C.dated("0.1.0", str(tmp_path)) == ["docs/SECURITY.md says 2026-11-11, CHANGELOG.md's 0.1.0 section 2026-11-30"]
+    (tmp_path / "CITATION.cff").write_text("title: Scrutate\n")
+    assert "CITATION.cff says (no date found), CHANGELOG.md's 0.1.0 section 2026-11-30" in C.dated("0.1.0", str(tmp_path))
     assert C.dated("0.2.0", str(tmp_path)) == ["CHANGELOG.md has no dated ## [0.2.0] section"]

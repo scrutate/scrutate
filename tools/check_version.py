@@ -25,11 +25,13 @@ WRITTEN = [
     ("integrations/github/README.md", r"scrutate@v(\S+)"),
     ("integrations/github/README.md", r"version: v(\S+)"),
     ("integrations/pre-commit/README.md", r"rev: v(\S+)"),
+    ("CITATION.cff", r'^version: "?([^"\s]+)'),
 ]
 # every place a release writes its date, read against the date of the version's CHANGELOG section
 DATED = [
     ("docs/DELIVERY.md", r"^# Delivery index: Scrutate \S+ \((\d{4}-\d\d-\d\d)\)"),
     ("docs/SECURITY.md", r"built from this repository on (\d{4}-\d\d-\d\d)"),
+    ("CITATION.cff", r'^date-released: "?(\d{4}-\d\d-\d\d)'),
 ]
 WINGET = "packaging/winget/manifests/c/crisnahine/Scrutate"
 

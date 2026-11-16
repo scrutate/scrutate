@@ -33,6 +33,7 @@ test results and artifacts all name one binary by its SHA-256.
 | the winget manifests and their directory name | version | yes |
 | the examples in the GitHub Action and pre-commit READMEs | version | yes |
 | the title of `docs/DELIVERY.md`, the scope line of `docs/SECURITY.md` | the date of the version's `CHANGELOG.md` heading | yes |
+| `CITATION.cff` | `version`, and `date-released` (the `CHANGELOG.md` heading's date) | yes |
 
 The check fails when a file differs from the version, or a date from the version's
 `CHANGELOG.md` heading. The release workflow runs it first on the
