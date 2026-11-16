@@ -354,7 +354,8 @@ impl Vendored {
 /// The directories (globs allowed) a root manifest declares as the repository's own packages:
 /// Cargo workspace members and path dependencies, Go `replace` targets in the repository, npm,
 /// Yarn and pnpm workspaces. A workspace glob that starts with `!` is kept with its `!`: it takes
-/// its directories out again (`owns`).
+/// its directories out again (`owns`). In `package.json` a `!` glob that a later glob matches is
+/// dropped, as npm drops it (`["vendor/*", "!vendor/x", "vendor/x"]` keeps `vendor/x`).
 pub fn own_package_dirs(manifest: &str, text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     match manifest {
@@ -393,13 +394,25 @@ pub fn own_package_dirs(manifest: &str, text: &str) -> Vec<String> {
         }
         _ => {}
     }
-    out.iter()
+    let dirs: Vec<String> = out
+        .iter()
         .filter_map(|d| {
             let (not, d) = d.strip_prefix('!').map_or(("", d.as_str()), |d| ("!", d));
             let d = d.trim_start_matches("./").trim_end_matches('/');
             (!d.is_empty() && !d.starts_with("..")).then(|| format!("{not}{d}"))
         })
-        .collect()
+        .collect();
+    if manifest != "package.json" {
+        return dirs;
+    }
+    let mut kept: Vec<String> = Vec::new();
+    for d in dirs {
+        if !d.starts_with('!') {
+            kept.retain(|k| k.strip_prefix('!').is_none_or(|not| !owns(&[not.to_string()], &format!("{d}/-"))));
+        }
+        kept.push(d);
+    }
+    kept
 }
 
 /// Whether `path` lies in one of `dirs`, whose parts may hold `*` (within a part) or be `**`, and
@@ -616,6 +629,22 @@ mod tests {
         assert_eq!(own_package_dirs("package.json", r#"{"workspaces": {"packages": ["vendor/*"]}}"#), ["vendor/*"]);
         assert_eq!(own_package_dirs("pnpm-workspace.yaml", "packages:\n  - 'vendor/**'\n  - \"!vendor/x\"\nother:\n  - no\n"), ["vendor/**", "!vendor/x"]);
         assert_eq!(own_package_dirs("package.json", r#"{"workspaces": ["vendor/*", "!./vendor/x/"]}"#), ["vendor/*", "!vendor/x"]);
+        // npm's order, from the package-lock.json npm 12.2.2 writes for each list: a `!` glob is
+        // dropped when a later glob matches it, and otherwise holds wherever it stands
+        let npm = |list: &str, path: &str| owns(&own_package_dirs("package.json", &format!("{{\"workspaces\": {list}}}")), path);
+        assert!(!npm(r#"["!vendor/x", "vendor/*"]"#, "vendor/x/a.js") && npm(r#"["!vendor/x", "vendor/*"]"#, "vendor/y/a.js"));
+        assert!(!npm(r#"["vendor/*", "!vendor/x"]"#, "vendor/x/a.js"));
+        assert!(npm(r#"["vendor/*", "!vendor/x", "vendor/x"]"#, "vendor/x/a.js"));
+        assert!(!npm(r#"["vendor/x", "!vendor/x"]"#, "vendor/x/a.js"));
+        assert!(
+            npm(r#"["vendor/**", "!vendor/b/**", "vendor/b/a"]"#, "vendor/b/a/i.js")
+                && npm(r#"["vendor/**", "!vendor/b/**", "vendor/b/a"]"#, "vendor/b/c/i.js")
+        );
+        // pnpm keeps every `!` glob
+        assert_eq!(
+            own_package_dirs("pnpm-workspace.yaml", "packages:\n  - 'vendor/*'\n  - '!vendor/x'\n  - 'vendor/x'\n"),
+            ["vendor/*", "!vendor/x", "vendor/x"]
+        );
         // a `!` glob takes its directories out of the workspace
         let ws = ["vendor/**".to_string(), "!vendor/x".to_string()];
         assert!(owns(&ws, "vendor/y/a.js") && !owns(&ws, "vendor/x/a.js") && !owns(&ws, "vendor/x/deep/b.js"));
