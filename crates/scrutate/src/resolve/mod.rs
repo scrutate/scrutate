@@ -365,10 +365,10 @@ impl FileInfo {
         }
         let parsed = self.parsed.get_or_init(|| {
             let key = (self.root.clone(), self.path.clone());
-            let kept = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&key, &self.hash);
+            let kept = parsed_store(|st| st.get(&key, &self.hash));
             let p = kept.unwrap_or_else(|| {
                 let p = std::sync::Arc::new(parse_text(&self.path, self.src.clone(), self.raw.clone()));
-                PARSED.lock().unwrap_or_else(|e| e.into_inner()).put(key, self.hash.clone(), std::sync::Arc::clone(&p));
+                parsed_store(|st| st.put(key, self.hash.clone(), std::sync::Arc::clone(&p)));
                 p
             });
             if let Some(set) = self.set.upgrade().filter(|_| self.counted.get()) {
@@ -403,6 +403,42 @@ impl FileInfo {
         self.parsed.get().and_then(|p| p.as_ref()).map_or(0, |p| p.weight())
     }
 }
+
+/// What loading a file gives besides its text and tree, by the content hash it was made from.
+struct Facts {
+    hash: String,
+    defs: Vec<Def>,
+    bindings: Vec<Binding>,
+    deep: bool,
+}
+
+impl Facts {
+    /// What it takes kept under `path`: the map's entry and key, the `Rc`, and every buffer by its
+    /// capacity; the map's spare buckets are left out.
+    fn weight(&self, path: &str) -> usize {
+        let def = |d: &Def| d.name.capacity() + d.qualname.capacity() + d.kind.capacity();
+        let binding =
+            |b: &Binding| b.local.capacity() + b.module.capacity() + b.item.as_ref().map_or(0, String::capacity) + size_of::<usize>() * b.sites.capacity();
+        size_of::<(String, Rc<Facts>)>()
+            + path.len()
+            + 2 * size_of::<usize>()
+            + size_of::<Facts>()
+            + self.hash.capacity()
+            + size_of::<Def>() * self.defs.capacity()
+            + self.defs.iter().map(def).sum::<usize>()
+            + size_of::<Binding>() * self.bindings.capacity()
+            + self.bindings.iter().map(binding).sum::<usize>()
+    }
+}
+
+/// Counts a read of a file's rows in the index, for tests.
+fn row_read() {
+    #[cfg(test)]
+    ROW_READS.with(|n| n.set(n.get() + 1));
+}
+
+/// The most a request keeps of its files' facts (`Facts`), past its loaded set's text and trees.
+pub(crate) const FACTS_MEMO: usize = 16 << 20;
 
 /// Parses whose tree has gone: a node id kept from such a tree may name a node of a later one.
 static TREES_FREED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -609,6 +645,45 @@ thread_local! {
     static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// by path, the parses this thread made, for tests
+    static PARSES_OF: std::cell::RefCell<HashMap<String, usize>> = Default::default();
+    /// the index rows (bindings, definitions) this thread's loads read, for tests
+    static ROW_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// a test's own parse store and loaded-set cap, for this thread only (`small_caps`)
+    static OWN_STORE: std::cell::RefCell<Option<ParsedStore>> = const { std::cell::RefCell::new(None) };
+    static OWN_CAP: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// From now on this thread's resolvers hold `cap` bytes of loaded files and parses, for tests.
+#[cfg(test)]
+fn small_caps(cap: usize) {
+    OWN_STORE.with(|s| *s.borrow_mut() = Some(ParsedStore::new(cap)));
+    OWN_CAP.with(|c| c.set(Some(cap)));
+}
+
+/// The parse store this thread reads: `PARSED`, or a test's own (`small_caps`).
+fn parsed_store<R>(f: impl FnOnce(&mut ParsedStore) -> R) -> R {
+    #[cfg(test)]
+    {
+        if OWN_STORE.with(|s| s.borrow().is_some()) {
+            return OWN_STORE.with(|s| f(s.borrow_mut().as_mut().expect("set above")));
+        }
+    }
+    f(&mut PARSED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+fn loaded_cap() -> usize {
+    #[cfg(test)]
+    {
+        if let Some(cap) = OWN_CAP.with(std::cell::Cell::get) {
+            return cap;
+        }
+    }
+    LOADED_CAP
+}
+
 pub struct Resolver<'a> {
     ix: &'a Index,
     files: HashSet<String>,
@@ -652,6 +727,11 @@ pub struct Resolver<'a> {
     /// file reads, in order (`c_include_order`)
     c_includes: HashMap<(String, String), Option<Vec<String>>>,
     c_orders: HashMap<String, Rc<Vec<String>>>,
+    /// by path, what loading it gave besides its text and tree (content hash, definitions,
+    /// bindings, too deep), kept for the request while `FACTS_MEMO` has room: a file the loaded
+    /// set dropped is read and hashed again, not looked up and parsed again
+    facts: HashMap<String, Rc<Facts>>,
+    facts_bytes: usize,
     /// C#: type name -> (definition, namespace, class it is nested in); namespace -> its files;
     /// by type, the types it extends and implements
     cs_types: HashMap<String, CsTypes>,
@@ -1052,6 +1132,8 @@ thread_local! {
 /// What parsing the text of `path` gives the resolver.
 fn parse_text(path: &str, src: String, raw: Raw) -> Parsed {
     PARSES.with(|n| n.set(n.get() + 1));
+    #[cfg(test)]
+    PARSES_OF.with(|m| *m.borrow_mut().entry(path.to_string()).or_default() += 1);
     let spec = crate::langs::detect(path, Some(&src));
     let lang = spec.and_then(|s| lang_of(s.id));
     let tree = match (spec, lang) {
@@ -1188,7 +1270,7 @@ impl<'a> Resolver<'a> {
         Ok(Resolver {
             ix,
             files,
-            loaded: Rc::new(std::cell::RefCell::new(Loaded::new(LOADED_CAP))),
+            loaded: Rc::new(std::cell::RefCell::new(Loaded::new(loaded_cap()))),
             freed: TREES_FREED.load(std::sync::atomic::Ordering::Relaxed),
             langs: Default::default(),
             crates: None,
@@ -1211,6 +1293,8 @@ impl<'a> Resolver<'a> {
             c_defs: HashMap::new(),
             c_includes: HashMap::new(),
             c_orders: HashMap::new(),
+            facts: HashMap::new(),
+            facts_bytes: 0,
             cs_types: HashMap::new(),
             cs_namespaces: None,
             cs_bases: HashMap::new(),
@@ -1278,6 +1362,9 @@ impl<'a> Resolver<'a> {
     /// Drops the loaded copy of `path`; a later use loads it again.
     pub fn forget(&mut self, path: &str) {
         self.loaded.borrow_mut().remove(path);
+        if let Some(f) = self.facts.remove(path) {
+            self.facts_bytes -= f.weight(path);
+        }
         // a lookup's order follows the includes of the files it read; what an include names
         // (`c_includes`) follows only the repository's list of files
         self.c_orders.clear();
@@ -1358,10 +1445,16 @@ impl<'a> Resolver<'a> {
         let (src, raw) = decoded(bytes);
         let spec = crate::langs::detect(path, Some(&src));
         let lang = spec.and_then(|s| lang_of(s.id));
-        let kept = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&key, &hash);
+        let kept = parsed_store(|st| st.get(&key, &hash));
+        // what this request learned of these bytes when it loaded them before
+        let known = self.facts.get(path).filter(|f| f.hash == hash).cloned();
         // the index's bindings of these bytes, made from the tree its own parse built
-        let stored = match (&kept, spec, lang) {
-            (None, Some(spec), Some(_)) => self.ix.bindings_of(path, &hash).ok().flatten().and_then(|b| read_bindings(&b, spec)),
+        let stored = match (&kept, spec, lang, &known) {
+            (None, _, _, Some(f)) => Some((f.deep, f.bindings.clone())),
+            (None, Some(spec), Some(_), None) => {
+                row_read();
+                self.ix.bindings_of(path, &hash).ok().flatten().and_then(|b| read_bindings(&b, spec))
+            }
             _ => None,
         };
         let parsed = match (kept, &stored) {
@@ -1369,7 +1462,7 @@ impl<'a> Resolver<'a> {
             (None, Some(_)) => None,
             (None, None) => {
                 let p = std::sync::Arc::new(parse_text(path, src.clone(), raw.clone()));
-                PARSED.lock().unwrap_or_else(|e| e.into_inner()).put(key, hash.clone(), std::sync::Arc::clone(&p));
+                parsed_store(|st| st.put(key, hash.clone(), std::sync::Arc::clone(&p)));
                 Some(p)
             }
         };
@@ -1382,7 +1475,25 @@ impl<'a> Resolver<'a> {
             (None, Some(s)) => s,
             (None, None) => (false, Vec::new()),
         };
-        let defs = self.defs_of(path).unwrap_or_default();
+        let defs = match &known {
+            Some(f) => f.defs.clone(),
+            None => {
+                row_read();
+                self.defs_of(path).unwrap_or_default()
+            }
+        };
+        if known.is_none() {
+            // bytes that moved replace what the request learned of the old ones
+            if let Some(old) = self.facts.remove(path) {
+                self.facts_bytes -= old.weight(path);
+            }
+            let facts = Facts { hash: hash.clone(), defs: defs.clone(), bindings: bindings.clone(), deep };
+            let weight = facts.weight(path);
+            if self.facts_bytes + weight <= FACTS_MEMO {
+                self.facts_bytes += weight;
+                self.facts.insert(path.to_string(), Rc::new(facts));
+            }
+        }
         let cell = std::cell::OnceCell::new();
         if let Some(p) = parsed {
             let _ = cell.set(Some(p));
@@ -3286,6 +3397,79 @@ mod tests {
         compare(&s, "after an update");
         drop(s);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A request over more files than its caps hold parses each file a few times at most, however
+    /// many classes share a name: `references` of `__init__` asks for every class's
+    /// instantiations, and six packages define the same classes.
+    #[test]
+    fn a_request_heavier_than_its_caps_parses_each_file_a_few_times() {
+        let copies = 6;
+        let mut files = Vec::new();
+        for c in 0..copies {
+            files.push((format!("c{c}/__init__.py"), String::new()));
+            files.push((format!("c{c}/base.py"), "class Base:\n    def __init__(self):\n        self.n = 0\n".to_string()));
+            for m in 0..3 {
+                let body = format!(
+                    "from .base import Base\n\n\nclass M{m}(Base):\n    def __init__(self):\n        super().__init__()\n        self.b = Base()\n\n\ndef make{m}():\n    return M{m}()\n"
+                );
+                files.push((format!("c{c}/m{m}.py"), body));
+            }
+        }
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let (root, s) = indexed("heavier_than_caps", &refs);
+        let one = std::sync::Arc::new(parse_text("c0/m0.py", files[2].1.clone(), None)).weight() + files[2].1.len();
+        small_caps(one * 2);
+        PARSES_OF.with(|m| m.borrow_mut().clear());
+        let found = crate::names::Names::new(&s).unwrap().references("__init__", 10_000).unwrap().occurrences.len();
+        let most = PARSES_OF.with(|m| m.borrow().iter().map(|(p, n)| (*n, p.clone())).max());
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(found >= copies * 4, "found {found}");
+        let (n, path) = most.expect("some file was parsed");
+        assert!(n <= 3, "{path} parsed {n} times");
+    }
+
+    /// A file the loaded set dropped comes back from what the request learned of its bytes, with no
+    /// read of its rows in the index.
+    #[test]
+    fn a_dropped_file_comes_back_without_reading_its_rows() {
+        let (root, s) = indexed("facts_kept", &[("a.py", "import os\n\n\ndef f():\n    pass\n"), ("b.py", "x = 1\n")]);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        rv.loaded = Rc::new(std::cell::RefCell::new(Loaded::new(1)));
+        let reads = || ROW_READS.with(std::cell::Cell::get);
+        let first = rv.file("a.py").defs.len();
+        let _ = rv.file("b.py");
+        let held = rv.loaded.borrow().weight().0;
+        let before = reads();
+        let again = rv.file("a.py").defs.len();
+        let read = reads() - before;
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(held, 1, "loading b.py dropped a.py");
+        assert_eq!((first, again), (1, 1));
+        assert_eq!(read, 0, "a.py's rows were read again");
+    }
+
+    /// A file the loaded set dropped, whose bytes then moved, comes back with the imports of its new
+    /// bytes, not with what the request learned of the old ones.
+    #[test]
+    fn a_dropped_file_whose_bytes_moved_is_learned_again() {
+        let (root, s) = indexed("facts_moved", &[("a.py", "import os\n"), ("b.py", "x = 1\n")]);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        rv.loaded = Rc::new(std::cell::RefCell::new(Loaded::new(1)));
+        let locals = |rv: &mut Resolver| rv.file("a.py").bindings.iter().map(|b| b.local.clone()).collect::<Vec<_>>();
+        let before = locals(&mut rv);
+        let _ = rv.file("b.py");
+        let held = rv.loaded.borrow().weight().0;
+        std::fs::write(root.join("a.py"), "import sys\n").unwrap();
+        let after = locals(&mut rv);
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(held, 1, "loading b.py dropped a.py");
+        assert_eq!((before, after), (vec!["os".to_string()], vec!["sys".to_string()]));
     }
 
     /// A request's loaded files stay under its cap, trees included; a file that left is loaded

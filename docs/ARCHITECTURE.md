@@ -861,7 +861,11 @@ request and ask what the occurrence at a place refers to; no other module builds
 Within a request a file is read once while the request's set of loaded files holds it, however
 many of its call sites are asked about; the set holds at most 256 MiB of weight (`LOADED_CAP`,
 weighed as ADR 4's store weighs) and drops the least recently used, so with that store the
-resolver holds at most 512 MiB of weight plus the file in use. A file is parsed only when the resolver reads its tree: the imports of a file the index
+resolver holds at most 512 MiB of weight, plus 32 MiB for the two memos below and the file in
+use. Beside the set, a request keeps, by path, what it learned of each file it read (definitions
+and imports, used while the file's bytes keep the hash they had) and the instantiations each class
+name was found at, under 16 MiB each (`FACTS_MEMO`, `NESTED_MEMO`), so a file the set dropped is
+read and hashed again but not looked up again. A file is parsed only when the resolver reads its tree: the imports of a file the index
 parsed come from the index, stored by content beside its artifact
 ([ADR 0008](adr/0008-resolver-reads-bindings-from-the-index.md)). A process that answers many
 requests keeps each file's parse for the next one, found by its content and bounded by weight

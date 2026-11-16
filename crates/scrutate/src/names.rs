@@ -23,6 +23,13 @@ pub struct Dependency {
     pub resolved: Option<String>,
 }
 
+/// Whether the occurrence of `word` reads as making an instance: a call, `.new`, or `new` before it.
+fn instantiates(o: &Occurrence, word: &str) -> bool {
+    let after = o.text.get(o.at + word.len()..).unwrap_or("").trim_start();
+    let before = o.text.get(..o.at).unwrap_or("").trim_end();
+    after.starts_with('(') || after.starts_with(".new") || before.ends_with("new")
+}
+
 /// (importing file, line, module as written)
 pub type Importer = (String, i64, String);
 
@@ -44,8 +51,15 @@ pub struct Names<'a> {
     langs: Langs<'a>,
     /// `callers` met another definition of a name it asked for
     pub(crate) rivals: bool,
+    /// what a nested `references` of a class found that reads as an instantiation, by spelling
+    /// and limit, for the rest of the request (`NESTED_MEMO`), and the bytes it holds
+    instantiations: HashMap<(String, u64), std::rc::Rc<Vec<Occurrence>>>,
+    memo_bytes: usize,
     _reading: Reading,
 }
+
+/// The most a request keeps of its nested `references` answers.
+pub(crate) const NESTED_MEMO: usize = 16 << 20;
 
 impl<'a> Names<'a> {
     pub fn new(s: &'a Searcher) -> Result<Names<'a>> {
@@ -59,6 +73,8 @@ impl<'a> Names<'a> {
             callee_cases: None,
             langs: Langs { root: &s.ix.root, seen: Default::default() },
             rivals: false,
+            instantiations: HashMap::new(),
+            memo_bytes: 0,
             _reading: reading,
         })
     }
@@ -249,15 +265,11 @@ impl<'a> Names<'a> {
                 spelled.push("super".to_string());
             }
             for word in spelled {
-                let made = |o: &Occurrence| {
-                    let after = o.text.get(o.at + word.len()..).unwrap_or("").trim_start();
-                    let before = o.text.get(..o.at).unwrap_or("").trim_end();
-                    matches!(o.resolution, Ok((id, _)) if id == class.id) && (after.starts_with('(') || after.starts_with(".new") || before.ends_with("new"))
-                };
+                let made = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if id == class.id) && instantiates(o, &word);
                 let of_class: Vec<Occurrence> = if word == bare.as_str() {
                     occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
                 } else {
-                    self.references(&word, max_results)?.occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
+                    self.instantiations(&word, max_results)?.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
                 };
                 occurrences.extend(of_class);
             }
@@ -280,6 +292,29 @@ impl<'a> Names<'a> {
             }
         }
         Ok(Resolved { definitions, occurrences, truncated, bounded, no_kind: false, notes, first_overload, outside: Default::default() })
+    }
+
+    /// The occurrences `references(word, max_results)` gives that read as an instantiation, kept
+    /// for the request while `NESTED_MEMO` has room: every class of that name asks the same.
+    fn instantiations(&mut self, word: &str, max_results: u64) -> Result<std::rc::Rc<Vec<Occurrence>>> {
+        let key = (word.to_string(), max_results);
+        if let Some(found) = self.instantiations.get(&key) {
+            return Ok(std::rc::Rc::clone(found));
+        }
+        let found: Vec<Occurrence> = self.references(word, max_results)?.occurrences.into_iter().filter(|o| instantiates(o, word)).collect();
+        let found = std::rc::Rc::new(found);
+        // the entry, its key and the `Rc`, and each occurrence's buffers by capacity; a line's text
+        // is shared by its uses and counted for each
+        let bytes = size_of::<((String, u64), std::rc::Rc<Vec<Occurrence>>)>()
+            + word.len()
+            + 2 * size_of::<usize>()
+            + size_of::<Occurrence>() * found.capacity()
+            + found.iter().map(|o| o.path.capacity() + o.text.len()).sum::<usize>();
+        if self.memo_bytes + bytes <= NESTED_MEMO {
+            self.memo_bytes += bytes;
+            self.instantiations.insert(key, std::rc::Rc::clone(&found));
+        }
+        Ok(found)
     }
 
     /// The one decision about the site of `spelled` at 1-based `line`, 0-based byte `col` of

@@ -55,9 +55,20 @@ which this item first proposed, would not have moved these numbers.
    they hold, weighed as the store weighs them. The set drops files when one is loaded, when one
    is found in it, and when a file in it makes its tree, sparing the file in use. A file dropped
    from the set is loaded again when asked for again. What the resolver holds is bounded by
-   `PARSED_CAP` plus `LOADED_CAP` of weight, plus the one file in use beyond the cap, in a fresh
+   `PARSED_CAP` plus `LOADED_CAP` of weight, plus the two memos below (16 MiB each) and the one
+   file in use beyond the cap, in a fresh
    process and in a `serve`; a tree a caller still holds after its file left the set goes when
    the caller drops it.
+   Two memos sit beside the set for the length of the request, each under 16 MiB: by path, each
+   file's definitions, bindings and depth with the hash of the bytes they came from, used only
+   while the file still has that hash (`FACTS_MEMO`), so a dropped file
+   comes back without reading its two rows in the index again (its tree is still built only when
+   asked for, as without the memo); and, by spelling and
+   limit, the occurrences a nested `references` of a class name found that read as an
+   instantiation (`NESTED_MEMO`), so `references` of `__init__` looks each class name up once
+   however many classes share it. A file whose hash moved is learned again. Without them a
+   request over more than the set holds read the same files again for every class of a name:
+   `refs __init__` over six copies of the Python standard library parsed 3,618 files 85,828 times.
 4. **Node ids stay safe.** The resolver keeps two caches keyed by tree node ids (`found`, `tys`).
    Once trees can go during a request, a later tree can reuse an id, so every `Parsed` that drops
    a tree counts it (`TREES_FREED`), and a resolver that sees the count move empties both caches
@@ -141,6 +152,18 @@ definitions by name. Same box and runs as above, with those kept:
 Run 1 here was each binary's first read of its own cold copy; run 2 is the fair comparison. With
 them, `dead` on the whole Linux tree takes 11 percent longer than the build before, where it
 took 54 percent longer without them. The answers are again the same byte for byte.
+
+The two memos beside the set (decision 3) were measured on scrutate-build (c7a.4xlarge, 16 cores)
+with `refs --json --max-results 2000 __init__` over six copies of the Python 3.14 standard library
+and a virtualenv (4,205 files, 84 MB), each binary on its own copy with an index it built, runs
+interleaved: 48629c0a, before the set, took 136.8, 125.0, 123.0 and 148.5 s at 1.93 GB; the set
+without the memos 634.5 and 622.1 s at 0.56 GB, loading 4,052 files 395,072 times and parsing
+3,618 of them 85,828 times; with the memos 105.7, 100.5, 109.9 and 98.8 s at 0.55 to 0.56 GB. Without the
+facts memo the same request took 111.2, 108.6 and 108.8 s against 110.6, 100.0 and 100.4 s with
+it, 8 percent more CPU (Reviewer 6's runs, same box). All
+outputs are the same byte for byte. `dead` on the whole Linux tree, the set without and with the
+memos run at once on scrutate-build-3: 4,439 s at 4.44 GB and 4,520 s at 4.37 GB, both the same
+output as before.
 
 ## Other choices
 
