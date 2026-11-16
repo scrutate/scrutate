@@ -841,7 +841,7 @@ locked package is the package. A Go package in a module's subdirectory is named 
 requires, is the longest the import path starts with, and the directory after it, which must hold
 Go files), or by its name alone, `gomock.NewController`, when one direct requirement has a
 directory of that name whose package clause is that name; of two, the one the repository's own Go
-files import, else an error that names both import paths. The import path names the directory
+files import, else an error that names every import path (the first three, then how many more). The import path names the directory
 and the package clause the name the code writes, so a package whose clause is not its directory's
 name is found by its import path only. A dependency's `internal` package answers by its import
 path (the dependency's own code imports it), never by its name, which the repository cannot
@@ -850,7 +850,9 @@ that directory and the ones under it. The rest is looked up as `symbol` and `rea
 by its last part (`de::Deserialize` finds `Deserialize`). In a Go module or a Python package, the
 definitions in the package's own directory come first (a Go package is the directory at its
 import path: `yaml.Marshal` lists sigs.k8s.io/yaml's root `yaml.go` before its vendored
-`goyaml.v2` and `goyaml.v3`), and in each part a name in its typed case comes before one that
+`goyaml.v2` and `goyaml.v3`); in each part a definition whose qualified name is the name as asked comes first, so
+`assert.Equal` is testify's function and `assert.Assertions.Equal` its method, as in Python
+`requests.get` before a method `Session.get`; then a name in its typed case before one that
 matches only without case. The answer's first line names the
 package, its version, the lockfile and the directory (`serde 1.0.200 (Cargo.lock):
 /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.200`), and every path in it

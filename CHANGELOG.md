@@ -407,6 +407,7 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `--deps PACKAGE.NAME` lists the package's own `NAME` before a method of that name, in Go and Python (`assert.Equal` is testify's function, `assert.Assertions.Equal` its method), and a bare Go package name many packages share is refused naming the first three import paths and how many more, where client-go's 59 packages named `fake` made one line of 3,604 bytes.
 - `--deps` finds a Go package in a module's subdirectory, by its import path (`go.uber.org/mock/gomock.NewController`) or by its name (`gomock.NewController`), where both said "no package of go.mod names" and only the module's own names answered: testify's `assert`, `golang.org/x/sync/errgroup` and most Go imports are such packages. Two packages of one name answer the one the repository imports, or are refused naming both import paths.
 - `tsquery` and `tsquery --rewrite` say a source file over 1 MB, which they do not search: named
   on the command line it gets `PATH: over 1 MB, left alone` and exit 2, where it exited 1 with

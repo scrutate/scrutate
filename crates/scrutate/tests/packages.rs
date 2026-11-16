@@ -810,6 +810,121 @@ fn of_two_go_packages_of_one_name_the_one_the_repository_imports_is_read_and_oth
 }
 
 #[test]
+fn a_package_s_own_name_comes_before_a_method_of_that_name_unless_the_method_is_asked_for() {
+    // the first hit's file, then the second's
+    let order = |out: &str| -> Vec<String> {
+        out.lines().filter(|l| l.contains(".go:") || l.contains(".py:")).map(|l| l.split(':').next().unwrap().rsplit('/').next().unwrap().to_string()).collect()
+    };
+    let t = Tree::new("own_name_first");
+    t.go_mod("require (\n\tgithub.com/stretchr/testify v1.9.0\n\texample.com/kit v1.0.0\n)");
+    // testify as it ships: the method in assertion_forward.go, the function in assertions.go
+    let a = "gomod/github.com/stretchr/testify@v1.9.0/assert";
+    t.store(
+        &format!("{a}/assertion_forward.go"),
+        "package assert\n\nfunc (a *Assertions) Equal(expected, actual any) bool {\n\treturn Equal(a.t, expected, actual)\n}\n",
+    );
+    t.store(&format!("{a}/assertions.go"), "package assert\n\nfunc Equal(t TestingT, expected, actual any) bool {\n\treturn true\n}\n");
+    // a module root: a method Run in a file before the package's function Run
+    let k = "gomod/example.com/kit@v1.0.0";
+    t.store(&format!("{k}/a_server.go"), "package kit\n\nfunc (s *Server) Run() error {\n\treturn nil\n}\n");
+    t.store(&format!("{k}/kit.go"), "package kit\n\nfunc Run() error {\n\treturn nil\n}\n");
+    t.uv_lock(&[("requests", "2.32.3")]);
+    t.wheel(
+        "requests",
+        "2.32.3",
+        &[
+            ("requests/__init__.py", ""),
+            ("requests/a_sessions.py", "class Session:\n    def get(self, url):\n        return url\n"),
+            ("requests/api.py", "def get(url, params=None):\n    return url\n"),
+        ],
+    );
+    let mut wrong = Vec::new();
+    for (name, first) in [
+        ("assert.Equal", "assertions.go"),
+        ("assert.Assertions.Equal", "assertion_forward.go"),
+        ("kit.Run", "kit.go"),
+        ("kit.Server.Run", "a_server.go"),
+        ("requests.get", "api.py"),
+        ("requests.Session.get", "a_sessions.py"),
+    ] {
+        for cmd in [vec!["symbol", "--deps", name], vec!["read", "--deps", "--symbol", name]] {
+            let (code, out, err) = t.run(&cmd);
+            assert_eq!(code, 0, "{cmd:?}: {out}{err}");
+            if order(&out).first().map(String::as_str) != Some(first) {
+                wrong.push(format!("{} {name}: {:?}, {first} asked first", cmd[0], order(&out)));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_go_package_name_many_packages_share_is_refused_naming_the_first_three_and_how_many_more() {
+    let t = Tree::new("go_many_fakes");
+    t.go_mod("require example.com/big v1.0.0");
+    for d in ["a", "b", "c", "d", "e"] {
+        t.store(&format!("gomod/example.com/big@v1.0.0/{d}/fake/fake.go"), "package fake\n\nfunc New() {}\n");
+    }
+    let (code, _, err) = t.run(&["symbol", "--deps", "fake.New"]);
+    assert_eq!(code, 2, "{err}");
+    let line = err.lines().find(|l| l.contains("names 5 packages")).unwrap_or_else(|| panic!("{err}"));
+    assert!(
+        ["example.com/big/a/fake", "example.com/big/b/fake", "example.com/big/c/fake", "and 2 more", "import none of them", "by its import path"]
+            .iter()
+            .all(|w| line.contains(w))
+            && !line.contains("d/fake")
+            && line.len() < 400,
+        "{line}"
+    );
+    let v = t.batch(&[serde_json::json!({"op": "find_symbol", "name": "fake.New", "scope": "deps"})]);
+    let e = v[0]["error"].as_str().unwrap_or_else(|| panic!("{}", v[0]));
+    assert!(e.contains("names 5 packages") && e.contains("example.com/big/c/fake") && e.contains("and 2 more") && !e.contains("d/fake"), "{e}");
+}
+
+#[test]
+fn a_go_package_in_a_subdirectory_is_looked_up_there_before_the_limit_cuts() {
+    // thirty files that sort before sub/ define Name too: the package's own one is never cut
+    let t = Tree::new("go_subdir_cut");
+    t.go_mod("require example.com/zsub v1.0.0");
+    let m = "gomod/example.com/zsub@v1.0.0";
+    for i in 0..30 {
+        t.store(&format!("{m}/aaa/f{i:02}.go"), &format!("package aaa\n\nfunc Name() int {{\n\treturn {i}\n}}\n"));
+    }
+    t.store(&format!("{m}/sub/sub.go"), "package sub\n\nfunc Name() int {\n\treturn 4242\n}\n");
+    let hits = |out: &str| {
+        out.lines()
+            .filter(|l| l.contains(".go:"))
+            .map(|l| l.split_whitespace().next().unwrap().rsplit("zsub@v1.0.0/").next().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    for name in ["example.com/zsub/sub.Name", "sub.Name"] {
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert_eq!(hits(&out), ["sub/sub.go:3-5"], "{name}: {out}");
+        assert!(!out.contains("stopped") && !out.contains("limit"), "{name}: {out}");
+        let (code, out, err) = t.run(&["read", "--deps", "--symbol", name]);
+        assert_eq!(code, 0, "read {name}: {out}{err}");
+        assert!(out.contains("return 4242") && !out.contains("return 1\n") && !out.contains("path="), "read {name}: {out}");
+        for v in t.batch(&[
+            serde_json::json!({"op": "find_symbol", "name": name, "scope": "deps"}),
+            serde_json::json!({"op": "read_code", "symbol": name, "scope": "deps"}),
+        ]) {
+            let r = &v["result"];
+            let a = r["answer"].to_string();
+            assert!(
+                v.get("error").is_none()
+                    && a.contains("sub/sub.go")
+                    && !a.contains("aaa/")
+                    && r.get("stopped_at").is_none()
+                    && r["answer"].get("stopped_at").is_none(),
+                "{name}: {v}"
+            );
+            assert!(v["op"] != "read_code" || a.contains("4242"), "{name}: {v}");
+        }
+    }
+}
+
+#[test]
 fn a_name_outside_every_lockfile_says_which_lockfiles_were_read() {
     let t = Tree::new("unknown");
     t.cargo_lock(&[("serde", "1.0.200")]);

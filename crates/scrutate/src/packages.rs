@@ -590,12 +590,22 @@ fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Res
             } else {
                 let echo = crate::fmt::echo;
                 let paths: Vec<String> = found.iter().map(path).collect();
+                // the first three, as client-go has 59 packages named `fake`
+                let shown: Vec<String> = paths.iter().take(3).map(|p| echo(p)).collect();
+                let listed = match paths.len() {
+                    2 => shown.join(" and "),
+                    3 => format!("{}, {} and {}", shown[0], shown[1], shown[2]),
+                    n => format!("{} and {} more", shown.join(", "), n - 3),
+                };
+                let import = match (mine.is_empty(), paths.len()) {
+                    (true, 2) => "neither",
+                    (true, _) => "none of them",
+                    (false, _) => "more than one",
+                };
                 bail!(
-                    "{} names {} packages of modules go.mod requires, {}, and the repository's Go files import {}: --deps cannot tell which; name the package by its import path ({}.NAME)",
+                    "{} names {} packages of modules go.mod requires, {listed}, and the repository's Go files import {import}: --deps cannot tell which; name the package by its import path ({}.NAME)",
                     echo(package),
                     paths.len(),
-                    paths.iter().map(|p| echo(p)).collect::<Vec<_>>().join(" and "),
-                    if mine.is_empty() { "neither" } else { "more than one" },
                     echo(&paths[0])
                 );
             }
@@ -1178,10 +1188,11 @@ fn in_package(path: &str, dir: &str, ext: &str) -> bool {
     inside.is_some_and(|f| !f.contains('/') && f.ends_with(ext)) || path == format!("{dir}{ext}")
 }
 
-/// `lookup`, with the definitions in the package's own directory first, and in each part a name
-/// as typed (`Marshal`) before one that matches only without its case (`marshal`). The package's
-/// own are looked up in that directory on their own first, so none of them is cut by the limit
-/// (a read's 20 definitions included: its own are read by their locations).
+/// `lookup`, with the definitions in the package's own directory first; in each part one whose
+/// qualified name is the name as asked (`Equal` the package's function, `Assertions.Equal` the
+/// method), then a name as typed (`Marshal`) before one that matches only without its case
+/// (`marshal`). The package's own are looked up in that directory on their own first, so none of
+/// them is cut by the limit (a read's 20 definitions included: its own are read by their locations).
 fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, limit: usize, exact: bool, dir: Option<(String, &str)>) -> Result<Answer> {
     let Some((dir, ext)) = dir else { return lookup(run, rest, read, limit, exact) };
     let want = rest.rsplit("::").next().unwrap_or(rest).rsplit('.').next().unwrap_or(rest);
@@ -1215,7 +1226,7 @@ fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, l
         Answer::Hits { hits, stopped, .. } => {
             let others: Vec<crate::search::Hit> = std::mem::take(hits).into_iter().filter(|h| !own_hits.iter().any(|o| o.id == h.id)).collect();
             let mut all: Vec<crate::search::Hit> = std::mem::take(&mut own_hits).into_iter().chain(others).collect();
-            all.sort_by_key(|h| (!own(&h.path), h.name != want));
+            all.sort_by_key(|h| (!own(&h.path), h.qualname != rest, h.name != want));
             if all.len() > limit {
                 all.truncate(limit);
                 *stopped = Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT });
@@ -1228,7 +1239,7 @@ fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, l
                 .filter(|d| !own_defs.iter().any(|o: &(crate::index::ChunkRow, String, Vec<crate::index::Symbol>)| o.0.id == d.0.id))
                 .collect();
             let mut all: Vec<_> = std::mem::take(&mut own_defs).into_iter().chain(others).collect();
-            all.sort_by_key(|d| (!own(&d.0.path), d.0.name != want));
+            all.sort_by_key(|d| (!own(&d.0.path), d.0.qualname != rest, d.0.name != want));
             if all.len() > crate::ops::READ_DEFINITIONS || more_own {
                 all.truncate(crate::ops::READ_DEFINITIONS);
                 *stopped = Some(crate::ops::Stop { at: crate::ops::READ_DEFINITIONS, how: DEPS_MORE });
