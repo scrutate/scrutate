@@ -421,6 +421,10 @@ incompatible index by itself, and that is never breaking.
 - Redaction takes a secret followed by `&`, as in a URL's query string
   (`?api_key=...&format=json`, `jdbc:...&password=...&useSSL=false`, a JWT before `&x=1`): such
   lines reached MCP answers and hook output as written ([Security](docs/SECURITY.md)).
+- Redaction takes an unquoted password, secret or token whose value holds a symbol such as `@` or
+  `!` (a YAML `password:`, a `.properties` `spring.datasource.password=`), and a `.env` value named
+  `PASS` or `..._PASS` (`DB_PASS`, `SMTP_PASS`; not `BYPASS`): these were shown as written
+  ([Security](docs/SECURITY.md)).
 - `--deps PACKAGE.NAME` lists the package's own `NAME` before a method of that name, in Go and Python (`assert.Equal` is testify's function, `assert.Assertions.Equal` its method), and a bare Go package name many packages share is refused naming the first three import paths and how many more, where client-go's 59 packages named `fake` made one line of 3,604 bytes.
 - `--deps` finds a Go package in a module's subdirectory, by its import path (`go.uber.org/mock/gomock.NewController`) or by its name (`gomock.NewController`), where both said "no package of go.mod names" and only the module's own names answered: testify's `assert`, `golang.org/x/sync/errgroup` and most Go imports are such packages. Two packages of one name answer the one the repository imports, or are refused naming both import paths.
 - A source file the code index leaves out (over 1 MB, or not text or could not be parsed) is said
