@@ -796,20 +796,19 @@ fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
         }
     }
     let mut post = vec![(0u32, 0u16); total as usize];
-    let mut cur = start.clone();
+    // `start` is the cursor: after the fill each key's run ends at it
     for (i, d) in docs.iter().enumerate() {
         for &(t, m) in &d.tris {
-            post[cur[t as usize] as usize] = (i as u32, m);
-            cur[t as usize] += 1;
+            post[start[t as usize] as usize] = (i as u32, m);
+            start[t as usize] += 1;
         }
     }
-    drop(cur);
     let mut ptr = Vec::with_capacity(keys.len() + 1);
     let mut enc = Vec::with_capacity(post.len() * 3 + post.len() / 4);
     for &t in &keys {
         ptr.push(enc.len() as u64);
-        let (s, n) = (start[t as usize] as usize, count[t as usize] as usize);
-        encode_postings(&mut enc, &post[s..s + n]);
+        let (end, n) = (start[t as usize] as usize, count[t as usize] as usize);
+        encode_postings(&mut enc, &post[end - n..end]);
     }
     ptr.push(enc.len() as u64);
     write_synced(&dir.join("post.bin"), &enc)?;
