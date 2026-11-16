@@ -412,6 +412,12 @@ incompatible index by itself, and that is never breaking.
 - `--deps` finds a Go module that go.mod replaces with a fork of another name by the path the code
   imports and by its package name (`yaml.Marshal` for a fork of github.com/a/yaml), where only the
   fork's own path found it ([CLI](docs/CLI.md#--deps-a-dependency-at-its-locked-version)).
+- `dead` no longer lists a definition that another one calls from the same line (`static int
+  sq(int v) { return v * v; } int area(int v) { return sq(v); }`, a one-line class whose public
+  method calls its private one, two Go functions on a line): a use on its own first or last line
+  counts as its own only inside the span its grammar gives it. Where no grammar gives a span, a
+  definition whose name stands again on that line is undecided, with why
+  ([CLI](docs/CLI.md#engine-b)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it

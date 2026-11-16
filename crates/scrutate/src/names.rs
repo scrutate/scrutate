@@ -1026,6 +1026,11 @@ impl<'a> Names<'a> {
         let (candidates, too_large) = crate::dead::candidates(&self.s.ix, under)?;
         let mut out = crate::dead::Dead::default();
         for c in candidates {
+            if c.named == 0 && c.own_line > 0 {
+                let n = c.own_line;
+                out.undecided.push((c.sym, format!("its name stands {n} times on its own first or last line, where no grammar span tells its own from a use")));
+                continue;
+            }
             if c.named == 0 {
                 match (c.base, too_large.first()) {
                     (Some(why), _) => out.undecided.push((c.sym, why)),

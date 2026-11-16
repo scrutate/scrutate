@@ -36,11 +36,14 @@ pub(crate) struct Candidate {
     pub lines: Vec<(String, i64)>,
     /// with no line naming it, why it may still be used (its class extends another)
     pub base: Option<String>,
+    /// uses on its first or last line that no span tells from its own
+    pub own_line: usize,
 }
 
-/// What the pass over one file found: (name, line) of each occurrence, the rule of each wanted
-/// definition in it, and whether it was too large to read.
-type Scanned = (Vec<(u32, i64)>, Vec<(i64, Rule)>, bool);
+/// What the pass over one file found: (name, line, byte) of each occurrence, the rule of each
+/// wanted definition in it, whether it was too large to read, and the byte span of each wanted
+/// definition a use on its first or last line may lie outside of (None: no grammar gave one).
+type Scanned = (Vec<(u32, i64, usize)>, Vec<(i64, Rule)>, bool, Vec<(i64, Option<(usize, usize)>)>);
 
 /// What a definition is to its language before any use is looked for.
 enum Rule {
@@ -88,6 +91,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
             ids.push(id);
         }
     }
+    let id_by_sym: HashMap<i64, u32> = wanted.iter().zip(&id_of).map(|(s, &id)| (s.id, id)).collect();
     let odd: Vec<&str> = name_ids.keys().copied().filter(|n| !n.chars().all(word_char)).collect();
     let odd_finder = aho_corasick::AhoCorasick::new(&odd)?;
     let files = crate::files::every_file(root);
@@ -96,27 +100,30 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         .map(|rel| {
             let Some(raw) = crate::files::read_regular(&root.join(rel), MAX_READ) else {
                 let big = std::fs::metadata(root.join(rel)).is_ok_and(|m| m.len() > MAX_READ);
-                return (Vec::new(), Vec::new(), big);
+                return (Vec::new(), Vec::new(), big, Vec::new());
             };
-            let Some(src) = crate::index::decode_source(&raw) else { return (Vec::new(), Vec::new(), false) };
+            let Some(src) = crate::index::decode_source(&raw) else { return (Vec::new(), Vec::new(), false, Vec::new()) };
             let lang = crate::langs::detect_at(root, rel).map(|l| l.id);
-            let found = occurrences(&src, lang, &name_ids, &writer_ids, &folded, &odd, &odd_finder);
+            let found = occurrences_at(&src, lang, &name_ids, &writer_ids, &folded, &odd, &odd_finder);
             let mine: Vec<&Symbol> = by_file
                 .get(rel.as_str())
                 .map(|v| v.iter().copied().filter(|s| KINDS.contains(&s.kind.as_str()) && inside(&s.path)).collect())
                 .unwrap_or_default();
             let rules = if mine.is_empty() { Vec::new() } else { file_rules(root, rel, &src, &mine, &by_file[rel.as_str()]) };
-            (found, rules, false)
+            let spans = edge_spans(rel, &src, &mine, &found, &id_by_sym);
+            (found, rules, false, spans)
         })
         .collect();
     let too_large: Vec<String> = files.iter().zip(&scanned).filter(|(_, s)| s.2).map(|(f, _)| f.clone()).collect();
     let readable: Vec<bool> = files.iter().map(|f| crate::resolve::reads(root, f)).collect();
     let mut rules: HashMap<i64, Rule> = HashMap::new();
-    let mut at: Vec<Vec<(u32, i64)>> = vec![Vec::new(); name_ids.len() + writer_ids.len()];
-    for (fi, (found, file_rules, _)) in scanned.into_iter().enumerate() {
+    let mut spans: HashMap<i64, Option<(usize, usize)>> = HashMap::new();
+    let mut at: Vec<Vec<(u32, i64, usize)>> = vec![Vec::new(); name_ids.len() + writer_ids.len()];
+    for (fi, (found, file_rules, _, file_spans)) in scanned.into_iter().enumerate() {
         rules.extend(file_rules);
-        for (n, line) in found {
-            at[n as usize].push((fi as u32, line));
+        spans.extend(file_spans);
+        for (n, line, byte) in found {
+            at[n as usize].push((fi as u32, line, byte));
         }
     }
     let mut out = Vec::new();
@@ -125,9 +132,31 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         if matches!(rule, Rule::Entry) {
             continue;
         }
-        let twin = |f: u32, line: i64| starts[s.qualname.as_str()].iter().any(|&(p, at)| files[f as usize] == p && at == line);
-        let mut found: Vec<(u32, i64)> =
-            at[id as usize].iter().copied().filter(|&(f, line)| !(files[f as usize] == s.path && s.start <= line && line <= s.end) && !twin(f, line)).collect();
+        // another definition of the name starts on the line; its own start is the span's to decide
+        let twin = |f: u32, line: i64| {
+            starts[s.qualname.as_str()].iter().any(|&(p, at)| files[f as usize] == p && at == line && (p, at) != (s.path.as_str(), s.start))
+        };
+        // a use is the definition's own inside its own text: on a line within it, or on its first
+        // or last line where its span holds the use (another definition may share the line); with
+        // no span for it, such a line is neither
+        let mut own_line = 0;
+        let mut found: Vec<(u32, i64)> = Vec::new();
+        for &(f, line, byte) in &at[id as usize] {
+            if twin(f, line) {
+                continue;
+            }
+            if files[f as usize] == s.path && s.start <= line && line <= s.end {
+                match spans.get(&s.id) {
+                    Some(Some((a, b))) if (line == s.start || line == s.end) && !(*a <= byte && byte < *b) => {}
+                    Some(None) if line == s.start || line == s.end => {
+                        own_line += 1;
+                        continue;
+                    }
+                    _ => continue,
+                }
+            }
+            found.push((f, line));
+        }
         found.dedup();
         let unread = found.iter().filter(|o| !readable[o.0 as usize]).count();
         let mine = |o: &&(u32, i64)| files[o.0 as usize] == s.path;
@@ -144,7 +173,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
             Rule::Base(why) => Some(why),
             _ => None,
         };
-        out.push(Candidate { sym: s.clone(), named: found.len(), unread, lines, base });
+        out.push(Candidate { sym: s.clone(), named: found.len(), unread, lines, base, own_line });
     }
     Ok((out, too_large))
 }
@@ -214,6 +243,7 @@ const RUBY_HOOKS: [&str; 30] = [
 ];
 
 /// The (name, 1-based line) of every whole-word occurrence in `src` of a name of `names`.
+#[cfg(test)]
 fn occurrences(
     src: &str,
     lang: Option<&str>,
@@ -223,20 +253,33 @@ fn occurrences(
     odd: &[&str],
     odd_finder: &aho_corasick::AhoCorasick,
 ) -> Vec<(u32, i64)> {
+    occurrences_at(src, lang, names, writers, folded, odd, odd_finder).into_iter().map(|(n, line, _)| (n, line)).collect()
+}
+
+/// `occurrences`, each with the byte its word starts at.
+fn occurrences_at(
+    src: &str,
+    lang: Option<&str>,
+    names: &HashMap<&str, u32>,
+    writers: &HashMap<&str, u32>,
+    folded: &HashMap<String, Vec<u32>>,
+    odd: &[&str],
+    odd_finder: &aho_corasick::AhoCorasick,
+) -> Vec<(u32, i64, usize)> {
     use unicode_normalization::UnicodeNormalization;
     let mut out = Vec::new();
     let (mut line, mut start) = (1i64, None::<usize>);
-    let flush = |from: usize, to: usize, line: i64, out: &mut Vec<(u32, i64)>| {
+    let flush = |from: usize, to: usize, line: i64, out: &mut Vec<(u32, i64, usize)>| {
         let w = &src[from..to];
         let hit = if w.is_ascii() { names.get(w).copied() } else { names.get(w.nfc().collect::<String>().as_str()).copied() };
         if let Some(n) = hit {
-            out.push((n, line));
+            out.push((n, line, from));
         }
         if let Some(&n) = writers.get(w).filter(|_| src[..from].ends_with(['.', ':'])) {
-            out.push((n, line));
+            out.push((n, line, from));
         }
         if !folded.is_empty() && w.is_ascii() {
-            out.extend(folded.get(&w.to_ascii_lowercase()).into_iter().flatten().filter(|&&n| hit != Some(n)).map(|&n| (n, line)));
+            out.extend(folded.get(&w.to_ascii_lowercase()).into_iter().flatten().filter(|&&n| hit != Some(n)).map(|&n| (n, line, from)));
         }
     };
     // a word is the name the file's language writes (`ident::inside_name`): `foo'`, `$init` and
@@ -274,7 +317,7 @@ fn occurrences(
                 continue;
             }
             let line = 1 + src.as_bytes()[..m.start()].iter().filter(|&&b| b == b'\n').count() as i64;
-            out.push((names[odd[m.pattern().as_usize()]], line));
+            out.push((names[odd[m.pattern().as_usize()]], line, a));
         }
         out.sort_by_key(|o| o.1);
     }
@@ -401,6 +444,30 @@ fn file_rules(root: &Path, rel: &str, src: &str, mine: &[&Symbol], all: &[&Symbo
                 .filter(|p| p.id != d.id && p.start <= d.start && d.end <= p.end && (p.start, p.end) != (d.start, d.end))
                 .min_by_key(|p| p.end - p.start);
             (d.id, rule(rel, &facts, d, parent.copied()))
+        })
+        .collect()
+}
+
+/// The byte spans of the definitions in `mine` that a use on their first or last line may lie
+/// outside of: their name more than once on their first line, or on a last line of their own.
+/// Such a file is parsed again for its definitions' spans (`parse::Chunk::bytes`); one that needs
+/// none is not.
+fn edge_spans(rel: &str, src: &str, mine: &[&Symbol], found: &[(u32, i64, usize)], id_by_sym: &HashMap<i64, u32>) -> Vec<(i64, Option<(usize, usize)>)> {
+    let edge = |s: &Symbol| {
+        let Some(&id) = id_by_sym.get(&s.id) else { return false };
+        let on = |line: i64| found.iter().filter(|&&(n, l, _)| n == id && l == line).count();
+        on(s.start) > 1 || s.end != s.start && on(s.end) > 0
+    };
+    let wanted: Vec<&Symbol> = mine.iter().copied().filter(|s| edge(s)).collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let chunks = crate::parse::parse_file_with(rel, src, None).0.chunks;
+    wanted
+        .into_iter()
+        .map(|s| {
+            let span = chunks.iter().find(|c| c.qualname == s.qualname && c.kind == s.kind && (c.start, c.end) == (s.start, s.end)).and_then(|c| c.bytes());
+            (s.id, span)
         })
         .collect()
 }

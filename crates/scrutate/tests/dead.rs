@@ -516,3 +516,113 @@ fn a_lisp_name_with_a_dash_or_a_mark_in_it_is_a_name_of_its_own() {
     assert!(!names(&r.json(&["dead"]), "dead").contains(&"e.lisp foo".to_string()));
     assert_eq!(refs(&r, "foo"), ["e.lisp:1", "e.lisp:3"]);
 }
+
+/// A definition called only from another definition on its own line is used, and a definition
+/// beside them that nothing calls is still dead: a use is the definition's own only inside its
+/// own text, not anywhere on its lines.
+#[test]
+fn a_definition_called_from_its_own_line_is_not_dead() {
+    let r = Repo::new(
+        "own_line",
+        &[
+            ("a.c", "static int sq(int v) { return v * v; } int area(int v) { return sq(v); } static int lone(int v) { return v; }\n"),
+            ("a.js", "function helper() { return 1; } function api() { return helper(); } function orphan() { return 2; }\nmodule.exports = { api };\n"),
+            ("P.java", "class P { private int x() { return 1; } private int z() { return 3; } public int y() { return x(); } }\n"),
+            ("a.go", "package main\n\nfunc helper() int { return 1 }; func lonely() int { return 2 }; func main() { _ = helper() }\n"),
+            (
+                "b.php",
+                "<?php class Box { private function Hidden() { return 1; } private function Unused() { return 2; } public function go() { return $this->HIDDEN(); } }\n",
+            ),
+        ],
+    );
+    let v = r.json(&["dead"]);
+    let dead = names(&v, "dead");
+    for used in ["a.c sq", "a.js helper", "P.java P.x", "a.go helper", "b.php Box.Hidden"] {
+        assert!(!dead.iter().any(|d| d == used), "{used} has a caller on its own line, yet is dead: {dead:?}");
+    }
+    for unused in ["a.c lone", "a.js orphan", "P.java P.z", "a.go lonely", "b.php Box.Unused"] {
+        assert!(dead.iter().any(|d| d == unused), "{unused} is called by nothing, yet is not dead: {v:#}");
+    }
+}
+
+/// In a language with no grammar, whose definitions have no span, a definition whose name stands
+/// again on its own line is undecided, with why, not dead; one named once there is dead.
+#[test]
+fn a_definition_named_again_on_its_own_line_without_a_span_is_undecided() {
+    let r = Repo::new("own_line_heuristic", &[("a.cr", "def helper(): return 1; helper()\ndef alone(): return 2\n")]);
+    let v = r.json(&["dead"]);
+    assert_eq!(names(&v, "dead"), ["a.cr alone"], "{v:#}");
+    assert_eq!(names(&v, "undecided"), ["a.cr helper"], "{v:#}");
+    let why = v["result"]["undecided"][0]["reason"].as_str().unwrap_or_else(|| panic!("{v:#}"));
+    assert!(why.contains("its name stands 2 times on its own first or last line"), "{why}");
+}
+
+/// Generated trees: in C, JavaScript, Go and Rust, functions put one to three to a line in random
+/// order, each calling a random few of the others; `dead` lists exactly those nothing calls,
+/// however callers and callees share lines.
+/// Five seeds draw about 25 same-line calls; the floor of 20 needs about that many, so fewer
+/// seeds trip it while every dead check still holds.
+#[test]
+fn dead_is_the_functions_nothing_calls_however_they_share_lines() {
+    let (mut pairs, mut edges) = (0, 0);
+    for seed in [3u64, 7, 11, 13, 17] {
+        let mut state = seed;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize
+        };
+        let mut files = Vec::new();
+        let mut want = Vec::new();
+        for (lang, ext) in [("c", "c"), ("js", "js"), ("go", "go"), ("rust", "rs")] {
+            let n = 12;
+            let names: Vec<String> = (0..n).map(|i| format!("{lang}{seed}_{i}_zq")).collect();
+            let mut called = vec![false; n];
+            let calls: Vec<Vec<usize>> = (0..n)
+                .map(|i| {
+                    let mut c: Vec<usize> = (0..next() % 3).map(|_| next() % n).filter(|&j| j != i).collect();
+                    c.sort_unstable();
+                    c.dedup();
+                    c.iter().for_each(|&j| called[j] = true);
+                    c
+                })
+                .collect();
+            let mut order: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                order.swap(i, next() % (i + 1));
+            }
+            let def = |i: usize| {
+                let sum: String = calls[i].iter().map(|&j| format!("{}(v) + ", names[j])).collect();
+                match lang {
+                    "c" => format!("static int {}(int v) {{ return {sum}v; }}", names[i]),
+                    "js" => format!("function {}(v) {{ return {sum}v; }}", names[i]),
+                    "go" => format!("func {}(v int) int {{ return {sum}v }}", names[i]),
+                    _ => format!("fn {}(v: i32) -> i32 {{ {sum}v }}", names[i]),
+                }
+            };
+            let mut text = if lang == "go" { "package main\n\n".to_string() } else { String::new() };
+            let mut line_of = vec![0; n];
+            let (mut at, mut line) = (0, 0);
+            while at < order.len() {
+                let take = 1 + next() % 3;
+                let group = &order[at..(at + take).min(order.len())];
+                group.iter().for_each(|&i| line_of[i] = line);
+                text += &group.iter().map(|&i| def(i)).collect::<Vec<_>>().join(if lang == "go" { "; " } else { " " });
+                text += "\n";
+                (at, line) = (at + take, line + 1);
+            }
+            for i in 0..n {
+                edges += calls[i].len();
+                pairs += calls[i].iter().filter(|&&j| line_of[j] == line_of[i]).count();
+            }
+            want.extend((0..n).filter(|&i| !called[i]).map(|i| format!("a.{ext} {}", names[i])));
+            files.push((format!("a.{ext}"), text));
+        }
+        let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+        let r = Repo::new(&format!("same_line_{seed}"), &files);
+        let v = r.json(&["dead"]);
+        want.sort();
+        assert_eq!(names(&v, "dead"), want, "seed {seed}: {files:#?}");
+    }
+    eprintln!("{edges} calls, {pairs} of them from a definition on its callee's own line");
+    assert!(pairs >= 20, "only {pairs} same-line calls drawn");
+}
