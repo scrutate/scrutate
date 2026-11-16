@@ -116,9 +116,30 @@ fn php_namespace(fi: &FileInfo, row: usize) -> String {
     ns
 }
 
-/// The full name a class or function name written at `at` stands for: through a `use` that binds
-/// its first part, else in the namespace around.
-fn php_qualify(fi: &FileInfo, at: Node, written: &str) -> String {
+/// What the `use` that made binding `b` imports: "function" (`use function`), "const"
+/// (`use const`), else "class", which a plain `use` of a class or namespace is.
+fn php_use_kind(fi: &FileInfo, b: &Binding) -> &'static str {
+    let (Some(tree), Some(&at)) = (fi.tree(), b.sites.first()) else { return "class" };
+    let mut n = tree.root_node().descendant_for_byte_range(at, at);
+    while let Some(x) = n {
+        // a clause of a group may say its own kind: `use A\{B, function c}`
+        if matches!(x.kind(), "namespace_use_clause" | "namespace_use_declaration") {
+            if let Some(t) = x.child_by_field_name("type") {
+                return if t.kind() == "const" { "const" } else { "function" };
+            }
+            if x.kind() == "namespace_use_declaration" {
+                break;
+            }
+        }
+        n = x.parent();
+    }
+    "class"
+}
+
+/// The full name a class name, or with `function` a function name, written at `at` stands for:
+/// through a `use` of that kind that binds its first part, else in the namespace around. The
+/// first part of a qualified name is a class or namespace, whatever the name is.
+fn php_qualify(fi: &FileInfo, at: Node, written: &str, function: bool) -> String {
     if let Some(full) = written.strip_prefix('\\') {
         return full.to_string();
     }
@@ -126,7 +147,8 @@ fn php_qualify(fi: &FileInfo, at: Node, written: &str) -> String {
         Some((f, r)) => (f, Some(r)),
         None => (written, None),
     };
-    if let Some(b) = fi.bindings.iter().find(|b| b.local.eq_ignore_ascii_case(first)) {
+    let kind = if function && rest.is_none() { "function" } else { "class" };
+    if let Some(b) = fi.bindings.iter().find(|b| b.local.eq_ignore_ascii_case(first) && php_use_kind(fi, b) == kind) {
         let base = php_full(b);
         return rest.map_or(base.clone(), |r| format!("{base}\\{r}"));
     }
@@ -260,10 +282,14 @@ impl Resolver<'_> {
     /// of that name, as PHP falls back for an unqualified call.
     fn php_function(&mut self, fi: &FileInfo, whole: Node) -> Resolution {
         let written = text(whole, &fi.src).trim();
-        let full = php_qualify(fi, whole, written);
+        let full = php_qualify(fi, whole, written, true);
         match self.php_path(&full, &["function"]) {
             Ok(id) => Ok((id, "namespace")),
-            Err(_) if !written.contains('\\') && full != written && !fi.bindings.iter().any(|b| b.local.eq_ignore_ascii_case(written)) => {
+            Err(_)
+                if !written.contains('\\')
+                    && full != written
+                    && !fi.bindings.iter().any(|b| b.local.eq_ignore_ascii_case(written) && php_use_kind(fi, b) == "function") =>
+            {
                 self.php_path(written, &["function"]).map(|id| (id, "namespace"))
             }
             Err(e) => Err(e),
@@ -281,7 +307,7 @@ impl Resolver<'_> {
             }
             _ => {}
         }
-        let full = php_qualify(fi, n, written);
+        let full = php_qualify(fi, n, written, false);
         self.php_path(&full, CONTAINER_KINDS)
     }
 
