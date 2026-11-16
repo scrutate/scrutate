@@ -38,9 +38,13 @@ const HEX: &str = "0123456789abcdef";
 
 /// `text` in base64, as an HTTP Basic header carries it.
 fn basic(text: &str) -> String {
+    base64(text.as_bytes())
+}
+
+fn base64(bytes: &[u8]) -> String {
     const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
-    for chunk in text.as_bytes().chunks(3) {
+    for chunk in bytes.chunks(3) {
         let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         for i in 0..4 {
@@ -48,6 +52,18 @@ fn basic(text: &str) -> String {
         }
     }
     out
+}
+
+/// The base64 lines, 64 to a line, of one DER SEQUENCE of `n` bytes in all, its header included and
+/// its content random: a body read as one public element.
+#[cfg(unix)]
+fn der_lines(seed: &mut u64, n: usize) -> Vec<String> {
+    let mut der = vec![0x30, 0x82, ((n - 4) >> 8) as u8, (n - 4) as u8];
+    der.extend((4..n).map(|_| {
+        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (*seed >> 33) as u8
+    }));
+    base64(&der).as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect()
 }
 
 /// (kind, file, line holding the secret, the secret): three of each kind.
@@ -757,8 +773,7 @@ fn a_public_body_whose_end_is_not_shown_leaves_the_base64_after_it_marked_throug
     let seed = &mut 81u64;
     let mut private: Vec<String> = (0..25).map(|_| chars(seed, &b64, 64)).collect();
     private.push(format!("{}==", chars(seed, &b64, 30)));
-    let mut public: Vec<String> = (0..6).map(|_| chars(seed, &b64, 64)).collect();
-    public.push(format!("{}=", chars(seed, &b64, 11)));
+    let public = der_lines(seed, 296);
     let pem = |what: &str, begin_tail: &str, eol: &str, body: &[String]| {
         let mut t = format!("-----BEGIN {what}-----{begin_tail}{eol}");
         body.iter().for_each(|l| t.push_str(&format!("{l}{eol}")));
@@ -810,9 +825,8 @@ fn a_public_body_whose_end_is_not_shown_leaves_the_base64_after_it_marked_throug
 #[cfg(unix)]
 #[test]
 fn hook_run_releases_a_public_body_at_its_end_and_marks_it_otherwise() {
-    let b64 = format!("{ALNUM}+/");
     let seed = &mut 82u64;
-    let mut body = |n: usize| -> Vec<String> { (0..n).map(|_| chars(seed, &b64, 64)).collect() };
+    let mut body = |n: usize| -> Vec<String> { der_lines(seed, n * 48) };
     let pem = |body: &[String]| format!("-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n", body.join("\n"));
     let (short, other, long) = (body(6), body(5), body(65));
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_public_hold_{}", std::process::id()));
@@ -846,6 +860,138 @@ fn hook_run_releases_a_public_body_at_its_end_and_marks_it_otherwise() {
     // back to back
     let out = hook(&["grep", "-h", "", "a.pem", "c.pem"]);
     assert!(short.iter().chain(&other).all(|l| out.contains(l.as_str())) && !out.contains("[redacted"), "two keys:\n{out}");
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&home);
+}
+
+/// Real public keys from `openssl pkey -pubout` (OpenSSL 3.5): RSA 2048, EC P-256, Ed25519, each
+/// body in pieces too narrow for key material, joined at run time (`public_key`).
+#[cfg(unix)]
+const PUBLIC_KEYS: [&[&str]; 3] = [
+    &[
+        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A",
+        "MIIBCgKCAQEAsBOXwcBRu9kz+8hJTDmG",
+        "8S6jJeDSU45+mPeBzx+C25W/wuSNHRmw",
+        "utfCX/TCikI9pCN6h442T5cAp5UANN7Z",
+        "DW2dpjOhVQpCGLQIWb+cQHuvyA0x4Muj",
+        "OpX63ssmvUADU/BGbxYNCkg6aZCLTxF/",
+        "Mo2OSAOrrCkMRH2flpzaqb5aUf2jgkGE",
+        "1h3r/qaGVQ2SyfJL3ZttdfKqZNjPRkiX",
+        "X2597MrsDhuaFHi0Xg56EHDeMYxbReYn",
+        "8JZIeoIoffpkdcthY0i4Zq1nBLoMgumZ",
+        "E+tUvMTLDrPVS/bBqHf64PTTcRS3QqF3",
+        "Q5+weycqADtBgRfZY4DI7pX8iBYtYahm",
+        "0wIDAQAB",
+    ],
+    &["MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcD", "QgAEc5Gdcvtfpuai4YnzyLqaMwnMPlUE", "QD4sfG9gTKDUiUuG882x645xpOnlpwQR", "ADZd3gSPLK01vybuHqscAisetg=="],
+    &["MCowBQYDK2VwAyEAOYLId79e2qZcAjLV", "iqdZP+ZsknpX4XM7Oxwtpjpn9nU="],
+];
+
+/// Public key `i` of `PUBLIC_KEYS` as `openssl` writes it, its body 64 to a line.
+#[cfg(unix)]
+fn public_key(i: usize) -> String {
+    let body = PUBLIC_KEYS[i].concat();
+    let lines: Vec<&str> = body.as_bytes().chunks(64).map(|l| std::str::from_utf8(l).unwrap()).collect();
+    format!("-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n", lines.join("\n"))
+}
+
+/// A body under a public key label is shown only when it is a DER public key: exactly the one DER
+/// element its first bytes give the length of, then its END. Any other body under it is marked as
+/// key material, its armour and the text around it as written: one that is not a DER element, one
+/// shorter than its element, one that runs on past its element, an OpenPGP public key block and an
+/// RFC 4716 SSH2 public key. Through `hook run` and the Grep hook alike.
+#[cfg(unix)]
+#[test]
+fn a_body_under_a_public_key_label_is_shown_only_when_it_is_a_der_public_key() {
+    let b64 = format!("{ALNUM}+/");
+    let seed = &mut 83u64;
+    let wrap = |text: &str, width: usize| text.as_bytes().chunks(width).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect::<Vec<_>>();
+    // the body of an OpenSSH private key, no DER element, in six full lines: a line narrower than
+    // a key's body is no key material for the rule that marks these, as for any key unarmoured
+    let mut openssh = b"openssh-key-v1\0".to_vec();
+    openssh.extend((0..300).map(|i| (i * 37 % 251) as u8));
+    let not_der = wrap(&base64(&openssh), 70);
+    let element = der_lines(seed, 6 * 48);
+    let short = element[..4].to_vec();
+    let mut longer = element.clone();
+    longer.extend(der_lines(seed, 2 * 48));
+    let armoured =
+        |label: &str, body: &[String]| format!("before the key\n-----BEGIN {label}-----\n{}\n-----END {label}-----\nafter the key\n", body.join("\n"));
+    let pgp_body: Vec<String> = (0..5).map(|_| chars(seed, &b64, 64)).collect();
+    let pgp =
+        format!("before the key\n-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n{}\n=Ab3x\n-----END PGP PUBLIC KEY BLOCK-----\nafter the key\n", pgp_body.join("\n"));
+    let ssh2_body: Vec<String> = (0..5).map(|_| chars(seed, &b64, 70)).collect();
+    let ssh2 = format!(
+        "before the key\n---- BEGIN SSH2 PUBLIC KEY ----\nComment: \"2048-bit RSA, converted\"\n{}\n---- END SSH2 PUBLIC KEY ----\nafter the key\n",
+        ssh2_body.join("\n")
+    );
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_public_der_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let home = root.with_extension("home");
+    let hook_run = |file: &str| {
+        let out = Command::new(BIN)
+            .args(["hook", "run", "--piped", "--", "grep", "-h", "", file])
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let grep_hook = |file: &str| {
+        let mut c = Command::new(BIN);
+        c.args(["hook", "grep"]).current_dir(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        c.env("HOME", &home).env("XDG_STATE_HOME", home.join("state")).env("CLAUDE_PROJECT_DIR", &root).env_remove("CLAUDE_CONFIG_DIR");
+        let ask = json!({"pattern": ".", "path": file, "output_mode": "content"});
+        let input = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": root.to_str().unwrap(), "tool_input": ask, "tool_use_id": "t1", "permission_mode": "default"});
+        let mut child = c.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+        String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap()
+    };
+    // (file, its text, its body lines, whether the body is shown, the lines kept as written)
+    type Case<'a> = (String, String, Vec<String>, bool, Vec<&'a str>);
+    let mut cases: Vec<Case> = Vec::new();
+    for i in 0..PUBLIC_KEYS.len() {
+        let key = public_key(i);
+        let body = key.lines().filter(|l| !l.starts_with("-----")).map(String::from).collect();
+        cases.push((format!("pub{i}.pem"), key, body, true, vec!["-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----"]));
+    }
+    let armour = vec!["before the key", "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----", "after the key"];
+    cases.push(("not_der.pem".into(), armoured("PUBLIC KEY", &not_der), not_der.clone(), false, armour.clone()));
+    cases.push(("short.pem".into(), armoured("PUBLIC KEY", &short), short.clone(), false, armour.clone()));
+    cases.push(("longer.pem".into(), armoured("PUBLIC KEY", &longer), longer.clone(), false, armour.clone()));
+    cases.push((
+        "key.asc".into(),
+        pgp,
+        pgp_body,
+        false,
+        vec!["before the key", "-----BEGIN PGP PUBLIC KEY BLOCK-----", "-----END PGP PUBLIC KEY BLOCK-----", "after the key"],
+    ));
+    cases.push((
+        "rfc4716.pub".into(),
+        ssh2,
+        ssh2_body,
+        false,
+        vec!["before the key", "---- BEGIN SSH2 PUBLIC KEY ----", "---- END SSH2 PUBLIC KEY ----", "after the key"],
+    ));
+    for (file, text, body, shown, kept) in &cases {
+        fs::write(root.join(file), text).unwrap();
+        for (front, out) in [("hook run", hook_run(file)), ("Grep hook", grep_hook(file))] {
+            let raw = body.iter().filter(|l| out.contains(l.as_str())).count();
+            if *shown {
+                assert!(raw == body.len() && !out.contains("[redacted"), "{front} {file}: a DER public key is shown whole:\n{out}");
+            } else {
+                assert!(
+                    raw == 0 && out.matches("[redacted:key-material]").count() >= body.len(),
+                    "{front} {file}: {raw} of {} body lines shown:\n{out}",
+                    body.len()
+                );
+            }
+            assert!(kept.iter().all(|k| out.contains(k)), "{front} {file}: the armour or the text around it changed:\n{out}");
+        }
+    }
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&home);
 }

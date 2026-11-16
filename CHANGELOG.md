@@ -221,6 +221,10 @@ incompatible index by itself, and that is never breaking.
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,
   where it was 1.99.1). The oldest compiler that builds it is still 1.91 (`rust-version`). What the
   tool does is unchanged.
+- A body under a public key label is shown only when it is a DER public key: exactly the one DER
+  element its first bytes give the length of, then its END line. Any other body under any key
+  label is marked as key material, an OpenPGP public key block and an RFC 4716 SSH2 public key
+  among them ([Security](docs/SECURITY.md#secrets-in-answers)).
 - `refs`, `callers` and `dead` hold a bounded set of parsed files: 256 MiB a request, and 256 MiB
   kept across the requests of `serve`, `lsp` and `batch`. The index stores each file's import
   bindings, so a C name looked up through included headers parses only the files whose trees it

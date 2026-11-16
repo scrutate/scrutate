@@ -592,9 +592,10 @@ pub enum Hold {
 
 /// The body of a public key or a certificate being read: only armour that ends its line (or is
 /// followed by a written-out `\n`, a key in one string) and is not closed on it opens one; base64
-/// alone, blank and header lines are its body. An END of the same label shows it was one, when a
-/// DER body (all but RFC 4716's) is then exactly the one element its first bytes say; anything
-/// else ends it.
+/// alone, blank and header lines are its body. An END of the same label shows it was one, when the
+/// body is then exactly the one DER element its first bytes say; anything else ends it, and a body
+/// that is not such an element is marked, whatever its label (an OpenPGP or an RFC 4716 armour is
+/// no public armour here, so their bodies are marked as any key material).
 #[derive(Default)]
 struct PublicBody {
     open: bool,
@@ -607,6 +608,16 @@ struct PublicBody {
     /// the body's base64 characters so far, padding left out, and the first eight of them
     chars: usize,
     head: String,
+}
+
+/// What a public body's first bytes say of it.
+enum Der {
+    /// too few have come to tell
+    TooFew,
+    /// they begin no DER element of a length this reads
+    Not,
+    /// the length of the element they begin, its header included
+    Len(usize),
 }
 
 enum Seen {
@@ -623,7 +634,7 @@ impl PublicBody {
         if self.open {
             if let Some(c) = PUBLIC_ARMOUR.captures(line).filter(|c| &c[1] == "END") {
                 self.open = false;
-                if c[2].trim().eq_ignore_ascii_case(&self.label) && self.der_len().is_none_or(|n| n == self.decoded()) {
+                if c[2].trim().eq_ignore_ascii_case(&self.label) && matches!(self.der(), Der::Len(n) if n == self.decoded()) {
                     return Seen::Released;
                 }
                 self.held.clear();
@@ -640,9 +651,11 @@ impl PublicBody {
                     self.chars += b64.bytes().filter(|&c| c != b'=').count();
                     self.held.push((ti, at, at + line.len()));
                 }
-                // more than the one element it began: another body runs on after it
-                if self.der_len().is_none_or(|n| self.decoded() <= n) {
-                    return Seen::Held;
+                // not a DER element, or more than the one it began: another body runs on after it
+                match self.der() {
+                    Der::TooFew => return Seen::Held,
+                    Der::Len(n) if self.decoded() <= n => return Seen::Held,
+                    _ => {}
                 }
             }
             self.open = false;
@@ -670,21 +683,23 @@ impl PublicBody {
         self.chars * 3 / 4
     }
 
-    /// The length of the DER element the body starts with, from its first bytes (a SEQUENCE, as
-    /// every such PEM body is but RFC 4716's): None while there are too few, or for another body.
-    fn der_len(&self) -> Option<usize> {
+    /// What the body's first bytes say of the DER element it starts with (a SEQUENCE, as every
+    /// public key, certificate, request and list of revoked ones is).
+    fn der(&self) -> Der {
         let value = |c: u8| B64_DIGITS.iter().position(|&d| d == c);
         let mut bytes = Vec::new();
         for quad in self.head.as_bytes().chunks(4).filter(|q| q.len() == 4) {
-            let v = quad.iter().try_fold(0u32, |acc, &c| value(c).map(|d| acc << 6 | d as u32))?;
+            let Some(v) = quad.iter().try_fold(0u32, |acc, &c| value(c).map(|d| acc << 6 | d as u32)) else { return Der::Not };
             bytes.extend([(v >> 16) as u8, (v >> 8) as u8, v as u8]);
         }
         match bytes[..] {
-            [0x30, n, ..] if n < 0x80 => Some(2 + n as usize),
-            [0x30, 0x81, a, ..] => Some(3 + a as usize),
-            [0x30, 0x82, a, b, ..] => Some(4 + ((a as usize) << 8 | b as usize)),
-            [0x30, 0x83, a, b, c, ..] => Some(5 + ((a as usize) << 16 | (b as usize) << 8 | c as usize)),
-            _ => None,
+            [0x30, n, ..] if n < 0x80 => Der::Len(2 + n as usize),
+            [0x30, 0x81, a, ..] => Der::Len(3 + a as usize),
+            [0x30, 0x82, a, b, ..] => Der::Len(4 + ((a as usize) << 8 | b as usize)),
+            [0x30, 0x83, a, b, c, ..] => Der::Len(5 + ((a as usize) << 16 | (b as usize) << 8 | c as usize)),
+            // what has come so far could still begin one
+            [] | [0x30, 0x82 | 0x83, _] if self.head.len() < 8 => Der::TooFew,
+            _ => Der::Not,
         }
     }
 }
@@ -1255,6 +1270,20 @@ mod tests {
         }
     }
 
+    /// The base64 lines, 64 to a line, of one DER SEQUENCE of `n` bytes in all, its content from
+    /// `seed`: a body read as one public element.
+    fn der_lines(seed: u64, n: usize) -> Vec<String> {
+        const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut der = vec![0x30, 0x82, ((n - 4) >> 8) as u8, (n - 4) as u8];
+        der.extend(fake(seed, ALNUM, n - 4).bytes());
+        let mut b64 = String::new();
+        for c in der.chunks(3) {
+            let v = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+            (0..4).for_each(|i| b64.push(if i <= c.len() { SET[(v >> (18 - 6 * i) & 63) as usize] as char } else { '=' }));
+        }
+        b64.as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect()
+    }
+
     /// A PEM armour line, written out here so no file holds one.
     pub(crate) fn armour(edge: &str, what: &str) -> String {
         format!("-----{edge} {what}PRIVATE KEY-----")
@@ -1425,13 +1454,8 @@ mod tests {
         assert!(redact(&host).1.is_empty(), "{host}");
         let mut r = Redactor::default();
         for what in ["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"] {
-            let mut lines = [
-                format!("-----BEGIN {what}-----"),
-                fake(71, &b64, 64),
-                fake(72, &b64, 64),
-                format!("{}==", fake(73, &b64, 20)),
-                format!("-----END {what}-----"),
-            ];
+            let body = der_lines(71, 110);
+            let mut lines = [format!("-----BEGIN {what}-----"), body[0].clone(), body[1].clone(), body[2].clone(), format!("-----END {what}-----")];
             // whole: as the lines of one answer, and as one text
             assert!(r.redact(&lines.join("\n")).1.is_empty(), "{what}");
             assert_eq!(r.redact_shown(&mut lines, 0, usize::MAX), [0; 5], "{what}");
@@ -1693,16 +1717,16 @@ mod tests {
     /// them: cut off, or one line over the 64 held, it is marked; two back to back are each left.
     #[test]
     fn a_public_body_is_left_as_written_only_up_to_its_end_in_what_one_call_is_given() {
-        let b64 = format!("{ALNUM}+/");
         let pem = |body: &[String]| [vec!["-----BEGIN PUBLIC KEY-----".to_string()], body.to_vec(), vec!["-----END PUBLIC KEY-----".to_string()]].concat();
-        let short: Vec<String> = (0..6).map(|i| fake(100 + i, &b64, 64)).collect();
-        let long: Vec<String> = (0..65).map(|i| fake(110 + i, &b64, 64)).collect();
+        let short = der_lines(100, 6 * 48);
+        let other = der_lines(101, 3 * 48);
+        let long = der_lines(110, 65 * 48);
         let marks = |lines: &[String]| Redactor::default().redact_shown(&mut lines.to_vec(), 0, usize::MAX).iter().sum::<usize>();
         let whole = pem(&short);
         assert_eq!(marks(&whole), 0);
         assert_eq!(marks(&whole[..whole.len() - 1]), short.len(), "cut off before the END");
         assert_eq!(marks(&pem(&long)), long.len(), "one line over the cap");
-        assert_eq!(marks(&[pem(&short), pem(&short[..3])].concat()), 0, "back to back");
+        assert_eq!(marks(&[pem(&short), pem(&other)].concat()), 0, "back to back");
         // one text, the same
         assert!(redact(&whole.join("\n")).1.is_empty());
         assert_eq!(redact(&whole[..whole.len() - 1].join("\n")).1.len(), short.len());
