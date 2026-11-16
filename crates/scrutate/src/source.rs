@@ -265,6 +265,14 @@ fn nothing_before_the_nul(b: &[u8], at: usize, term: u8) -> bool {
     at < (64 << 10) - 8 && !starts_with_bom(b) && (at < 3 || b[0] != term && b[1] != term && b[2] != term)
 }
 
+/// Whether a slice search of the walked file `b`, its binary check on, answers as ripgrep's
+/// reader does: the check covers the file's first `FIRST_BUFFER` bytes, so all of a file that
+/// size, and quits at a NUL before any line; the reader quits as soon, given no line that ends in
+/// its first read, the 3 bytes of the BOM check.
+fn quits_as_the_reader(b: &[u8], term: u8) -> bool {
+    b.len() <= FIRST_BUFFER && !starts_with_bom(b) && b[..b.len().min(3)].iter().all(|&c| c != term)
+}
+
 /// Search `b`, which holds no NUL byte the binary check could find, with that check off: one pass
 /// over the file. A second searcher would cost its 64 KiB line buffer on every start.
 fn unchecked<S: Sink>(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], sink: S) -> Result<(), S::Error> {
@@ -374,6 +382,11 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
             // A byte-order mark is transcoded, and the text it gives may hold a NUL
             None if !src.expands() && !starts_with_bom(b) => unchecked(r.matcher, searcher, b, &mut sink),
             None => r.matcher.search_slice(searcher, b, &mut sink),
+            // one search with the binary check on answers as the reader: a text file stays above,
+            // where that check would cost a pass per matching line
+            Some(_) if !named && !src.expands() && quits_as_the_reader(b, searcher.line_terminator().as_byte()) => {
+                r.matcher.search_slice(searcher, b, &mut sink)
+            }
             Some(at) => with_a_nul(r.matcher, searcher, b, at, named, &mut sink, &widest),
         },
         None => {
