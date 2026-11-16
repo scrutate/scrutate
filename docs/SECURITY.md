@@ -575,14 +575,14 @@ a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borr
 covered elsewhere: a private key's short last line in a `search_code` or definition answer that
 starts inside the key (no armour on the page, and these answers are not read back from the file),
 or in a file that holds a key's body without its armour; a key's short last line in a file the
-text index does not hold yet (new since its last update, or one it skips), shown by `hook run`
-with no line number or with a colon in its file name; secrets in base64, hex or URL encoding
-(gitleaks decodes them; scrutate does not); formats outside the table; a secret split over two
-lines of code or built at run time; a value alone with neither a vendor prefix nor a name on its
-line (a name on the line before it); the CLI and the Python bindings, which print what the files
-hold unless `SCRUTATE_REDACT=on` (the CLI's index answers only); and the index itself:
-`.scrutate/` keeps chunk text, secrets included, and the hash of every key body line (mode 0700
-on Unix).
+text index does not hold yet (new since its last update, or one it skips) or when the text index
+cannot be opened, shown by `hook run` with no line number or with a colon in its file name;
+secrets in base64, hex or URL encoding (gitleaks decodes them; scrutate does not); formats outside
+the table; a secret split over two lines of code or built at run time; a value alone with neither
+a vendor prefix nor a name on its line (a name on the line before it); the CLI and the Python
+bindings, which print what the files hold unless `SCRUTATE_REDACT=on` (the CLI's index answers
+only); and the index itself: `.scrutate/` keeps chunk text, secrets included, and the hash of
+every key body line (mode 0700 on Unix).
 
 ## Verified symbol edits
 
