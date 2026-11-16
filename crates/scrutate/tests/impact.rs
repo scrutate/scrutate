@@ -471,8 +471,10 @@ fn a_staged_change_under_a_subdirectory_root_answers_as_the_working_tree_does() 
         v["result"].clone()
     };
     let parts = |v: &Value| (v["changed"].clone(), v["callers"].clone(), v["tests"].clone(), v["notes"].clone());
-    let moves: [(&str, &[&str]); 4] = [
+    let moves: [(&str, &[&str]); 6] = [
         ("staged_sub_edit", &[]),
+        ("staged_sub_append", &["append"]),
+        ("staged_sub_comment", &["comment"]),
         ("staged_sub_inward", &["top/x.py", "sub/x.py"]),
         ("staged_sub_outward", &["sub/y.py", "top/y.py"]),
         ("staged_sub_within", &["sub/a.py", "sub/b.py"]),
@@ -481,6 +483,11 @@ fn a_staged_change_under_a_subdirectory_root_answers_as_the_working_tree_does() 
         let t = case(name);
         if mv.is_empty() {
             t.write("sub/a.py", "def a():\n    return 5\n\n\ndef keep():\n    return a()\n");
+            t.git(&["add", "-A"]);
+        } else if mv == ["append"] || mv == ["comment"] {
+            // a line after the last function: outside every definition, in a window
+            let line = if mv == ["append"] { "print(keep())" } else { "# x" };
+            t.write("sub/a.py", &format!("def a():\n    return 1\n\n\ndef keep():\n    return a()\n{line}\n"));
             t.git(&["add", "-A"]);
         } else {
             t.git(&["mv", mv[0], mv[1]]);

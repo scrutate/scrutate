@@ -309,6 +309,15 @@ impl Def {
 
 /// The definitions of `src` as the index would hold them, windows aside.
 fn parsed(path: &str, src: &[u8]) -> Vec<Def> {
+    parsed_chunks(path, src).into_iter().filter(|c| c.kind != "window").collect()
+}
+
+/// The windows of a parse of git's copy: the code between definitions, as the index keeps it.
+fn parsed_windows(path: &str, src: &[u8]) -> Vec<Def> {
+    parsed_chunks(path, src).into_iter().filter(|c| c.kind == "window").collect()
+}
+
+fn parsed_chunks(path: &str, src: &[u8]) -> Vec<Def> {
     if src.len() as u64 > crate::index::MAX_FILE_BYTES || !crate::parse::is_indexable(path) {
         return Vec::new();
     }
@@ -316,7 +325,6 @@ fn parsed(path: &str, src: &[u8]) -> Vec<Def> {
     crate::parse::parse_file(path, &src)
         .chunks
         .into_iter()
-        .filter(|c| c.kind != "window")
         .map(|c| Def { kind: c.kind.to_string(), name: c.name, qualname: c.qualname, start: c.start, end: c.end, id: 0 })
         .collect()
 }
@@ -502,19 +510,29 @@ impl Builder<'_> {
         // lines outside every definition: the window that holds them, as callers names such a caller
         let mut bare = !old_outside.is_empty();
         let from_index = e.new.is_some() && (!self.from_blobs || e.untracked);
+        // git's copy (staged, or a commit): its own parse's windows, named as the index names
+        // the same span when it holds one
+        let windows = if from_index || e.new.is_none() { Vec::new() } else { parsed_windows(&path, blob(&e.new_blob)) };
         let mut after = 0;
         for l in new_outside {
-            if !from_index {
-                bare = true;
-                break;
-            }
             if l <= after {
                 continue;
             }
-            match ix.window_at(&path, l)? {
-                Some(w) => {
-                    after = w.end;
-                    self.push(Hit::from_row(&w, false), if added { "added" } else { "edited" });
+            let window = if from_index {
+                ix.window_at(&path, l)?.map(|w| Hit::from_row(&w, false))
+            } else {
+                match windows.iter().find(|w| w.start <= l && l <= w.end) {
+                    Some(w) => Some(match ix.window_at(&path, l)?.filter(|i| i.start == w.start && i.end == w.end) {
+                        Some(i) => Hit::from_row(&i, false),
+                        None => w.hit(&path),
+                    }),
+                    None => None,
+                }
+            };
+            match window {
+                Some(h) => {
+                    after = h.end;
+                    self.push(h, if added { "added" } else { "edited" });
                 }
                 None => bare = true,
             }

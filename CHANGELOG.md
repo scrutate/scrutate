@@ -365,6 +365,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `impact --staged` and `review` name the window that holds a changed line outside every
+  definition (`b.py:3-3 [window] b`), as the working-tree form does, where they named the whole
+  file (`b.py [file]`).
 - `impact --staged` with a root below the repository's top answers with a conflict outside that
   root, where git 2.53 and 2.54 crash on the `--cached --relative` diff it ran: the staged diff
   there names the root as its pathspec and scrutate takes the root's part off the paths.

@@ -642,7 +642,8 @@ line per item:
   base has it, named with its base lines. A file renamed with edits (git's `-M`) names its
   definitions at the new path, with a note naming the old one. A changed line outside every
   definition names the window holding it, as `callers` lists a call written there, else the file
-  (`path  [file]`: a blank line, a deleted line, a staged line). A staged change is read from the
+  (`path  [file]`: a blank line, a deleted line); a staged or committed line's window comes from a
+  parse of git's copy. A staged change is read from the
   staged copy and named where the index holds that definition now.
 - `callers`: the callers of a changed definition, then theirs, breadth first, each once at its
   smallest distance, shown in front (`1` calls a changed definition). Each step is the answer of
