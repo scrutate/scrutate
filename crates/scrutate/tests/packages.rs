@@ -352,6 +352,35 @@ fn a_go_module_is_read_from_the_module_cache_at_the_version_go_mod_requires() {
 }
 
 #[test]
+fn of_two_go_modules_one_package_name_names_the_direct_requirement_then_the_one_named_so() {
+    // both declare `package yaml`; the repository's code imports a direct requirement only
+    let modules = |t: &Tree| {
+        t.store("gomod/sigs.k8s.io/yaml@v1.4.0/yaml.go", "package yaml\n\nfunc Marshal(o any) ([]byte, error) {\n\treturn nil, nil\n}\n");
+        t.store("gomod/gopkg.in/yaml.v3@v3.0.1/yaml.go", "package yaml\n\nfunc Marshal(in any) (out []byte, err error) {\n\treturn nil, nil\n}\n");
+    };
+    for (name, require, want) in [
+        ("direct_k8s", "require (\n\tsigs.k8s.io/yaml v1.4.0\n\tgopkg.in/yaml.v3 v3.0.1 // indirect\n)", "sigs.k8s.io/yaml v1.4.0 (go.mod)"),
+        ("direct_v3", "require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tsigs.k8s.io/yaml v1.4.0 // indirect\n)", "gopkg.in/yaml.v3 v3.0.1 (go.mod)"),
+        // both direct: the module whose last part is `yaml` as written
+        ("both_direct", "require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tsigs.k8s.io/yaml v1.4.0\n)", "sigs.k8s.io/yaml v1.4.0 (go.mod)"),
+    ] {
+        let t = Tree::new(&format!("go_yaml_{name}"));
+        t.go_mod(require);
+        modules(&t);
+        let (code, out, err) = t.run(&["symbol", "--deps", "yaml.Marshal"]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains(want), "{name}: {out}");
+    }
+    let t = Tree::new("go_toml_pair");
+    t.go_mod("require (\n\tgithub.com/BurntSushi/toml v1.4.0\n\tgithub.com/pelletier/go-toml/v2 v2.2.3 // indirect\n)");
+    t.store("gomod/github.com/!burnt!sushi/toml@v1.4.0/decode.go", "package toml\n\nfunc Decode(data string, v any) error {\n\treturn nil\n}\n");
+    t.store("gomod/github.com/pelletier/go-toml/v2@v2.2.3/unmarshaler.go", "package toml\n\nfunc Unmarshal(data []byte, v any) error {\n\treturn nil\n}\n");
+    let (code, out, err) = t.run(&["symbol", "--deps", "toml.Decode"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("github.com/BurntSushi/toml v1.4.0 (go.mod)"), "{out}");
+}
+
+#[test]
 fn a_go_module_is_found_by_the_package_name_the_code_uses_without_a_v_suffix_or_go_prefix() {
     let t = Tree::new("go_names");
     t.go_mod("require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tgithub.com/mattn/go-sqlite3 v1.14.22\n)");

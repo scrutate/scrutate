@@ -796,7 +796,9 @@ installed. `PACKAGE` is the package as the code imports it, `.` or `::` before t
 `@scope/pkg.fn`, `gin.Default` or `github.com/gin-gonic/gin.Default` (a Go module by its path or
 its last part, a major version suffix `/v2` skipped; the last part also without a `.v3` suffix or a
 `go-` prefix, as the code names the package: `yaml.Unmarshal` for gopkg.in/yaml.v3, `sqlite3.Open`
-for github.com/mattn/go-sqlite3). The longest start of the name that is a
+for github.com/mattn/go-sqlite3; when that name is two modules', a direct requirement comes before
+an `// indirect` one, which no package of the repository imports, then the module whose last part
+is the name as written: `yaml` is sigs.k8s.io/yaml beside an indirect gopkg.in/yaml.v3). The longest start of the name that is a
 locked package is the package. The rest is looked up as `symbol` and `read` look up a name, then
 by its last part (`de::Deserialize` finds `Deserialize`). The answer's first line names the
 package, its version, the lockfile and the directory (`serde 1.0.200 (Cargo.lock):
