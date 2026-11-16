@@ -407,8 +407,8 @@ follows them, and refuses the search, running nothing, when a path it names lies
 one of the index directories' files or directories by device and inode (on Windows by the file
 handle's volume and index: a link, a hard link
 under another name, a nested repository's index), or when the walk is too large to check
-(over 1,000,000 entries or 5 seconds); `read_code`, `grep_code` and the Grep hook
-refuse such a path the same way. A path that is an index file under another name (a hard link,
+(over 1,000,000 entries or 5 seconds); `read_code`, `grep_code`, the Grep hook and `edit_symbol`
+(its dry run too, which reads the definition as `read_code` does) refuse such a path the same way. A path that is an index file under another name (a hard link,
 either way round) is refused with a line that names the index file and says to remove the hard
 link, by its path, to search it again. The searches scrutate walks itself (`scrutate grep`, the
 index's walk and so `search`, `refs` and the MCP tools, the Grep hook) leave such a file out: on

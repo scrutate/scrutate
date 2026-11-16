@@ -307,3 +307,73 @@ fn a_nested_git_directory_under_another_spelling_is_neither_indexed_nor_edited()
     assert!(err, "{text}");
     assert_eq!(s.file("vendor/lib/.GIT/hooks/helper.py"), hook);
 }
+
+/// A repository file that also has a hard link inside `.scrutate` is refused by every check of the
+/// index directory, an edit's dry run too, since its identity cannot tell which name came first;
+/// each refusal names the index file it is and says to remove the hard link.
+/// A path inside, and a link that leads inside, keep the plain "is inside" line. Where the file
+/// system makes no hard link (FAT, exFAT) it says so and checks nothing.
+#[test]
+fn a_file_with_a_hard_link_in_the_index_directory_is_refused_as_a_hard_link_not_as_inside() {
+    const LINKED: &str = "remove the hard link, by its path";
+    let mut s = Server::start("hardlink", &[("a.py", PY)], &["--allow-edits"]);
+    let (text, err) = s.call("find_symbol", json!({"name": "first", "exact": true}));
+    assert!(!err, "{text}");
+    if let Err(e) = fs::hard_link(s.root.join("a.py"), s.root.join(".scrutate/copy.py")) {
+        eprintln!("skipped: this file system makes no hard link ({e})");
+        return;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(".scrutate/copy.py", s.root.join("via.py")).unwrap();
+    let calls = [
+        ("edit_symbol", json!({"symbol": "first", "path": "a.py", "new_text": "def first():\n    return 9\n"})),
+        ("read_code", json!({"path": "a.py"})),
+        ("read_code", json!({"symbol": "first", "path": "a.py"})),
+        ("grep_code", json!({"pattern": "first", "path": "a.py"})),
+    ];
+    for (tool, args) in calls {
+        let (text, err) = s.call(tool, args.clone());
+        assert!(err && text.contains("a.py is the same file as") && text.contains(LINKED) && !text.contains("a.py is inside"), "{tool} {args}: {text}");
+    }
+    let inside: &[(&str, &str)] = if cfg!(unix) {
+        &[(".scrutate/copy.py", "read_code"), ("via.py", "read_code"), ("via.py", "grep_code")]
+    } else {
+        &[(".scrutate/copy.py", "read_code")]
+    };
+    for &(path, tool) in inside {
+        let args = if tool == "read_code" { json!({"path": path}) } else { json!({"pattern": "first", "path": path}) };
+        let (text, err) = s.call(tool, args);
+        assert!(err && text.contains(&format!("{path} is inside scrutate's index directory")) && !text.contains(LINKED), "{tool} {path}: {text}");
+    }
+    assert_eq!(s.file("a.py"), PY);
+    let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("edits_hardlink_home_{}", std::process::id()));
+    fs::create_dir_all(&home).unwrap();
+    let hook = |args: &[&str], input: Option<Value>| {
+        let mut c = Command::new(BIN);
+        c.args(args)
+            .current_dir(&s.root)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("LOCALAPPDATA", home.join("state"))
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("CLAUDE_PROJECT_DIR", &s.root)
+            .env_remove("CLAUDE_CONFIG_DIR");
+        c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = c.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input.map(|v| v.to_string()).unwrap_or_default().as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let (_, err) = hook(&["hook", "run", "--", "grep", "-n", "first", "a.py"], None);
+    assert!(err.contains("a.py is the same file as") && err.contains(LINKED), "hook run: {err}");
+    let (_, err) = hook(&["hook", "run", "--", "grep", "-n", "first", ".scrutate/copy.py"], None);
+    assert!(err.contains(".scrutate/copy.py is inside") && !err.contains(LINKED), "hook run inside: {err}");
+    let grep = |path: &str| json!({"session_id": "t", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": s.root.to_str().unwrap(), "tool_input": {"pattern": "first", "path": path}, "tool_use_id": "t1", "permission_mode": "default"});
+    let (out, _) = hook(&["hook", "grep"], Some(grep("a.py")));
+    assert!(out.contains("a.py is the same file as") && out.contains(LINKED), "Grep hook: {out}");
+    #[cfg(unix)]
+    {
+        let (out, _) = hook(&["hook", "grep"], Some(grep("via.py")));
+        assert!(out.contains("via.py is inside") && !out.contains(LINKED), "Grep hook through a link: {out}");
+    }
+}
