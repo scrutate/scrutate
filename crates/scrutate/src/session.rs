@@ -569,9 +569,16 @@ impl Session {
     /// and the watch's change sets are a proof (the floor holds back what they cannot vouch for).
     fn walk_if_due(&self, repo: &mut Repo, token: Token, now: bool) -> Result<(UpdateStats, Pending)> {
         let watching = self.fresh.watching();
-        let asked = now || watching && (!self.every.floor || !self.fresh.order_proves());
+        let asked = now || self.fresh.owes_a_walk() || watching && (!self.every.floor || !self.fresh.order_proves());
         let nothing = Ok((UpdateStats::default(), Pending::default()));
         if !asked && !self.due() {
+            debug("the refresh interval holds that walk back");
+            // what the watch named is applied whatever the interval; the walk stays owed
+            let applied = *lock(&self.applied);
+            if let Some(n) = self.fresh.named_since(applied).filter(|n| !n.code.is_empty()) {
+                let st = repo.refresh_named(&n.code)?.unwrap_or_default();
+                return Ok((st, Pending(repo.is_stale().then_some(Changes::Named(n)))));
+            }
             return nothing;
         }
         let Some(_scanning) = stores::hold_within(&self.scanning, stores::OWN_WRITE_WAIT) else {
@@ -1499,12 +1506,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// Before its watch is in place a session under a floor walks at every read: nothing names a
+    /// change yet, and start-up's walk is owed.
+    #[test]
+    fn an_edit_before_the_watch_is_in_place_is_seen_under_a_floor() {
+        let root = std::env::temp_dir().join(format!("scrutate_session_before_watch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.py"), "def first():\n    return 0\n").unwrap();
+        let s = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        assert!(!s.run(&Op::Symbol { name: "first".into(), limit: 1, exact: true }, &Arc::default()).unwrap().is_empty());
+        for i in 0..5 {
+            std::fs::write(root.join("src/a.py"), format!("def early_{i}():\n    return {i}\n")).unwrap();
+            let a = s.run(&Op::Symbol { name: format!("early_{i}"), limit: 1, exact: true }, &Arc::default()).unwrap();
+            assert!(!a.is_empty(), "edit {i} before the watch is in place");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn a_walk_the_watch_asks_for_comes_at_once_unless_the_user_gave_a_floor() {
         for (floor, seen) in [(None, true), (Some(3600.0), false)] {
             let (root, s) = watched(&format!("asked_{seen}"), 10, Every::given(floor));
             s.notes.as_ref().unwrap().note(&Err(notify::Error::generic("a lost queue")));
-            std::fs::write(root.join("src/d3/m3.py"), "def after_loss():\n    return 3\n").unwrap();
+            // an edit the watch names is applied under a floor too
+            std::fs::write(root.join("src/d3/m3.py"), "def edited_after_loss():\n    return 3\n").unwrap();
+            let a = s.run(&Op::Symbol { name: "edited_after_loss".into(), limit: 1, exact: true }, &Arc::default()).unwrap();
+            assert!(!a.is_empty(), "a named edit, interval {floor:?}");
+            // a file no event names (its directory is new), so only the walk can find it
+            std::fs::create_dir_all(root.join("src/after")).unwrap();
+            std::fs::write(root.join("src/after/m.py"), "def after_loss():\n    return 3\n").unwrap();
             let a = s.run(&Op::Symbol { name: "after_loss".into(), limit: 1, exact: true }, &Arc::default()).unwrap();
             assert_eq!(!a.is_empty(), seen, "interval {floor:?}");
             let _ = std::fs::remove_dir_all(root);

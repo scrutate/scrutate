@@ -309,6 +309,12 @@ incompatible index by itself, and that is never breaking.
 - A save a read makes, which must not wait, no longer waits for another process's write lock to
   compact the index, up to 10 minutes while that process indexed: it tries once and leaves the
   compaction to the next update, which does it even when nothing changed.
+- Under `serve --refresh-interval S` a session saw no edit at all until the interval passed: once
+  the watches were set after the first call, the walk that follows them was held back by the
+  interval, and every call's change set waited with it, the files the watch named included. Now
+  that walk is part of start-up and the interval never holds it, and a call whose walk the
+  interval holds back still looks at the files the watch named; a new directory still waits for
+  the interval, as documented.
 - The language server answers definition and references in the spelling of the request's
   document when the editor names one repository in two ways (two folders, one through a link, or
   a file named through one), where every answer named the first folder's spelling.

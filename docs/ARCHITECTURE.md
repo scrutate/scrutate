@@ -730,7 +730,11 @@ every watch that changed, the watches set (the first time, and on Linux each tim
 file written while they were set may have no event), more than 10,000 events since the last read,
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
 floor the user gave and the change sets are a proof (`Freshness::order_proves`): on macOS every
-read walks whatever the interval. A named file costs one `stat` (`UpdateStats::files_looked`
+read walks whatever the interval. A walk the floor holds back still applies the files the events
+named since the last walk (`Freshness::named_since`, read with the burst rules but past a
+directory that came or went), and start-up's walk is owed from the session's start
+(`Freshness::owes_a_walk`): until a read has applied the walk that follows the watches' first
+set, every read walks whatever the floor, before the watch is in place too. A named file costs one `stat` (`UpdateStats::files_looked`
 counts them) and a read with nothing named costs no lock. A safety walk on the watch's thread
 (`watch::Safety`, every 60 s or 50 times its own cost) feeds in, as events, what changed with no
 event since its last walk.

@@ -246,6 +246,12 @@ impl Burst {
     /// The burst's files for each index, as the walks list their directories; None when a
     /// directory the walks enter came, went or was replaced, so the tree must be walked.
     fn files(&self, root: &Path, code: &CodeWalk, walked: &Walked) -> Option<Named> {
+        self.files_with(root, code, walked, false)
+    }
+
+    /// `files`; with `named_alone` the files are named even when a directory came or went, for a
+    /// read whose walk of every file is held back.
+    fn files_with(&self, root: &Path, code: &CodeWalk, walked: &Walked, named_alone: bool) -> Option<Named> {
         let mut listed: HashMap<&Path, Listing> = HashMap::new();
         let mut out = Named::default();
         for p in &self.paths {
@@ -255,7 +261,7 @@ impl Burst {
             if walked.holds(p) {
                 // a directory's own write time (Windows reports one per entry added or removed):
                 // the entry has an event of its own
-                if is_dir && !self.moved.contains(p) {
+                if is_dir && !self.moved.contains(p) || named_alone {
                     continue;
                 }
                 return None;
@@ -265,7 +271,7 @@ impl Burst {
             }
             let l = listed.entry(parent).or_insert_with(|| Listing::of(parent, code, walked));
             if is_dir {
-                if l.dirs.contains(p) {
+                if l.dirs.contains(p) && !named_alone {
                     return None;
                 }
                 continue;
@@ -274,6 +280,9 @@ impl Burst {
             // the file: the listing holds it under another case, and only a walk tells the two
             // names apart
             if md.as_ref().is_some_and(|m| m.is_file()) && !l.code.contains(p) && !l.text.contains(p) && l.holds_in_another_case(p) {
+                if named_alone {
+                    continue;
+                }
                 return None;
             }
             let Ok(rel) = p.strip_prefix(root) else { continue };
@@ -324,6 +333,10 @@ struct Shared {
     safety_every: AtomicU64,
     /// `ORDER_PROVES`, which tests set either way
     order_proves: AtomicBool,
+    /// start-up's walk has not been applied yet: from the session's start until a read applies the
+    /// walk that follows the watches' first set, no refresh interval holds a walk back (a write
+    /// made before the watches were in place has no event, and a walk alone finds it)
+    walk_owed: AtomicBool,
     noted: Mutex<Noted>,
     arrived: Condvar,
     #[cfg(target_os = "macos")]
@@ -394,6 +407,7 @@ impl Notes {
             next_cookie: AtomicU64::new(0),
             safety_every: AtomicU64::new(SAFETY_EVERY.as_millis() as u64),
             order_proves: AtomicBool::new(ORDER_PROVES),
+            walk_owed: AtomicBool::new(true),
             noted: Mutex::default(),
             arrived: Condvar::new(),
             #[cfg(target_os = "macos")]
@@ -467,6 +481,9 @@ impl Notes {
         let moved = n.dirs > n.dirs_walked;
         let gained = |old: &Walked| moved || !walked.watched().is_subset(&old.watched()) || !old.poll_files.is_empty() || !walked.poll_files.is_empty();
         if n.walked.as_deref().is_none_or(|old| cfg!(target_os = "linux") && gained(old)) {
+            if n.walked.is_none() {
+                self.0.walk_owed.store(true, Ordering::Release);
+            }
             n.walk_all("the watches were set");
         }
         n.dirs_walked = dirs;
@@ -514,6 +531,8 @@ impl Notes {
 
     fn stopped(&self) {
         lock(&self.0.noted).walked = None;
+        // with no watch, reads walk as a session without one does, at most once per interval
+        self.0.walk_owed.store(false, Ordering::Release);
         #[cfg(target_os = "macos")]
         {
             *lock(&self.0.flush) = None;
@@ -579,6 +598,10 @@ impl Freshness for Notes {
         if lock(&self.0.noted).walked.is_none() {
             return all("the watch is not in place", t.get());
         }
+        // a read that applied a walk since the watches were first set has had start-up's walk
+        if t.get() >= lock(&self.0.noted).walk_below {
+            self.0.walk_owed.store(false, Ordering::Release);
+        }
         if !self.0.order_proves.load(Ordering::Relaxed) {
             // a token of its own: a walk that applied it began after this call did, so it saw
             // every change made before the call
@@ -628,6 +651,21 @@ impl Freshness for Notes {
 
     fn order_proves(&self) -> bool {
         self.0.order_proves.load(Ordering::Relaxed)
+    }
+
+    fn owes_a_walk(&self) -> bool {
+        self.0.walk_owed.load(Ordering::Acquire)
+    }
+
+    fn named_since(&self, t: Token) -> Option<Named> {
+        let n = lock(&self.0.noted);
+        let walked = n.walked.clone()?;
+        let mut burst = Burst::default();
+        for (_, e) in n.events.iter().filter(|(g, _)| *g > t.get()) {
+            burst.note(&self.0.root, &walked, &Ok(e.clone()));
+        }
+        drop(n);
+        burst.files_with(&self.0.root, &self.0.code, &walked, true)
     }
 }
 

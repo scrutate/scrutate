@@ -65,6 +65,18 @@ pub trait Freshness: Send + Sync {
     fn order_proves(&self) -> bool {
         true
     }
+
+    /// Whether a read must walk whatever the refresh interval: start-up's walk, until a read
+    /// applies the one that follows the watches coming up.
+    fn owes_a_walk(&self) -> bool {
+        false
+    }
+
+    /// The files the events since `t` name, even where the answer for `t` is every file: a read
+    /// whose walk of every file a refresh interval holds back still applies these.
+    fn named_since(&self, _t: Token) -> Option<crate::stores::Named> {
+        None
+    }
 }
 
 /// What feeds a session's freshness from a watch: the watch's notes, on targets with a file watcher.

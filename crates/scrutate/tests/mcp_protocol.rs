@@ -283,6 +283,41 @@ fn an_explicit_refresh_interval_is_a_floor() {
     assert!(default.text(3, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py"), "a walk the watch asks for comes at once by default");
 }
 
+/// Under `--refresh-interval` an edit of a file the watch knows and a new file in a directory it
+/// knows are seen at once, on a tree of many directories: the interval holds back a walk of every
+/// file, never the files the watch named, nor the one look that follows the watches coming up.
+#[test]
+fn an_edit_and_a_new_file_are_seen_at_once_under_a_refresh_interval_on_a_tree_of_many_directories() {
+    let r = Repo::new("floor_many", 0);
+    for i in 0..40 {
+        let d = r.root.join(format!("d{i}"));
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join(format!("m{i}.py")), format!("def base_{i}():\n    return {i}\n")).unwrap();
+    }
+    // indexed before the server starts, so its first call answers before the watches are set
+    let indexed = Command::new(BIN).arg("--root").arg(&r.root).arg("index").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+    let mut floor = Session::start(&r, &["serve", "--refresh-interval", "3600"], &[]);
+    assert!(floor.text(1, "find_symbol", json!({"name": "base_1"})).contains("d1/m1.py"));
+    // the watches in place by now, the walk that follows them due
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let mut id = 1;
+    let mut seen = |floor: &mut Session, name: &str, file: &str| {
+        id += 1;
+        floor.text(id, "find_symbol", json!({"name": name})).contains(file)
+    };
+    let (mut edits, mut new_files) = (0, 0);
+    for k in 0..10 {
+        let f = r.root.join(format!("d{k}/m{k}.py"));
+        let body = format!("{}\n\ndef edited_{k}():\n    return {k}\n", fs::read_to_string(&f).unwrap());
+        fs::write(&f, body).unwrap();
+        edits += usize::from(seen(&mut floor, &format!("edited_{k}"), &format!("d{k}/m{k}.py")));
+        fs::write(r.root.join(format!("d{k}/late_{k}.py")), format!("def late_{k}():\n    return {k}\n")).unwrap();
+        new_files += usize::from(seen(&mut floor, &format!("late_{k}"), &format!("d{k}/late_{k}.py")));
+    }
+    assert_eq!((edits, new_files), (10, 10), "(edits, new files in a watched directory) seen at once, of 10 each");
+}
+
 #[test]
 fn a_new_file_an_argument_names_is_indexed_within_the_refresh_interval() {
     let r = Repo::new("named_new", 2);
