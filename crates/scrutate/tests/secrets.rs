@@ -1883,3 +1883,91 @@ fn a_named_file_that_is_an_index_file_under_another_name_is_searched_by_grep_and
     assert!(c.text.contains(LINKED) && !c.text.contains("needle in the cache"), "read_code: {}", c.text);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A directory argument reached through a symbolic link, however it is spelt (a link with a
+/// directory part in front of it, a trailing slash, `..`, a link in the middle of the path), is
+/// guarded by the index directories above where it really is: a hard link of an index file under
+/// it is in no answer, with up to 16 arguments and with more. A file argument that is a link to
+/// such a file is searched, as any path named is.
+#[cfg(unix)]
+#[test]
+fn a_directory_argument_through_a_link_is_guarded_by_the_index_above_its_target() {
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_through_link_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let repo = base.join("repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join(".scrutate/tsquery")).unwrap();
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src/a.txt"), "hello\n").unwrap();
+    fs::write(repo.join(".scrutate/tsquery/c.txt"), "hello from the cache\n").unwrap();
+    fs::hard_link(repo.join(".scrutate/tsquery/c.txt"), repo.join("src/linked.txt")).unwrap();
+    fs::create_dir_all(repo.join("src/sub")).unwrap();
+    fs::write(repo.join("src/sub/b.txt"), "hello\n").unwrap();
+    fs::hard_link(repo.join(".scrutate/tsquery/c.txt"), repo.join("src/sub/linked2.txt")).unwrap();
+    fs::create_dir_all(base.join("x/others")).unwrap();
+    std::os::unix::fs::symlink(repo.join("src"), base.join("x/r")).unwrap();
+    std::os::unix::fs::symlink(&repo, base.join("x/link")).unwrap();
+    std::os::unix::fs::symlink(repo.join("src/linked.txt"), base.join("x/f")).unwrap();
+    let others: Vec<String> = (0..20)
+        .map(|i| {
+            let rel = format!("x/others/o{i}.txt");
+            fs::write(base.join(&rel), "hello\n").unwrap();
+            rel
+        })
+        .collect();
+    let base = canon(&base);
+    let home = base.with_extension("home");
+    let run = |pre: &[&str], args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(pre)
+            .args(args)
+            .current_dir(&base)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_CACHE_DIR", base.with_extension("cache"))
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let grep = |args: &[&str]| run(&["grep", "-c", "hello"], args).1;
+    let absolute = base.join("x/r").to_string_lossy().into_owned();
+    let mut wrong = Vec::new();
+    for arg in ["x/r", "x/r/", "./x/r", absolute.as_str(), "x/r/sub", "x/link/src", "x/link/src/", "x/r/..", "x/r/../src", "x/../x/r"] {
+        for many in [false, true] {
+            let mut args = vec![arg];
+            if many {
+                args.extend(others.iter().map(String::as_str));
+            }
+            let what = format!("{arg} with {} arguments", args.len());
+            let out = grep(&args);
+            if !out.contains(".txt:1") {
+                wrong.push(format!("grep {what}: no answer to check: {out}"));
+            }
+            if out.contains("linked") {
+                wrong.push(format!("grep {what}: names a link of an index file: {out}"));
+            }
+            // the hook's walk before a search reaches the same file and refuses the search
+            let (code, out) = run(&["hook", "run", "--piped", "--", "grep", "-r", "-c", "hello"], &args);
+            if code != Some(2) || out.contains("linked") {
+                wrong.push(format!("hook run grep -r {what}: {code:?} {out}"));
+            }
+        }
+    }
+    // a file argument is searched by the name it is given
+    for many in [false, true] {
+        let mut args = vec!["x/f"];
+        if many {
+            args.extend(others.iter().map(String::as_str));
+        }
+        let out = grep(&args);
+        // one file argument is counted without its name, as ripgrep counts it
+        if !(if many { out.contains("x/f:1") } else { out.trim() == "1" }) {
+            wrong.push(format!("x/f with {} arguments is not searched: {out}", args.len()));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let _ = fs::remove_dir_all(&base);
+}

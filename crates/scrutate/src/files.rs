@@ -59,9 +59,12 @@ impl IndexFiles {
         IndexFiles::near_all(&[start], true).0
     }
 
-    /// The index directories of the directories above every one of `starts`, and with `own` of
-    /// each start itself. -> them, and the index directories they hold
-    pub fn near_all(starts: &[impl AsRef<Path>], own: bool) -> (IndexFiles, std::collections::BTreeSet<PathBuf>) {
+    /// The index directories above every one of `starts`. With `own` (a walk of few starts, or
+    /// one start) each start is climbed from where it really is, links resolved, its own index
+    /// directory first. Without it each is climbed from its directory as spelt, once per
+    /// directory: a walk of many starts climbs a directory start from where it really is when it
+    /// first lists it (`Guarded::enter`). -> them, the index directories, the directories climbed
+    pub fn near_all(starts: &[impl AsRef<Path>], own: bool) -> (IndexFiles, std::collections::BTreeSet<PathBuf>, std::collections::HashSet<PathBuf>) {
         let mut index = IndexFiles {
             #[cfg(unix)]
             ids: Default::default(),
@@ -70,41 +73,19 @@ impl IndexFiles {
             #[cfg(not(unix))]
             handles: Vec::new(),
         };
-        // a search may name thousands of files in a few directories: the climb runs once per
-        // directory above them, and a look at a start's own costs a system call per start
-        let mut dirs = std::collections::BTreeSet::new();
-        let mut above: std::collections::HashSet<&Path> = std::collections::HashSet::new();
+        let mut from: std::collections::HashSet<&Path> = std::collections::HashSet::new();
         for start in starts {
             let start = start.as_ref();
-            if own {
-                let own = start.join(INDEX_DIR);
-                if own.is_dir() {
-                    dirs.insert(std::fs::canonicalize(&own).unwrap_or(own));
-                }
-            }
-            above.insert(start.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(start));
+            from.insert(if own { start } else { start.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(start) });
         }
-        let mut climbed = std::collections::HashSet::new();
-        for d in above {
-            #[cfg(test)]
-            CLIMBS.with(|c| c.set(c.get() + 1));
-            let d = std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
-            for a in d.ancestors() {
-                if !climbed.insert(a.to_path_buf()) {
-                    break;
-                }
-                #[cfg(test)]
-                CLIMBS.with(|c| c.set(c.get() + 1));
-                let i = a.join(INDEX_DIR);
-                if i.is_dir() {
-                    dirs.insert(i);
-                }
-            }
+        let (mut dirs, mut climbed) = (std::collections::BTreeSet::new(), std::collections::HashSet::new());
+        for d in from {
+            climb(d, &mut climbed, &mut dirs);
         }
         for dir in &dirs {
             index.add(dir);
         }
-        (index, dirs)
+        (index, dirs, climbed)
     }
 
     /// Knows the files and directories of the index directory `dir`.
@@ -198,6 +179,14 @@ impl IndexFiles {
         for dir in std::mem::take(&mut *met.lock().unwrap_or_else(|p| p.into_inner())) {
             self.add(&dir);
         }
+        // and those above where each root really is, which a root through a link leaves out
+        let (mut climbed, mut above) = (std::collections::HashSet::new(), std::collections::BTreeSet::new());
+        for root in roots {
+            climb(root, &mut climbed, &mut above);
+        }
+        for dir in above {
+            self.add(&dir);
+        }
         #[cfg(unix)]
         let hit = {
             // a link is read through: its target decides; another entry's inode is its own
@@ -262,6 +251,25 @@ impl IndexFiles {
     }
 }
 
+/// Climbs from `d`, links resolved, to the root, stopping at a directory in `climbed`, and keeps
+/// each index directory met in `dirs`.
+fn climb(d: &Path, climbed: &mut std::collections::HashSet<PathBuf>, dirs: &mut std::collections::BTreeSet<PathBuf>) {
+    #[cfg(test)]
+    CLIMBS.with(|c| c.set(c.get() + 1));
+    let d = std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
+    for a in d.ancestors() {
+        if !climbed.insert(a.to_path_buf()) {
+            break;
+        }
+        #[cfg(test)]
+        CLIMBS.with(|c| c.set(c.get() + 1));
+        let i = a.join(INDEX_DIR);
+        if i.is_dir() {
+            dirs.insert(i);
+        }
+    }
+}
+
 /// Hashes inodes and devices by one multiply each: they are already spread, and the walks ask
 /// about every entry they meet.
 #[cfg(unix)]
@@ -309,28 +317,28 @@ enum Guard {
 struct Guarded {
     ix: std::sync::RwLock<IndexFiles>,
     any: std::sync::atomic::AtomicBool,
-    /// the index directories known, and the roots whose own was looked for
-    known: std::sync::Mutex<(std::collections::BTreeSet<PathBuf>, std::collections::HashSet<PathBuf>)>,
+    /// the index directories known, the roots entered, the directories climbed
+    known: std::sync::Mutex<(std::collections::BTreeSet<PathBuf>, std::collections::HashSet<PathBuf>, std::collections::HashSet<PathBuf>)>,
 }
 
 #[cfg(unix)]
 impl Guarded {
     fn enter(&self, root: &Path) {
         let mut known = self.known.lock().unwrap_or_else(|p| p.into_inner());
-        if known.1.contains(root) {
+        let (dirs, entered, climbed) = &mut *known;
+        if !entered.insert(root.to_path_buf()) {
             return;
         }
-        let own = root.join(INDEX_DIR);
-        if own.is_dir() {
-            let own = std::fs::canonicalize(&own).unwrap_or(own);
-            if !known.0.contains(&own) {
-                let mut ix = self.ix.write().unwrap_or_else(|p| p.into_inner());
-                ix.add(&own);
-                self.any.store(!ix.ids.is_empty(), std::sync::atomic::Ordering::Release);
-                known.0.insert(own);
-            }
+        // from where the root really is: a link, `..` or a trailing slash leaves its spelt
+        // directory elsewhere
+        let mut met = std::collections::BTreeSet::new();
+        climb(root, climbed, &mut met);
+        let new: Vec<PathBuf> = met.into_iter().filter(|d| dirs.insert(d.clone())).collect();
+        if !new.is_empty() {
+            let mut ix = self.ix.write().unwrap_or_else(|p| p.into_inner());
+            new.iter().for_each(|d| ix.add(d));
+            self.any.store(!ix.ids.is_empty(), std::sync::atomic::Ordering::Release);
         }
-        known.1.insert(root.to_path_buf());
     }
 }
 
@@ -339,12 +347,12 @@ impl WalkGuard {
         #[cfg(unix)]
         {
             if roots.len() <= FEW_ROOTS {
-                let (ix, _) = IndexFiles::near_all(roots, true);
+                let (ix, ..) = IndexFiles::near_all(roots, true);
                 return WalkGuard((!ix.ids.is_empty()).then(|| Arc::new(Guard::Fixed(ix))));
             }
-            let (ix, dirs) = IndexFiles::near_all(roots, false);
+            let (ix, dirs, climbed) = IndexFiles::near_all(roots, false);
             let any = std::sync::atomic::AtomicBool::new(!ix.ids.is_empty());
-            let known = std::sync::Mutex::new((dirs, Default::default()));
+            let known = std::sync::Mutex::new((dirs, Default::default(), climbed));
             WalkGuard(Some(Arc::new(Guard::Lazy(Guarded { ix: std::sync::RwLock::new(ix), any, known }))))
         }
         #[cfg(not(unix))]
@@ -1060,7 +1068,7 @@ mod tests {
             starts.push(root.join("c"));
             starts.iter().filter(|p| p.extension().is_some()).for_each(|p| std::fs::write(p, b"x").unwrap());
             CLIMBS.with(|c| c.set(0));
-            let (index, _) = IndexFiles::near_all(&starts, false);
+            let (index, ..) = IndexFiles::near_all(&starts, false);
             for d in [".scrutate", "a/.scrutate"] {
                 assert!(index.twin_of(&std::fs::canonicalize(root.join(d)).unwrap()).is_some(), "{d}");
             }

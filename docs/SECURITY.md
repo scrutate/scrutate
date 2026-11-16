@@ -440,9 +440,10 @@ still found by the walks while being refused by name. A file a watch or a sessio
 its name, with no walk (`watch`, `serve --watch`), is held to the rule on every platform: one
 that is an index file under another name is dropped from the indexes as gone. That costs nothing
 for a file with one link on Unix, and on Windows a handle per index file once per change set that
-names a file, since only the named files are asked about. The walks know the index directories of
-the searched paths and of the directories above them, not that of a nested repository inside the
-tree, where the binary header is what keeps its text out. Not covered: a link or a hard link made while the search runs
+names a file, since only the named files are asked about. The walks, and `hook run`'s walk before a search, know the index directories of
+the searched paths and of the directories above where each path really is (a path through a
+symbolic link, with `..` or a trailing slash, is climbed from its target), not that of a nested
+repository inside the tree, where the binary header is what keeps its text out. Not covered: a link or a hard link made while the search runs
 (the walk is done before it starts); a hard link to an index file of a repository outside the
 searched tree; a search that prints only part of a secret (`-o` with a pattern that matches
 inside it), since the redactor sees a line as printed and a piece of a token gives it nothing to
