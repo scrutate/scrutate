@@ -26,6 +26,8 @@ const NARROW: usize = 8;
 /// How much larger a filtered search makes its exact pool each time too few hits pass, and the most.
 const FILTER_WIDEN: usize = 8;
 const FILTER_WIDEN_MAX: usize = 64;
+/// What a filtered search says when its widened pool stopped at the bound short of k.
+pub const FILTER_STOP: &str = "the filtered search read its candidates up to 64 times their usual number: narrow the query or the filter";
 /// What a vendored hit loses from its ranker score: the bench/quality sweep put 0.5 and 1 at the
 /// unpenalized MRR@10 and 4 well below, while a strict tier lost a fifth of the queries.
 const VENDORED_MARGIN: f64 = 1.0;
@@ -643,10 +645,15 @@ impl Searcher {
     /// is filtered as its rows load, so while fewer than `k` hits pass, the search runs again with
     /// an exact pool `FILTER_WIDEN` times as large, until it comes back short.
     pub fn search_filtered(&mut self, query: &str, k: usize, with_text: bool, filter: &crate::filter::Compiled) -> Result<Vec<Hit>> {
+        Ok(self.search_filtered_bounded(query, k, with_text, filter)?.0)
+    }
+
+    /// `search_filtered`, and whether the widening stopped at its bound with fewer than `k`.
+    pub fn search_filtered_bounded(&mut self, query: &str, k: usize, with_text: bool, filter: &crate::filter::Compiled) -> Result<(Vec<Hit>, bool)> {
         let files = if filter.has_files() { self.ix.files()? } else { Vec::new() };
         let parts = self.parts(filter, &files)?;
         if parts.iter().any(Part::keeps_nothing) {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
         let narrow = self.allow_of(parts.iter().filter(|p| p.narrow()))?;
         if parts.iter().any(|p| !p.narrow()) {
@@ -654,7 +661,7 @@ impl Searcher {
             let scores = self.score(&c.x)?;
             let hits = self.hits(&c, &scores, k, with_text)?;
             if hits.len() >= k {
-                return Ok(hits);
+                return Ok((hits, false));
             }
         }
         let broad = self.allow_of(parts.iter().filter(|p| !p.narrow()))?;
@@ -662,17 +669,14 @@ impl Searcher {
             (Some(a), Some(b)) => Some(a.and(b)),
             (a, b) => a.or(b),
         };
-        let mut widen = 1;
-        loop {
+        let run = |widen: usize| -> Result<(Vec<Hit>, bool)> {
             let c = self.candidates_in(query, true, widen, Some(filter), allow.as_ref())?;
             let short = c.found[Source::Exact as usize].len() < EXACT_LIMIT * widen;
             let scores = self.score(&c.x)?;
-            let hits = self.hits(&c, &scores, k, with_text)?;
-            if hits.len() >= k || short || widen >= FILTER_WIDEN_MAX {
-                return Ok(hits);
-            }
-            widen *= FILTER_WIDEN;
-        }
+            Ok((self.hits(&c, &scores, k, with_text)?, short))
+        };
+        let ((hits, _), at_bound) = crate::ops::grow_until(1, FILTER_WIDEN, FILTER_WIDEN_MAX, run, |(hits, short), _| hits.len() >= k || *short)?;
+        Ok((hits, at_bound))
     }
 
     /// The parts of `filter`'s allow set: the files of `files` whose names it can keep, and the
@@ -721,6 +725,12 @@ impl Searcher {
 
     /// `search_many`, each phrasing searched with `search_filtered` when there is a filter.
     pub fn search_many_in(&mut self, queries: &[String], k: usize, with_text: bool, filter: Option<&crate::filter::Compiled>) -> Result<Vec<Hit>> {
+        Ok(self.search_many_bounded(queries, k, with_text, filter)?.0)
+    }
+
+    /// `search_many_in`, and whether a filtered search of one query stopped at its bound.
+    pub fn search_many_bounded(&mut self, queries: &[String], k: usize, with_text: bool, filter: Option<&crate::filter::Compiled>) -> Result<(Vec<Hit>, bool)> {
+        let mut at_bound = false;
         let mut fused: HashMap<i64, f64> = HashMap::new();
         let mut meta: HashMap<i64, Hit> = HashMap::new();
         let mut first_seen: Vec<i64> = Vec::new();
@@ -729,7 +739,11 @@ impl Searcher {
                 anyhow::bail!("cancelled");
             }
             let found = match filter {
-                Some(f) => self.search_filtered(q, 30, false, f)?,
+                Some(f) => {
+                    let (found, bound) = self.search_filtered_bounded(q, 30, false, f)?;
+                    at_bound |= bound;
+                    found
+                }
                 None => self.search(q, 30, false)?,
             };
             for (r, h) in found.into_iter().enumerate() {
@@ -754,7 +768,7 @@ impl Searcher {
         if with_text {
             self.fill_text(&mut out)?;
         }
-        Ok(out)
+        Ok((out, at_bound))
     }
 
     // ----------------------------------------------------------------- navigation

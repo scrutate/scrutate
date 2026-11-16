@@ -207,3 +207,43 @@ fn a_kind_finds_a_definition_past_100000_of_the_name() {
     assert!(json.contains("zz/last.py"), "{json}");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A filtered search answers k when k pass, or says it stopped: a kind that holds about a sixth of
+/// the chunks, too many to narrow the pools at once, and ten classes whose text holds the query
+/// only in their bodies, behind 5,000 functions named by it, are found.
+#[test]
+fn a_filtered_search_short_at_its_bound_says_so() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_search_bound_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    for i in 0..500 {
+        let body: String = (0..10).map(|k| format!("def token_{i}_{k}():\n    return \"token {i} {k}\"\n\n\n")).collect();
+        fs::write(root.join(format!("f{i}.py")), body).unwrap();
+    }
+    for i in 0..100 {
+        let body: String = (0..10).map(|k| format!("class Plain{i}x{k}:\n    v = {k}\n\n\n")).collect();
+        fs::write(root.join(format!("c{i}.py")), body).unwrap();
+    }
+    let body: String = (0..10).map(|k| format!("class Holder{k}:\n    v = \"token\"\n\n\n")).collect();
+    fs::write(root.join("holders.py"), body).unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    run(&["index"]);
+    let v: Value = serde_json::from_str(&run(&["search", "token", "--kind", "class", "-k", "10", "--json"])).unwrap();
+    let found = v["result"].as_array().map_or(0, Vec::len);
+    assert!(found == 10 || !v["stopped_at"].is_null(), "{found} results and no stopped_at: {v}");
+    let text = run(&["search", "token", "--kind", "class", "-k", "10"]);
+    assert!(found == 10 || text.contains("stopped at"), "{text}");
+    eprintln!("filtered search at its bound: {found} of 10");
+    let _ = fs::remove_dir_all(&root);
+}

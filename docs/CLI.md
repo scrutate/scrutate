@@ -333,7 +333,9 @@ comma-separated list. The values of one flag are any of them; every flag given m
 An unknown type, language or kind is an error that says where the names are listed. `search`
 returns `-k` results whenever that many pass: a filter that keeps an eighth of the files or the
 definitions or fewer draws the lexical and semantic candidates from those alone, and a broader
-one filters a first search's candidates, then draws them from what it keeps when too few pass. A
+one filters a first search's candidates, then draws them from what it keeps when too few pass,
+widening the candidates up to 64 times their usual number; an answer still short of `-k` there
+says so. A
 kind no definition has, or a filter that keeps no file, answers at once. `symbol`'s filters narrow inside the name lookup, so `--limit` counts only what they keep; when
 no definition has the name, the near matches are ranked before the filters see them, so they are
 read again until `--limit` pass, up to 100,000, and an answer stopped there says so. `refs`

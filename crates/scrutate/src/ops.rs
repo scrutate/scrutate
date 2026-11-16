@@ -1421,7 +1421,18 @@ const SCOPED_REFS_MAX: usize = 100_000;
 
 /// `fetch(n)` with `n` from `start` growing four times a round, until `done(answer, n)` or `n`
 /// reaches `max`. -> (the last answer, whether `max` ended the read before `done`)
-fn read_until<T>(start: usize, max: usize, mut fetch: impl FnMut(usize) -> Result<T>, done: impl Fn(&T, usize) -> bool) -> Result<(T, bool)> {
+fn read_until<T>(start: usize, max: usize, fetch: impl FnMut(usize) -> Result<T>, done: impl Fn(&T, usize) -> bool) -> Result<(T, bool)> {
+    grow_until(start, 4, max, fetch, done)
+}
+
+/// `read_until` growing `factor` times a round.
+pub(crate) fn grow_until<T>(
+    start: usize,
+    factor: usize,
+    max: usize,
+    mut fetch: impl FnMut(usize) -> Result<T>,
+    done: impl Fn(&T, usize) -> bool,
+) -> Result<(T, bool)> {
     let mut n = start.clamp(1, max.max(1));
     loop {
         let got = fetch(n)?;
@@ -1431,7 +1442,7 @@ fn read_until<T>(start: usize, max: usize, mut fetch: impl FnMut(usize) -> Resul
         if n >= max {
             return Ok((got, true));
         }
-        n = n.saturating_mul(4).min(max);
+        n = n.saturating_mul(factor.max(2)).min(max);
     }
 }
 
@@ -1441,8 +1452,11 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
         Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().filter(|a| !a.is_empty() && *a != query).cloned());
-            let hits = if qs.len() == 1 { s.search_filtered(query, *k, *snippets, f)? } else { s.search_many_in(&qs, *k, *snippets, Some(f))? };
-            Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
+            let (hits, at_bound) =
+                if qs.len() == 1 { s.search_filtered_bounded(query, *k, *snippets, f)? } else { s.search_many_bounded(&qs, *k, *snippets, Some(f))? };
+            // the widened search stopped at its bound short of k: the answer says so
+            let stopped = (at_bound && hits.len() < *k).then_some(Stop { at: hits.len(), how: crate::search::FILTER_STOP });
+            Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped }
         }
         Op::Symbol { name, limit, exact } => {
             let want = limit.saturating_add(1);
@@ -3012,6 +3026,9 @@ mod tests {
         assert!(at_bound && got.len() == 16, "{at_bound} {}", got.len());
         let few = |n: usize| -> Result<Vec<usize>> { Ok((0..n.min(5)).collect()) };
         assert!(!read_until(1, 16, few, done).unwrap().1);
+        // the filtered search's widening: 1, 8, 64, then its bound
+        let (got, at_bound) = grow_until(1, 8, 16, rows, done).unwrap();
+        assert!(at_bound && got.len() == 16, "{at_bound} {}", got.len());
     }
 
     /// A references answer whose kind filter read up to its bound says that, not "raise
@@ -3032,23 +3049,26 @@ mod tests {
         assert!(a.json()["stopped_reason"].is_null());
     }
 
-    /// A symbol answer stopped at the bound says so in text and JSON, an empty one too.
+    /// A symbol or search answer stopped at its bound says so in text and JSON, an empty one too.
     #[test]
     fn a_symbol_answer_stopped_at_the_bound_says_so() {
-        for hits in [
-            Vec::new(),
-            vec![crate::search::Hit {
-                path: "a.py".into(),
-                name: "a0".into(),
-                qualname: "a0".into(),
-                kind: "function".into(),
-                start: 1,
-                end: 2,
-                ..Default::default()
-            }],
-        ] {
-            let a = Answer::Hits { hits, words: Vec::new(), snippet: true, stopped: Some(Stop { at: 0, how: SCOPED_SYMBOLS_STOP }) };
-            assert!(a.text().contains(SCOPED_SYMBOLS_STOP), "{}", a.text());
+        for (how, hits) in [SCOPED_SYMBOLS_STOP, crate::search::FILTER_STOP].into_iter().flat_map(|how| {
+            [
+                Vec::new(),
+                vec![crate::search::Hit {
+                    path: "a.py".into(),
+                    name: "a0".into(),
+                    qualname: "a0".into(),
+                    kind: "function".into(),
+                    start: 1,
+                    end: 2,
+                    ..Default::default()
+                }],
+            ]
+            .map(|hits| (how, hits))
+        }) {
+            let a = Answer::Hits { hits, words: Vec::new(), snippet: true, stopped: Some(Stop { at: 0, how }) };
+            assert!(a.text().contains(how), "{}", a.text());
             assert!(!a.envelope(std::path::Path::new("/r"))["stopped_at"].is_null());
         }
     }
