@@ -1585,6 +1585,17 @@ const NO_TEXT: &[(&str, &str)] = &[
     ("text/*/paths.bin", "the indexed files' paths, which a listing of the tree shows too"),
 ];
 
+/// The files under the index directory that can hold a file's text and the steps of the test
+/// below that write them: (path from the index directory, `*` as in `NO_TEXT`, the writer).
+const WRITTEN: &[(&str, &str)] = &[
+    ("answers/*.bin", "callers and dead, by the CLI and by MCP; impact and review walk callers"),
+    ("tsquery/*.bin", "tsquery and structural_search"),
+    ("index.db", "index"),
+    ("seg/*/*.npy", "index"),
+    ("text/*/*.npy", "index, index --text and grep --index"),
+    ("text/*/post.bin", "index, index --text and grep --index"),
+];
+
 /// Whether `rel` matches `pattern`, where `*` stands for any part of one name.
 fn on_list(pattern: &str, rel: &str) -> bool {
     let (p, r): (Vec<&str>, Vec<&str>) = (pattern.split('/').collect(), rel.split('/').collect());
@@ -1707,17 +1718,24 @@ fn every_index_file_that_can_hold_text_reads_as_binary() {
     drop(session);
     let dir = root.join(".scrutate");
     let mut text = Vec::new();
+    let mut found: Vec<String> = Vec::new();
     for e in ignore::WalkBuilder::new(&dir).standard_filters(false).build().flatten() {
         if !e.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
         let rel = e.path().strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
+        found.push(rel.clone());
         let mut head = Vec::new();
         std::io::Read::read_to_end(&mut std::io::Read::take(fs::File::open(e.path()).unwrap(), 1024), &mut head).unwrap();
         if !head.contains(&0) && !NO_TEXT.iter().any(|(pattern, _)| on_list(pattern, &rel)) {
             text.push(format!("{rel}: {:?}", String::from_utf8_lossy(&head[..head.len().min(80)])));
         }
     }
+    // each kind the check covers was written: a writer that went quiet would leave it nothing
+    let kinds: Vec<(&str, &str, usize)> = WRITTEN.iter().chain(NO_TEXT).map(|(p, w)| (*p, *w, found.iter().filter(|r| on_list(p, r)).count())).collect();
+    eprintln!("checked {} index files: {}", found.len(), kinds.iter().map(|(p, _, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", "));
+    let none: Vec<String> = kinds.iter().filter(|k| k.2 == 0).map(|(p, w, _)| format!("{p} ({w})")).collect();
+    assert!(none.is_empty(), "no file of these kinds was written, so nothing of them was checked: {}", none.join(", "));
     assert!(text.is_empty(), "index files that read as text:\n{}", text.join("\n"));
     let _ = fs::remove_dir_all(&root);
 }
