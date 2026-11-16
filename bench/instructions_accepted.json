@@ -1,10 +1,10 @@
 {
  "startup/no match": {
   "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
-  "limit": 1.02,
+  "limit": 1.03,
   "since": "2026-11-16",
-  "audit": "R3X-17a",
-  "reason": "what 0.1.0 adds at start: 1,209,775 -> 1,226,735 instructions (1.0140) from e7d6c9d9 to 54ac083c, measured on the AWS build box; one commit over 0.25% (e043cd1e, Names::tie, +0.36%), the rest in steps under 3 K instructions each"
+  "audit": "R3X-17a; R3X-17b",
+  "reason": "what 0.1.0 adds at start, on top of what code layout and the environment move: 0.1.0 adds 1,209,775 -> 1,226,735 instructions (1.0140) from e7d6c9d9 to 54ac083c on the AWS build box (R3X-17a; one commit over 0.25%, e043cd1e, Names::tie, +0.36%), and 1.0177 for CI's own binaries of e7d6c9d9 and f62168a1 counted on one box (1,175,197 -> 1,195,956; the runner gave 1.0228). Layout: every 8th commit of f7475149..f62168a1 built on box 2 counts 1,200,182, 1,198,609, 1,201,229, 1,201,333, 1,197,269, 1,193,646, 1,200,200, 1,193,600, 1,197,989, a band of 1,193,600 to 1,201,333 (0.64%) with no step that holds, and two builds of one commit are byte-identical. Path and environment: one binary counts 1,197,368, 1,199,169 at another path and 1,197,989 with a longer environment. The limit is their sum rounded up"
  },
  "binheavy/literal": {
   "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
