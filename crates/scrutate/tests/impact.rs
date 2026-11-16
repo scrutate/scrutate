@@ -638,9 +638,11 @@ fn with_git_dir_alone_a_subdirectory_answers_as_the_root_and_another_repository_
     // the global configuration it names no tree, git takes the root, and the guard refuses
     let m = modules.to_str().unwrap();
     t.git(&["--git-dir", m, "config", "--unset", "core.worktree"]);
+    // written by git, which quotes the path for its own syntax (a Windows path's backslashes)
     let elsewhere = |what: &str| {
         let p = t.root.with_file_name(format!("impact_worktree_{what}_{}", std::process::id()));
-        fs::write(&p, format!("[core]\n\tworktree = {}\n", t.root.join("sub").display())).unwrap();
+        let _ = fs::remove_file(&p);
+        t.git(&["config", "-f", p.to_str().unwrap(), "core.worktree", t.root.join("sub").to_str().unwrap()]);
         p
     };
     let included = elsewhere("included");
