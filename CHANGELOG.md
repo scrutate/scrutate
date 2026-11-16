@@ -368,7 +368,7 @@ incompatible index by itself, and that is never breaking.
   asking what it changes", exit 2), as `impact --staged` did, where it named the conflict-marked
   text as an edit.
 - `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_GREP_DEBUG`, `SCRUTATE_WATCH_DEBUG`
-  and `SCRUTATE_PROFILE` are off for `false`, `no` and `off` as for `0` or empty, as every other
+  and `SCRUTATE_PROFILE` are off for `false`, `f`, `no`, `n` and `off` as for `0` or empty, as every other
   on/off variable is, where `SCRUTATE_NO_SESSION=false` turned the use of a running `serve` off,
   `SCRUTATE_SESSION_DEBUG=off` turned its lines on and `SCRUTATE_PROFILE=0` printed timings
   ([CLI](docs/CLI.md#conventions)).
@@ -1459,7 +1459,7 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - Unified `find`, MCP server (19 tools), configuration files with environment-variable
   precedence, shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
-- On/off environment variables are off for `0`, `false`, `no`, `off` or empty; `NO_COLOR` turns
+- On/off environment variables are off for `0`, `false`, `f`, `no`, `n`, `off` or empty; `NO_COLOR` turns
   colour off for any non-empty value.
 - One definition of every index operation for the CLI, the MCP server, `batch` and the Python
   bindings (`ops.rs`); `batch` runs any operation by name.

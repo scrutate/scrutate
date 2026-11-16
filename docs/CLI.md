@@ -100,8 +100,8 @@
   `config` and `completions` still run. `[[language]]` tables add languages
   ([below](#custom-languages)). Precedence: command line > environment variable > configuration
   file > built-in default. Every configurable option names its variable in `--help` (e.g.
-  `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`, `false`, `no`, `off`
-  or empty, on otherwise (`1`, `true`, `yes`, `on`). `--root` (`SCRUTATE_ROOT`) must be an
+  `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`, `false`, `f`, `no`, `n`,
+  `off` (in any case) or empty, on otherwise (`1`, `true`, `yes`, `on`). `--root` (`SCRUTATE_ROOT`) must be an
   existing directory for a command that opens the index (`grep --index` and `--symbols` among
   them), else it exits 2 and creates nothing; `grep` with paths does not use it.
 - **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
