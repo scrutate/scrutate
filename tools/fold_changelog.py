@@ -47,29 +47,30 @@ def fold(changelog: str, summary: str, version: str, date: str, repo: str) -> tu
     heads = [i for i, line in enumerate(lines) if line.startswith("## ")]
     unrel = next((i for i in heads if re.match(r"^## \[?unreleased\]?\s*$", lines[i], re.I)), None)
     ver = next((i for i in heads if re.match(rf"^## \[{re.escape(version)}\]", lines[i])), None)
-    if unrel is None or ver is None or ver < unrel:
-        raise SystemExit(f"CHANGELOG.md needs `## [Unreleased]` above `## [{version}]`")
-    end = next((i for i in heads if i > ver), len(lines))
+    if unrel is None or ver is not None and ver < unrel:
+        raise SystemExit(f"CHANGELOG.md needs `## [Unreleased]`, above `## [{version}]` if it has one")
+    # a version without a section of its own (every release after the first) folds Unreleased alone
+    stop = ver if ver is not None else next((i for i in heads if i > unrel), len(lines))
+    end = next((i for i in heads if i > ver), len(lines)) if ver is not None else stop
     refs = [line for line in lines if LINK_REF.match(line)]
-    unreleased = trim([line for line in lines[unrel + 1:ver] if not LINK_REF.match(line)])
-    old = trim([line for line in lines[ver + 1:end] if not LINK_REF.match(line)])
+    unreleased = trim([line for line in lines[unrel + 1:stop] if not LINK_REF.match(line)])
+    old = trim([line for line in lines[ver + 1:end] if not LINK_REF.match(line)]) if ver is not None else []
+    stood = (f"then its section as it stood ({lines[ver][3:]})." if ver is not None else "").strip()
     later = trim([line for line in lines[end:] if not LINK_REF.match(line)])
     full = [
         f"# Every change in {version}",
         "",
         f"The full list behind the {version} section of [CHANGELOG.md](../../CHANGELOG.md), moved here",
         "verbatim when the release was folded: the entries written under Unreleased while it was",
-        f"prepared, then its section as it stood ({lines[ver][3:]}).",
+        f"prepared{', ' + stood if stood else '.'}",
         "",
         f"## Written under Unreleased before {version}",
         "",
         *rebase("\n".join(unreleased), "", "docs/changes").split("\n"),
         "",
-        f"## {lines[ver][3:]}",
-        "",
-        *rebase("\n".join(old), "", "docs/changes").split("\n"),
-        "",
     ]
+    if ver is not None:
+        full += [f"## {lines[ver][3:]}", "", *rebase("\n".join(old), "", "docs/changes").split("\n"), ""]
     described = trim(re.sub(r"<!--.*?-->", "", summary, flags=re.S).split("\n"))
     section = [
         f"## [{version}] - {date}",

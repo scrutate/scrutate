@@ -62,3 +62,25 @@ def test_nothing_is_deleted_and_a_second_fold_is_refused(folded):
     assert [line for line in kept if line not in moved] == []
     with pytest.raises(SystemExit, match="folded already"):
         F.main([VERSION, DATE, "--root", str(folded)])
+
+
+def test_a_release_after_the_first_folds_from_unreleased_alone(folded):
+    # after 0.1.0, the next release's entries go under Unreleased and it has no section of its own
+    path = folded / "CHANGELOG.md"
+    after = read(path).replace("## [Unreleased]\n", "## [Unreleased]\n\n### Added\n- `grep --frob` frobs ([CLI](docs/CLI.md)).\n", 1)
+    path.write_text(after, encoding="utf-8")
+    (folded / "docs/changes/0.2.0-summary.md").write_text("A second release.\n\n### Added\n- Frobbing ([CLI](../CLI.md)).\n", encoding="utf-8")
+    assert F.main(["0.2.0", "2026-12-15", "--root", str(folded)]) == 0
+    changelog = read(path)
+    heads = [line for line in changelog.split("\n") if line.startswith("## ")]
+    assert heads[:3] == ["## [Unreleased]", "## [0.2.0] - 2026-12-15", f"## [{VERSION}] - {DATE}"]
+    notes, problems = R.notes(changelog, "0.2.0")
+    assert problems == [] and "Frobbing" in notes and "grep --frob" not in notes
+    assert R.notes(changelog, VERSION)[1] == [], "the earlier release's section stays as it was"
+    full = read(folded / "docs/changes/0.2.0.md")
+    assert "`grep --frob` frobs ([CLI](../CLI.md))" in full and f"## [{VERSION}]" not in full
+    assert changelog.rstrip("\n").split("\n")[-3:] == [
+        f"[{VERSION}]: https://github.com/scrutate/scrutate/releases/tag/v{VERSION}",
+        "[Unreleased]: https://github.com/scrutate/scrutate/compare/v0.2.0...HEAD",
+        "[0.2.0]: https://github.com/scrutate/scrutate/releases/tag/v0.2.0",
+    ]
