@@ -1824,18 +1824,25 @@ mod tests {
         println!("{marks} marks in {lines} lines: {:.3} per 10,000", marks as f64 * 10_000.0 / lines.max(1) as f64);
     }
 
+    /// docs/SECURITY.md says how many rules there are, where it gives what building them costs.
+    #[test]
+    fn the_security_doc_counts_the_rules_there_are() {
+        let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/SECURITY.md")).unwrap();
+        let counted: Vec<usize> = Regex::new(r"of the (\d+)\s+rules").unwrap().captures_iter(&doc).map(|c| c[1].parse().unwrap()).collect();
+        assert!(!counted.is_empty(), "SECURITY.md no longer counts the rules");
+        assert!(counted.iter().all(|&n| n == RULES.len()), "SECURITY.md counts {counted:?} rules, there are {}", RULES.len());
+    }
+
     /// What redaction costs on the largest page an answer shows (24,000 bytes), as `text_page`
     /// redacts it: line by line before the budget pages it, then the page once more (release
     /// build: `tools/secret_redactions.py`).
     #[test]
     #[ignore = "a timing"]
     fn the_cost_of_redacting_large_answers() {
-        let src: String = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-            .unwrap()
-            .flatten()
-            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
-            .collect::<Vec<_>>()
-            .concat();
+        // in name order: read_dir's order differs by filesystem, and so would the page
+        let mut files: Vec<_> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap().flatten().map(|e| e.path()).collect();
+        files.sort();
+        let src: String = files.iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect::<Vec<_>>().concat();
         let page = &src[..src.floor_char_boundary(24_000)];
         let t0 = std::time::Instant::now();
         LazyLock::force(&RULES);

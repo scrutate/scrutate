@@ -542,11 +542,13 @@ it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `
 `private-key` 37): the private keys are the test keys the kernel ships, and the other 162, 0.037
 per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files,
 none (a test holds it there). A rule's regex is built the first time a text holds one of its
-keywords, so a process pays for the rules its answers need: about 0.3 ms before any text, and
-about 1 ms more for a 24,000-byte page of this repository's source, which needs 3 of the 31 rules,
-on an Apple M3 Pro and on a 16-vCPU x86 server (0.2 to 0.4 ms and 0.9 to 1.5 ms in three runs
-each, load 9 to 18). A text that needs every rule pays what building them all costs, 7 to 9 ms
-and 10 to 13 ms. Redacting the page then takes 0.29 ms and 0.36 to 0.46 ms (medians of 101 runs).
+keywords, so a process pays for the rules its answers need. The page measured is the first 24,000
+bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 5 of the 32
+rules. On a 16-vCPU AMD EPYC 9R14 server (three runs, load 6), a process takes 0.3 ms before any
+text and 2.1 ms more for that page; a text that needs every rule pays what building them all costs,
+10.3 ms. Redacting the page again then takes 0.45 ms (median of 101 runs). The source a page holds
+changes which rules it needs; `cargo test --release -p scrutate --lib the_cost_of_redacting --
+--ignored --nocapture` measures it again.
 
 `tests/secrets.rs` plants three secrets of each kind (a `.env`, private keys with a last line
 shorter than any rule for base64 alone, a typed Rust constant, a line too long to show whole and a
