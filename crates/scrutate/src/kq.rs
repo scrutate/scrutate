@@ -82,6 +82,9 @@ pub(crate) struct Registry {
     open: usize,
     budget: usize,
     dev: u64,
+    /// files whose watch the system refused for want of the user's access: no note comes for
+    /// them, so each drain tries again
+    shut: std::collections::BTreeSet<PathBuf>,
 }
 
 /// The descriptors this process may open: the soft limit raised to what the system allows a
@@ -127,7 +130,7 @@ impl Registry {
         let kq = unsafe { OwnedFd::from_raw_fd(fd) };
         let dev = std::fs::metadata(root).map_err(|_| Off::Refused)?.dev();
         let budget = budget.unwrap_or_else(|| (descriptor_limit() / 2).saturating_sub(RESERVE));
-        Ok(Registry { kq, entries: Vec::new(), by_path: HashMap::new(), open: 0, budget, dev })
+        Ok(Registry { kq, entries: Vec::new(), by_path: HashMap::new(), open: 0, budget, dev, shut: Default::default() })
     }
 
     /// The watches in place.
@@ -149,8 +152,17 @@ impl Registry {
         if fd < 0 {
             let e = std::io::Error::last_os_error();
             // gone already: the directory's note says so
-            return if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(refused(&e)) };
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return Ok(());
+            }
+            // a file the user cannot read has no text to keep fresh until it can be read
+            if !dir && matches!(e.raw_os_error(), Some(libc::EACCES | libc::EPERM)) {
+                self.shut.insert(path.to_path_buf());
+                return Ok(());
+            }
+            return Err(refused(&e));
         }
+        self.shut.remove(path);
         // SAFETY: a descriptor open just returned, owned from here on
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
         let i = match self.by_path.get(path) {
@@ -299,6 +311,13 @@ impl Registry {
     /// files of a watched directory are watched before they are named.
     pub(crate) fn drain(&mut self, keep: &dyn Fn(&Path) -> bool) -> Result<Vec<Change>, Off> {
         let mut out = Vec::new();
+        // one open each: a file whose access came back is watched and named from now on
+        for path in std::mem::take(&mut self.shut) {
+            self.add(&path, false)?;
+            if self.by_path.get(&path).is_some_and(|&i| self.entries[i].fd.is_some()) {
+                out.push(Change::Modified(path));
+            }
+        }
         let mut dirs = Vec::new();
         for (i, flags) in self.drain_raw()? {
             let Some(e) = self.entries.get(i) else { continue };

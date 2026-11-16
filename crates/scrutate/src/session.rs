@@ -2956,6 +2956,26 @@ mod tests {
         s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty())
     }
 
+    /// A file the user cannot read leaves the kqueue in place for the rest of the tree, and is
+    /// seen once it can be read.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_the_user_cannot_read_leaves_the_kqueue_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, s) = kqueue_in_place("kq_unreadable");
+        let shut = root.join("src/shut.py");
+        std::fs::write(&shut, "def shut_away():\n    return 0\n").unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        watching_by_kqueue(&s);
+        std::fs::write(root.join("src/a.py"), "def made_a_1():\n    return 1\n").unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "made_a_1".into(), limit: 1, exact: true }).unwrap();
+        assert!(a.is_ok_and(|a| !a.is_empty()) && st.files_looked == 1, "named by the kqueue alone: {st:?}");
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(found(&s, "shut_away"), "the file once it can be read");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A symlink that becomes a file at its path (as `git checkout` does when a path stops being
     /// a link) is a new file to the next read.
     #[cfg(target_os = "macos")]
