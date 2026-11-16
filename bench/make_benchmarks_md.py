@@ -30,6 +30,12 @@ TOOL_ORDER = ["scrutate", "rg", "grep", "git", "ugrep", "ack", "ag"]
 LABEL = {"scrutate": "scrutate", "rg": "ripgrep", "grep": "GNU grep", "git": "git grep", "ugrep": "ugrep", "ack": "ack", "ag": "ag"}
 
 
+def build_header(rows: list[dict]) -> str:
+    """The index build column's name: from scratch, with the page cache dropped only when every row's was."""
+    cache = "page cache dropped" if rows and all(r.get("page_cache_dropped") for r in rows) else "warm page cache"
+    return f"Index build s (from scratch, {cache})"
+
+
 def fmt_ms(v):
     return "-" if v is None else (f"{v:,.0f}" if v >= 100 else f"{v:.1f}")
 
@@ -198,7 +204,7 @@ def main() -> int:
     # index
     if d.get("index"):
         w("## Engine B: index build, size and query latency\n")
-        w("| Corpus | Files | Lines | Corpus MB | Index build s (cold) | peak RSS MB | no-op update s | 1-file edit update s | Index MB | Index/corpus | ranked search p50 / p95 ms (in-process) | `scrutate search` whole process ms (warm / cold) |")
+        w(f"| Corpus | Files | Lines | Corpus MB | {build_header(d['index'])} | peak RSS MB | no-op update s | 1-file edit update s | Index MB | Index/corpus | ranked search p50 / p95 ms (in-process) | `scrutate search` whole process ms (warm / cold) |")
         w("|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in d["index"]:
             p = f"{r['search_p50_ms']:.1f} / {r['search_p95_ms']:.1f}" if "search_p50_ms" in r else "-"

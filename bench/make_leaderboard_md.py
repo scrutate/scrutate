@@ -297,6 +297,11 @@ def engine_a(data, label):
     return out
 
 
+def throughput_runs(st: dict) -> int:
+    """How many throughput runs the settings name; a file from before `--throughput-runs` ran three."""
+    return st.get("throughput_runs", 3)
+
+
 def indexed(data, label):
     others = [t for t in data["tools"] if t != "scrutate"]
     out = [f"## Engine B: indexed search against {' and '.join(others)}: {label}\n"]
@@ -305,7 +310,7 @@ def indexed(data, label):
     st = data["settings"]
     out.append(f"- Method: {st['index_runs']} full index builds and {st['index_runs']} incremental updates (100 files edited) per tool; "
                f"{st['runs']} runs of each of {st['queries']} queries, round-robin across tools, each in a fresh process; "
-               f"{st['concurrency']} concurrent clients for {st['seconds']:.0f} s, three times, for throughput.")
+               f"{st['concurrency']} concurrent clients for {st['seconds']:.0f} s, {throughput_runs(st)} times, for throughput.")
     out.append("- Versions: " + "; ".join(f"{t}: `{v['version']}`" for t, v in data["tools"].items()) + ".\n")
     out.append("| Metric | " + " | ".join(data["tools"]) + " |")
     out.append("|---|" + "---|" * len(data["tools"]))

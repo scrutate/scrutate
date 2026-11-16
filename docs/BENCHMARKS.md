@@ -156,7 +156,7 @@ ast-grep parses every file with tree-sitter on each run; scrutate's `tsquery` ra
 
 ## Engine B: index build, size and query latency
 
-| Corpus | Files | Lines | Corpus MB | Index build s (cold) | peak RSS MB | no-op update s | 1-file edit update s | Index MB | Index/corpus | ranked search p50 / p95 ms (in-process) | `scrutate search` whole process ms (warm / cold) |
+| Corpus | Files | Lines | Corpus MB | Index build s (from scratch, warm page cache) | peak RSS MB | no-op update s | 1-file edit update s | Index MB | Index/corpus | ranked search p50 / p95 ms (in-process) | `scrutate search` whole process ms (warm / cold) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | small | 598 | 199,721 | 7 | 0.4 | 368 | 0.02 | 0.06 | 19 | 2.64× | - | - |
 | big | 6,817 | 3,016,971 | 122 | 5.2 | 824 | 0.06 | 0.12 | 287 | 2.34× | - | - |

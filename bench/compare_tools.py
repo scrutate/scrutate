@@ -540,8 +540,8 @@ def bench_index(corpora: dict, runs: int, cold: bool) -> list[dict]:
     qfile = os.path.join(WORK, "bench", "queries", "networkx.json")
     for cname, cdir in corpora.items():
         shutil.rmtree(os.path.join(cdir, ".scrutate"), ignore_errors=True)
-        if cold:
-            drop_caches()
+        # macOS has no /proc: there a cold run builds with a warm page cache all the same
+        dropped = drop_caches() if cold else False
         t0 = time.perf_counter()
         build_rss = peak_rss_mb([SCRUTATE, "index"], cdir)
         build_s = time.perf_counter() - t0
@@ -573,6 +573,7 @@ def bench_index(corpora: dict, runs: int, cold: bool) -> list[dict]:
                 size += os.path.getsize(os.path.join(dp, fn))
         cs = corpus_stats(cdir)
         row = {"corpus": cname, "files": cs["files"], "lines": cs["lines"], "corpus_mb": cs["bytes"] / 1e6, "index_build_s": build_s,
+               "page_cache_dropped": dropped,
                "index_build_maxrss_mb": build_rss, "index_noop_s": noop_s, "index_incremental_s": inc_s, "index_mb": size / 1e6,
                "index_ratio": size / max(cs["bytes"], 1)}
         # ranked search latency: in-process timings over the benchmark queries

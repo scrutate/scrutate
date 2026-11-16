@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "bench"))
 import gen_doc_assets as D  # noqa: E402
 import make_leaderboard_md as L  # noqa: E402
+import make_benchmarks_md as B  # noqa: E402
 
 ROOT = os.path.join(HERE, "..", "..")
 
@@ -57,3 +58,13 @@ def test_a_reworded_count_sentence_fails_rather_than_drop_out():
     readme, board = page("README.md"), page("docs/LEADERBOARD.md")
     problems = D.readme_count_problems(readme.replace("leads Zoekt and livegrep on all 8 indexed metrics", "leads Zoekt and livegrep everywhere"), board)
     assert len(problems) == 1 and problems[0].startswith("README.md: no sentence matches"), problems
+
+
+def test_the_generators_take_their_words_from_the_run_they_print():
+    # an index build is "cold" only when the run dropped the page cache for every row
+    assert B.build_header([{"page_cache_dropped": True}, {"page_cache_dropped": True}]) == "Index build s (from scratch, page cache dropped)"
+    assert B.build_header([{"page_cache_dropped": True}, {"page_cache_dropped": False}]) == "Index build s (from scratch, warm page cache)"
+    assert B.build_header([{}]) == "Index build s (from scratch, warm page cache)"
+    # the throughput line names the runs the settings hold; a file from before the option ran three
+    assert L.throughput_runs({"throughput_runs": 10}) == 10
+    assert L.throughput_runs({}) == 3

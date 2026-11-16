@@ -1029,7 +1029,7 @@ scrutate --index scrutate grep --index -F -e zqxjkvbw_never_present_symbol
 ## Engine B: indexed search against zoekt: macos-arm64
 
 - Hardware: Apple M3 Pro, 11 logical CPUs; macOS-27.2.1-arm64-arm-64bit. Corpus: `linux-nodot`.
-- Method: 5 full index builds and 5 incremental updates (100 files edited) per tool; 20 runs of each of 20 queries, round-robin across tools, each in a fresh process; 11 concurrent clients for 15 s, three times, for throughput.
+- Method: 5 full index builds and 5 incremental updates (100 files edited) per tool; 20 runs of each of 20 queries, round-robin across tools, each in a fresh process; 11 concurrent clients for 15 s, 3 times, for throughput.
 - Versions: scrutate: `scrutate 0.1.0`; zoekt: `zoekt v0.0.0-20261103080450-a5a933bc043e`.
 
 | Metric | scrutate | zoekt |
@@ -1059,7 +1059,7 @@ scrutate --index scrutate grep --index -F -e zqxjkvbw_never_present_symbol
 ## Engine B: indexed search against zoekt and livegrep: linux-aarch64
 
 - Hardware: a Linux virtual machine on the Apple M3 Pro above, one virtual CPU per performance core, 5 logical CPUs; Linux-6.8.0-117-generic-aarch64-with-glibc2.39. Corpus: `linux-nodot`.
-- Method: 5 full index builds and 5 incremental updates (100 files edited) per tool; 20 runs of each of 20 queries, round-robin across tools, each in a fresh process; 5 concurrent clients for 15 s, three times, for throughput.
+- Method: 5 full index builds and 5 incremental updates (100 files edited) per tool; 20 runs of each of 20 queries, round-robin across tools, each in a fresh process; 5 concurrent clients for 15 s, 3 times, for throughput.
 - Versions: scrutate: `scrutate 0.1.0`; zoekt: `zoekt v0.0.0-20261103080450-a5a933bc043e`; livegrep: `livegrep 923d5ad71dfe60900e6c2017b2fa4a5ff902ad71`.
 
 | Metric | scrutate | zoekt | livegrep |
