@@ -5193,5 +5193,10 @@ public class Main extends Base {
         assert_eq!(Resolver::rust_mod_dir("src/a/b.rs"), "src/a/b");
         assert_eq!(Resolver::rust_mod_dir("src/a/mod.rs"), "src/a");
         assert_eq!(cargo_package_name("[workspace]\nname = \"no\"\n[package]\nname = \"grep-matcher\"\n"), Some("grep-matcher".into()));
+        assert_eq!(cargo_package_name("[package]\nname = \"grep-cli\"  # cli helpers\n"), Some("grep-cli".into()));
+        assert_eq!(cargo_package_name("[package]\nname = 'foo'\n"), Some("foo".into()));
+        assert_eq!(cargo_package_name("[package] # x\nname = \"bar\"\n"), Some("bar".into()));
+        assert_eq!(cargo_package_name("[package]\nname = \"baz-pkg\"\n[lib]\nname = \"baz\"\n"), Some("baz".into()));
+        assert_eq!(cargo_package_name("[package\nname = \"broken\"\n"), None);
     }
 }
