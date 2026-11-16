@@ -34,6 +34,14 @@ incompatible index by itself, and that is never breaking.
   with at most `| head` or `| tail` after it. `setup claude --hook` adds it beside the Grep hook,
   `setup codex --hook` to `$CODEX_HOME/hooks.json`; `hook stats` counts its searches apart;
   `SCRUTATE_HOOK_BASH=off` turns it off ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `hook run` refuses, before anything runs, a `grep` or `rg` that could read a file of
+  scrutate's index, decided by file identity, with a line naming the path; a search too wide to
+  check that way (over 1,000,000 entries or 5 seconds) is refused with a line asking for narrower
+  paths ([Security](docs/SECURITY.md)).
+- Searches through `hook run` run with colour off, and an `rg` with `--json` or `--replace`
+  (`-r`) is refused, pointing at `scrutate grep --json`, which gives JSON with secrets redacted.
+- What `hook run` adds to an `rg` goes before the `--` that really ends its flags, read as `rg`
+  reads them, so it always stays a flag.
 - `read --symbol NAME --history [N]` and the MCP `read_code` tool's `history` list the last
   commits that changed each definition's lines, newest first, through renames and uncommitted
   edits, for the first 10 definitions shown; in a shallow clone it marks where the history is
