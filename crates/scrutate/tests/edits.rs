@@ -429,3 +429,36 @@ fn a_definition_with_a_prefix_on_its_line_is_edited() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// An edit of a file's first definition keeps the file's UTF-8 byte-order mark, which lies on the
+/// definition's first line but is no part of it; an edit of a later one leaves it as it was, and a
+/// `new_text` that starts with one gets none of its own.
+#[test]
+fn an_edit_keeps_the_byte_order_mark_and_never_doubles_it() {
+    const BOM: &str = "\u{feff}";
+    let py = "def first():\n    return 1\n\n\ndef second():\n    return 2\n";
+    let ts = "function first() {\n  return 1;\n}\n\nfunction second() {\n  return 2;\n}\n";
+    let cs = "class First {\n  int F() { return 1; }\n}\n\nclass Second {\n  int G() { return 2; }\n}\n";
+    let cases = [
+        ("a.py", py, "first", "def first():\n    return 9\n".to_string(), py.replace("return 1", "return 9")),
+        ("a.ts", ts, "first", "function first() {\n  return 9;\n}\n".to_string(), ts.replace("return 1", "return 9")),
+        ("a.cs", cs, "First", "class First {\n  int F() { return 9; }\n}\n".to_string(), cs.replace("return 1", "return 9")),
+        ("b.py", py, "second", "def second():\n    return 9\n".to_string(), py.replace("return 2", "return 9")),
+        ("c.py", py, "first", format!("{BOM}def first():\n    return 9\n"), py.replace("return 1", "return 9")),
+    ];
+    let mut failed = Vec::new();
+    for (file, text, name, new_text, want) in cases {
+        let mut s = Server::start(&format!("bom_{}", file.replace('.', "_")), &[(file, &format!("{BOM}{text}"))], &["--allow-edits"]);
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file} dry run: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        let got = s.file(file);
+        if err || got != format!("{BOM}{want}") {
+            failed.push(format!("{file} apply ({err}): {out}\n{got:?}"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

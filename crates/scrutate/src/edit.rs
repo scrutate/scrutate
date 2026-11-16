@@ -149,19 +149,21 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let starts: Vec<usize> = std::iter::once(0).chain(old.match_indices('\n').map(|(i, _)| i + 1)).collect();
     let line_at = |l: i64| starts.get((l - 1) as usize).copied().unwrap_or(old.len());
     let (a, b) = (line_at(target.start), line_at(target.end + 1));
+    // a byte-order mark opens the file, not its first definition
+    let a = if a == 0 && old.starts_with('\u{feff}') { '\u{feff}'.len_utf8() } else { a };
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&(spec.language)())?;
     let Some(t0) = parser.parse(&old, None) else { bail!("{rel} did not parse") };
     // whole lines are replaced, so other code on the first or the last of them would go with them
     if let Some((from, to)) = target.bytes.map(|r| wrapped(t0.root_node(), r, (a, b))) {
-        let before = !old[a..from.max(a)].trim_start_matches('\u{feff}').trim().is_empty();
+        let before = !old[a..from.max(a)].trim().is_empty();
         if before || !old[to.min(b)..b].trim().is_empty() {
             let line = if before { target.start } else { target.end };
             bail!("{} shares a line with other code ({rel}:{line}): edit_symbol replaces whole lines; nothing written", target.qualname);
         }
     }
     let eol = if old.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut repl = new_text.replace("\r\n", "\n");
+    let mut repl = new_text.strip_prefix('\u{feff}').unwrap_or(new_text).replace("\r\n", "\n");
     if eol == "\r\n" {
         repl = repl.replace('\n', "\r\n");
     }
