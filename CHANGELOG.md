@@ -9,6 +9,14 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- On Windows an index command uses a running `serve`'s session too, through a named pipe
+  (`\\.\pipe\scrutate-session-` and a hash of the user's SID and the root), with the bytes and exit
+  code a fresh process prints, as through the socket on Unix. Only a local process of the same
+  user, at the server's integrity level or above and not restricted or in an AppContainer, is
+  greeted; the command line in turn takes no answer from a server process or pipe of lower trust.
+  The first `serve` on a root holds the name, which goes with the process, or when the root's
+  link moves to another tree, once the calls in flight end ([Security](docs/SECURITY.md),
+  [ADR 0006](docs/adr/0006-the-session-on-windows.md)).
 - `serve --allow-edits` lists `edit_symbol`, which replaces one whole definition: a dry run gives
   the diff and the file's hash, and `apply: true` writes only with that hash, while the file still
   has it, and only when the new file parses and the definitions outside the edit keep their names,
