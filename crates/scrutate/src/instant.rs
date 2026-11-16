@@ -4497,6 +4497,9 @@ mod tests {
         assert_eq!(spans("abc", 1, "ab x"), [(0, 2)]);
         assert_eq!(spans("abc", 1, " bc"), [(1, 3)]);
         assert_eq!(spans("b2日", 2, "a123 b"), [(1, 4), (5, 6)]);
+        // a single character within N edits, where no longer part can end; and where one can
+        assert_eq!(spans("abc", 2, " a "), [(1, 2)]);
+        assert_eq!(spans("abc", 2, "xxaxx"), [(2, 5)]);
         // an exact occurrence is its own span, before a looser one to its left
         assert_eq!(spans("abcd", 1, "abxdabcd"), [(0, 4), (4, 8)]);
     }

@@ -33,14 +33,14 @@ What follows from it:
 - every span's own text is within N edits;
 - an exact occurrence is always its own span, never swallowed by a looser one;
 - with no edits, a literal's spans are `rg -F`'s, and a regex's are the leftmost-longest
-  matches; they differ from ripgrep's leftmost-first only where it stops short: alternation, an
-  optional part, a lazy quantifier (`a|ab` on `ab`: ours `ab`, ripgrep's `a`);
+  matches; they differ from ripgrep's leftmost-first only where it stops short: alternation, a
+  repeat's optional copies, a lazy quantifier (`a|ab` on `ab`: ours `ab`, ripgrep's `a`);
 - a line matches exactly when it has a span: dropping an edited end character never raises an
   occurrence's cost, and the empty string is never within N edits (such a pattern is refused).
 
 Cases that are stated behaviour, not defects: a fragment left beside a better span is an
 occurrence of its own (`--fuzzy=1 ab` on `aab`: `a`, then `ab`); a single character within N
-edits is a span (`--fuzzy=2 abc` on `xxaxx`: `a`).
+edits is a span (`--fuzzy=2 abc` on ` a `: `a`, where the spaces cannot be ends).
 
 **The build.** Which lines match is unchanged: `find_at` still stops at the first end, so `-c`,
 `-l`, `-q` and the line sets are what they were. A matched line's spans come from `spans`
@@ -71,6 +71,32 @@ edits, with each position's count of trailing deletions to an end worked out onc
 - A debug build asserts, where spans meet detection, that a line the matcher matched has a span.
 - Spans cost N + 1 backward passes over a matched line on top of detection; lines that only
   count or list do not pay it.
+
+## Cost, and what is not done
+
+Measured with cachegrind on the AWS build box, on the Linux tree's `kernel/` with `-j1`:
+
+- In a `--json` run the span pass is 26% of the instructions for `--fuzzy=2 return` (472.7 M of
+  1,822 M) and 30% for `--fuzzy-regex=1 'ret[a-z]*n'` (1,728 M of 5,824 M). It is what those
+  rows' ratios to the earliest-end-and-carry build pay for: 1.1554 and 1.1391. Of the 472.7 M on
+  the `return` row, 162.3 M is allocation: the list of units per line, the list of starts per
+  gap and the two columns of each forward run.
+- For a literal longer than one machine word the backward scan is Myers' recurrence over all of
+  its words: about 3,400 instructions per byte of the line per pass at 4,096 characters. On a
+  205 KB line that costs 6,782 instructions per byte beyond `-c` for 50 copies of the pattern
+  with one edit each (`-c` 55.0 M, `--json` 1,444 M, at N 1 and 2 alike), and 6,407 (N 1) to
+  9,562 (N 2) for one exact copy in noise. The forward band stays at 2c + 1 positions a
+  character; the scan is the cost.
+
+Two improvements are recorded for after 0.1.0, neither changing a span:
+
+- For a long literal, the prefilter's k + 1 pieces in place of the backward scan: an occurrence
+  within c <= k edits holds one piece exactly, so its start lies in [hit - offset - c,
+  hit - offset + c]. Those windows, merged and walked left to right with the same forward band,
+  hold every start, at a cost that goes with c and not with the pattern's length. Short patterns
+  keep the backward scan.
+- The per-line and per-gap buffers kept and reused across lines, in place of a new allocation
+  each time.
 
 ## Alternatives not taken
 
