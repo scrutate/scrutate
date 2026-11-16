@@ -1372,7 +1372,9 @@ the whole tree, reading the ignore files again, runs for a burst that:
 - renames a file to another case of its name on a disk that ignores case (macOS's default),
   where the old name still opens the file;
 - changes an ignore file (`.gitignore`, `.ignore`, `.rgignore`, `.git/info/exclude`) or
-  `.scrutate.toml`, also a rule file outside the tree: an `.ignore` or `.rgignore` in any
+  `.scrutate.toml` in a directory the walks enter (one in an ignored directory, as the
+  `.gitignore` `python3 -m venv` writes in `.venv/`, changes nothing), also a rule file outside
+  the tree: an `.ignore` or `.rgignore` in any
   directory above the root, a `.gitignore` above it up to the repository top,
   `.git/info/exclude` of each repository nested in the tree, git's global excludes file and the
   git configuration files that name it;
