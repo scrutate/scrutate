@@ -26,6 +26,10 @@ pub struct Dependency {
 /// (importing file, line, module as written)
 pub type Importer = (String, i64, String);
 
+/// The most occurrences `references` with kinds resolves to find max_results of the kept kinds,
+/// or max_results when it is larger: about nine seconds on the Linux tree.
+pub const REFS_KIND_RESOLVE_MAX: u64 = 10_000;
+
 /// One request's view of what the names of the repository refer to.
 pub struct Names<'a> {
     s: &'a Searcher,
@@ -80,7 +84,13 @@ impl<'a> Names<'a> {
     pub fn references_in(&mut self, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>) -> Result<Resolved> {
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
-        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
+        // with kinds an occurrence counts once it resolves to a definition of a kept kind, so the
+        // search reads on, resolving at most REFS_KIND_RESOLVE_MAX (or max_results when larger)
+        let kinds = scope.filter(|f| f.has_kinds());
+        let read_max = if kinds.is_some() { max_results.max(REFS_KIND_RESOLVE_MAX) } else { max_results };
+        let mut kind_of: HashMap<i64, bool> = HashMap::new();
+        let mut bounded: Option<u64>;
+        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, read_max) };
         // a name defined in a language that ignores case is looked for in any case, and kept in
         // another case only in a file of such a language
         let mut any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
@@ -109,13 +119,28 @@ impl<'a> Names<'a> {
             let mut occurrences = Vec::new();
             // Engine A stops at `max_results` lines; one long line can hold more uses than that
             let total: usize = hits.iter().map(|h| h.spans.len()).sum();
-            truncated |= total as u64 > max_results;
-            for h in hits {
+            truncated |= total as u64 > read_max;
+            let mut resolved = 0u64;
+            bounded = None;
+            'lines: for h in hits {
                 let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
                 let folds = !any_case || self.langs.folds(&h.path, "function");
                 let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
                 let lang = self.langs.id(&h.path);
-                for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
+                let room = if kinds.is_some() { usize::MAX } else { max_results.saturating_sub(occurrences.len() as u64) as usize };
+                for &(a, b) in spans.take(room) {
+                    if kinds.is_some() {
+                        // one more than max_results kept says whether the answer is cut
+                        if occurrences.len() as u64 > max_results {
+                            truncated = true;
+                            break 'lines;
+                        }
+                        if resolved >= read_max {
+                            truncated = true;
+                            bounded = Some(resolved);
+                            break 'lines;
+                        }
+                    }
                     let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
                     // `foo` in `foo'`, `init` in `$init`: part of another name of the file's language
                     if lang.is_some_and(|l| crate::ident::inside_name(l, &h.text, da, db)) {
@@ -123,8 +148,35 @@ impl<'a> Names<'a> {
                     }
                     // the occurrence as this file spells it
                     let resolution = self.tie(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare)).resolution();
+                    if let Some(f) = kinds {
+                        resolved += 1;
+                        // an occurrence of another kind is dropped as it resolves, never held
+                        let kept = match resolution {
+                            Ok((id, _)) => match kind_of.get(&id) {
+                                Some(&k) => k,
+                                None => {
+                                    let k = s.ix.chunk(id)?.is_some_and(|d| f.admits_kind(&d.kind));
+                                    kind_of.insert(id, k);
+                                    k
+                                }
+                            },
+                            Err(_) => false,
+                        };
+                        if !kept {
+                            continue;
+                        }
+                    }
                     occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
                 }
+            }
+            // the search itself stopped at the bound's lines with fewer than max_results kept
+            if kinds.is_some() && bounded.is_none() && truncated && occurrences.len() as u64 <= max_results {
+                bounded = Some(resolved);
+            }
+            // the one past max_results was kept to tell whether the answer is cut
+            if kinds.is_some() && occurrences.len() as u64 > max_results {
+                occurrences.truncate(max_results as usize);
+                truncated = true;
             }
             let alias = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if s.ix.chunk(id).ok().flatten().is_some_and(|d| d.name != *bare));
             if any_case || !bare.is_ascii() || !occurrences.iter().any(|o| self.langs.folds(&o.path, "function") && alias(o)) {
@@ -227,7 +279,7 @@ impl<'a> Names<'a> {
                 }
             }
         }
-        Ok(Resolved { definitions, occurrences, truncated, bounded: false, notes, first_overload, outside: Default::default() })
+        Ok(Resolved { definitions, occurrences, truncated, bounded, no_kind: false, notes, first_overload, outside: Default::default() })
     }
 
     /// The one decision about the site of `spelled` at 1-based `line`, 0-based byte `col` of

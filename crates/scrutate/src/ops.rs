@@ -1417,8 +1417,6 @@ fn histories(s: &Searcher, defs: &[(ChunkRow, String, Vec<crate::index::Symbol>)
 const SCOPED_SYMBOLS_MAX: usize = 100_000;
 /// What a filtered `symbol` answer says when its read of near matches stopped at the bound.
 const SCOPED_SYMBOLS_STOP: &str = "100,000 near matches were read before the filter: narrow the name";
-/// The most occurrences `references` with kinds reads to find max_results of them.
-const SCOPED_REFS_MAX: usize = 100_000;
 
 /// `fetch(n)` with `n` from `start` growing four times a round, until `done(answer, n)` or `n`
 /// reaches `max`. -> (the last answer, whether `max` ended the read before `done`)
@@ -1495,18 +1493,13 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
         }
         Op::Refs { name, max_results, def, .. } => {
             let name = &name.trim().to_string();
-            // a kind is known only once an occurrence is resolved, after the search counted it: with
-            // kinds the search reads more until max_results of the kept kinds are in, then cuts
-            let kept = |refs: &crate::resolve::Resolved| {
-                let ids: std::collections::HashSet<i64> = refs.definitions.iter().filter(|d| f.admits_kind(&d.kind)).map(|d| d.id).collect();
-                refs.occurrences.iter().filter(|o| f.admits_path(&o.path) && matches!(o.resolution, Ok((id, _)) if ids.contains(&id))).count() as u64
-            };
-            let fetch = |n: usize| Names::new(s)?.references_in(name, n as u64, Some(f));
-            let (mut refs, at_bound) = if f.has_kinds() {
-                read_until(*max_results as usize, SCOPED_REFS_MAX, fetch, |refs, _| !refs.truncated || kept(refs) > *max_results)?
-            } else {
-                (fetch(*max_results as usize)?, false)
-            };
+            // no definition of the name has a kept kind: no occurrence can resolve to one
+            if f.has_kinds() && s.ix.symbols_named_where(&crate::intel::bare_name(s, name)?, 1, &|r| f.admits_kind(&r.kind))?.is_empty() {
+                let refs = crate::resolve::Resolved { no_kind: true, ..Default::default() };
+                return Ok(Answer::Resolved { name: name.clone(), refs, only: None, max_results: *max_results });
+            }
+            // with kinds, references_in keeps only the occurrences of those kinds as it resolves them
+            let mut refs = Names::new(s)?.references_in(name, *max_results, Some(f))?;
             // the definition --def names is found whatever the file filters keep
             let only = match def {
                 Some(spec) => Some(definition_at(s, &refs, name, spec)?),
@@ -1519,9 +1512,6 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
                 refs.occurrences.truncate(*max_results as usize);
                 refs.truncated = true;
             }
-            // the read stopped at its bound with occurrences left: the answer says so, and why
-            refs.truncated |= at_bound;
-            refs.bounded = at_bound && refs.occurrences.len() < *max_results as usize;
             let used: std::collections::HashSet<i64> = refs.occurrences.iter().filter_map(|o| o.resolution.as_ref().ok().map(|r| r.0)).collect();
             refs.definitions.retain(|d| by_kind.contains(&d.id) && (f.admits_path(&d.path) || used.contains(&d.id) || only == Some(d.id)));
             refs.outside = refs.definitions.iter().filter(|d| !f.admits_path(&d.path)).map(|d| d.id).collect();
@@ -1584,16 +1574,25 @@ fn joined(a: String, b: String) -> String {
     }
 }
 
-/// What a `references` answer with kinds says when its search read up to its bound.
-pub const REFS_BOUND_STOP: &str =
-    "100,000 occurrences were read before the kind filter, and fewer than max_results were of its kinds: narrow the name or the files";
-
-/// The closing line of a resolved `references` answer: its bound, else its max_results cut.
-fn resolved_stop(refs: &crate::resolve::Resolved, max_results: u64) -> String {
-    if refs.bounded {
-        format!("({REFS_BOUND_STOP})")
+/// Why a resolved `references` answer with kinds holds fewer than max_results, if it does.
+fn resolved_reason(name: &str, refs: &crate::resolve::Resolved) -> Option<String> {
+    if refs.no_kind {
+        Some(format!("no definition named {} is of those kinds", echo(name)))
     } else {
-        stopped_at(refs.truncated, max_results)
+        refs.bounded.map(|n| {
+            format!(
+                "{n} occurrences were resolved and fewer than max_results were of those kinds (at most {} are): narrow the name or the files",
+                crate::names::REFS_KIND_RESOLVE_MAX
+            )
+        })
+    }
+}
+
+/// The closing line of a resolved `references` answer: why it is short, else its max_results cut.
+fn resolved_stop(name: &str, refs: &crate::resolve::Resolved, max_results: u64) -> String {
+    match resolved_reason(name, refs) {
+        Some(why) => format!("({why})"),
+        None => stopped_at(refs.truncated, max_results),
     }
 }
 
@@ -2542,11 +2541,11 @@ impl Answer {
                 }
             }
             // an empty answer whose search stopped says that it stopped
-            Answer::Resolved { refs, max_results, .. } if self.is_empty() => {
-                Parts { tail: resolved_stop(refs, *max_results), ..nothing("(no results)".to_string()) }
+            Answer::Resolved { name, refs, max_results, .. } if self.is_empty() => {
+                Parts { tail: resolved_stop(name, refs, *max_results), ..nothing("(no results)".to_string()) }
             }
-            Answer::Resolved { refs, only, max_results, .. } => Parts {
-                tail: resolved_stop(refs, *max_results),
+            Answer::Resolved { name, refs, only, max_results } => Parts {
+                tail: resolved_stop(name, refs, *max_results),
                 brief: Some(resolved_brief(refs, *only)),
                 ..lines(crate::resolve::resolved_text(refs, *only), "lines")
             },
@@ -2858,7 +2857,7 @@ impl Answer {
     pub fn stop_note(&self) -> String {
         match self {
             Answer::Refs { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
-            Answer::Resolved { refs, max_results, .. } => resolved_stop(refs, *max_results),
+            Answer::Resolved { name, refs, max_results, .. } => resolved_stop(name, refs, *max_results),
             Answer::Impact(i) => i.stop_line(),
             _ => self.stopped().map(|s| stop_line(Some(s), self.parts().noun)).unwrap_or_default(),
         }
@@ -2956,8 +2955,8 @@ impl Answer {
                     }).collect::<Vec<_>>(),
                     "truncated": refs.truncated,
                 });
-                if refs.bounded {
-                    v["stopped_reason"] = json!(REFS_BOUND_STOP);
+                if let Some(why) = resolved_reason(name, refs) {
+                    v["stopped_reason"] = json!(why);
                 }
                 if only.is_none() {
                     v["unresolved"] = refs
@@ -3066,22 +3065,20 @@ mod tests {
         assert!(at_bound && got.len() == 16, "{at_bound} {}", got.len());
     }
 
-    /// A references answer whose kind filter read up to its bound says that, not "raise
-    /// max_results", in text and JSON, an empty one too; a plain cut keeps the max_results line.
+    /// A references answer with kinds that holds fewer than max_results says why, not "raise
+    /// max_results", in text and JSON, an empty one too: the bound with the count it resolved, or no
+    /// definition of those kinds; a plain cut keeps the max_results line.
     #[test]
     fn a_references_answer_stopped_at_its_bound_says_why() {
-        let answer = |bounded: bool| Answer::Resolved {
-            name: "a0".into(),
-            refs: crate::resolve::Resolved { truncated: true, bounded, ..Default::default() },
-            only: None,
-            max_results: 5,
-        };
-        let a = answer(true);
-        assert!(a.text().contains(REFS_BOUND_STOP) && !a.text().contains("raise max_results"), "{}", a.text());
-        assert_eq!(a.json()["stopped_reason"], json!(REFS_BOUND_STOP));
-        let a = answer(false);
-        assert!(a.text().contains("raise max_results") && !a.text().contains(REFS_BOUND_STOP), "{}", a.text());
-        assert!(a.json()["stopped_reason"].is_null());
+        let answer = |refs: crate::resolve::Resolved| Answer::Resolved { name: "a0".into(), refs, only: None, max_results: 5 };
+        let a = answer(crate::resolve::Resolved { truncated: true, bounded: Some(10_000), ..Default::default() });
+        assert!(a.text().contains("10000 occurrences were resolved") && !a.text().contains("raise max_results"), "{}", a.text());
+        assert!(a.json()["stopped_reason"].as_str().is_some_and(|r| r.contains("narrow the name or the files")));
+        let a = answer(crate::resolve::Resolved { no_kind: true, ..Default::default() });
+        assert!(a.text().contains("no definition named a0 is of those kinds"), "{}", a.text());
+        assert!(a.json()["stopped_reason"].as_str().is_some_and(|r| r.contains("no definition named a0")));
+        let a = answer(crate::resolve::Resolved { truncated: true, ..Default::default() });
+        assert!(a.text().contains("raise max_results") && a.json()["stopped_reason"].is_null(), "{}", a.text());
     }
 
     /// A symbol or search answer stopped at its bound says so in text and JSON, an empty one too.

@@ -280,3 +280,80 @@ fn a_path_name_finds_its_definition_past_10000_of_its_last_part() {
     assert!(text.contains("src/zz.rs"), "{text}");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// references with kinds answers at once when no definition of the name has one, resolves at most
+/// 10,000 occurrences (or max_results when larger) and says how many when it stops there.
+#[test]
+fn references_with_kinds_stop_at_their_bound_and_say_why() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_kind_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let calls: String = (0..10_050).map(|_| "    a0()\n").collect();
+    fs::write(root.join("big.py"), format!("def a0():\n    return 1\n\n\ndef many():\n{calls}")).unwrap();
+    fs::write(
+        root.join("zz.py"),
+        "class C:\n    def a0(self):\n        return 1\n\n    def use(self):\n        self.a0()\n        self.a0()\n        self.a0()\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    run(&["index"]);
+    // no definition of a0 is a class: empty at once, and it says so
+    let none: Value = serde_json::from_str(&run(&["refs", "a0", "--kind", "class", "--json"])).unwrap();
+    assert!(none["result"]["stopped_reason"].as_str().is_some_and(|r| r.contains("no definition named a0 is of those kinds")), "{none}");
+    // the method's uses come after 10,050 of the function's: the read stops at its bound and says so
+    let text = run(&["refs", "a0", "--kind", "method", "--max-results", "5"]);
+    assert!(text.contains("10000 occurrences were resolved") && !text.contains("raise max_results"), "{text}");
+    // that answer holds none, and says it stopped rather than that there are none
+    let stopped: Value = serde_json::from_str(&run(&["refs", "a0", "--kind", "method", "--max-results", "5", "--json"])).unwrap();
+    assert!(
+        stopped["result"]["truncated"] == json!(true) && stopped["result"]["stopped_reason"].as_str().is_some_and(|r| r.contains("10000 occurrences")),
+        "{stopped}"
+    );
+    // a max_results above the bound is read whole, and finds them
+    let all: Value = serde_json::from_str(&run(&["refs", "a0", "--kind", "method", "--max-results", "20000", "--json"])).unwrap();
+    let found: usize = all["result"]["definitions"].as_array().into_iter().flatten().map(|d| d["references"].as_array().map_or(0, Vec::len)).sum();
+    assert!(found >= 3 && all["result"]["stopped_reason"].is_null(), "{found}: {all}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// One kept occurrence past max_results, the last one read, still marks the answer cut: a method
+/// a0 with its definition line and 7 uses, after 40 uses of a function a0, at --max-results 7, by
+/// kind.
+#[test]
+fn the_occurrence_past_max_results_marks_the_answer_cut_when_it_is_the_last() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_last_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let calls: String = (0..40).map(|_| "    a0()\n").collect();
+    fs::write(root.join("big.py"), format!("def a0():\n    return 1\n\n\ndef many():\n{calls}")).unwrap();
+    let uses: String = (0..7).map(|_| "        self.a0()\n").collect();
+    fs::write(root.join("m.py"), format!("class C:\n    def a0(self):\n        return 1\n\n    def use(self):\n{uses}")).unwrap();
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let run = |args: &[&str]| -> Value {
+        let out =
+            std::process::Command::new(BIN).args(args).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let count =
+        |v: &Value| -> usize { v["result"]["definitions"].as_array().into_iter().flatten().map(|d| d["references"].as_array().map_or(0, Vec::len)).sum() };
+    let args = ["--kind", "method"];
+    let all: Vec<&str> = ["refs", "a0"].into_iter().chain(args.iter().copied()).chain(["--max-results", "5000", "--json"]).collect();
+    let full = run(&all);
+    assert!(count(&full) == 8 && full["result"]["truncated"] == json!(false), "{args:?} whole: {full}");
+    let cut: Vec<&str> = ["refs", "a0"].into_iter().chain(args.iter().copied()).chain(["--max-results", "7", "--json"]).collect();
+    let v = run(&cut);
+    assert!(count(&v) == 7 && v["result"]["truncated"] == json!(true), "{args:?} at 7: {v}");
+    let _ = fs::remove_dir_all(&root);
+}

@@ -2954,9 +2954,11 @@ pub struct Resolved {
     pub definitions: Vec<ChunkRow>,
     pub occurrences: Vec<Occurrence>,
     pub truncated: bool,
-    /// a filter applied after the search (a kind) read up to its bound and found fewer than
-    /// max_results it keeps: raising max_results below the bound changes nothing
-    pub bounded: bool,
+    /// with kinds, the occurrences resolved when the search stopped at its bound with fewer than
+    /// max_results of them kept: raising max_results below the bound changes nothing
+    pub bounded: Option<u64>,
+    /// with kinds, no definition of the name has one of them, so nothing was searched
+    pub no_kind: bool,
     /// files whose search stopped at a NUL byte, each with what the search said: a use after
     /// that byte is not among the occurrences
     pub notes: Vec<(String, String)>,
