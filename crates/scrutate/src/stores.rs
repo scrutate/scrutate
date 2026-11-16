@@ -348,7 +348,12 @@ impl Repo {
     /// and then leaves the code index as it was.
     // shortcut: a rebuild after damage and the text index do not see the flag, give them the flag if that matters
     pub fn update_until(&mut self, force: bool, cancel: Arc<AtomicBool>) -> Result<Updated> {
-        self.reopened()?;
+        {
+            // a closed index is built again before the flag can be set: a write
+            let writer = Arc::clone(&self.writer);
+            let _w = self.searcher.is_none().then(|| hold(&writer));
+            self.reopened()?;
+        }
         self.ix.cancel = cancel;
         let r = self.update_stores(Writer::Reindex, &Changes::All, force);
         if let Some(s) = &mut self.searcher {
@@ -600,6 +605,30 @@ pub fn recorded(root: &Path) -> std::collections::HashMap<String, (index::Stat, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reindex_of_a_closed_index_waits_for_the_writer_lock() {
+        let root = std::env::temp_dir().join(format!("scrutate_reindex_closed_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("f.py"), "def f():\n    return 1\n").unwrap();
+        let mut repo = Repo::open(&root).unwrap();
+        repo.update(false).unwrap();
+        repo.searcher = None; // as a rebuild that failed to reopen leaves it
+        std::fs::write(root.join("g.py"), "def g():\n    return 2\n").unwrap();
+        let writer = repo.writer();
+        let held = hold(&writer);
+        let t = std::thread::spawn(move || {
+            let mut repo = repo;
+            repo.update_until(false, Arc::default()).map(|_| ())
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        let files = crate::index::Index::open(&root, ModelSet::none()).unwrap().files().unwrap();
+        assert_eq!(files, ["f.py"], "the index was built again while another write held the lock");
+        drop(held);
+        t.join().unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn an_operation_reads_one_commit_while_a_writer_commits_another() {
