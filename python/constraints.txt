@@ -1,6 +1,6 @@
 # The versions the training code's and bindings' tests and the Python lint were last run with (pip install -c).
 maturin==1.16.0
-numpy==2.5.4
+numpy==2.5.5
 pytest==9.2.0
 PyYAML==6.0.3
 ruff==0.17.5
