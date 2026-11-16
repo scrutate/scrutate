@@ -506,6 +506,31 @@ impl Peq {
     }
 }
 
+/// The fuzzy spans of a line of `len` bytes, chosen by `in_gap`: for each number of edits `c` from
+/// 0 to `k`, over each part of the line no span covers yet, it adds the spans costing `c` there.
+pub(crate) fn fuzzy_passes(len: usize, k: usize, mut in_gap: impl FnMut(usize, usize, usize, &mut Vec<(usize, usize)>)) -> Vec<(usize, usize)> {
+    let mut taken: Vec<(usize, usize)> = Vec::new();
+    for c in 0..=k {
+        let mut found = Vec::new();
+        let mut from = 0;
+        for &(a, b) in taken.iter().chain([&(len, len)]) {
+            if from < a {
+                in_gap(c, from, a, &mut found);
+            }
+            from = b;
+        }
+        taken.extend(found);
+        taken.sort_unstable();
+    }
+    taken
+}
+
+/// Whether the character at `line[i]` is a word character (`\w`); a byte of invalid UTF-8 is not.
+pub(crate) fn word_at(line: &[u8], i: usize) -> bool {
+    let c = if line[i] < 0x80 { Some(line[i] as char) } else { wide_char(line, i).0 };
+    c.is_some_and(|c| regex_syntax::try_is_word_character(c).unwrap_or_else(|_| crate::ident::is_continue(c)))
+}
+
 /// Myers' recurrence on 64-bit blocks, for patterns longer than one machine word: the addition
 /// and the two shifts carry from block to block (Hyyrö 2003).
 #[derive(Clone)]
@@ -644,7 +669,6 @@ impl FuzzyMatcher {
         Ok(FuzzyMatcher { fwd: Peq::new(&classes), rev: Peq::new(&reversed), m, k: max_edits as usize, prefilter, long })
     }
 
-    /// Byte range of the line containing `pos` within `hay[at..]`.
     /// First match end in `hay[at..]`: candidate lines from the prefilter, verified with Myers. Each
     /// candidate line is read from its start to the match, or to its end when none is there, once.
     fn first_end_filtered(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
@@ -667,9 +691,8 @@ impl FuzzyMatcher {
         None
     }
 
-    /// End (exclusive) and distance of the first match in `hay[at..]` within k edits, its end carried
-    /// on while the next character still ends a match with no more edits (`abcd` within one edit is
-    /// `abcd` whole, not `abc` with a deletion).
+    /// End (exclusive) and distance of the first match in `hay[at..]` within k edits: which lines
+    /// match. The spans a line shows come from `spans`.
     fn first_end(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
         self.scan(hay, at, false).0
     }
@@ -677,15 +700,14 @@ impl FuzzyMatcher {
     /// `first_end`, and where it stopped reading; with `one_line`, it stops at the first line break.
     fn scan(&self, hay: &[u8], at: usize, one_line: bool) -> (Option<(usize, usize)>, usize) {
         let mut i = at;
-        let mut found: Option<(usize, usize)> = None;
         if let Some(b) = &self.long {
             let (fwd, _) = &**b;
             let (mut pv, mut mv) = fwd.start();
             let mut score = self.m as isize;
             while i < hay.len() {
                 if hay[i] == b'\n' {
-                    if found.is_some() || one_line {
-                        return (found, i);
+                    if one_line {
+                        return (None, i);
                     }
                     (pv, mv) = fwd.start();
                     score = self.m as isize;
@@ -695,14 +717,11 @@ impl FuzzyMatcher {
                 let (eq, n) = fwd.eq_at(hay, i);
                 score += fwd.step(&mut pv, &mut mv, eq);
                 i += n;
-                match found {
-                    Some((_, best)) if score <= best as isize => found = Some((i, score as usize)),
-                    Some(_) => return (found, i),
-                    None if score <= self.k as isize => found = Some((i, score as usize)),
-                    None => {}
+                if score <= self.k as isize {
+                    return (Some((i, score as usize)), i);
                 }
             }
-            return (found, i);
+            return (None, i);
         }
         let m = self.m;
         let top = 1u128 << (m - 1);
@@ -714,8 +733,8 @@ impl FuzzyMatcher {
             let c = hay[i];
             let (eq, n) = if c < 0x80 {
                 if c == b'\n' {
-                    if found.is_some() || one_line {
-                        return (found, i);
+                    if one_line {
+                        return (None, i);
                     }
                     pv = mask;
                     mv = 0;
@@ -729,14 +748,148 @@ impl FuzzyMatcher {
             };
             score += myers_step(eq, &mut pv, &mut mv, top, mask);
             i += n;
-            match found {
-                Some((_, best)) if score <= best as isize => found = Some((i, score as usize)),
-                Some(_) => return (found, i),
-                None if score <= self.k as isize => found = Some((i, score as usize)),
-                None => {}
+            if score <= self.k as isize {
+                return (Some((i, score as usize)), i);
             }
         }
-        (found, i)
+        (None, i)
+    }
+
+    /// The spans of `line`, one line without its line break, by docs/adr/0013-fuzzy-spans.md: the
+    /// parts within `k` edits of the pattern, the fewest edits first, then the leftmost, then the
+    /// longest, none overlapping; an end character is matched or is a word character substituted,
+    /// never inserted.
+    pub(crate) fn spans(&self, line: &[u8]) -> Vec<(usize, usize)> {
+        let mut units = Vec::new();
+        let mut i = 0;
+        while i < line.len() {
+            units.push(i);
+            i += unit_len(line, i);
+        }
+        fuzzy_passes(line.len(), self.k, |c, from, to, out| {
+            let gap = &units[units.partition_point(|&u| u < from)..units.partition_point(|&u| u < to)];
+            let mut at = from;
+            for s in self.starts(line, gap, c) {
+                if s >= at {
+                    if let Some(e) = self.longest_from(line, s, to, c) {
+                        out.push((s, e));
+                        at = e;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Over the units `gap` of `line`: every unit where a part within `c` edits of the pattern
+    /// starts and ends inside the gap, left to right (the reversed pattern, searching backward).
+    fn starts(&self, line: &[u8], gap: &[usize], c: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        let m = self.m as isize;
+        if let Some(b) = &self.long {
+            let (_, rev) = &**b;
+            let (mut pv, mut mv) = rev.start();
+            let mut score = m;
+            for &u in gap.iter().rev() {
+                score += rev.step(&mut pv, &mut mv, rev.eq_at(line, u).0);
+                if score <= c as isize {
+                    out.push(u);
+                }
+            }
+        } else {
+            let top = 1u128 << (self.m - 1);
+            let mask = if self.m == 128 { u128::MAX } else { (1u128 << self.m) - 1 };
+            let (mut pv, mut mv, mut score) = (mask, 0u128, m);
+            for &u in gap.iter().rev() {
+                score += myers_step(self.rev.at(line, u).0, &mut pv, &mut mv, top, mask);
+                if score <= c as isize {
+                    out.push(u);
+                }
+            }
+        }
+        out.reverse();
+        out
+    }
+
+    /// Whether pattern position `j` holds the character at `line[i]`, and that character's length.
+    fn holds(&self, line: &[u8], i: usize) -> (impl Fn(usize) -> bool + '_, usize) {
+        enum Eq<'a> {
+            One(u128),
+            Words(&'a [u64]),
+        }
+        let (eq, n) = match &self.long {
+            Some(b) => {
+                let (e, n) = b.0.eq_at(line, i);
+                (Eq::Words(e), n)
+            }
+            None => {
+                let (e, n) = self.fwd.at(line, i);
+                (Eq::One(e), n)
+            }
+        };
+        (
+            move |j: usize| match &eq {
+                Eq::One(e) => e >> j & 1 != 0,
+                Eq::Words(w) => w[j / 64] >> (j % 64) & 1 != 0,
+            },
+            n,
+        )
+    }
+
+    /// The end of the longest part of `line` from `start` to `to` at most within `c` edits whose
+    /// first and last characters are matched or are word characters substituted, if one is. One
+    /// start keeps the alignment within `c` of the diagonal: 2c + 1 pattern positions a character.
+    fn longest_from(&self, line: &[u8], start: usize, to: usize, c: usize) -> Option<usize> {
+        const NO: usize = usize::MAX / 2;
+        let m = self.m;
+        // prev[j], cur[j]: the fewest edits aligning the text so far with the pattern's first j
+        let (mut prev, mut cur) = (vec![NO; m + 1], vec![NO; m + 1]);
+        let mut best = None;
+        let (mut i, mut t) = (start, 0usize);
+        while i < to {
+            let (holds, n) = self.holds(line, i);
+            let word = word_at(line, i);
+            t += 1;
+            let (lo, hi) = (t.saturating_sub(c).max(1), (t + c).min(m));
+            if lo > hi {
+                break;
+            }
+            cur[lo - 1] = NO;
+            let mut end = NO;
+            for j in lo..=hi {
+                // this character on pattern position j - 1, matched or substituted
+                let before = if t == 1 { j - 1 } else { prev[j - 1] };
+                let on = if holds(j - 1) { before } else { before + 1 };
+                if holds(j - 1) || word {
+                    end = end.min(on + (m - j));
+                }
+                cur[j] = if t == 1 {
+                    // the first character is never inserted
+                    if holds(j - 1) || word {
+                        on
+                    } else {
+                        NO
+                    }
+                } else {
+                    on.min(prev[j] + 1)
+                };
+                cur[j] = cur[j].min(cur[j - 1] + 1);
+                if cur[j] > c {
+                    cur[j] = NO;
+                }
+            }
+            if hi < m {
+                cur[hi + 1] = NO;
+            }
+            std::mem::swap(&mut prev, &mut cur);
+            i += n;
+            if end <= c {
+                best = Some(i);
+            }
+            if prev[lo..=hi].iter().all(|&x| x == NO) {
+                break;
+            }
+        }
+        best
     }
 
     /// Start of the match that ends at `end` with distance `d`: run the algorithm on the reversed
@@ -1689,6 +1842,17 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
+/// The spans of one line of a fuzzy matcher (none for another): a line it matches has one.
+fn fuzzy_spans(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
+    let (spans, matches) = match matcher {
+        AnyMatcher::Fuzzy(m) => (m.spans(line), cfg!(debug_assertions) && m.find_at(line, 0).ok().flatten().is_some()),
+        AnyMatcher::FuzzyRegex(m) => (m.spans(line), cfg!(debug_assertions) && m.find_at(line, 0).ok().flatten().is_some()),
+        _ => (Vec::new(), false),
+    };
+    debug_assert!(!spans.is_empty() || !matches, "a matched line with no span: {:?}", String::from_utf8_lossy(line));
+    spans
+}
+
 /// Calls `f` with each match in `line` until it returns false. As ripgrep, leaves out an empty
 /// match right where the match before it ended, and one past the line's end (after its `\n`).
 fn each_match(matcher: &AnyMatcher, line: &[u8], f: impl FnMut(usize, usize) -> bool) {
@@ -1698,6 +1862,20 @@ fn each_match(matcher: &AnyMatcher, line: &[u8], f: impl FnMut(usize, usize) -> 
 /// `each_match` over `hay[lines]`, read with the text around it: `$`, `\B` and word edges see
 /// what follows the lines, not their end. Offsets are into `hay`.
 fn each_match_in(matcher: &AnyMatcher, hay: &[u8], lines: std::ops::Range<usize>, mut f: impl FnMut(usize, usize) -> bool) {
+    // a fuzzy line's spans are chosen over the whole line, not found one after another
+    if matches!(matcher, AnyMatcher::Fuzzy(_) | AnyMatcher::FuzzyRegex(_)) {
+        let mut from = lines.start;
+        for l in hay[lines.clone()].split_inclusive(|&b| b == b'\n') {
+            let text = l.strip_suffix(b"\n").unwrap_or(l);
+            for (a, b) in fuzzy_spans(matcher, text) {
+                if !f(from + a, from + b) {
+                    return;
+                }
+            }
+            from += l.len();
+        }
+        return;
+    }
     let line = hay;
     let mut at = lines.start;
     let content = lines.end - usize::from(hay[lines.clone()].ends_with(b"\n"));
@@ -4179,29 +4357,21 @@ mod tests {
         m.find_at(hay.as_bytes(), 0).unwrap().map(|m| (m.start(), m.end()))
     }
 
-    /// First end (and distance) of a match within `k` edits: the textbook dynamic programme. With
-    /// `carry`, the end goes on while the next byte ends a match at no greater distance.
-    fn naive_first_end(pat: &[u8], hay: &[u8], k: usize, carry: bool) -> Option<(usize, usize)> {
+    /// First end (and distance) of a match within `k` edits: the textbook dynamic programme.
+    fn naive_first_end(pat: &[u8], hay: &[u8], k: usize) -> Option<(usize, usize)> {
         let m = pat.len();
         let mut col: Vec<usize> = (0..=m).collect();
-        let mut found: Option<(usize, usize)> = None;
         for (i, &c) in hay.iter().enumerate() {
             let mut next = vec![0usize; m + 1];
             for j in 1..=m {
                 next[j] = (next[j - 1] + 1).min(col[j] + 1).min(col[j - 1] + usize::from(pat[j - 1] != c));
             }
             col = next;
-            match found {
-                Some((_, best)) if col[m] <= best => found = Some((i + 1, col[m])),
-                Some(_) => return found,
-                None if col[m] <= k => found = Some((i + 1, col[m])),
-                None => {}
-            }
-            if found.is_some() && !carry {
-                return found;
+            if col[m] <= k {
+                return Some((i + 1, col[m]));
             }
         }
-        found
+        None
     }
 
     #[test]
@@ -4234,7 +4404,7 @@ mod tests {
             hay.extend((0..next(50)).map(|_| b"abcd"[next(4) as usize]));
             let k = (next(8) as usize).min(m - 1);
             let f = FuzzyMatcher::new(std::str::from_utf8(&pat).unwrap(), k as u8, false).unwrap();
-            assert_eq!(f.first_end(&hay, 0), naive_first_end(&pat, &hay, k, true), "round {round}: m={m} k={k}");
+            assert_eq!(f.first_end(&hay, 0), naive_first_end(&pat, &hay, k), "round {round}: m={m} k={k}");
             if m <= 128 {
                 // the block path on short patterns too, against the single-word one
                 let b = Blocks::new(&fuzzy_classes(std::str::from_utf8(&pat).unwrap(), false));
@@ -4248,7 +4418,7 @@ mod tests {
                         break;
                     }
                 }
-                assert_eq!(got, naive_first_end(&pat, &hay, k, false), "blocks, round {round}: m={m} k={k}");
+                assert_eq!(got, naive_first_end(&pat, &hay, k), "blocks, round {round}: m={m} k={k}");
             }
         }
         assert!(FuzzyMatcher::new(&"a".repeat(FUZZY_MAX + 1), 1, false).is_err());
@@ -4289,28 +4459,57 @@ mod tests {
     }
 
     #[test]
-    fn an_exact_fuzzy_match_is_highlighted_whole() {
-        // a match ends first at `abc`, one deletion away, and goes on while no edit is added
-        assert_eq!(fuzzy_find("abcd", 1, "zz abcd"), Some((3, 7)));
-        assert_eq!(fuzzy_find("abcd", 1, "abcdx"), Some((0, 4)));
-        assert_eq!(fuzzy_find("abcd", 2, "zz abcd ok"), Some((3, 7)));
-        // and stops at the line end
-        assert_eq!(fuzzy_find("abcd", 1, "abc\nd"), Some((0, 3)));
+    fn a_line_the_fuzzy_matchers_match_has_a_span_and_no_other_does() {
+        let mut state = 0x0BAD_5EED_2468_ACE0u64;
+        let mut next = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let units = ["a", "b", "c", "1", " ", "(", "é", "日", "\u{301}"];
+        for _ in 0..3000 {
+            let line: String = (0..next(16)).map(|_| units[next(units.len() as u64) as usize]).collect();
+            let lit: String = (0..2 + next(3)).map(|_| units[next(4) as usize]).collect();
+            let k = next(lit.chars().count() as u64 - 1) as u8;
+            let f = FuzzyMatcher::new(&lit, k, false).unwrap();
+            let matched = f.find_at(line.as_bytes(), 0).unwrap().is_some();
+            assert_eq!(!f.spans(line.as_bytes()).is_empty(), matched, "--fuzzy={k} {lit:?} on {line:?}");
+            let re = format!("{}[ab1]*{}", &lit[..1], &lit[1..]);
+            if let Ok(r) = crate::fuzzyre::FuzzyRegex::new(&re, k.min(1), false) {
+                let matched = r.find_at(line.as_bytes(), 0).unwrap().is_some();
+                assert_eq!(!r.spans(line.as_bytes()).is_empty(), matched, "--fuzzy-regex={} {re:?} on {line:?}", k.min(1));
+            }
+        }
     }
 
-    /// `naive_first_end` (carried) over characters: each unit is a character or a byte of invalid UTF-8.
+    #[test]
+    fn fuzzy_spans_take_the_fewest_edits_then_the_leftmost_then_the_longest() {
+        let spans = |pat: &str, k: u8, line: &str| FuzzyMatcher::new(pat, k, false).unwrap().spans(line.as_bytes());
+        assert_eq!(spans("abcd", 1, "zz abcd"), [(3, 7)]);
+        assert_eq!(spans("abcd", 1, "abcdx"), [(0, 4)]);
+        assert_eq!(spans("aa", 0, "aaaa"), [(0, 2), (2, 4)]);
+        assert_eq!(spans("ab", 1, "aab"), [(0, 1), (1, 3)]);
+        assert_eq!(spans("ab", 1, "abab ab"), [(0, 2), (2, 4), (5, 7)]);
+        // an end is matched or a word character substituted, never a space or an insertion
+        assert_eq!(spans("hello", 1, "hellp"), [(0, 5)]);
+        assert_eq!(spans("kmalloc", 1, "kmallo("), [(0, 6)]);
+        assert_eq!(spans("abc", 1, "ab x"), [(0, 2)]);
+        assert_eq!(spans("abc", 1, " bc"), [(1, 3)]);
+        assert_eq!(spans("b2日", 2, "a123 b"), [(1, 4), (5, 6)]);
+        // an exact occurrence is its own span, before a looser one to its left
+        assert_eq!(spans("abcd", 1, "abxdabcd"), [(0, 4), (4, 8)]);
+    }
+
+    /// `naive_first_end` over characters: each unit is a character or a byte of invalid UTF-8.
     fn naive_first_end_chars(classes: &[Vec<char>], hay: &[u8], k: usize) -> Option<(usize, usize)> {
         let m = classes.len();
         let mut col: Vec<usize> = (0..=m).collect();
-        let mut found: Option<(usize, usize)> = None;
         let mut i = 0;
         while i < hay.len() {
             let (c, n) = if hay[i] < 0x80 { (Some(hay[i] as char), 1) } else { wide_char(hay, i) };
             i += n;
             if c == Some('\n') {
-                if found.is_some() {
-                    return found;
-                }
                 col = (0..=m).collect();
                 continue;
             }
@@ -4320,21 +4519,18 @@ mod tests {
                 next[j] = (next[j - 1] + 1).min(col[j] + 1).min(col[j - 1] + usize::from(!same));
             }
             col = next;
-            match found {
-                Some((_, best)) if col[m] <= best => found = Some((i, col[m])),
-                Some(_) => return found,
-                None if col[m] <= k => found = Some((i, col[m])),
-                None => {}
+            if col[m] <= k {
+                return Some((i, col[m]));
             }
         }
-        found
+        None
     }
 
     #[test]
     fn fuzzy_edits_are_characters_and_case_folds_as_in_the_regex_engine() {
         assert_eq!(fuzzy_find("naïve", 1, "a naive b"), Some((2, 7)));
         assert_eq!(fuzzy_find("naive", 1, "a naïve b"), Some((2, 8)));
-        assert_eq!(fuzzy_find("日本語", 1, "日本誤のテキスト"), Some((0, 9)));
+        assert_eq!(fuzzy_find("日本語", 1, "日本誤のテキスト"), Some((0, 6)));
         assert_eq!(fuzzy_find("naive", 1, "na\u{0}ve"), Some((0, 5)));
         let m = FuzzyMatcher::new("naive", 1, false).unwrap();
         assert_eq!(m.find_at(b"x na\xffve", 0).unwrap().map(|s| (s.start(), s.end())), Some((2, 7)), "invalid UTF-8 is one unit per byte");

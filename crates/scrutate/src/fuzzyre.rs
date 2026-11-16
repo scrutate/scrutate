@@ -263,22 +263,17 @@ impl FuzzyRegex {
         best
     }
 
-    /// End (exclusive) and number of errors of the first match in `hay[at..]`, its end carried on
-    /// while the next character still ends a match with no more errors (`a[0-9]*b` within one edit
-    /// is `a12b` whole, not `a` with a deletion and then `12b`).
+    /// End (exclusive) and number of errors of the first match in `hay[at..]`: which lines match.
+    /// The spans a line shows come from `spans`.
     fn first_end(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
         let k = self.k;
         let mut r = self.init.clone();
         let mut next = vec![0u64; k + 1];
-        let mut found: Option<(usize, usize)> = None;
         let mut i = at;
         while i < hay.len() {
             let c = hay[i];
             let bc = if c < 0x80 {
                 if c == b'\n' {
-                    if found.is_some() {
-                        return found;
-                    }
                     r.copy_from_slice(&self.init);
                     i += 1;
                     continue;
@@ -296,14 +291,116 @@ impl FuzzyRegex {
                 next[j] = (self.step(r[j]) & bc) | r[j - 1] | self.step(r[j - 1]) | self.step(next[j - 1]);
             }
             std::mem::swap(&mut r, &mut next);
-            match (r.iter().position(|&s| s & self.last != 0), found) {
-                (Some(j), Some((_, best))) if j <= best => found = Some((i, j)),
-                (Some(j), None) => found = Some((i, j)),
-                (_, Some(_)) => return found,
-                (None, None) => {}
+            if let Some(j) = r.iter().position(|&s| s & self.last != 0) {
+                return Some((i, j));
             }
         }
-        found
+        None
+    }
+
+    /// The spans of `line`, one line without its line break, by docs/adr/0013-fuzzy-spans.md: the
+    /// parts within `k` edits of a string the pattern matches, the fewest edits first, then the
+    /// leftmost, then the longest, none overlapping; an end character is matched or is a word
+    /// character substituted, never inserted.
+    pub fn spans(&self, line: &[u8]) -> Vec<(usize, usize)> {
+        let rev = self.rev.as_deref().expect("a pattern built by new has its reverse");
+        let mut units = Vec::new();
+        let mut i = 0;
+        while i < line.len() {
+            units.push(i);
+            i += self.unit(line, i).1;
+        }
+        let to_end = self.to_end();
+        crate::instant::fuzzy_passes(line.len(), self.k, |c, from, to, out| {
+            let gap = &units[units.partition_point(|&u| u < from)..units.partition_point(|&u| u < to)];
+            let mut at = from;
+            for s in rev.starts(line, gap, c) {
+                if s >= at {
+                    if let Some(e) = self.longest_from(line, s, to, c, &to_end) {
+                        out.push((s, e));
+                        at = e;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Of a reversed pattern, over the units `gap` of `line`: every unit where a part within `c`
+    /// edits of the pattern (read forward) starts and ends inside the gap, left to right.
+    fn starts(&self, line: &[u8], gap: &[usize], c: usize) -> Vec<usize> {
+        let mut r = self.init.clone();
+        let mut next = vec![0u64; self.k + 1];
+        let mut out = Vec::new();
+        for &u in gap.iter().rev() {
+            let bc = self.unit(line, u).0;
+            next[0] = self.step(r[0]) & bc;
+            for j in 1..=self.k {
+                next[j] = (self.step(r[j]) & bc) | r[j - 1] | self.step(r[j - 1]) | self.step(next[j - 1]);
+            }
+            std::mem::swap(&mut r, &mut next);
+            if r[..=c].iter().any(|&x| x & self.last != 0) {
+                out.push(u);
+            }
+        }
+        out.reverse();
+        out
+    }
+
+    /// The positions from which the pattern ends after deleting `d` more of its positions, for d in
+    /// 0..=k.
+    fn to_end(&self) -> Vec<u64> {
+        let follow = |p: usize| self.follow[p / 8][1 << (p % 8)];
+        let mut out = vec![self.last];
+        let mut reached = self.last;
+        for _ in 0..self.k {
+            let prev = *out.last().unwrap();
+            let here = (0..MAX_POSITIONS).filter(|&p| reached & (1 << p) == 0 && follow(p) & prev != 0).fold(0u64, |a, p| a | 1 << p);
+            reached |= here;
+            out.push(here);
+        }
+        out
+    }
+
+    /// The end of the longest part of `line` from `start` to `to` at most within `c` edits whose
+    /// first and last characters are matched or are word characters substituted, if one is.
+    fn longest_from(&self, line: &[u8], start: usize, to: usize, c: usize, to_end: &[u64]) -> Option<usize> {
+        let costs = |m: &[u64]| (0..=c).any(|j| (0..=c - j).any(|d| m[j] & to_end[d] != 0));
+        let (mut r, mut next, mut ended) = (vec![0u64; c + 1], vec![0u64; c + 1], vec![0u64; c + 1]);
+        let mut best = None;
+        let mut i = start;
+        let mut first = true;
+        while i < to {
+            let (bc, n) = self.unit(line, i);
+            let word = crate::instant::word_at(line, i);
+            for j in 0..=c {
+                // the positions this character ends on, matched or (a word character) substituted
+                let (on, sub) = if first {
+                    (self.step_from(self.init[j], true), if j > 0 { self.step_from(self.init[j - 1], true) } else { 0 })
+                } else {
+                    (self.step_from(r[j], false), if j > 0 { self.step_from(r[j - 1], false) } else { 0 })
+                };
+                ended[j] = (on & bc) | if word { sub } else { 0 };
+                next[j] = if first {
+                    ended[j]
+                } else {
+                    // inside, an insertion and any substitution as well
+                    (on & bc) | sub | if j > 0 { r[j - 1] } else { 0 }
+                };
+                if j > 0 {
+                    next[j] |= self.step_from(next[j - 1], false);
+                }
+            }
+            std::mem::swap(&mut r, &mut next);
+            first = false;
+            i += n;
+            if costs(&ended) {
+                best = Some(i);
+            }
+            if r.iter().all(|&x| x == 0) {
+                break;
+            }
+        }
+        best
     }
 }
 
@@ -394,29 +491,25 @@ mod tests {
         assert_eq!(at("a[0-9]*b", 0, "aa12b"), (1, 5));
         // the longest text within the match's edits, as --fuzzy highlights it
         assert_eq!(at("abcd", 1, "zzzz abxd"), (5, 9));
-        assert_eq!(at("é[0-9]+", 0, "xé12"), (1, 5));
+        assert_eq!(at("é[0-9]+", 0, "xé12"), (1, 4));
         // a match on a later line starts on that line
         assert_eq!(at("a[0-9]*b", 0, "a1\nzz a2b"), (6, 9));
     }
 
     #[test]
-    fn a_match_with_no_edits_is_one_match_whatever_the_edits_allowed() {
-        let all = |pat: &str, k: u8, hay: &str| {
-            let m = FuzzyRegex::new(pat, k, false).unwrap();
-            let (mut out, mut at) = (Vec::new(), 0);
-            while let Some(s) = m.find_at(hay.as_bytes(), at).unwrap() {
-                out.push((s.start(), s.end()));
-                at = s.end().max(at + 1);
-            }
-            out
-        };
-        assert_eq!(all("a[0-9]*b", 1, "zzz a12b"), [(4, 8)]);
-        assert_eq!(all("abc[0-9]*d", 2, "zz abc12d"), [(3, 9)]);
-        assert_eq!(all("abcd", 1, "zz abcd"), [(3, 7)]);
-        // the end goes no further once a character adds an edit
-        assert_eq!(all("abcd", 1, "abcdx"), [(0, 4)]);
-        // and stops at the line end
-        assert_eq!(all("a[0-9]*b", 1, "a1\na2b"), [(0, 2), (3, 6)]);
+    fn spans_take_the_fewest_edits_then_the_leftmost_then_the_longest() {
+        let spans = |pat: &str, k: u8, line: &str| FuzzyRegex::new(pat, k, false).unwrap().spans(line.as_bytes());
+        assert_eq!(spans("a[0-9]*b", 1, "zzz a12b"), [(4, 8)]);
+        assert_eq!(spans("abc[0-9]*d", 2, "zz abc12d"), [(3, 9)]);
+        assert_eq!(spans("a[0-9]*b", 1, "a1"), [(0, 2)]);
+        assert_eq!(spans("aa", 0, "aaaa"), [(0, 2), (2, 4)]);
+        assert_eq!(spans("aab", 1, "aaaaaaaa x"), [(0, 3), (3, 6), (6, 8)]);
+        // with no edits, the leftmost-longest match: a quantifier's run whole
+        assert_eq!(spans("é[0-9]+", 0, "xé12"), [(1, 5)]);
+        assert_eq!(spans("[0-9]+", 0, "x1234y"), [(1, 5)]);
+        assert_eq!(spans("((\\w{2})){1,2}a", 0, "b12aa1日a1日"), [(0, 5), (5, 10)]);
+        // the longest from the leftmost start, where ripgrep's leftmost-first takes the first branch
+        assert_eq!(spans("a|ab", 0, "ab"), [(0, 2)]);
     }
 
     #[test]

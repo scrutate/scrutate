@@ -48,7 +48,8 @@ adds:
   edit distance in characters: one 128-bit word up to 128, 64-bit blocks with carries up to 4096,
   a pigeonhole prefilter so only candidate lines pay for the DP; `-i` folds case as a regex does),
   **approximate regex** (`--fuzzy-regex`: a bit-parallel Glushkov automaton of at most 64
-  positions, one state set per number of edits), multiline, inverted, whole-word, smart case. A
+  positions, one state set per number of edits; for both, a matched line's spans are chosen in
+  N + 1 passes by one definition, [ADR 0013](adr/0013-fuzzy-spans.md)), multiline, inverted, whole-word, smart case. A
   case-insensitive literal (`-i`, `-F -i`, `-S`) finds candidates without the regex engine: two needle bytes, each in either case, at a fixed
   distance inside a stretch whose characters keep their byte length under case folding (`k` and
   `s` end one: KELVIN SIGN and LONG S are longer); the regex confirms each candidate line. The

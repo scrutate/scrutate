@@ -849,14 +849,17 @@ incompatible index by itself, and that is never breaking.
 - `grep --fuzzy-regex` reports where a match starts: the reversed pattern is run back from its
   end. The column, the `--json` spans and the colour took a lower bound (`zzz a12b` gave column 1
   for `a[0-9]*b`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
-- `grep --fuzzy` and `--fuzzy-regex` highlight a match whole, in colour and in `--json` spans:
-  an exact `abcd` within one edit is one span over `abcd`, where it stopped at `abc`, and
-  `a[0-9]*b` on `a12b` is one span, where it was two. Which lines match is unchanged. The fuzzy
-  modes do more work at a match's end: on the Linux tree's `kernel/`, 2.5% more instructions for
-  `--fuzzy=1 kmalloc`, 10.8% for `--fuzzy=2 return`, 4.3% for `--fuzzy-regex=1 kmal+oc` and 5.6%
-  for `--fuzzy-regex=1 'ret[a-z]*n'` ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+- `grep --fuzzy` and `--fuzzy-regex` choose a line's spans by one rule: the parts within N edits,
+  the fewest edits first, then the leftmost, then the longest, none overlapping, each beginning
+  and ending on a character matched or a word character substituted. An exact match is its own
+  span (`--fuzzy=0 aa` on `aaaa`: two, as `rg -F`), a slip lights the whole word (`kmallod`) and a
+  bracket beside it stays out (`kmallo(`); the first end found and the start before it lit text
+  past N edits (`--fuzzy=2 b2日` on `a123 b`: ` b`) or part of a word (`abc` of `abcd`). Which
+  lines match is unchanged, and finding them costs 2.7 to 10.6% fewer instructions on the Linux
+  tree's `kernel/`; the spans of `--json` and colour cost up to 15.5% more there (`--fuzzy=2
+  return`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep --fuzzy` reads a long line full of matches once: each match read on to the line's end
-  again, so 100,000 matches on one line took 125.8 G instructions, now 0.77 G
+  again, so 100,000 matches on one line took 125.8 G instructions, now 0.79 G
   ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - An internal error advises `scrutate index --force` only in a process that opened an index:
   `grep` without `--index`, `hook`, `setup` and the other commands without one now only ask for a
