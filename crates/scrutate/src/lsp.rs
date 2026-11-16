@@ -350,6 +350,9 @@ struct Server {
     waited_out: std::cell::Cell<Option<std::time::Instant>>,
     /// the folders and errors already logged by a request over several folders, logged once each
     skipped: std::cell::RefCell<HashSet<(PathBuf, i64)>>,
+    /// per folder, what its index leaves out as last said, and the left-out files a request
+    /// named since then, each said once
+    noted: std::cell::RefCell<HashMap<PathBuf, (crate::index::NotIndexed, HashSet<String>)>>,
     /// set when the editor cancels the request being answered (`$/cancelRequest`): its waits and
     /// searches stop
     cancel: Arc<AtomicBool>,
@@ -839,7 +842,8 @@ impl Server {
             };
             for i in these {
                 let f = &self.folders[i];
-                let answer = self.run(method, f, several && pass == 0, &mut |s| match method {
+                let named = p["textDocument"]["uri"].as_str().and_then(|u| f.rel(u));
+                let answer = self.run(method, f, several && pass == 0, named.as_deref(), &mut |s| match method {
                     "textDocument/definition" => f.definition(s, p),
                     "textDocument/references" => f.references(s, p),
                     "textDocument/documentSymbol" => f.document_symbols(s, p),
@@ -894,7 +898,7 @@ impl Server {
 
     /// `f` on a reader of `folder`'s index for a `method` request, once its first build is done;
     /// `no_wait` does not wait for that build.
-    fn run(&self, method: &str, folder: &Folder, no_wait: bool, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
+    fn run(&self, method: &str, folder: &Folder, no_wait: bool, named: Option<&str>, f: &mut dyn FnMut(&mut Searcher) -> Result<Value>) -> Reply {
         // read within a second of a request that waited out the build: queued behind it
         let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
         let build_wait = if queued || no_wait { std::time::Duration::ZERO } else { self.build_wait };
@@ -910,19 +914,41 @@ impl Server {
             return Err((-32801, "the index is still being built".to_string()));
         }
         // a damaged index is built again and the request answered from the new one
-        let (v, pending) = session
+        let ((v, left, why), pending) = session
             .read_pending(&cancel, |s| {
                 // a newer scrutate took the index over since it was opened: nothing here can read it
                 if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
                     return Err(newer.into());
                 }
-                crate::ops::in_snapshot(s, &mut *f)
+                let v = crate::ops::in_snapshot(s, &mut *f)?;
+                Ok((v, s.ix.not_indexed(), named.and_then(|r| s.ix.not_indexed_reason(r))))
             })
             .map_err(|e| (-32603, format!("{e:#}")))?;
         if let Some(note) = pending.note() {
             log(2, &format!("scrutate: {method}: {note}"));
         }
+        self.say_left_out(folder, left, named.zip(why));
         Ok(v)
+    }
+
+    /// What `folder`'s index leaves out, as a warning in the log (the answer's own types have no
+    /// place for it): once whenever the set changes, and once per left-out file a request names
+    /// (`named`, with why), in the command line's words. Nothing when nothing is left out.
+    fn say_left_out(&self, folder: &Folder, left: crate::index::NotIndexed, named: Option<(&str, &str)>) {
+        let mut noted = self.noted.borrow_mut();
+        let (said, files) = noted.entry(folder.root.clone()).or_default();
+        if *said != left {
+            if !left.is_empty() {
+                log(2, &format!("scrutate: {}", left.lines().join("\n")));
+            }
+            *said = left;
+            files.clear();
+        }
+        if let Some((rel, why)) = named
+            && files.insert(rel.to_string())
+        {
+            log(2, &format!("scrutate: {rel} is not in the index ({why}): read it by lines, or search it with grep"));
+        }
     }
 }
 
@@ -1021,6 +1047,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         build_wait: crate::session::BUILD_WAIT,
         waited_out: Default::default(),
         skipped: Default::default(),
+        noted: Default::default(),
         cancel: Default::default(),
     };
     // the editor's messages are read on a thread of their own, so a `$/cancelRequest` reaches the
@@ -1122,6 +1149,7 @@ mod tests {
             build_wait: std::time::Duration::from_millis(300),
             waited_out: Default::default(),
             skipped: Default::default(),
+            noted: Default::default(),
             cancel: Default::default(),
         };
         // a request that waits the build out never returns; 100 times the wait leaves a loaded
@@ -1158,6 +1186,7 @@ mod tests {
             build_wait: std::time::Duration::from_secs(20),
             waited_out: Default::default(),
             skipped: Default::default(),
+            noted: Default::default(),
             cancel: Default::default(),
         };
         let flag = Arc::clone(&srv.cancel);
@@ -1194,6 +1223,7 @@ mod tests {
             build_wait: std::time::Duration::from_secs(20),
             waited_out: Default::default(),
             skipped: Default::default(),
+            noted: Default::default(),
             cancel: Arc::new(AtomicBool::new(true)),
         };
         let first = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
@@ -1262,6 +1292,7 @@ mod tests {
             build_wait: std::time::Duration::from_millis(300),
             waited_out: Default::default(),
             skipped: Default::default(),
+            noted: Default::default(),
             cancel: Default::default(),
         };
         let mut srv = server(vec![folder("x", Some(Arc::clone(&x))), folder("y", Some(Arc::clone(&y)))]);
@@ -1313,6 +1344,7 @@ mod tests {
                 build_wait: std::time::Duration::from_millis(300),
                 waited_out: Default::default(),
                 skipped: Default::default(),
+                noted: Default::default(),
                 cancel: Default::default(),
             };
             let r = srv.request("workspace/symbol", &serde_json::json!({"query": "shared"})).unwrap();
@@ -1361,6 +1393,7 @@ mod tests {
                 build_wait: std::time::Duration::from_millis(300),
                 waited_out: Default::default(),
                 skipped: Default::default(),
+                noted: Default::default(),
                 cancel: Default::default(),
             };
             for f in spellings {
@@ -1411,6 +1444,7 @@ mod tests {
             build_wait: std::time::Duration::from_secs(2),
             waited_out: Default::default(),
             skipped: Default::default(),
+            noted: Default::default(),
             cancel: Default::default(),
         };
         assert_eq!(srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).map_err(|e| e.0), Err(-32801));

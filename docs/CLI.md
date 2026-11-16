@@ -1322,7 +1322,12 @@ answered so at once, so a `shutdown` behind any number of them is read within on
 are read on a thread of their own, so `$/cancelRequest` reaches the request it names while it
 runs: its wait for the build and its search stop, and it is answered with error -32800
 (RequestCancelled); one cancelled while it waits its turn is answered so without running, and a
-cancel for a request already answered is dropped. Columns are UTF-16 code
+cancel for a request already answered is dropped. What the code index leaves out (see [Files
+the index leaves out](#files-the-index-leaves-out)) goes to the log as a `window/logMessage`
+warning, never a popup: once with the first answer from an index that leaves files out and again
+whenever that set changes, and once per left-out file the first time a request names it (a
+document's symbols, or a definition or references from a position in it); an answer itself is
+the protocol's, empty where it found nothing. Columns are UTF-16 code
 units, as the protocol requires. The exit code is 0 after `shutdown` (then `exit` or the end of input), 1 otherwise.
 Logs go to stderr.
 

@@ -1344,3 +1344,90 @@ fn the_language_server_agrees_with_the_command_line() {
     assert_eq!((defs, uses, outlined), (48, 75, 63), "definitions, uses and outline entries compared");
     assert_eq!(siteless, ["src/m0.rs:9 impl", "src/m1.rs:9 impl", "src/m2.rs:7 impl"], "definitions with no occurrence of their own");
 }
+
+/// The `window/logMessage` warnings a session has logged so far that say what the index leaves out.
+fn left_out_logs(c: &Client) -> Vec<String> {
+    c.notifications
+        .iter()
+        .filter(|m| m["method"] == "window/logMessage" && m["params"]["type"] == 2)
+        .filter_map(|m| m["params"]["message"].as_str().map(String::from))
+        .filter(|m| m.contains("not in the index"))
+        .collect()
+}
+
+/// A language server whose index leaves out a file over 1 MB says so in the log, never as a
+/// popup: once with its first answer, and once for that file the first time a request names it;
+/// the answers themselves stay the protocol's.
+#[test]
+fn a_file_the_index_leaves_out_is_logged_once_for_the_session_and_once_when_named() {
+    let r = Repo::new("left_out");
+    r.write("small.py", "def small_marker():\n    return 1\n");
+    r.write("big.py", &format!("def big_marker():\n    return 1\n\n\n{}", "x = 1  #\n".repeat(111_200)));
+    let status =
+        Command::new(BIN).arg("index").current_dir(&r.root).env("SCRUTATE_SEMANTIC", "none").stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    assert!(status.success());
+    let mut child = Command::new(BIN)
+        .arg("lsp")
+        .current_dir(&r.root)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let found = c.request("workspace/symbol", json!({"query": "small_marker"}));
+    assert!(found["result"].as_array().is_some_and(|a| !a.is_empty()), "{found}");
+    assert_eq!(left_out_logs(&c), ["scrutate: 1 file over 1 MB is not in the index: big.py"], "{:?}", c.notifications);
+    let big = json!({"textDocument": {"uri": uri(&r.root.join("big.py"))}});
+    let symbols = c.request("textDocument/documentSymbol", big.clone());
+    assert_eq!(symbols["result"], json!([]), "{symbols}");
+    let named = "scrutate: big.py is not in the index (over 1 MB): read it by lines, or search it with grep";
+    assert_eq!(left_out_logs(&c).last().map(String::as_str), Some(named), "{:?}", c.notifications);
+    assert_eq!(left_out_logs(&c).len(), 2);
+    // the same file again, and a name defined only in it: empty answers, no second message
+    c.request("textDocument/documentSymbol", big);
+    let none = c.request("workspace/symbol", json!({"query": "big_marker"}));
+    assert_eq!(none["result"], json!([]), "{none}");
+    assert_eq!(left_out_logs(&c).len(), 2, "{:?}", c.notifications);
+    // no popup
+    assert!(!c.notifications.iter().any(|m| m["method"] == "window/showMessage"), "{:?}", c.notifications);
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    let _ = child.wait();
+}
+
+/// Over a tree whose index leaves nothing out, no request logs anything about it.
+#[test]
+fn a_session_over_a_tree_with_nothing_left_out_logs_nothing_new() {
+    let r = Repo::new("nothing_left_out");
+    r.write("a.py", "def alpha():\n    return beta()\n\n\ndef beta():\n    return 1\n");
+    let status =
+        Command::new(BIN).arg("index").current_dir(&r.root).env("SCRUTATE_SEMANTIC", "none").stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    assert!(status.success());
+    let mut child = Command::new(BIN)
+        .arg("lsp")
+        .current_dir(&r.root)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let doc = json!({"textDocument": {"uri": uri(&r.root.join("a.py"))}, "position": {"line": 1, "character": 12}});
+    c.request("workspace/symbol", json!({"query": "alpha"}));
+    c.request("textDocument/documentSymbol", json!({"textDocument": doc["textDocument"]}));
+    c.request("textDocument/definition", doc.clone());
+    c.request("textDocument/references", json!({"textDocument": doc["textDocument"], "position": doc["position"], "context": {"includeDeclaration": true}}));
+    c.request("workspace/symbol", json!({"query": "zz_no_such_name"}));
+    let logs: Vec<&Value> = c.notifications.iter().filter(|m| m["method"] == "window/logMessage").collect();
+    assert!(logs.is_empty(), "{logs:?}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    let _ = child.wait();
+}
