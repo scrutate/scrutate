@@ -388,6 +388,9 @@ struct Shared {
     /// a test's change to the tree between a kqueue's listing and its watches
     #[cfg(all(test, target_os = "macos"))]
     kq_between: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// a test's work between a kqueue's probe write and its watch of the probe
+    #[cfg(all(test, target_os = "macos"))]
+    kq_in_probe: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 /// Where the macOS kqueue stands; a read takes the look unless it is `Ready`. A new kqueue is
@@ -530,6 +533,8 @@ impl Notes {
             kq_forced: AtomicBool::new(false),
             #[cfg(all(test, target_os = "macos"))]
             kq_between: Mutex::new(None),
+            #[cfg(all(test, target_os = "macos"))]
+            kq_in_probe: Mutex::new(None),
         }))
     }
 
@@ -592,7 +597,12 @@ impl Notes {
             };
             let _ = std::fs::create_dir_all(&self.0.cookies);
             // a probe of its own: two builds at once (a read's and the watch's) must not share one
-            reg.probe(&self.0.cookies.join(format!("{}probe{epoch}", self.0.prefix)))?;
+            let probe = self.0.cookies.join(format!("{}probe{epoch}", self.0.prefix));
+            #[cfg(test)]
+            let between = lock(&self.0.kq_in_probe).take();
+            #[cfg(not(test))]
+            let between: Option<Box<dyn FnOnce() + Send>> = None;
+            reg.probe_with(&probe, || between.into_iter().for_each(|f| f()))?;
             let paths: Vec<PathBuf> = dirs.iter().map(|(d, _)| d.clone()).collect();
             #[cfg(test)]
             if let Some(f) = lock(&self.0.kq_between).take() {
@@ -2141,6 +2151,31 @@ mod tests {
         let r = root_present(&root, &root, &id);
         assert!(r.is_err_and(|e| e.to_string().contains("is gone")));
         std::fs::remove_dir_all(&old).unwrap();
+    }
+
+    /// Two kqueue builds at once (a read's rebuild and the watch's), the older one run to its end
+    /// between the newer one's probe write and its watch of the probe: each proves the volume
+    /// with a probe of its own, and the newer one is in place after.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn two_kqueue_builds_at_once_each_prove_the_volume() {
+        let root = tree("twobuilds");
+        let notes = Notes::new(&root);
+        notes.in_place_without_a_watcher();
+        let older = notes.0.kq_epoch.fetch_add(2, Ordering::AcqRel) + 1;
+        let other = notes.clone();
+        *lock(&notes.0.kq_in_probe) = Some(Box::new(move || {
+            let walked = Walked::new(&other.0.root, &other.0.code);
+            other.kq_build(older, kq_dirs(&other.0.root, &walked), &walked);
+        }));
+        let walked = Walked::new(&root, &notes.0.code);
+        notes.kq_build(older + 1, kq_dirs(&root, &walked), &walked);
+        let state = match &*lock(&notes.0.kq) {
+            Kq::Ready(..) => "ready".to_string(),
+            Kq::Off(why) => format!("off: {why}"),
+        };
+        assert_eq!(state, "ready");
+        assert!(!notes.0.kq_rebuilding.load(Ordering::Acquire));
     }
 
     #[test]

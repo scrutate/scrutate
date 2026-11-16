@@ -355,8 +355,15 @@ impl Registry {
 
     /// Whether this volume reports a write through kqueue: `probe` (a path of the tree's
     /// volume, made and removed here) is watched, written, and its note must come at once.
+    #[cfg(test)]
     pub(crate) fn probe(&mut self, probe: &Path) -> Result<(), Off> {
+        self.probe_with(probe, || {})
+    }
+
+    /// `probe`, running `between` once the probe file is written and before it is watched.
+    pub(crate) fn probe_with(&mut self, probe: &Path, between: impl FnOnce()) -> Result<(), Off> {
         std::fs::write(probe, b"").map_err(|_| Off::Probe)?;
+        between();
         let r = (|| {
             self.add(probe, false)?;
             std::fs::write(probe, b"probe").map_err(|_| Off::Probe)?;
