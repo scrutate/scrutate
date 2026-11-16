@@ -435,8 +435,9 @@ NFC with final sigma folded.
     SHA-1 verification;
   - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory,
     each file and the directory flushed to disk (`index::sync_file`: on macOS a write barrier,
-    `F_BARRIERFSYNC`, which keeps that order without `sync_all`'s flush of the drive cache, about
-    3 ms a file; `sync_all` where the file system refuses it), and renamed before the database names them, so
+    `F_BARRIERFSYNC`, which keeps that order without `sync_all`'s flush of the drive cache (about
+    3 ms a file), so a one-file update behind a read takes about 30 ms (28 to 38 ms p50 on an
+    M-series Mac); `sync_all` where the file system refuses it), and renamed before the database names them, so
     a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
     by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
   - one read snapshot per operation (`ops::run`, each language server request): its reads see
@@ -571,7 +572,7 @@ mapped: a mapped file another process shortens ends the reader with SIGBUS. A ma
 valid JSON (a crash can leave it empty) is rebuilt by the next update like a damaged segment, and a
 generation's liveness file is written again when an update that stopped early left one. Writers
 serialise on a lock file (polled with `try_lock`: SMB mounts answer a blocking lock with EAGAIN).
-The index stores no file contents (409 MB for the 1.6 GB Linux v7.3 tree; docs/LEADERBOARD.md
+The index stores no file contents (440 MB for the 1.6 GB Linux v7.3 tree; docs/LEADERBOARD.md
 compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query reads the
 candidate files from the source tree.
 
