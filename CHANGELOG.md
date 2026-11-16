@@ -310,7 +310,7 @@ incompatible index by itself, and that is never breaking.
   kqueue instead, whose notes the system posts inside the call that makes the change: a call reads
   them at once and looks at the files they name (on 14,520 files, `find_symbol` through the server
   takes 5.8 ms where a look at the tree took 108 ms). While those watches are not in place, for a
-  tree past half the process's descriptors less 1,024 (`kern.maxfilesperproc`; about 29,700 files
+  tree, or the trees of all of a process's sessions together, past half the process's descriptors less 1,024 (`kern.maxfilesperproc`; about 29,700 files
   and directories where it is 61,440), or on a volume that gives no kqueue notes, every macOS
   call looks at every file. When the watch cannot vouch for fewer files, or
   cannot start, the call looks at every file as before. `SCRUTATE_SESSION_DEBUG=1` says why

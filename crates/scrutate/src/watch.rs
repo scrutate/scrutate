@@ -326,8 +326,8 @@ pub const COOKIES: &str = "cookies";
 const BARRIER: Duration = Duration::from_secs(1);
 /// Whether a cookie's event proves every change made before the cookie is noted: the platform
 /// queues a write's event before the event of a file made after the write returned. Not on macOS:
-/// FSEvents can give a write a later event id than a cookie made after it, so there every read
-/// looks at the tree.
+/// FSEvents can give a write a later event id than a cookie made after it, so there the proof is
+/// the kqueue, and while none is in place every read looks at the tree.
 pub(crate) const ORDER_PROVES: bool = !cfg!(target_os = "macos");
 /// Events kept for reads at most; past this the next read walks the tree.
 const MOST_NOTED: usize = 10_000;
@@ -340,7 +340,8 @@ const KQ_BUILDS: usize = 4;
 /// so a read waits for no burst and no update. A read writes a cookie file and waits for its
 /// event (as Watchman's sync queries do), so a file written before the read started is noted;
 /// then the events since the read's token, as `Burst` reads them, are its change set. Where
-/// `ORDER_PROVES` is false (macOS) a read writes no cookie and its change set is every file. Whatever
+/// `ORDER_PROVES` is false (macOS) a read writes no cookie: the kqueue's drain is its proof, and
+/// while no kqueue is in place its change set is every file. Whatever
 /// the events cannot vouch for (lost events, an error, a rule file, a directory that came or
 /// went, a directory's first watch, no watch at all) makes the change set every file.
 #[derive(Clone)]

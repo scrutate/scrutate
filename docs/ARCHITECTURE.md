@@ -752,15 +752,20 @@ burst's debounce nor a running update holds up. A read first writes a cookie fil
 order, so every change made before the read started is then noted. FSEvents does not (a write can
 get a later event id than a cookie made after it), so on macOS (`watch::ORDER_PROVES` false) a
 read writes no cookie. Its proof there is a kqueue (`kq.rs`): an `EVFILT_VNODE` watch on every
-file and directory of the walk, opened `O_EVTONLY`; XNU posts a vnode's note inside the syscall,
+directory the walk enters and each file it lists there or that sets rules (ignored files take
+none, a file or directory the user cannot read none until it can be read), opened `O_EVTONLY`;
+XNU posts a vnode's note inside the syscall,
 so a read drains the queue with a zero timeout and notes what it names as events. The watches are
 set on the watch's thread each time the watches are (unless the same directories, by path and
 inode, are watched already), and on a thread of their own when a read's drain finds a directory
-that came or went; a new kqueue is built beside the one in place, which watches on until the swap
-and is drained into the notes then. After the first one (no kqueue before it) the next read walks
+that came or went, or a rule file that changed (which builds even over the same directories); a
+new kqueue is built beside the one in place, which watches on until the swap and is drained into
+the notes then, or after it is dropped when the process's budget cannot hold both. After the first one (no kqueue before it) the next read walks
 whatever the refresh interval; after a rebuild only the new directories want that walk. Without them (being set, more
-than half the process's descriptors less a reserve, a probe write with no note, a tree on more
-than one device, a refused watch) the read's change set is every file. With the kqueue in place
+watches than the process's one budget, half its descriptors less 1,024 shared by every kqueue, a
+probe write with no note, a tree on more than one device, a directory that changes too fast to
+list twice alike, a refused watch other than for want of the user's access) the read's change set
+is every file. With the kqueue in place
 FSEvents' events feed only the watch's bursts. A cookie's name
 belongs to its session alone (process id, a number per session and 64 random bits, since two
 containers sharing a bind-mounted root can both be pid 1), so two sessions of one root

@@ -97,8 +97,8 @@ this repository 3.9 ms median before, 8.2 ms after (a call right after an edit 2
 ms after); on 14,520 files (20 copies) 15.0 ms before, 130.8 ms after (after an edit 206 ms, 314
 ms). The look grows with the tree. A command line call through `serve` already looked at every file
 and is unchanged (`symbol` through it: 10.2 and 15.0 ms before, 9.8 and 12.4 ms after, two rounds
-of 15 calls each). A barrier cheaper than the look that is still a proof is the open item
-(ARCH-01m).
+of 15 calls each). A barrier cheaper than the look that is still a proof was the open item
+(ARCH-01m); the amendment below closes it.
 
 ## Amendment, 2026-11-16: a kqueue proves macOS reads
 
@@ -112,37 +112,46 @@ the vnode's list under the vnode lock (bsd/vfs/vfs_subr.c), which activates the 
 A read that starts after a write returned takes the kqueue's lock in `kevent` and finds that note:
 the order is the kernel's, not a daemon's.
 
-So on macOS `watch::Notes` keeps a kqueue (`kq.rs`) with an `EVFILT_VNODE` watch on every file and
-directory of the walk inside the root, each opened `O_EVTONLY`. A read drains it with a zero timeout,
+So on macOS `watch::Notes` keeps a kqueue (`kq.rs`) with an `EVFILT_VNODE` watch, each opened
+`O_EVTONLY`, on every directory the walk enters inside the root and on each file it lists there or
+that sets rules (`kq_keeps`: the walk's ignore rules, not its size or language limits); an ignored
+file takes no descriptor, and a directory the walk has not entered yet keeps all its files. A read drains it with a zero timeout,
 no cookie and no wait, and notes what it names (a file written or replaced, a file made or removed
 in a watched directory) as events; the change set follows by the rules above. FSEvents' events then
 feed only the watch's bursts.
 
 - Watch, then look. The watches are set on the watch's thread whenever the watches are set (the
   same directories by path and inode keep the kqueue they have), and on a thread of their own when
-  a read's drain finds a directory that came, went or moved. A directory is watched before it is
+  a read's drain finds a directory that came, went or moved, or a rule file that changed, which
+  builds again even over the same directories, since which files the walk lists changed with it. A directory is watched before it is
   listed, and listed until two listings agree; a file is watched before it is named. Reads look at
   the tree until the first kqueue is in place, and the first read after that looks too, whatever
   the refresh interval, so a file changed before its watch existed is in that look, which starts
   after every watch does.
 - No gap on a rebuild. A new kqueue is built beside the one in place, which keeps watching until
   the swap and is drained into the notes at it: a change made while both watched is in one queue
-  or the other, so a file the watch knew is never missed. Only the new directories want a walk
+  or the other, so a file the watch knew is never missed. When the budget cannot hold both, the one
+  in place is dropped first and reads look until the new one is in. Only the new directories want a walk
   then, which a refresh interval the user gave may hold back, as on Linux. A directory that came or
   went is noted as such for the burst rules, with the other changes of the same drain. A directory
   made in a parent before the build watched that parent is in the parent's listing with no watch
   of its own, and no later note names it, so each build lists the tree's directories again once
-  its watches are set: when they changed, reads keep looking and another build follows. A
+  its watches are set: when they changed, reads keep looking and another build follows, at most 4
+  in a row (`KQ_BUILDS`) while they keep changing. A
   directory no walk enters (an ignored one) changes no listing, so it asks for no build.
 - A listing keeps each name with its kind (directory, file, or a link, socket or pipe): a name
   that keeps its place and changes kind, as a link that `git checkout` turns into a file or a
   directory, is a new file or a new directory to the next drain, and its old watch is dropped so
   what is there now is watched.
-- The budget: at most half of `RLIMIT_NOFILE` (raised to the process ceiling,
-  `kern.maxfilesperproc`, as Go's runtime does at start) less 1,024 kept for the index and the
-  rest of the process. A tree with more files and directories, or any refused watch (`EMFILE`,
+- The budget: one for the process, shared by every kqueue in it (two sessions in one Python
+  process, a rebuild beside the kqueue in place): at most half of `RLIMIT_NOFILE` (raised to the
+  process ceiling, `kern.maxfilesperproc`, as Go's runtime does at start) less 1,024 kept for the
+  index and the rest of the process. A tree with more files and directories, a directory that
+  changes so fast that 8 listings never agree (`Off::Churn`), or any other refused watch (`EMFILE`,
   `ENFILE` or another error) drops every watch: reads take the look, never a part of a tree that
-  claims proof.
+  claims proof. A file or directory the user cannot read (`EACCES`, `EPERM`) gets no watch and
+  leaves the rest in place: each drain tries up to 32 of them again, in turn, and names one once it
+  opens (a directory with its files); the walk cannot read them either.
 - Descriptors, where this design can fail quietly: one open descriptor per file and directory of
   the walk, for as long as the session runs (16,639 for the 14,520-file tree below; a 100,000-file
   tree needs about 110,000). Raising the soft limit to `kern.maxfilesperproc` (61,440 on the Mac
@@ -161,10 +170,22 @@ feed only the watch's bursts.
 Tested: `kq::tests` (a write is in the next drain 1,000 times; a file replaced by a temporary file's
 rename 1,000 times is named each time, with the same descriptors under its tree before and after;
 a new file is watched before it is named; a directory renamed away and back asks for new watches;
-a tree past the budget keeps no descriptor; the temporary directory's probe), and the session
-tests `a_file_written_just_before_a_call_is_in_its_answer_every_time_through_the_kqueue` (1,000
-writes with no FSEvents at all, one file looked at each time) and
-`a_tree_past_the_kqueue_budget_is_looked_at_by_every_read`; the injected-order test stays. Not
+a name that changes kind is a change; 1,000 files made and removed leave no entry behind, their
+slots reused; two kqueues of one process draw on one budget; a file whose access comes back is
+named within a few drains however many are shut; a tree past the budget keeps no descriptor; the
+temporary directory's probe), `watch::tests::two_kqueue_builds_at_once_each_prove_the_volume`, and
+the session tests `a_file_written_just_before_a_call_is_in_its_answer_every_time_through_the_kqueue`
+(1,000 writes with no FSEvents at all, one file looked at each time),
+`a_tree_past_the_kqueue_budget_is_looked_at_by_every_read`,
+`a_directory_made_while_the_kqueue_is_built_is_not_left_unwatched`,
+`a_new_directory_and_one_made_again_get_the_kqueue`, `a_new_directory_costs_one_look_and_then_none`,
+`kind_changes_answer_as_the_tree_is` (fixed seeds over every ordered pair of absent, file,
+directory, a link to a file and a link to a directory),
+`a_file_the_user_cannot_read_leaves_the_kqueue_in_place`,
+`a_directory_the_user_cannot_read_leaves_the_kqueue_in_place`,
+`ignored_files_take_no_kqueue_watch_until_a_rule_takes_them_back` and
+`the_watch_s_build_past_the_budget_beside_the_kqueue_in_place_brings_it_back`; the injected-order
+test stays. Not
 tested here: a volume whose probe fails (no such volume on the machines this ran on; the code takes
 the look on that path).
 
