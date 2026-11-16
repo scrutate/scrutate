@@ -3038,6 +3038,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A directory the user cannot read leaves the kqueue in place for the rest of the tree; once
+    /// it can be read its files are seen, and a write in it after.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_directory_the_user_cannot_read_leaves_the_kqueue_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, s) = kqueue_in_place("kq_locked_dir");
+        let locked = root.join("src/locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("in.py"), "def locked_away():\n    return 0\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        watching_by_kqueue(&s);
+        std::fs::write(root.join("src/a.py"), "def made_a_1():\n    return 1\n").unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "made_a_1".into(), limit: 1, exact: true }).unwrap();
+        assert!(a.is_ok_and(|a| !a.is_empty()) && st.files_looked == 1, "named by the kqueue alone: {st:?}");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let t0 = Instant::now();
+        while !found(&s, "locked_away") {
+            assert!(t0.elapsed() < Duration::from_secs(10), "the directory's file once it can be read");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::fs::write(locked.join("in.py"), "def locked_no_more():\n    return 1\n").unwrap();
+        let t0 = Instant::now();
+        while !found(&s, "locked_no_more") {
+            assert!(t0.elapsed() < Duration::from_secs(10), "a write in it after");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A file the user cannot read leaves the kqueue in place for the rest of the tree, and is
     /// seen once it can be read.
     #[cfg(target_os = "macos")]

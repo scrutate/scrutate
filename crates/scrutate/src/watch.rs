@@ -557,7 +557,7 @@ impl Notes {
                 let began = notes.dirs();
                 // a rule file changed: which files the walk lists may have, with the same directories
                 let forced = notes.0.kq_forced.swap(false, Ordering::AcqRel);
-                let walked = Walked::new(&notes.0.root, &notes.0.code);
+                let walked = Arc::new(Walked::new(&notes.0.root, &notes.0.code));
                 let dirs = kq_dirs(&notes.0.root, &walked);
                 // a directory no walk enters (an ignored one) came or went: the watches stay as
                 // they are, and a build begun before this one is stale
@@ -584,7 +584,7 @@ impl Notes {
     /// read until a walk is applied looks at the tree whatever the refresh interval; with one
     /// before, only the new directories need that walk, which the interval may hold back.
     #[cfg(target_os = "macos")]
-    fn kq_build(&self, epoch: u64, dirs: Vec<(PathBuf, u64)>, walked: &Walked) -> bool {
+    fn kq_build(&self, epoch: u64, dirs: Vec<(PathBuf, u64)>, walked: &Arc<Walked>) -> bool {
         let t0 = Instant::now();
         let built = (|| -> std::result::Result<(crate::kq::Registry, bool), crate::kq::Off> {
             let mut reg = match self.0.kq_budget.load(Ordering::Relaxed) {
@@ -860,7 +860,7 @@ impl Notes {
     #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn kq_in_place_now(&self) -> bool {
         let epoch = self.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        let walked = Walked::new(&self.0.root, &self.0.code);
+        let walked = Arc::new(Walked::new(&self.0.root, &self.0.code));
         if self.kq_build(epoch, kq_dirs(&self.0.root, &walked), &walked) {
             self.kq_rebuild(false);
         }
@@ -2172,10 +2172,10 @@ mod tests {
         let older = notes.0.kq_epoch.fetch_add(2, Ordering::AcqRel) + 1;
         let other = notes.clone();
         *lock(&notes.0.kq_in_probe) = Some(Box::new(move || {
-            let walked = Walked::new(&other.0.root, &other.0.code);
+            let walked = Arc::new(Walked::new(&other.0.root, &other.0.code));
             other.kq_build(older, kq_dirs(&other.0.root, &walked), &walked);
         }));
-        let walked = Walked::new(&root, &notes.0.code);
+        let walked = Arc::new(Walked::new(&root, &notes.0.code));
         notes.kq_build(older + 1, kq_dirs(&root, &walked), &walked);
         let state = match &*lock(&notes.0.kq) {
             Kq::Ready(..) => "ready".to_string(),

@@ -227,8 +227,9 @@ impl Registry {
             if e.kind() == std::io::ErrorKind::NotFound {
                 return Ok(());
             }
-            // a file the user cannot read has no text to keep fresh until it can be read
-            if !dir && matches!(e.raw_os_error(), Some(libc::EACCES | libc::EPERM)) {
+            // a file or directory the user cannot read has no text to keep fresh until it can be
+            // read (the walk cannot enter such a directory either)
+            if matches!(e.raw_os_error(), Some(libc::EACCES | libc::EPERM)) {
                 self.shut.insert(path.to_path_buf());
                 return Ok(());
             }
@@ -433,9 +434,16 @@ impl Registry {
         }
         for path in tries {
             self.shut.remove(&path);
-            self.add(&path, false)?;
+            let dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+            if dir {
+                // the walk listed it already, so no rebuild would: watch it and its files here
+                self.add_dir(&path, keep)?;
+            } else {
+                self.add(&path, false)?;
+            }
             if self.by_path.get(&path).is_some_and(|&i| self.entries[i].fd.is_some()) {
-                out.push(Change::Modified(path));
+                // a directory that can be read now is a new one to the walks: a rebuild lists it
+                out.push(if dir { Change::Directory(path) } else { Change::Modified(path) });
             }
         }
         let mut dirs = Vec::new();
