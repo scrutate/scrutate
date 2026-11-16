@@ -588,3 +588,28 @@ fn a_path_finds_its_definition_of_a_name_many_files_define() {
     }
     assert!(missed.is_empty(), "{} of {} lookups missed:\n{}", missed.len(), 3 * N, missed.join("\n"));
 }
+
+/// A constant on a file's first line is edited: the file's module chunk, which starts there too, is
+/// the file's lines and no second definition in the new text.
+#[test]
+fn a_constant_on_the_first_line_is_edited() {
+    let cases = [
+        ("m.js", "const a = 1;\nconst b = 2;\n", "a", "const a = 5;\n"),
+        ("m.py", "A = 1\nB = 2\n", "A", "A = 5\n"),
+        ("m.rs", "pub const A: u8 = 1;\npub const B: u8 = 2;\n", "A", "pub const A: u8 = 5;\n"),
+    ];
+    for (file, text, name, new_text) in cases {
+        let mut s = Server::start(&format!("first_{}", file.replace('.', "_")), &[(file, text)], &["--allow-edits"]);
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        assert!(!err, "{file}: {dry}");
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        assert!(!err, "{file}: {out}");
+        assert_eq!(s.file(file), text.replacen(text.lines().next().unwrap(), new_text.trim_end(), 1), "{file}");
+    }
+    // a name the file's module chunk carries is no definition: the answer says so, not "call again"
+    let text = "int a = 1;\n\nint f(void) { return a; }\n";
+    let mut s = Server::start("first_global_c", &[("a.c", text)], &["--allow-edits"]);
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "a", "path": "a.c", "new_text": "int a = 2;\n"}));
+    assert!(err && out.contains("no definition matches a"), "{out}");
+    assert_eq!(s.file("a.c"), text);
+}

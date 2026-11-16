@@ -78,6 +78,8 @@ fn defs(path: &str, source: &str) -> Vec<Def> {
         .0
         .chunks
         .into_iter()
+        // a file's module chunk and its windows are its lines, no definition an edit adds or drops
+        .filter(|c| !matches!(c.kind, "module" | "window"))
         .map(|c| Def { bytes: c.bytes(), qualname: c.qualname, kind: c.kind, start: c.start, end: c.end })
         .collect()
 }
@@ -143,6 +145,11 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
         bail!("{} names {} definitions ({}): pass path, or one location, to pick the one to edit", crate::fmt::echo(symbol), at.len(), at.join(", "));
     }
     let row = &found[0].0;
+    // a file's module chunk or a window can carry a name (`int a = 1;` on line 1 names C's module
+    // chunk) but is no definition
+    if matches!(row.kind.as_str(), "module" | "window") {
+        bail!("no definition matches {}", crate::fmt::echo(symbol));
+    }
     let rel = row.path.clone();
     if let Some(top) = guarded(&s.ix.root, &rel) {
         bail!("{rel} is under {top}: edit_symbol never writes there");
