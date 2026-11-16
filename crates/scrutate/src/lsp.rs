@@ -903,8 +903,8 @@ impl Server {
         // the one thread that answers requests must not wait out a long first build: a change and
         // shutdown come in behind it; ContentModified asks the editor to ask again
         if !session.wait_built(&cancel, Some(build_wait), |_| {}) {
-            // a request that did not wait has waited out nothing: the next one may still wait
-            if !no_wait {
+            // a request that did not wait, or was cancelled in its wait, has waited out nothing
+            if !no_wait && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 self.waited_out.set(Some(std::time::Instant::now()));
             }
             return Err((-32801, "the index is still being built".to_string()));
@@ -1170,6 +1170,40 @@ mod tests {
         assert_eq!(r.map_err(|e| e.0), Err(-32801));
         assert!(took < std::time::Duration::from_secs(5), "the cancel did not stop the wait: {took:?}");
         assert!(session.is_building(), "the request gave up while the build still ran");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A request cancelled in its wait for the first build has waited nothing out: the same
+    /// request asked again waits for the build and gets its answer, not ContentModified at once.
+    #[test]
+    fn a_request_asked_again_after_a_cancel_waits_for_the_build() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_cancel_again_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let session = Arc::new(Session::open(&root, crate::session::Every::given(None)).unwrap());
+        session.building();
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            folders: vec![Folder { session: Some(Arc::clone(&session)), opened: true, ..Folder::new(root.clone(), root.clone()) }],
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_secs(20),
+            waited_out: Default::default(),
+            skipped: Default::default(),
+            cancel: Arc::new(AtomicBool::new(true)),
+        };
+        let first = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+        assert_eq!(first.map_err(|e| e.0), Err(-32801));
+        srv.cancel = Arc::default();
+        let builder = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            session.build().unwrap();
+        });
+        let again = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+        builder.join().unwrap();
+        assert!(again.is_ok(), "the request asked again was not let wait: {:?}", again.map_err(|e| e.0));
         let _ = std::fs::remove_dir_all(&root);
     }
 
