@@ -518,7 +518,7 @@ number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the ba
 `user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
 `changeme`). `env-secret`
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
-`KEY` or `CREDENTIALS`; `password` a quoted value of a name holding `password`, `secret` or
+`KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`); `password` a quoted value of a name holding `password`, `secret` or
 `token`, any symbol in it; `key-material` a line of base64 alone as wide as a key's body and near
 random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside, and public
 material: an SSH key after its type, as `known_hosts` writes it, and the body of a public key, a
@@ -532,7 +532,10 @@ one that runs past its element's length, or one shown without its own END line, 
 after it may be another file's private key. An OpenPGP public key block and an RFC 4716 SSH2
 public key are marked as any key material, since nothing here proves their bodies public);
 `generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
-holding a common word. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
+holding a common word; after a name holding `password`, `passwd`, `secret` or `token` it also takes
+an unquoted value with other symbols (a YAML `password:` or a `.properties`
+`spring.datasource.password=` whose value holds `@` or `!`), up to a space, quote, `;`, `&`, `:`, `,`, a bracket or the
+line's end, and no URL. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
 string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> = "..."`), a value
 in up to two constructors (`Some(String::from("..."))`, `Optional.of("...")`) and a Rust raw

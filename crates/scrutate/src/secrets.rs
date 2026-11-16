@@ -300,14 +300,15 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         ),
         // HTTP Basic credentials: base64 of `user:password`
         rule("basic-auth", "scrutate", r"(?i)\bbasic[ \t]+([A-Za-z0-9+/]{8,}={0,2})", 1, 0.0, &["basic"], user_and_password),
-        // a `.env` line (`NAME=value`, the name upper case): the value may hold any symbol
+        // a `.env` line (`NAME=value`, the name upper case): the value may hold any symbol; `PASS`
+        // only as the whole name or after `_` (`DB_PASS`, not `BYPASS`)
         rule(
             "env-secret",
             "scrutate",
-            r#"\b((?:export[ \t]+)?[A-Z0-9_]*(?:SECRET|PASSW(?:OR)?D|PWD|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|AUTH_?KEY|CREDENTIALS?)[A-Z0-9_]*)=["']?([^\s"'`#]{8,})"#,
+            r#"\b((?:export[ \t]+)?(?:[A-Z0-9_]*(?:SECRET|PASSW(?:OR)?D|PWD|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|AUTH_?KEY|CREDENTIALS?)[A-Z0-9_]*|(?:[A-Z0-9_]*_)?PASS))=["']?([^\s"'`#]{8,})"#,
             2,
             3.0,
-            &["secret", "passw", "pwd", "token", "key", "credential"],
+            &["secret", "pass", "pwd", "token", "key", "credential"],
             env_value,
         ),
         // a quoted value of a password, secret or token: it may hold any symbol (`"Xq7r@T2v!W9#yZ"`)
@@ -329,7 +330,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             "generic-secret",
             "gitleaks generic-api-key (without its stopwords)",
             &format!(
-                r#"(?i-u)[\w.-]{{0,50}}?(?:access|auth|(?-i:[Aa]pi|API)|credential|creds|key|passw(?:or)?d|secret|token)(?:[ \t\w.-]{{0,20}})[\s'"]{{0,3}}(?:{TYPED}|=|>|:{{1,3}}=|\|\||:|=>|\?=|,){WRAPPED}(?:[`'"\s=]|r#{{0,2}}"){{0,5}}([\w.=-]{{10,150}}|[a-z0-9][a-z0-9+/]{{11,}}={{0,3}}){CODE_END}"#
+                r#"(?i-u)[\w.-]{{0,50}}?(?:access|auth|(?-i:[Aa]pi|API)|credential|creds|key|passw(?:or)?d|secret|token)(?:[ \t\w.-]{{0,20}})[\s'"]{{0,3}}(?:{TYPED}|=|>|:{{1,3}}=|\|\||:|=>|\?=|,){WRAPPED}(?:[`'"\s=]|r#{{0,2}}"){{0,5}}([\w.=-]{{10,150}}|[a-z0-9][a-z0-9+/]{{11,}}={{0,3}}|(?u:[^\s"'`;&()\[\]{{}}<>,:]{{10,150}})){CODE_END}"#
             ),
             2,
             3.5,
@@ -359,8 +360,16 @@ fn real_value(secret: &str, _: &str, _: &str) -> bool {
 
 /// gitleaks' generic-api-key filters but its stopwords: a value with a digit or a symbol, a name
 /// not on the allowlist, no placeholder, and no number written in code (`0xcbf29ce484222325u64`).
+/// A value with a symbol outside gitleaks' set only after a password, secret or token, and no URL.
 fn generic(secret: &str, whole: &str, before: &str) -> bool {
-    secret.chars().any(|c| !(c.is_ascii_alphabetic() || matches!(c, '_' | '.' | '-')))
+    let only = |set: &[u8]| secret.bytes().all(|b| b.is_ascii_alphanumeric() || set.contains(&b));
+    let symbolic = !only(b"_.=-") && !only(b"+/=");
+    let key = whole[..whole.rfind(secret).unwrap_or(0)].to_ascii_lowercase();
+    // a Rust macro call (`quote_spanned!`) and digits with format flags (`1234567890.-+`) are code
+    let code =
+        secret.strip_suffix('!').is_some_and(|s| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) || !secret.bytes().any(|b| b.is_ascii_alphabetic());
+    (!symbolic || (["passw", "secret", "token"].iter().any(|k| key.contains(k)) && !secret.contains("://") && !code))
+        && secret.chars().any(|c| !(c.is_ascii_alphabetic() || matches!(c, '_' | '.' | '-')))
         && !NOT_SECRET_NAMES.is_match(whole)
         && real_value(secret, whole, before)
         && !NUMBER.is_match(secret)
@@ -1679,6 +1688,41 @@ mod tests {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
             assert!(out.ends_with("&useSSL=false") || out.ends_with("&format=json") || out.ends_with("&x=1"), "{line} -> {out}");
+        }
+    }
+
+    /// An unquoted password, secret or token with a symbol in it is redacted, and so is a `.env`
+    /// value whose name is `PASS` or ends in `_PASS`; a name that ends in other letters and `PASS`
+    /// (`BYPASS`, `COMPASS`), and a symbol after another keyword, are not.
+    #[test]
+    fn an_unquoted_secret_with_a_symbol_and_a_pass_name_are_redacted() {
+        let symbolic = format!("{}@{}!{}", fake(91, ALNUM, 4), fake(92, ALNUM, 6), fake(93, ALNUM, 3));
+        let plain = fake(94, ALNUM, 12);
+        for line in [
+            format!("  password: {symbolic}"),
+            format!("spring.datasource.password={symbolic}"),
+            format!("client_secret = {symbolic}"),
+            format!("auth_token: {symbolic} # rotated"),
+            format!("DB_PASS={plain}"),
+            format!("SMTP_PASS={plain}"),
+            format!("export MYSQL_ROOT_PASS={plain}"),
+            format!("PASS={plain}"),
+        ] {
+            let secret = if line.contains(&symbolic) { &symbolic } else { &plain };
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
+        }
+        for line in [
+            format!("BYPASS={plain}"),
+            format!("COMPASS={plain}"),
+            format!("api_key: user@{}.example.com", fake(95, "abcdefghij", 8)),
+            "token: https://auth.example.com/oauth/token".to_string(),
+            "password: see-the-docs".to_string(),
+            "password: ${DB_PASSWORD}".to_string(),
+            "let tokens = quote_spanned! {span=>".to_string(),
+            "const char* valid_tokens = \"1234567890.-+ #btcdeEfgGosuxX\";".to_string(),
+        ] {
+            assert!(redact(&line).1.is_empty(), "{line} -> {}", redact(&line).0);
         }
     }
 
