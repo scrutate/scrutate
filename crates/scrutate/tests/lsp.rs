@@ -332,23 +332,36 @@ fn a_folder_that_cannot_answer_leaves_the_others_answers() {
     symbols(&mut c, "with a deleted folder");
     c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder(&r.root.join("also_gone"))], "removed": []}}));
     symbols(&mut c, "with a deleted folder added later");
-    // a folder whose first build is still running when the request comes
+    // a folder whose first build cannot end while the request is read: the test holds its
+    // index's write lock, which the build waits for
     let big = r.root.join("big");
     fs::create_dir_all(big.join(".git")).unwrap();
-    for i in 0..3000 {
-        r.write(&format!("big/m{i}.py"), &format!("def f{i}(a):\n    return a + {i}\n"));
-    }
+    r.write("big/m.py", "def f(a):\n    return a\n");
+    assert!(Command::new(BIN).arg("index").current_dir(&big).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success());
+    let lock = rusqlite::Connection::open(big.join(".scrutate/index.db")).unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();
     c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder(&big)], "removed": []}}));
     let t = std::time::Instant::now();
     symbols(&mut c, "with a folder in its first build");
-    // set aside, not waited for: a wait that the build outlasts takes all of BUILD_WAIT, one it
-    // does not outlast answers from the folder and logs nothing
+    // set aside, not waited for: a request that waits for the build waits out all of BUILD_WAIT
     let left_out = "big is left out of this answer: the index is still being built";
     assert!(
         c.notifications.iter().any(|n| n["method"] == "window/logMessage" && n["params"]["message"].as_str().is_some_and(|m| m.ends_with(left_out))),
         "{:?}",
         c.notifications
     );
+    assert!(t.elapsed() < scrutate::session::BUILD_WAIT, "the build was waited for: {:?}", t.elapsed());
+    lock.execute_batch("ROLLBACK").unwrap();
+    // a folder with no index at all, asked at once: its build may or may not end first, so it is
+    // left out or answers, but is never waited for
+    let fresh = r.root.join("fresh");
+    fs::create_dir_all(fresh.join(".git")).unwrap();
+    for i in 0..3000 {
+        r.write(&format!("fresh/m{i}.py"), &format!("def g{i}(a):\n    return a + {i}\n"));
+    }
+    c.notify("workspace/didChangeWorkspaceFolders", json!({"event": {"added": [folder(&fresh)], "removed": []}}));
+    let t = std::time::Instant::now();
+    symbols(&mut c, "with a folder that has no index yet");
     assert!(t.elapsed() < scrutate::session::BUILD_WAIT, "the build was waited for: {:?}", t.elapsed());
     c.request("shutdown", Value::Null);
     c.notify("exit", Value::Null);
