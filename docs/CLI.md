@@ -344,8 +344,10 @@ says so. A
 kind no definition has, or a filter that keeps no file, answers at once. `symbol`'s filters narrow inside the name lookup, so `--limit` counts only what they keep; when
 no definition has the name, the near matches are ranked before the filters see them, so they are
 read again until `--limit` pass, up to 100,000, and an answer stopped there says so. `refs`
-walks only the files the globs and types (or, with no type, the languages' file names) admit, so
-`--max-results` counts only those; its file filters pick each occurrence by its own file, and a
+walks only the files the globs and types (or, with no type, the languages' file names) admit, and
+`--max-results` counts only the occurrences in files the filters keep: a file whose language its
+text decides (a `.h` header, C or C++) is read and judged before its occurrences count, up to the
+same 10,000 as `--kind`. Its file filters pick each occurrence by its own file, and a
 definition outside them heads the occurrences they keep, marked `(outside the filter)`
 (`outside_filter` in the JSON). `--kind` picks the definitions, and `--def` names one whatever
 the file filters keep; with `--def` or a qualified name, `--max-results` counts the occurrences

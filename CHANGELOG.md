@@ -433,6 +433,9 @@ incompatible index by itself, and that is never breaking.
   link or a uv editable source answered "(no results)" once more than 20 other files of the
   repository defined the name, or one hit marked as cut; a read past 20 of the dependency's own
   definitions says to name one by its location, where it said to pass a path `--deps` does not take.
+- `refs NAME --lang c` (and any file filter) counts `--max-results` over the occurrences in the
+  files the filter keeps, where a C++ header's uses could fill the count and be dropped after it,
+  answering none of the C header's ([CLI](docs/CLI.md#engine-b)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it

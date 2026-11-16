@@ -216,10 +216,14 @@ impl<'a> Names<'a> {
         SEARCHES.with(|c| c.set(c.get() + 1));
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
-        // with `keep` an occurrence counts once it resolves to a kept definition, so the search
-        // reads on, resolving at most REFS_KIND_RESOLVE_MAX (or max_results when larger)
+        // with `keep` an occurrence counts once it resolves to a kept definition, and with file
+        // filters once its file passes them (a language can be read from a file's text, which the
+        // walk does not open), so the search reads on, at most REFS_KIND_RESOLVE_MAX (or
+        // max_results when larger)
         let kinds = keep;
-        let read_max = if kinds.is_some() { max_results.max(REFS_KIND_RESOLVE_MAX) } else { max_results };
+        let by_file = scope.filter(|f| f.has_files());
+        let selective = kinds.is_some() || by_file.is_some();
+        let read_max = if selective { max_results.max(REFS_KIND_RESOLVE_MAX) } else { max_results };
         let mut kind_of: HashMap<(i64, &str), bool> = HashMap::new();
         let mut bounded: Option<u64>;
         // one line past the bound says whether more exist: the search stopping at exactly the bound does not
@@ -258,13 +262,16 @@ impl<'a> Names<'a> {
             let mut resolved = 0u64;
             bounded = None;
             'lines: for h in hits {
+                if by_file.is_some_and(|f| !f.admits_path(&h.path)) {
+                    continue;
+                }
                 let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
                 let folds = !any_case || self.langs.folds(&h.path, "function");
                 let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
                 let lang = self.langs.id(&h.path);
-                let room = if kinds.is_some() { usize::MAX } else { max_results.saturating_sub(occurrences.len() as u64) as usize };
+                let room = if selective { usize::MAX } else { max_results.saturating_sub(occurrences.len() as u64) as usize };
                 for &(a, b) in spans.take(room) {
-                    if kinds.is_some() {
+                    if selective {
                         // one more than max_results kept says whether the answer is cut
                         if occurrences.len() as u64 > max_results {
                             truncated = true;
@@ -284,8 +291,8 @@ impl<'a> Names<'a> {
                     // the occurrence as this file spells it
                     let resolution = self.tie(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare)).resolution();
                     let o = Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution };
+                    resolved += 1;
                     if let Some(f) = kinds {
-                        resolved += 1;
                         // an occurrence of another kind is dropped as it resolves, never held
                         let kept = match resolution {
                             Ok((id, why)) => match kind_of.get(&(id, why)) {
@@ -317,11 +324,11 @@ impl<'a> Names<'a> {
                 }
             }
             // the search itself stopped at the bound's lines with fewer than max_results kept
-            if kinds.is_some() && bounded.is_none() && truncated && occurrences.len() as u64 <= max_results {
+            if selective && bounded.is_none() && truncated && occurrences.len() as u64 <= max_results {
                 bounded = Some(resolved);
             }
             // the one past max_results was kept to tell whether the answer is cut
-            if kinds.is_some() && occurrences.len() as u64 > max_results {
+            if selective && occurrences.len() as u64 > max_results {
                 occurrences.truncate(max_results as usize);
                 truncated = true;
             }
@@ -459,7 +466,8 @@ impl<'a> Names<'a> {
             }
         }
         let narrowed = kinds.is_some().then_some(narrowed);
-        Ok(Resolved { definitions, occurrences, truncated, bounded, no_kind: false, notes, first_overload, outside: Default::default(), narrowed })
+        let by_files = by_file.is_some();
+        Ok(Resolved { definitions, occurrences, truncated, bounded, by_files, no_kind: false, notes, first_overload, outside: Default::default(), narrowed })
     }
 
     /// The occurrences of each of `words` as the main read of `references` of it finds them, its

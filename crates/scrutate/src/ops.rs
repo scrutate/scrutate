@@ -1622,9 +1622,15 @@ fn resolved_reason(name: &str, refs: &crate::resolve::Resolved) -> Option<String
     if refs.no_kind {
         Some(format!("no definition named {} is of those kinds", echo(name)))
     } else {
+        // what picked the occurrences: the definitions (kinds, --def, a qualified name), the files, or both
+        let asked = match (refs.narrowed.is_some(), refs.by_files) {
+            (true, true) => "of the definitions and in the files asked for",
+            (false, true) => "in the files asked for",
+            _ => "of the definitions asked for",
+        };
         refs.bounded.map(|n| {
             format!(
-                "{n} occurrences were read and fewer than max_results were of the definitions asked for (at most {} are read): narrow the name or the files",
+                "{n} occurrences were read and fewer than max_results were {asked} (at most {} are read): narrow the name or the files",
                 crate::names::REFS_KIND_RESOLVE_MAX
             )
         })
@@ -3123,6 +3129,16 @@ mod tests {
         assert!(a.json()["stopped_reason"].as_str().is_some_and(|r| r.contains("no definition named a0")));
         let a = answer(crate::resolve::Resolved { truncated: true, ..Default::default() });
         assert!(a.text().contains("raise max_results") && a.json()["stopped_reason"].is_null(), "{}", a.text());
+        // the reason names what picked the occurrences: the definitions, the files or both
+        let narrowed = || Some(crate::resolve::Narrowed::default());
+        for (by_files, narrowed, asked) in [
+            (false, narrowed(), "were of the definitions asked for"),
+            (true, None, "were in the files asked for"),
+            (true, narrowed(), "were of the definitions and in the files asked for"),
+        ] {
+            let a = answer(crate::resolve::Resolved { truncated: true, bounded: Some(3), by_files, narrowed, ..Default::default() });
+            assert!(a.text().contains(asked), "{asked}: {}", a.text());
+        }
     }
 
     /// A symbol or search answer stopped at its bound says so in text and JSON, an empty one too.

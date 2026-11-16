@@ -3093,6 +3093,8 @@ pub struct Resolved {
     /// with kinds, the occurrences resolved when the search stopped at its bound with fewer than
     /// max_results of them kept: raising max_results below the bound changes nothing
     pub bounded: Option<u64>,
+    /// whether file filters picked the occurrences as they were read, for the words of `bounded`
+    pub by_files: bool,
     /// with kinds, no definition of the name has one of them, so nothing was searched
     pub no_kind: bool,
     /// files whose search stopped at a NUL byte, each with what the search said: a use after

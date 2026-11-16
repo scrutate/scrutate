@@ -243,6 +243,19 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
         let mut qr = Rng(0x0a11_ed00 + r as u64);
         let q = 2 + qr.below(3);
         let mut q_paths = Vec::new();
+        // a C++ header's uses of `nm` before a C header's, for the --lang pair: a header's language
+        // is read from its text, after the walk
+        let calls = |n: usize| (0..n).map(|i| format!(" + nm({i})")).collect::<String>();
+        fs::create_dir_all(root.join("h")).unwrap();
+        fs::write(
+            root.join("h/a_cpp.h"),
+            format!(
+                "#pragma once\nnamespace ns {{\nclass Box {{ public: int v; }};\nint nm(int x) {{ return x; }}\ninline int use_a() {{ return 0{}; }}\n}}\n",
+                calls(1 + qr.below(6))
+            ),
+        )
+        .unwrap();
+        fs::write(root.join("h/z_c.h"), format!("int nm(int x);\nstatic inline int use_z(void) {{ return 0{}; }}\n", calls(1 + qr.below(4)))).unwrap();
         for j in 0..q {
             let (ext, text) = if qr.below(2) == 0 {
                 (
@@ -349,6 +362,15 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             broken.push(format!("r{r} (n={n}) references {name} max_results {max}: {why}"));
         }
         covered.insert("references qualified name".to_string());
+        // references --lang c: the C header's occurrences, though the C++ header's come first
+        let max = 1 + qr.below(4);
+        rows += 1;
+        let full = call("references", json!({"name": "nm", "langs": ["c"], "max_results": 5000}));
+        let cut = call("references", json!({"name": "nm", "langs": ["c"], "max_results": max}));
+        if let Err(why) = kept_of(&whole, &full, &cut, max, false, &|o, _| o.0 == "h/z_c.h") {
+            broken.push(format!("r{r} (n={n}) references langs c max_results {max}: {why}"));
+        }
+        covered.insert("references langs c header".to_string());
         // the other narrowing arguments: the answer with a limit is the first items of the one without
         let d = rng.below(3);
         let others = [
@@ -1015,5 +1037,45 @@ fn a_qualified_name_counts_the_occurrences_of_the_definitions_it_names() {
     // a dropped argument is never silent: def with textual is refused, as the command line refuses it
     let both = scrutate::mcp::call_tool(&session, "references", &json!({"name": "push", "def": "z_stack.rs", "textual": true}), &settings, &cancel);
     assert!(both.is_error && both.text.contains("`def` cannot be used with `textual`"), "{}", both.text);
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A language read from a file's text picks the occurrences before max_results counts them: a C++
+/// header's 5 uses of `nm` come first, then a C header's; `--lang c` holds min(M, the C header's 3)
+/// at every M, on the command line and over MCP.
+#[test]
+fn a_language_decided_by_a_file_text_picks_the_occurrences_before_the_limit() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_lang_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(
+        root.join("a_cpp.h"),
+        "#pragma once\nnamespace ns {\nclass Box { public: int v; };\nint nm(int x) { return x; }\ninline int use_a() { return nm(1) + nm(2) + nm(3) + nm(4) + nm(5); }\n}\n",
+    )
+    .unwrap();
+    fs::write(root.join("z_c.h"), "int nm(int x);\nstatic inline int use_z(void) { return nm(1) + nm(2); }\n").unwrap();
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let run = |args: &[&str]| -> Value {
+        let out =
+            std::process::Command::new(BIN).args(args).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|_| panic!("{args:?}: {}", String::from_utf8_lossy(&out.stdout)))
+    };
+    let paths = |v: &Value| -> Vec<String> {
+        let r = &v["result"];
+        let defs = r["definitions"].as_array().into_iter().flatten().flat_map(|d| d["references"].as_array().into_iter().flatten());
+        defs.chain(r["unresolved"].as_array().into_iter().flatten()).map(|o| o["path"].as_str().unwrap_or("").to_string()).collect()
+    };
+    let full = paths(&run(&["refs", "nm", "--lang", "c", "--max-results", "5000", "--json"]));
+    assert_eq!(full, ["z_c.h"; 3], "the C header's uses alone");
+    let settings = scrutate::mcp::Settings::new(None);
+    let cancel = Arc::default();
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    for m in [1usize, 2, 3, 4, 50] {
+        let ms = m.to_string();
+        assert_eq!(paths(&run(&["refs", "nm", "--lang", "c", "--max-results", &ms, "--json"])), full[..m.min(3)], "--lang c --max-results {m}");
+        let mcp = scrutate::mcp::call_tool(&session, "references", &json!({"name": "nm", "langs": ["c"], "max_results": m}), &settings, &cancel);
+        assert_eq!(paths(&mcp.structured), full[..m.min(3)], "MCP langs c max_results {m}: {}", mcp.text);
+    }
     let _ = fs::remove_dir_all(&root);
 }
