@@ -148,11 +148,13 @@ impl Walked {
         self.at.elapsed() >= WALK_EVERY || self.text_index != has_text_index(root)
     }
 
-    /// Whether `path` holds rules for what is indexed: an ignore file in the tree, one of `rules`,
-    /// or a `.scrutate.toml`.
+    /// Whether `path` holds rules for what is indexed: an ignore file in a directory the walks
+    /// enter, one of `rules`, or a `.scrutate.toml`. One in a directory they do not enter is a file
+    /// like any other there: `Burst::files` walks the tree when that directory is new and entered.
     fn sets_rules(&self, root: &Path, path: &Path) -> bool {
         self.rules.contains(path)
             || inside(root, path)
+                && path.parent().is_some_and(|d| self.holds(d))
                 && path.file_name().is_some_and(|n| [".gitignore", ".ignore", crate::instant::RGIGNORE, ".scrutate.toml"].iter().any(|r| n == *r))
     }
 }
@@ -2080,6 +2082,29 @@ mod tests {
             std::fs::write(&g, "z = 1\n").unwrap();
         };
         assert_eq!(burst(&root, ignored, &[ev(create, &[&g])]), Some(Named::default()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An ignore file in a directory no walk enters (`python3 -m venv` writes `.venv/.gitignore`)
+    /// changes nothing indexed and walks nothing; one in a new directory the walks enter does.
+    #[test]
+    fn an_ignore_file_in_a_skipped_directory_walks_nothing() {
+        let root = tree("skipped_rules");
+        let create = EventKind::Create(CreateKind::File);
+        for rel in ["gen/.gitignore", "gen/out/.ignore", "gen/.rgignore", "gen/.scrutate.toml"] {
+            let p = root.join(rel);
+            let write = || {
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, "*\n").unwrap();
+            };
+            assert_eq!(burst(&root, write, &[ev(create, &[&p])]), Some(Named::default()), "{rel}");
+        }
+        let p = root.join("src/pkg/.gitignore");
+        let made = || {
+            std::fs::create_dir_all(root.join("src/pkg")).unwrap();
+            std::fs::write(&p, "*.py\n").unwrap();
+        };
+        assert_eq!(burst(&root, made, &[ev(create, &[&p])]), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 

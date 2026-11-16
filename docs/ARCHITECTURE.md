@@ -780,7 +780,7 @@ never take each other's cookie; a session keeps only the names it still waits fo
 cookies over ten seconds old when it starts. The events since the
 read's token, read by the same rules a burst uses (`Burst::note`, `Burst::files`), name the files.
 Anything those rules cannot vouch for is every file: lost events or a watcher error, an ignore or
-config file, a directory that came or went, a directory left without a watch, a rule file outside
+config file in a directory the walks enter, a directory that came or went, a directory left without a watch, a rule file outside
 every watch that changed, the watches set (the first time, and on Linux each time again, since a
 file written while they were set may have no event), more than 10,000 events since the last read,
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
