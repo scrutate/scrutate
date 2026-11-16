@@ -345,6 +345,17 @@ fn a_call_of_a_class_is_a_call_of_its_constructor() {
 }
 
 #[test]
+fn a_ruby_new_after_a_multi_byte_character_names_its_class() {
+    let r = Repo::new(
+        "rb_new_multibyte",
+        &[("inv.rb", "class Invoice\n  def initialize(n)\n    @n = n\n  end\nend\n\ndef bill\n  x = \u{201c}Invoice.new(1)\nend\n")],
+    );
+    let (code, out) = r.run(&["callees", "bill"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("[class] Invoice"), "{out}");
+}
+
+#[test]
 fn a_call_outside_every_definition_has_the_chunk_that_holds_it_as_caller() {
     let r = Repo::new(
         "toplevel_calls",
