@@ -8,9 +8,9 @@
  },
  "binheavy/literal": {
   "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
-  "limit": 1.02,
+  "limit": 1.03,
   "since": "2026-11-16",
-  "audit": "R3X-14c",
-  "reason": "the NUL rules of FUZZ-02: a walked file with a NUL byte is answered as ripgrep reads it, which a slice search alone gets wrong when the first NUL comes late (lines before the read that meets it print, later ones do not). On 2,000 random 32 KB files and 200 text files: 11,504,716 instructions with the rules off, 11,635,811 with them (+65 per binary file: one memchr to the first NUL and the dispatch), against 11,519,548 on main (1.0101); ripgrep 15.2.0 counts 14,277,862 there (1.24 times main)"
+  "audit": "R3X-14c; R4-FZ-01, R4-FZ-02",
+  "reason": "the NUL rules: a walked file with a NUL byte answered as ripgrep reads it (FUZZ-02, R3X-14c), and two more of ripgrep's answers copied, a walked file whose NUL comes after its first 64 KiB (R4-FZ-01) and the context separator before the binary note under --sort (R4-FZ-02), which cost about 100 instructions more per binary file. CI's benchmarks run at e2d39d85 (run 43782004117, the full corpus): 85,902,359 -> 87,809,435, 1.0222. On 2,000 random 32 KB files and 200 text files on an AWS build box: 11,523,832 on main; 11,635,320 after R3X-14c (1.0097); 11,832,672 with R4-FZ-01 and R4-FZ-02 (1.0268). The same box gave 1.0303 at e2d39d85 against a main count that moves about 0.3% between runs there, so the limit is held against CI's number, not the box's. ripgrep 15.2.0 counts 14,277,862 on that tree (1.24 times main)"
  }
 }
