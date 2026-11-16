@@ -779,11 +779,12 @@ impl Searcher {
     /// last, for a name written as a path, a top-level definition of its last part
     /// (`crate::util::helper` finds `helper`).
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
-        self.find_symbol_where(name, limit, None)
+        self.find_symbol_where(name, limit, None, None)
     }
 
-    /// `find_symbol`, keeping only the definitions `keep` admits, before `limit` cuts.
-    pub fn find_symbol_where(&self, name: &str, limit: usize, keep: Option<&dyn Fn(&ChunkRow) -> bool>) -> Result<Vec<Hit>> {
+    /// `find_symbol` in the file `path` when one is given, keeping only the definitions `keep`
+    /// admits, before `limit` cuts.
+    pub fn find_symbol_where(&self, name: &str, limit: usize, path: Option<&str>, keep: Option<&dyn Fn(&ChunkRow) -> bool>) -> Result<Vec<Hit>> {
         // a Rust raw identifier `r#type` is indexed as `type`
         let name = name.trim();
         let unraw = name.strip_prefix("r#").unwrap_or(name).replace("::r#", "::").replace(".r#", ".");
@@ -791,9 +792,10 @@ impl Searcher {
         let d = dotted(typed);
         let d = d.trim_start_matches('.');
         let rows = |n: &str| -> Result<Vec<Hit>> {
-            let found = match keep {
-                Some(keep) => self.ix.symbols_named_where(n, limit, keep)?,
-                None => self.ix.symbols_named(n, limit)?,
+            let found = match (keep, path) {
+                (Some(keep), path) => self.ix.symbols_named_where(n, limit, &|r| path.is_none_or(|p| r.path == p) && keep(r))?,
+                (None, Some(path)) => self.ix.symbols_named_in(n, path, limit)?,
+                (None, None) => self.ix.symbols_named(n, limit)?,
             };
             Ok(found.iter().map(|r| Hit::from_row(r, true)).collect())
         };
@@ -823,7 +825,7 @@ impl Searcher {
             if out.len() >= limit {
                 break;
             }
-            if let Some(r) = self.ix.chunk(id)?.filter(|r| keep.is_none_or(|keep| keep(r))) {
+            if let Some(r) = self.ix.chunk(id)?.filter(|r| path.is_none_or(|p| r.path == p) && keep.is_none_or(|keep| keep(r))) {
                 out.push(Hit::from_row(&r, true));
             }
         }

@@ -948,10 +948,7 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
                     // a path narrows the lookup before any limit: a name many files define keeps the
                     // named file's definitions, wherever they rank among the others
                     let named = path.as_deref().map(|p| repo_path(s, p));
-                    let mut hits = s.find_symbol(symbol, if named.is_some() { i64::MAX as usize } else { READ_DEFINITIONS + 1 })?;
-                    if let Some(p) = &named {
-                        hits.retain(|h| h.path == *p);
-                    }
+                    let hits = s.find_symbol_where(symbol, READ_DEFINITIONS + 1, named.as_deref(), None)?;
                     hits.iter().filter_map(|h| s.ix.chunk(h.id).transpose()).collect::<Result<Vec<_>>>()?
                 }
             };
@@ -1470,7 +1467,7 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
             // the filter narrows inside the lookup, before any limit cuts
             let mut kept: Vec<Hit> = match crate::intel::location(name) {
                 Some(_) => targets(s, name, want, false)?.into_iter().filter(|h| keep(&h.path, &h.kind)).collect(),
-                None => s.find_symbol_where(name, want, Some(&|r: &ChunkRow| keep(&r.path, &r.kind)))?,
+                None => s.find_symbol_where(name, want, None, Some(&|r: &ChunkRow| keep(&r.path, &r.kind)))?,
             };
             let mut bounded = false;
             // as without filters: no definition of the name, then the near matches the filter keeps;

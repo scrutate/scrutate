@@ -3140,6 +3140,22 @@ impl Index {
         Ok(rows)
     }
 
+    /// `symbols_named` in the file `path`: the query reads no other file's rows.
+    pub fn symbols_named_in(&self, name: &str, path: &str, limit: usize) -> Result<Vec<ChunkRow>> {
+        let key = name_key(name);
+        let last = name_key(name.rsplit('.').next().unwrap_or(name));
+        // the tail filter must run before LIMIT
+        let mut st = self.db.prepare_cached(&format!(
+            "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
+             AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?3 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
+             AND path = ?5 {} LIMIT ?2",
+            symbol_order("?4")
+        ))?;
+        let typed_last = name.rsplit('.').next().unwrap_or(name);
+        let rows = st.query_map(params![key, limit as i64, last, typed_last, path], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     /// `symbols_named`, keeping only the rows `keep` admits: they are read in order until `limit`
     /// pass, so a filter narrows before the limit cuts, however many rows it leaves out. With no
     /// filter `symbols_named` is cheaper: its LIMIT lets the sort keep only the first rows.
