@@ -941,7 +941,13 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let mut rows = match crate::intel::location(symbol) {
                 Some((path, line)) => s.ix.chunk_at(&repo_path(s, path), line)?.into_iter().collect(),
                 None => {
-                    let hits = s.find_symbol(symbol, READ_DEFINITIONS + 1)?;
+                    // a path narrows the lookup before any limit: a name many files define keeps the
+                    // named file's definitions, wherever they rank among the others
+                    let named = path.as_deref().map(|p| repo_path(s, p));
+                    let mut hits = s.find_symbol(symbol, if named.is_some() { i64::MAX as usize } else { READ_DEFINITIONS + 1 })?;
+                    if let Some(p) = &named {
+                        hits.retain(|h| h.path == *p);
+                    }
                     hits.iter().filter_map(|h| s.ix.chunk(h.id).transpose()).collect::<Result<Vec<_>>>()?
                 }
             };

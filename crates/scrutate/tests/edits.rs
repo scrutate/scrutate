@@ -555,3 +555,36 @@ fn a_comment_on_the_definitions_first_or_last_line_is_edited_with_it() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// A name many files define is found in the file a path names, whatever the others: the path
+/// narrows the lookup before the answer's limit of definitions applies. 25 files each define
+/// `a0`; past the first 21 a lookup by name answered "no definition matches" for the rest.
+#[test]
+fn a_path_finds_its_definition_of_a_name_many_files_define() {
+    const N: usize = 25;
+    let files: Vec<(String, String)> = (1..=N).map(|i| (format!("f{i}.py"), format!("def a0():\n    return {i}\n"))).collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let mut s = Server::start("many_a0", &refs, &["--allow-edits"]);
+    let mut missed = Vec::new();
+    for (i, (path, _)) in files.iter().enumerate() {
+        let (text, err) = s.call("read_code", json!({"symbol": "a0", "path": path}));
+        if err || !text.contains(&format!("return {}", i + 1)) {
+            missed.push(format!("read_code {path}: {text}"));
+        }
+        let (text, err) = s.call("edit_symbol", json!({"symbol": "a0", "path": path, "new_text": "def a0():\n    return 0\n"}));
+        if err {
+            missed.push(format!("edit_symbol {path}: {text}"));
+        }
+        let out = Command::new(BIN)
+            .args(["read", path, "--symbol", "a0"])
+            .current_dir(&s.root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        if !out.status.success() || !String::from_utf8_lossy(&out.stdout).contains(&format!("return {}", i + 1)) {
+            missed.push(format!("read --symbol {path}: {}", String::from_utf8_lossy(&out.stderr)));
+        }
+    }
+    assert!(missed.is_empty(), "{} of {} lookups missed:\n{}", missed.len(), 3 * N, missed.join("\n"));
+}
