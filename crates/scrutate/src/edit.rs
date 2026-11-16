@@ -69,10 +69,17 @@ struct Def {
     kind: &'static str,
     start: i64,
     end: i64,
+    bytes: Option<(usize, usize)>,
 }
 
+/// Unfilled, so each keeps where it lies in `source`.
 fn defs(path: &str, source: &str) -> Vec<Def> {
-    crate::parse::parse_source(path, source).into_iter().map(|c| Def { qualname: c.qualname, kind: c.kind, start: c.start, end: c.end }).collect()
+    crate::parse::parse_file_with(path, source, None)
+        .0
+        .chunks
+        .into_iter()
+        .map(|c| Def { bytes: c.bytes(), qualname: c.qualname, kind: c.kind, start: c.start, end: c.end })
+        .collect()
 }
 
 /// The error and missing nodes of a tree, and the line of the first.
@@ -91,6 +98,22 @@ fn errors(root: tree_sitter::Node) -> (usize, usize) {
         stack.extend(x.children(&mut c));
     }
     (n, first)
+}
+
+/// `range` widened to each node around it that holds it alone and lies within the lines `a..b`
+/// (`export` before a function), so their words are the definition's; never to the file's root.
+fn wrapped(root: tree_sitter::Node, range: (usize, usize), (a, b): (usize, usize)) -> (usize, usize) {
+    let (mut from, mut to) = range;
+    let Some(mut n) = root.descendant_for_byte_range(from, to) else { return range };
+    while let Some(p) = n.parent() {
+        let alone = p.named_children(&mut p.walk()).filter(|k| !k.kind().contains("comment")).count() == 1;
+        if p.parent().is_none() || p.start_byte() < a || p.end_byte() > b || !alone {
+            break;
+        }
+        (from, to) = (from.min(p.start_byte()), to.max(p.end_byte()));
+        n = p;
+    }
+    (from, to)
 }
 
 /// The answer to `edit_symbol`.
@@ -126,6 +149,17 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let starts: Vec<usize> = std::iter::once(0).chain(old.match_indices('\n').map(|(i, _)| i + 1)).collect();
     let line_at = |l: i64| starts.get((l - 1) as usize).copied().unwrap_or(old.len());
     let (a, b) = (line_at(target.start), line_at(target.end + 1));
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&(spec.language)())?;
+    let Some(t0) = parser.parse(&old, None) else { bail!("{rel} did not parse") };
+    // whole lines are replaced, so other code on the first or the last of them would go with them
+    if let Some((from, to)) = target.bytes.map(|r| wrapped(t0.root_node(), r, (a, b))) {
+        let before = !old[a..from.max(a)].trim_start_matches('\u{feff}').trim().is_empty();
+        if before || !old[to.min(b)..b].trim().is_empty() {
+            let line = if before { target.start } else { target.end };
+            bail!("{} shares a line with other code ({rel}:{line}): edit_symbol replaces whole lines; nothing written", target.qualname);
+        }
+    }
     let eol = if old.contains("\r\n") { "\r\n" } else { "\n" };
     let mut repl = new_text.replace("\r\n", "\n");
     if eol == "\r\n" {
@@ -137,9 +171,7 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
     let new = format!("{}{repl}{}", &old[..a], &old[b..]);
     let span = (a, b, a, a + repl.len());
     // the new file parses as well as the old one did
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&(spec.language)())?;
-    let (Some(t0), Some(t1)) = (parser.parse(&old, None), parser.parse(&new, None)) else { bail!("{rel} did not parse") };
+    let Some(t1) = parser.parse(&new, None) else { bail!("{rel} did not parse") };
     let in_span = crate::rewrite::broken(t1.root_node(), span.2, span.3) && !crate::rewrite::broken(t0.root_node(), a, b);
     let (e0, e1) = (errors(t0.root_node()), errors(t1.root_node()));
     if in_span || e1.0 > e0.0 {

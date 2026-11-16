@@ -44,6 +44,12 @@ pub(crate) struct Lazy {
 }
 
 impl Chunk {
+    /// Where the definition lies in its source, its text's start to its node's end, when a grammar
+    /// gave it.
+    pub(crate) fn bytes(&self) -> Option<(usize, usize)> {
+        self.lazy.map(|l| (l.text, l.end))
+    }
+
     /// Cuts `text` and `body` from `src`, the file's chunks in their order and from one `budget`.
     /// The index does it one chunk at a time, so a file of thousands of nested definitions never
     /// holds all their copies at once.

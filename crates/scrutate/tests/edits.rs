@@ -377,3 +377,55 @@ fn a_file_with_a_hard_link_in_the_index_directory_is_refused_as_a_hard_link_not_
         assert!(out.contains("via.py is inside") && !out.contains(LINKED), "Grep hook through a link: {out}");
     }
 }
+
+/// An edit replaces whole lines, so a definition that shares its first or last line with other
+/// code (another definition, a statement before or after it) is refused, a dry run too, and the
+/// file is left as it was.
+#[test]
+fn a_definition_that_shares_a_line_with_other_code_is_refused() {
+    let cases = [
+        ("a.js", "function f() { return 1 } function g() { return 2 }\n\nfunction h() { return g() }\n", "f", "function f() { return 5 }\n"),
+        ("a.rs", "pub struct A(u8); pub struct B;\n\nfn main() {}\n", "A", "pub struct A(u16);\n"),
+        ("b.js", "init(); function f() {\n  return 1\n}\n\nfunction h() { return f() }\n", "f", "function f() {\n  return 5\n}\n"),
+        ("c.js", "function f() {\n  return 1\n}; register(f); window.ready = true;\n\nfunction h() { return f() }\n", "f", "function f() {\n  return 5\n}\n"),
+    ];
+    for (file, text, name, new_text) in cases {
+        let mut s = Server::start(&format!("shared_{}", file.replace('.', "_")), &[(file, text)], &["--allow-edits"]);
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        assert!(err && dry.contains("shares a line with other code") && dry.contains("nothing written"), "{file} dry run: {dry}");
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": "0000000000000000"}));
+        assert!(err, "{file} apply: {out}");
+        assert_eq!(s.file(file), text, "{file} was written");
+    }
+}
+
+/// A definition whose own first line starts with a word of it (`export`, `async`, `static`, a Go
+/// receiver), or with an attribute or decorator on the line above, has its lines to itself and is
+/// edited, the prefix as `new_text` gives it.
+#[test]
+fn a_definition_with_a_prefix_on_its_line_is_edited() {
+    let cases = [
+        ("a.ts", "export function f() {\n  return 1\n}\n", "f", "export function f() {\n  return 2\n}\n"),
+        ("b.js", "export default function f() {\n  return 1\n}\n", "f", "export default function f() {\n  return 2\n}\n"),
+        ("c.js", "async function f() {\n  return 1\n}\n", "f", "async function f() {\n  return 2\n}\n"),
+        ("d.c", "static int f(void) {\n  return 1;\n}\n", "f", "static int f(void) {\n  return 2;\n}\n"),
+        ("e.go", "package p\n\ntype T struct{}\n\nfunc (r T) M() int {\n\treturn 1\n}\n", "M", "func (r T) M() int {\n\treturn 2\n}\n"),
+        ("f.py", "@decorator\ndef f():\n    return 1\n", "f", "@decorator\ndef f():\n    return 2\n"),
+        ("g.rs", "#[inline]\npub fn f() -> u8 {\n    1\n}\n", "f", "#[inline]\npub fn f() -> u8 {\n    2\n}\n"),
+    ];
+    let mut failed = Vec::new();
+    for (file, text, name, new_text) in cases {
+        let mut s = Server::start(&format!("prefix_{}", file.replace('.', "_")), &[(file, text)], &["--allow-edits"]);
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file} dry run: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        let got = s.file(file);
+        if err || !got.ends_with(new_text) || got.len() != text.len() {
+            failed.push(format!("{file} apply ({err}): {out}\n{got:?}"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}

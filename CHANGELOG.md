@@ -20,7 +20,9 @@ incompatible index by itself, and that is never breaking.
 - `serve --allow-edits` lists `edit_symbol`, which replaces one whole definition: a dry run gives
   the diff and the file's hash, and `apply: true` writes only with that hash, while the file still
   has it, and only when the new file parses and the definitions outside the edit keep their names,
-  kinds and order (a grown edit shifts their lines). A file under `.git/` or `.scrutate/` at any
+  kinds and order (a grown edit shifts their lines). The edit replaces the definition's lines
+  whole, so one that shares its first or last line with other code is refused, a dry run too. A
+  file under `.git/` or `.scrutate/` at any
   depth, under any spelling a file system takes for them (`.GIT`, `git~1`), a link, and a file that
   is not UTF-8 text are never written. Without the flag the server stays read-only, and no
   environment variable or configuration file turns it on
