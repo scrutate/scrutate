@@ -2918,13 +2918,24 @@ impl Items<'_> {
                 }
                 let i = next.fetch_add(1, Ordering::Relaxed);
                 let (path, rel, named) = files.get(i)?;
-                if let Some((_, w)) = slots {
+                #[cfg(test)]
+                {
+                    let pause = tests::PAUSE_TAKEN.lock().unwrap().clone();
+                    if let Some((name, pause)) = pause
+                        && path.file_name() == Some(name.as_os_str())
+                    {
+                        std::thread::sleep(pause);
+                    }
+                }
+                if let Some((slots, w)) = slots {
                     let mut handed = w.handed.lock().unwrap_or_else(|p| p.into_inner());
                     while i >= handed.saturating_add(w.ahead) {
                         handed = w.moved.wait(handed).unwrap_or_else(|p| p.into_inner());
                     }
-                    // a file not started is not handed over
+                    // a file not started is handed over empty: the caller waits for every file
+                    // taken, and a thread past it waits at the window for this one
                     if s.stop.is_set() {
+                        *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(mpsc::sync_channel(0).1);
                         return None;
                     }
                 }
@@ -3041,7 +3052,13 @@ impl<'a> Threads<'a> {
         let mut fw = file_worker(s.q);
         let mut files = 0u32;
         while !s.stop.is_set() {
-            let Some((path, rel, size, named, own)) = items.next(s) else { break };
+            let Some((path, rel, size, named, own)) = items.next(s) else {
+                // wakes `schedule_in_order` to look for a file `next` handed over empty
+                if matches!(items, Items::List { slots: Some(_), .. }) {
+                    let _ = tx.try_send(Vec::new());
+                }
+                break;
+            };
             if own.is_some() {
                 // wakes `schedule_in_order` to look for the file; a full channel already will
                 let _ = tx.try_send(Vec::new());
@@ -3236,7 +3253,8 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
 /// `schedule` of a list that hands its records over file by file in list order: each file's index
 /// with each of its records, then with `None` at its end. A file is searched while those before
 /// it are handed over, holding at most `FILE_BATCHES` batches, and at most `FILES_AHEAD_PER_THREAD`
-/// files per thread are taken past the one handed over; files never started are not handed over.
+/// files per thread are taken past the one handed over; a file a stop leaves unstarted is handed
+/// over with no record when it was taken, else not at all.
 #[cfg(not(target_os = "wasi"))]
 fn schedule_in_order(files: &[(PathBuf, Arc<str>, bool)], stop_at: Option<u64>, s: &Common, each: &mut dyn FnMut(usize, Option<Record>)) {
     let (p, c) = (s.p, s.c);
@@ -3609,6 +3627,11 @@ mod tests {
         pub(super) static MOST_QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
+    /// A file of a list, by name, whose taker pauses this long after taking it and before the
+    /// window: the threads of a search are not the test's, so this is shared, and a name of one
+    /// test's own keeps the others out of it.
+    pub(super) static PAUSE_TAKEN: Mutex<Option<(std::ffi::OsString, std::time::Duration)>> = Mutex::new(None);
+
     fn query(text: &str, mode: Mode) -> Query {
         Query { pattern: Pattern { text: text.into(), mode, ..Pattern::default() }, ..Query::default() }
     }
@@ -3773,6 +3796,35 @@ mod tests {
         // the files taken ahead of the one handed over, and those the threads hold, at 10 matches each
         let most = 10 * (FILES_AHEAD_PER_THREAD * f.threads + f.threads + 1) as u64;
         assert!(stats.matches <= most, "{} matches found while the caller held the first file", stats.matches);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A cancel that comes while a thread holds a file it took but has not passed the window with
+    /// ends the search: another thread waits at the window for that file to be handed over.
+    #[test]
+    fn a_cancel_while_a_taken_file_waits_for_the_window_ends_a_search_in_path_order() {
+        let root = std::env::temp_dir().join(format!("scrutate_sorted_cancel_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let paused = format!("03_paused_{}.txt", std::process::id());
+        for i in 0..60 {
+            let name = if i == 3 { paused.clone() } else { format!("{i:02}.txt") };
+            std::fs::write(root.join(name), "abc e\n").unwrap();
+        }
+        *PAUSE_TAKEN.lock().unwrap() = Some((paused.into(), std::time::Duration::from_millis(300)));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (done_tx, done) = mpsc::channel();
+        let (dir, stop) = (root.clone(), Arc::clone(&cancel));
+        std::thread::spawn(move || {
+            let o = Query { first_in_path_order: true, ..query("e", Mode::Literal) };
+            let f = Files { threads: 2, ..Files::walk(vec![dir]) };
+            let _ = done_tx.send(search(&o, &f, stop, Output::Records(&mut |_| {})).is_ok());
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        cancel.store(true, Ordering::Relaxed);
+        let ended = done.recv_timeout(std::time::Duration::from_secs(10));
+        *PAUSE_TAKEN.lock().unwrap() = None;
+        assert_eq!(ended, Ok(true), "the search did not end after the cancel");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
