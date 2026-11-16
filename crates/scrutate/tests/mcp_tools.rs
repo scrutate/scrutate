@@ -1234,6 +1234,20 @@ fn a_concise_read_code_past_the_last_line_says_no_more() {
     }
 }
 
+/// A concise read_code lists the definitions of the lines it reads whatever spelling of the path
+/// it is given, as outline finds the file.
+#[test]
+fn a_concise_read_code_lists_definitions_under_any_spelling_of_the_path() {
+    let mut r = Repo::new("concise_spellings", &[("pkg/a.py", "def alpha():\n    return 1\n\ndef beta():\n    return 2\n")]);
+    let absolute = r.root.join("pkg/a.py").to_string_lossy().into_owned();
+    // read_code reads the file as it is on disk: the outline builds the index its definitions come from
+    r.ok("outline", json!({"path": "pkg/a.py"}));
+    for path in ["pkg/a.py", "./pkg/a.py", "pkg/../pkg/a.py", absolute.as_str()] {
+        let text = r.ok("read_code", json!({"path": path, "response_format": "concise"}));
+        assert!(text.contains("def alpha()") && text.contains("def beta()"), "{path}: {text}");
+    }
+}
+
 /// A tool's path that leaves the repository and comes back into it names the repository's
 /// directory, as the same path without the detour does.
 #[test]

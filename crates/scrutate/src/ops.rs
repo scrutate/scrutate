@@ -1118,10 +1118,11 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let path = if printed || (read_back != path && !exists(path)) { read_back.as_ref() } else { path };
             let start = (*start).max(1);
             let (lines, total) = read_range(s, path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
+            let rel = repo_path(s, path);
             let path = path.trim_start_matches("./").to_string();
-            crate::finder::visited(&s.ix.root, &[&path]);
+            crate::finder::visited(&s.ix.root, &[&rel]);
             let last = start + lines.len() as i64 - 1;
-            let mut defs = s.ix.symbols_in(&path).unwrap_or_default();
+            let mut defs = s.ix.symbols_in(&rel).unwrap_or_default();
             defs.retain(|d| start <= d.start && d.start <= last);
             Answer::Read { path, lines, start, total, defs }
         }
