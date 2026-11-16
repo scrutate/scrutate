@@ -17,7 +17,7 @@ build='
     curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none > /dev/null
   fi
   mkdir -p /build && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /build -xf -
-  command -v python3 > /dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends python3-minimal > /dev/null; }
+  command -v python3 > /dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 > /dev/null; }
   # two links as in release.yml: the second has the function order under the names of the first
   export SCRUTATE_LINUX_ORDER=/build/target/startup.order.elf
   cd /build && cargo build --release -p scrutate --locked -q
