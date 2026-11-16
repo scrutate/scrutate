@@ -701,16 +701,22 @@ impl<'a> Names<'a> {
     /// the decided ones, first the ones whose code names the target's type, then the ones in its package.
     /// -> (callers: decided, then undecided; how many are undecided)
     pub fn callers(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
+        self.callers_in(name, limit, None)
+    }
+
+    /// `callers` with the call sites `scope` admits alone, the others never resolved.
+    pub fn callers_in(&mut self, name: &str, limit: usize, scope: Option<&crate::filter::Compiled>) -> Result<(Vec<Hit>, usize)> {
         self.stored = Some(Stored::open(self.s, "callers", name, limit));
-        let r = self.callers_kept(name, limit);
-        if let (Some(st), Ok((_, _, complete))) = (self.stored.take(), &r) {
+        let r = self.callers_kept(name, limit, scope);
+        // a scoped run answered some of the sites: kept as complete, it would hide the rest
+        if let (Some(st), Ok((_, _, complete)), None) = (self.stored.take(), &r, scope) {
             st.save(self.s, limit, *complete);
         }
         r.map(|(out, undecided, _)| (out, undecided))
     }
 
     /// `callers`, and whether it went through every call site
-    fn callers_kept(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, bool)> {
+    fn callers_kept(&mut self, name: &str, limit: usize, scope: Option<&crate::filter::Compiled>) -> Result<(Vec<Hit>, usize, bool)> {
         let s = self.s;
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
         let mut targets = crate::ops::targets(s, name, 500, false)?;
@@ -735,6 +741,7 @@ impl<'a> Names<'a> {
             targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
         let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
         let fits = |path: &str| targets.iter().any(|t| langs.same_family(&t.path, path));
+        let in_scope = |path: &str| scope.is_none_or(|f| f.admits_path(path));
         let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
         // a call of a method a target overrides or implements may run the target
         let overridden: HashSet<i64> = targets.iter().flat_map(|t| self.rv.overridden(t.id)).filter(|id| !ids.contains(id)).collect();
@@ -755,7 +762,7 @@ impl<'a> Names<'a> {
             }
             // a row is settled once kept; one no call of this name ties may hold another name's call
             let mut once = HashSet::new();
-            sites.retain(|r| fits(&r.path) && !seen.contains(&r.id) && once.insert(r.id));
+            sites.retain(|r| fits(&r.path) && in_scope(&r.path) && !seen.contains(&r.id) && once.insert(r.id));
             if n == "new" && !targets.iter().any(|t| t.name == "new") {
                 sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));
             }
@@ -791,6 +798,9 @@ impl<'a> Names<'a> {
             }
         }
         for (local, file) in self.aliases_of(&targets, &langs)? {
+            if !in_scope(&file) {
+                continue;
+            }
             let mut sites = s.ix.callers_of(&local)?;
             // `use function Lib\phpfn as pf` is called `PF()` too where names ignore case
             if langs.folds(&file, "function") {
@@ -1799,6 +1809,37 @@ mod tests {
     fn callers(repo: &mut crate::Repo) -> Vec<(String, i64)> {
         let (hits, _) = repo.recovering(|s| Names::new(s)?.callers("redact", 31)).unwrap();
         hits.into_iter().map(|h| (h.path, h.start)).collect()
+    }
+
+    /// A scoped `refs` resolves only the call sites its scope admits, answers the callers the
+    /// unscoped one does inside the scope, and keeps no partial answer an unscoped run would miss.
+    #[test]
+    fn a_scoped_refs_resolves_only_the_call_sites_in_its_scope() {
+        let root = std::env::temp_dir().join(format!("scrutate_names_scoped_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("in")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join("lib.c"), "void helper(void) {\n}\n").unwrap();
+        std::fs::write(root.join("in/a.c"), "void a(void) {\n    helper();\n}\n").unwrap();
+        for i in 0..20 {
+            std::fs::write(root.join(format!("out/b{i}.c")), format!("void b{i}(void) {{\n    helper();\n}}\n")).unwrap();
+        }
+        let (mut repo, _) = crate::open_updated(&root, true).unwrap();
+        let scope = crate::filter::Filter { globs: vec!["in/**".into()], ..Default::default() }.compile(&root).unwrap();
+        let paths = |r: crate::intel::References| r.callers.into_iter().map(|h| h.path).collect::<Vec<_>>();
+        crate::resolve::LOADS.with(|n| n.set(0));
+        let scoped = paths(repo.recovering(|s| crate::intel::references_in(s, "helper", 100, Some(&scope))).unwrap());
+        let loaded = crate::resolve::LOADS.with(|n| n.get());
+        assert_eq!(scoped, ["in/a.c"]);
+        assert!(loaded <= 2, "a scoped refs loaded {loaded} files into the resolver");
+        let all = paths(repo.recovering(|s| crate::intel::references_in(s, "helper", 100, None)).unwrap());
+        assert_eq!(all.len(), 21, "{all:?}");
+        if keeps(&root) {
+            crate::resolve::LOADS.with(|n| n.set(0));
+            assert_eq!(paths(repo.recovering(|s| crate::intel::references_in(s, "helper", 100, None)).unwrap()), all);
+            assert_eq!(crate::resolve::LOADS.with(|n| n.get()), 0, "an unscoped repeat after a scoped run loaded files");
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A repeat of `callers` on an unchanged index and tree answers from what the first run kept:
