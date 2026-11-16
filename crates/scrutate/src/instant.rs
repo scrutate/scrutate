@@ -2284,6 +2284,7 @@ struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
+    #[inline]
     fn collector(&self, path: Arc<str>) -> Collector<'a> {
         let o = self.q;
         Collector {
@@ -2359,6 +2360,7 @@ fn count_file(r: &Run, size: Option<u64>) {
 /// The end of one file's search: what it found leaves (a search aborted by an error or
 /// cancellation still reports it). As ripgrep, a file the walk found that holds a NUL byte has
 /// no count and is not listed. Returns the emptied output buffer, for the next file.
+#[inline]
 fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
     sink.flush();
     if sink.matched && (named || !sink.binary || r.q.report == Report::Lines) {

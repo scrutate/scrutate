@@ -8,9 +8,9 @@
  },
  "binheavy/literal": {
   "base": "e7d6c9d92da5674dcc169d60ce960978c75ab6c3",
-  "limit": 1.03,
+  "limit": 1.02,
   "since": "2026-11-16",
-  "audit": "R3X-14c; R4-FZ-01, R4-FZ-02; R3X-14d",
-  "reason": "the NUL rules: a walked file with a NUL byte answered as ripgrep reads it (FUZZ-02, R3X-14c), and two more of ripgrep's answers copied, a walked file whose NUL comes after its first 64 KiB (R4-FZ-01) and the context separator before the binary note under --sort (R4-FZ-02), which cost about 100 instructions more per binary file. CI's benchmarks run at e2d39d85 (run 43782004117, the full corpus): 85,902,359 -> 87,809,435, 1.0222. On 2,000 random 32 KB files and 200 text files on an AWS build box: 11,523,832 on main; 11,635,320 after R3X-14c (1.0097); 11,832,672 with R4-FZ-01 and R4-FZ-02 (1.0268); 11,764,237 after R3X-14d (1.0209). The same box gave 1.0303 at e2d39d85 against a main count that moves about 0.3% between runs there, so the limit is held against CI's number, not the box's. ripgrep 15.2.0 counts 14,277,862 on that tree (1.24 times main)"
+  "audit": "R3X-14c; R4-FZ-01, R4-FZ-02; R3X-14d; R3X-14e",
+  "reason": "the NUL rules: a walked file with a NUL byte answered as ripgrep reads it (FUZZ-02, R3X-14c), with two more of ripgrep's answers copied, a walked file whose NUL comes after its first 64 KiB (R4-FZ-01) and the context separator before the binary note under --sort (R4-FZ-02). CI's benchmarks run at e2d39d85 (run 43782004117): 85,902,359 -> 87,809,435, 1.0222, about 100 instructions per binary file over R3X-14c; R3X-14d and R3X-14e took most of it back (the Collector built in place and the calls around it inlined, about 40 per walked file). bench/instructions.py on an AWS build box after R3X-14e: 80,264,698 -> 81,295,843, 1.0128 against main e7d6c9d9. ripgrep 15.2.0 counts 1.24 times main on the smaller tree the rows were also checked on"
  }
 }

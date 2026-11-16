@@ -89,10 +89,22 @@ impl Source for Disk {
         #[cfg(windows)]
         let _ = std::io::Seek::seek(&mut &self.file, std::io::SeekFrom::Start(0));
         match widest {
-            // a multi-line search reads the file whole, sized from its length, and grows no line
-            // buffer for Watch to see
             Some(widest) if !m.reads_whole(s) => m.search_reader(s, Watch { r: &self.file, widest }, sink),
-            Some(_) => m.search_file(s, &self.file, sink),
+            // a multi-line search of the whole file, read here as File's read_to_end sizes it
+            // (searcher's own read zeroes more than it reads, through a reader that hides the
+            // size): the same MultiLine search on the same bytes. A byte-order mark is transcoded
+            Some(_) => {
+                let mut b = Vec::new();
+                match (&self.file).read_to_end(&mut b) {
+                    Ok(_) if starts_with_bom(&b) => m.search_reader(s, &b[..], sink),
+                    Ok(_) => m.search_slice(s, &b, sink),
+                    // the searcher's own read, from the start again, reports what failed
+                    Err(_) => {
+                        let _ = std::io::Seek::seek(&mut &self.file, std::io::SeekFrom::Start(0));
+                        m.search_file(s, &self.file, sink)
+                    }
+                }
+            }
             None => m.search_file(s, &self.file, sink),
         }
     }
@@ -375,7 +387,10 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
         }
     }
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
-    let mut sink = Collector { convert: named, out: std::mem::take(&mut w.out), ..r.collector(Arc::clone(&rel)) };
+    // built in place: the struct update moved a whole Collector once more per file
+    let mut sink = r.collector(Arc::clone(&rel));
+    sink.convert = named;
+    sink.out = std::mem::take(&mut w.out);
     let res = match whole {
         Some(b) => match if clear { None } else { memchr::memchr(0, b) } {
             // nothing for a binary check to find: one pass over the file, as before the NUL rules.
