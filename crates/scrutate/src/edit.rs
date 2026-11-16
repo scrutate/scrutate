@@ -176,6 +176,30 @@ fn comments_only(root: tree_sitter::Node, old: &str, (lo, hi): (usize, usize), (
     !code.contains(&true)
 }
 
+/// An error unless every definition outside `target` in the old file is in the new one as it was,
+/// in order, with `edited` in its place: around it by name and kind, apart from it by its text too.
+/// One inside the new text that the old file did not have is named as defined beside it.
+fn others_kept((before, old, target): (&[Def], &str, &Def), (after, new, edited): (&[Def], &str, &Def), new_end: i64) -> Result<()> {
+    let kept = outside_of(before, old, target);
+    let now_kept = outside_of(after, new, edited);
+    let key = |k: &(&str, &'static str, Option<String>, i64)| (k.0.to_string(), k.1, k.2.clone());
+    if kept.iter().map(key).eq(now_kept.iter().map(key)) {
+        return Ok(());
+    }
+    let (kept_keys, now_keys): (Vec<_>, Vec<_>) = (kept.iter().map(key).collect(), now_kept.iter().map(key).collect());
+    let beside: Vec<String> = now_kept
+        .iter()
+        .filter(|k| k.3 >= target.start && k.3 <= new_end && !kept_keys.contains(&key(k)))
+        .map(|k| format!("{} ({}) at line {}", k.0, k.1, k.3))
+        .collect();
+    if !beside.is_empty() {
+        bail!("the new text defines more than {}: {}; edit_symbol replaces one definition; nothing written", target.qualname, beside.join(", "));
+    }
+    let gone: Vec<&str> = kept.iter().filter(|k| !now_keys.contains(&key(k))).map(|k| k.0).collect();
+    let what = if gone.is_empty() { "their order".to_string() } else { gone.join(", ") };
+    bail!("the edit changes the definitions around {} (gone, moved or changed: {what}); nothing written", target.qualname)
+}
+
 /// The answer to `edit_symbol`.
 pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, apply: bool, given: Option<&str>) -> Result<Answer> {
     let read = Op::Read { path: path.map(str::to_string), symbol: Some(symbol.to_string()), start: 1, end: None, history: 0 };
@@ -286,23 +310,7 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
             target.start
         );
     };
-    let kept = outside_of(&before, &old, &target);
-    let now_kept = outside_of(&after, &new, edited);
-    let key = |k: &(&str, &'static str, Option<String>, i64)| (k.0.to_string(), k.1, k.2.clone());
-    if kept.iter().map(key).ne(now_kept.iter().map(key)) {
-        let (kept_keys, now_keys): (Vec<_>, Vec<_>) = (kept.iter().map(key).collect(), now_kept.iter().map(key).collect());
-        let beside: Vec<String> = now_kept
-            .iter()
-            .filter(|k| k.3 >= target.start && k.3 <= new_end && !kept_keys.contains(&key(k)))
-            .map(|k| format!("{} ({}) at line {}", k.0, k.1, k.3))
-            .collect();
-        if !beside.is_empty() {
-            bail!("the new text defines more than {}: {}; edit_symbol replaces one definition; nothing written", target.qualname, beside.join(", "));
-        }
-        let gone: Vec<&str> = kept.iter().filter(|k| !now_keys.contains(&key(k))).map(|k| k.0).collect();
-        let what = if gone.is_empty() { "their order".to_string() } else { gone.join(", ") };
-        bail!("the edit changes the definitions around {} (gone, moved or changed: {what}); nothing written", target.qualname);
-    }
+    others_kept((&before, &old, &target), (&after, &new, edited), new_end)?;
     let plan = one.plan(new.clone().into_bytes(), span);
     let diff = plan.diff();
     if apply {
@@ -317,6 +325,39 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn def(name: &str, kind: &'static str, (start, end): (i64, i64), bytes: (usize, usize)) -> Def {
+        Def { qualname: name.to_string(), kind, start, end, bytes: Some(bytes) }
+    }
+
+    /// The comparison of the definitions outside an edit, called with hand-built lists: each way a
+    /// definition outside it can change fails, and an unchanged one passes.
+    #[test]
+    fn every_definition_outside_the_edit_is_compared_by_its_place_and_text() {
+        // old: `f` on line 1 (0..9), `g` beside it on line 1 (10..19), `h` on line 3 (21..30)
+        let old = "fn f() {} fn g() {}\n\nfn h() {}\n";
+        let target = def("f", "function", (1, 1), (0, 9));
+        let (g, h) = (def("g", "function", (1, 1), (10, 19)), def("h", "function", (3, 3), (21, 30)));
+        let before = vec![target.clone(), g.clone(), h.clone()];
+        let check = |new: &str, after: Vec<Def>| {
+            let edited = after.iter().find(|d| d.qualname == "f").cloned().unwrap();
+            others_kept((&before, old, &target), (&after, new, &edited), 1)
+        };
+        // as they were: passes
+        assert!(check(old, before.clone()).is_ok());
+        // `h`'s text changed, its name, kind and lines the same
+        let new = "fn f() {} fn g() {}\n\nfn h() {1}\n";
+        assert!(check(new, vec![target.clone(), g.clone(), def("h", "function", (3, 3), (21, 31))]).is_err());
+        // `h` gone
+        assert!(check(old, vec![target.clone(), g.clone()]).is_err());
+        // `g` and `h` swapped
+        let new = "fn f() {} fn h() {}\n\nfn g() {}\n";
+        assert!(check(new, vec![target.clone(), def("h", "function", (1, 1), (10, 19)), def("g", "function", (3, 3), (21, 30))]).is_err());
+        // `g`, on the target's own line but apart from it by its bytes, gone: placed by lines it
+        // would count as inside the target and pass
+        let new = "fn f() {}\n\nfn h() {}\n";
+        assert!(check(new, vec![def("f", "function", (1, 1), (0, 9)), def("h", "function", (3, 3), (11, 20))]).is_err());
+    }
 
     #[test]
     fn git_and_scrutate_are_refused_under_any_spelling_and_an_edit_never_crosses_the_socket() {
