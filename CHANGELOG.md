@@ -368,6 +368,10 @@ incompatible index by itself, and that is never breaking.
 - `impact --staged` with a root below the repository's top answers with a conflict outside that
   root, where git 2.53 and 2.54 crash on the `--cached --relative` diff it ran: the staged diff
   there names the root as its pathspec and scrutate takes the root's part off the paths.
+- `check` names a segment of 20,000 chunks or more with vectors that lacks its inverted-file lists
+  (a removal that stopped midway), and exits 1, where it passed such an index while every search
+  read all of that segment's vectors; the answers were right, only slower, and `scrutate index
+  --force` writes the lists again ([CLI](docs/CLI.md#engine-b)).
 - An error from a git that crashed or failed without a word names how it ended (`git diff-index:
   ended by signal 11 (a crash) and gave no reason`, or its exit status), where `impact`, `review`
   and `read --history` said `git diff-index: ` and nothing after it.

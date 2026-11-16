@@ -3486,6 +3486,15 @@ impl Index {
                         r.segments_ok = false;
                         r.problems.push(format!("segment {name}: {e}"));
                     }
+                    // the writer gives every segment this large with vectors its lists; without them a
+                    // search reads every vector of it, so its answers are right and slower
+                    if seg.vec.is_some() && seg.n >= crate::lex::IVF_MIN_ROWS && seg.ivf.is_none() {
+                        r.segments_ok = false;
+                        r.problems.push(format!(
+                            "segment {name}: {} chunks and no inverted-file lists, so a search reads every vector of it (`scrutate index --force` writes them again)",
+                            seg.n
+                        ));
+                    }
                 }
                 if let Some(why) = self.vector_damage(&store) {
                     r.segments_ok = false;
@@ -4160,6 +4169,33 @@ mod tests {
         assert!(problems.is_empty(), "{group:?} removed: {problems:?}");
         let st = ix.update(false).unwrap();
         assert_eq!(st.files_changed, 0, "{group:?} removed: the next update rebuilt the index: {st:?}");
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A segment large enough for inverted-file lists that has none (a removal that stopped
+    /// midway) is named by `check`: a search still answers, reading every vector of it, slower.
+    #[test]
+    fn check_names_a_large_segment_without_its_inverted_file_lists() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_no_ivf_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let funcs = (0..21_000).map(|i| format!("def f{i}(x):\n    return x + {i}\n\n")).collect::<String>();
+        std::fs::write(root.join("a.py"), funcs).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::from_env()).unwrap();
+        ix.update(false).unwrap();
+        assert!(ix.check(false).unwrap().problems.is_empty());
+        let seg = ix.seg_dir.join(&ix.segments()[0]);
+        assert!(seg.join("ivf_order.npy").is_file(), "the segment was written without inverted-file lists");
+        for f in ["ivf_order", "ivf_cent", "ivf_ptr", "ivf_inv"] {
+            std::fs::remove_file(seg.join(format!("{f}.npy"))).unwrap();
+        }
+        ix.lex = None;
+        let problems = ix.check(false).unwrap().problems;
+        assert!(problems.len() == 1 && problems[0].contains("no inverted-file lists"), "{problems:?}");
+        // what the message says repairs it
+        ix.update(true).unwrap();
+        assert!(ix.check(false).unwrap().problems.is_empty(), "index --force left the segment without its lists");
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }
