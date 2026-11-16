@@ -65,7 +65,8 @@ incompatible index by itself, and that is never breaking.
   check that way (over 1,000,000 entries or 5 seconds) is refused with a line asking for narrower
   paths ([Security](docs/SECURITY.md)).
 - Searches through `hook run` run with colour off, and an `rg` with `--json` or `--replace`
-  (`-r`) is refused, pointing at `scrutate grep --json`, which gives JSON with secrets redacted.
+  (`-r`) is refused, pointing at `scrutate grep --json`, which gives JSON with secrets redacted;
+  so is an `rg` with `--stats`, whose statistics `scrutate grep` prints in another form.
 - What `hook run` adds to an `rg` goes before the `--` that really ends its flags, read as `rg`
   reads them, so it always stays a flag.
 - `read --symbol NAME --history [N]` and the MCP `read_code` tool's `history` list the last

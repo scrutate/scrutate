@@ -1729,7 +1729,9 @@ search skips the directory the walk skipped. Colour is always off: the search's 
 `--colour` and `--colors` are dropped and `--color=never` added, since escape codes around a
 match would cut a secret in two. An `rg` with `--replace` (`-r`) or `--json` exits 2 and runs
 nothing: both rewrite each line before scrutate can find a secret in it (`scrutate grep --json`
-gives JSON with secrets redacted). A search for the
+gives JSON with secrets redacted). An `rg` with `--stats` exits 2 and runs nothing too: rg prints
+its statistics on standard output, and `scrutate grep`, which answers an `rg`, prints its own
+summary on stderr (`scrutate grep --stats`). A search for the
 text `.scrutate`, the pattern and not a path, runs. A line
 with `\r` or another control character but tab and line feed is left alone.
 

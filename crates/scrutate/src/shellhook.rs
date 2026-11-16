@@ -831,6 +831,15 @@ fn rewrites_lines(argv: &[String]) -> Option<&str> {
         .map(|(a, _)| a.as_str())
 }
 
+/// The flag of `argv` whose answer `scrutate grep` gives in another form than rg: `--stats`,
+/// whose lines rg prints on standard output and scrutate grep as one summary on stderr.
+fn reports_otherwise(argv: &[String]) -> Option<&str> {
+    if argv[0] != "rg" {
+        return None;
+    }
+    argv[1..].iter().zip(roles(&RG_FLAGS, &argv[1..])).find(|(a, r)| *r == Role::Flag && a.as_str() == "--stats").map(|(a, _)| a.as_str())
+}
+
 /// On Unix: the child dies when `hook run` does, however it dies (the agent's timeout, SIGKILL).
 /// Before the program starts, its process forks a watcher that waits for the end of a pipe only
 /// `hook run` holds open, then kills the program if it is still running. -> the pipe's ends:
@@ -1121,6 +1130,12 @@ pub fn run_main(args: &[String]) -> i32 {
     if let Some(flag) = rewrites_lines(argv) {
         eprintln!(
             "scrutate hook run: rg's {flag} changes each line before scrutate can find a secret in it: not run (`scrutate grep --json` gives JSON with secrets redacted)"
+        );
+        return 2;
+    }
+    if let Some(flag) = reports_otherwise(argv) {
+        eprintln!(
+            "scrutate hook run: rg's {flag} prints statistics `scrutate grep` prints in another form, on stderr: not run (`scrutate grep --stats` gives its own)"
         );
         return 2;
     }

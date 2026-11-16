@@ -503,3 +503,28 @@ fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
     assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
     assert!(rewritten * 10 >= cmds.len() * 7, "{rewritten} of {} rewritten", cmds.len());
 }
+
+/// `hook run` refuses, running nothing, an `rg` whose lines it could not answer as rg prints
+/// them: one that rewrites each line (`--json`, `--replace`, `-r`) and one whose statistics
+/// `scrutate grep` gives in another form (`--stats`); each exits 2 with a line that says why.
+#[test]
+fn hook_run_refuses_an_rg_it_cannot_answer_as_rg_does() {
+    let r = Repo::new("refused_rg");
+    r.write("a.txt", "hello world\n");
+    for (args, why) in [
+        ("rg --json hello", "changes each line"),
+        ("rg --replace=x hello", "changes each line"),
+        ("rg -rx hello", "changes each line"),
+        ("rg --stats hello", "prints statistics"),
+        ("rg -n --stats hello .", "prints statistics"),
+    ] {
+        let (out, err, code) = sh(&r.root, &format!("'{BIN}' hook run --piped -- {args}"));
+        assert!(code == 2 && out.is_empty() && err.contains(why) && err.contains("not run"), "{args}: {code}\n{out}\n{err}");
+    }
+    // a pattern that is the text --stats is searched
+    if have_rg() {
+        r.write("b.txt", "--stats\n");
+        let (out, _, code) = sh(&r.root, &format!("'{BIN}' hook run --piped -- rg -e --stats"));
+        assert!(code == 0 && out.contains("b.txt"), "{code}\n{out}");
+    }
+}
