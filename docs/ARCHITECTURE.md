@@ -41,13 +41,15 @@ Built on the `grep-searcher`, `grep-regex`, `grep-matcher` and `ignore` crates t
 built from (search, regex, matcher trait, ignore-aware walk, per their crates.io pages). Scrutate
 adds:
 
-- **Matching modes**: regex (Rust `regex`: linear time, no backtracking, size-limited), literal,
+- **Matching modes**: regex (Rust `regex`: linear time, no backtracking, size-limited), PCRE2
+  (`-P`: look-around and backreferences, backtracking, stopped by PCRE2's match limit), literal,
   **identifier** (one spelling matches every casing: `refreshToken` ≡ `refresh_token` ≡
   `REFRESH_TOKEN`; digits and acronyms are parts), **fuzzy/approximate** (Myers' bit-parallel
   edit distance in characters: one 128-bit word up to 128, 64-bit blocks with carries up to 4096,
   a pigeonhole prefilter so only candidate lines pay for the DP; `-i` folds case as a regex does),
-  multiline, inverted, whole-word, smart case. A case-insensitive literal (`-i`, `-F -i`, `-S`)
-  finds candidates without the regex engine: two needle bytes, each in either case, at a fixed
+  **approximate regex** (`--fuzzy-regex`: a bit-parallel Glushkov automaton of at most 64
+  positions, one state set per number of edits), multiline, inverted, whole-word, smart case. A
+  case-insensitive literal (`-i`, `-F -i`, `-S`) finds candidates without the regex engine: two needle bytes, each in either case, at a fixed
   distance inside a stretch whose characters keep their byte length under case folding (`k` and
   `s` end one: KELVIN SIGN and LONG S are longer); the regex confirms each candidate line. The
   scan is safe slice code over 64-byte blocks (NEON or SSE2, plus an AVX2 copy picked at run time
@@ -56,7 +58,7 @@ adds:
 - **Traversal**: the `ignore` parallel walker (work stealing, `.gitignore` / `.ignore` / global
   excludes, hidden files off, symlink loop detection, depth and size filters, type globs from the
   language registry), vendored (`vendor/ignore`) with eleven changes listed in its README and
-  published as `scrutate-ignore`, which `crates/scrutate` imports as `ignore`. Four are for speed. The global git excludes path comes from `~/.gitconfig` through a
+  published as `scrutate-ignore`, which `crates/scrutate` imports as `ignore`. The first nine are for speed or memory, the last two let it run on wasi. The global git excludes path comes from `~/.gitconfig` through a
   small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs, doubling
   up to the original 1 ms, before looking for work (598 files: 12.3 ms to 9.3 ms). Gitignore lines
   of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal path, `/` and a name with
@@ -77,7 +79,7 @@ adds:
   | the Linux tree on an M3 Pro | 977 ms on 11 threads, about 845 ms on 5 |
   | a small-file read, page cache against disk | macOS: about 25 µs against 160 µs or more; Linux: under 15 µs against 30 µs or more |
   | the Linux tree cold on 5 CPUs, Linux | 1.22 s on 5 threads, 0.37 s with a thread per 16 slow reads |
-  | cold, macOS | 2.7 s on 5 threads, 1.3 s on 22; 48 gained 5% on one tree, lost 4% on another |
+  | cold, macOS | 2.7 s on 5 threads, 1.31 s on 24; 48 gained 5% on one tree, lost 4% on another |
   | 231 files cold on Linux | 5.8 ms adding one at a time, 8.3 ms with a thread per slow read |
 - **Searches at the same time (macOS)**: the kernel serves about four file-reading threads at full
   speed across all processes, so four searches on five threads each lose to four on one. A search
@@ -110,8 +112,8 @@ adds:
   nowhere, and count nothing), once per search and per look at the count, never per file. A test
   supplies its own readings, so the share and the cold-disk rule are tested without the hardware.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
-  each). Pass one counts each range's newlines, 256 KiB at a time per thread (1 MiB held 14.3 MB on
-  a 740 MB file, 6.1 MB now); a NUL byte sends the file back to the single pass, so binary handling
+  each). Pass one counts each range's newlines, 256 KiB at a time per thread (1 MiB held 15.2 MB on
+  a 740 MB file, 6.9 MB now); a NUL byte sends the file back to the single pass, so binary handling
   is unchanged. Pass two searches a window of ranges per thread and writes output in file order, so
   memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`, multiline and a
   byte-order mark keep the single pass.
@@ -207,8 +209,8 @@ adds:
   or files, context, limits, record shape), a `Files` (a walk's roots and rules, a file list under
   a root, or named texts in memory, plus threads) and the caller's cancel flag, which it reads and
   never sets. Results leave as `Record`s of one kind (match, context, count, file, note), or as
-  plain lines the threads write (`Output::Plain`). A record is 104 bytes, the size of one result
-  back when a flag and a sentinel line number told its kind.
+  plain lines the threads write (`Output::Plain`). A record is 96 bytes, less than the 104 one result
+  took when a flag and a sentinel line number told its kind.
 - **One run, one translation**: every file search of a run shares a `Run` (matcher, query, file
   set, counters, stop flag, output target). The pattern is translated once (`Pattern::translate`:
   the form its mode means, and whether case folds); the matcher and the text index's trigram
@@ -242,8 +244,9 @@ adds:
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
   (`--json`, schema version 1, record types in [CLI](CLI.md#conventions)). Flags: [CLI
   reference](CLI.md#engine-a-grep-alias-g).
-- **No dependency on Engine B**: `grep` never opens the index; `grep --symbols` is the one opt-in
-  bridge (it groups matches by enclosing function, using the index if one exists).
+- **No dependency on Engine B by default**: `grep` opens no index unless asked. `--index` reads only
+  the files the text index names as candidates (`--update` brings that index up to date first), and
+  `--symbols` groups matches by enclosing function, using the code index if one exists.
 
 ## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
@@ -570,12 +573,13 @@ small classes and alternations expand to exact string sets; concatenations combi
 else adds no constraint), evaluated over the postings as bitsets; Engine A's per-file searcher
 searches the surviving files. A string of four bytes or more needs its trigrams at positions that
 can line up, each followed by a byte that fits (`kernel_thread` on the Linux tree: 164 candidate
-files instead of 1,781). The condition is necessary, never sufficient, so results equal Engine A's
-on the indexed snapshot; a property test and a coverage-guided fuzz target check that any text a
-pattern matches satisfies its condition, Unicode case folding included (the Kelvin sign matches
-`k` under `-i`). Files with a NUL byte index only the bytes before it (line-mode search stops
-there) and are always searched by multi-line queries; UTF-16 files and files unreadable at index
-time are always searched.
+files instead of 1,781). The condition is necessary, never sufficient: the candidates come from the
+indexed snapshot and each is searched as it is now, so a file added since the last update is not
+searched and one edited since is searched only if its indexed text passed (`--update` first closes
+that gap); a property test and a coverage-guided fuzz target check that any text a pattern matches
+satisfies its condition, Unicode case folding included (the Kelvin sign matches `k` under `-i`).
+Files with a NUL byte index only the bytes before it (line-mode search stops there) and are always
+searched by multi-line queries; UTF-16 files and files unreadable at index time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per

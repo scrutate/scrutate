@@ -26,11 +26,13 @@
 </p>
 
 - **Exit codes**: `0` results found, `1` no results, `2` error (bad arguments, unreadable index,
-  invalid pattern, a `--root` that is not an existing directory, a missing search path, a `grep`
+  invalid pattern, a `--root` that is not an existing directory for a command that opens the index,
+  a missing search path, a `grep`
   of the current directory that searched no file...),
   `130` interrupted (Ctrl-C, or stopped early for a reason other than `--max-results`).
   `grep --type-list` and `grep --version` need no pattern.
-- **Diagnostics**: an error is one stderr line (`scrutate: error: ...`); with `--json`, or
+- **Diagnostics**: an error is one stderr line (`scrutate: error: ...`), and an invalid regex adds
+  the regex parser's lines that point at the fault; with `--json`, or
   `SCRUTATE_DIAGNOSTICS=json` for any command, one JSON record
   `{"type": "error", "schema": 1, "message": "..."}` (`"internal_error"` for a bug).
 - **Streams**: results on stdout, diagnostics and progress on stderr. Piped output is plain
@@ -100,7 +102,8 @@
   file > built-in default. Every configurable option names its variable in `--help` (e.g.
   `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`, `false`, `no`, `off`
   or empty, on otherwise (`1`, `true`, `yes`, `on`). `--root` (`SCRUTATE_ROOT`) must be an
-  existing directory, else the command exits 2 and creates nothing.
+  existing directory for a command that opens the index (`grep --index` and `--symbols` among
+  them), else it exits 2 and creates nothing; `grep` with paths does not use it.
 - **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
   index runs on the top of the current repository (the first directory upward holding `.git`, as a file or a
   directory) and says so on stderr (`[scrutate] using the index in <path>`). The first index is
@@ -197,10 +200,10 @@ each. Also:
 |---|---|
 | `-U` | multiline: each line of a multi-line match is printed with its own number; `-c` counts each match, with `$`, `\B` and `-w` read against the text after the matched lines, as ripgrep counts |
 | `-g GLOB` | `!` excludes |
-| `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type. A language's type also takes the extensions it shares with another language and is told apart in by content: `.h` for `cpp` and `objc` as for `c`, `.m` for `objc` and `matlab`, `.pp` for `pascal` and `puppet`, as ripgrep's `cpp` takes `.h` |
+| `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type. A language's type also takes the extensions it shares with another language, every file of them, whatever its content: `.h` for `cpp` and `objc` as for `c`, `.m` for `objc` and `matlab`, `.pp` for `pascal` and `puppet`, `.cls` for `latex` and `apex`, as ripgrep's `cpp` takes `.h` |
 | `-n` / `-N` | line numbers or none; numbers by default, to a terminal and to a pipe or file alike (see below); the later wins, and `--json` keeps them |
 | `--max-bytes BYTES`, `--offset N` | a bounded answer in path order, see "Answers from the index" below |
-| `--stats` | with `-l` each file is searched only to its first match, so it prints `N of M files match` and the JSON summary gives `"matches": null` |
+| `--stats` | with `-l` each file is searched only to its first match, so it prints `N of M files match`; the JSON summary of `-l` gives `"matches": null`, with `--stats` or without |
 | `--symbols` | groups lines by the enclosing function using the index, when one exists; a file whose search a NUL byte stopped after a match ends its last group with a `note:` line, `"note"` in the JSON `symbol_group` |
 
 Threads: `-j`, `SCRUTATE_THREADS` and the configuration file's `threads` take at most 256. The
@@ -864,7 +867,8 @@ error; a `batch` record that stopped carries `stopped_at` too.
 and `tsquery` answers (`--json` ignores both). A cut answer keeps whole items and ends with a
 line like `(12 more results not shown: call again with offset=8, or narrow the request)`;
 `--offset 8` continues it. The whole answer, that line included, fits the budget; only a budget
-smaller than one item plus that line is passed. An agent running the CLI through a shell can set
+smaller than one item plus that line is passed, and then the first item is cut to fit (to
+nothing at a small enough budget) with a line that says so. An agent running the CLI through a shell can set
 the variable once, so its harness never cuts an answer in the middle.
 
 `grep` keeps its own budget, so a pipeline (`| wc -l`, `| xargs`) sees every line unless asked:

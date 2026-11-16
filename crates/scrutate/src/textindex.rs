@@ -1,6 +1,6 @@
 //! Engine B text index: trigram postings over exactly the files Engine A's default walk searches,
 //! so `grep --index` reads only the files that can contain a match. Every candidate file is still
-//! searched by Engine A's matcher, so the output equals Engine A's output on the indexed snapshot.
+//! searched by Engine A's matcher as it is now; the candidates are the indexed snapshot's.
 //!
 //! Layout under `.scrutate/text/`: `manifest.json` names the live segments; a segment directory
 //! holds `keys.npy` (sorted u32 trigrams), `ptr.npy` (u64 offsets into `post.bin`), `post.bin`

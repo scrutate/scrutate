@@ -642,7 +642,7 @@ def diagram_text_index():
     s.arrow([(c3, y1 + h1 + 2), (c3, y2 - 4)], flow=2.2)
     y3 = y2 + h2 + 56
     fin = ["Engine A's own per-file searcher reads the candidate files from the source tree, with the same translated pattern.",
-           "Results equal Engine A's on the indexed snapshot."]
+           "The candidates come from the indexed snapshot; each is read as it is now."]
     h3 = s.card(xs[1], y3, 878 - xs[1] + 1, "Engine A confirms", fin, cls="out")
     s.arrow([(c3, y2 + h2 + 2), (c3, y3 - 4)], flow=4.4)
     s.h = int(y3 + h3 + 2)

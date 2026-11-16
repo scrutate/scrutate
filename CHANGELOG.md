@@ -404,9 +404,9 @@ incompatible index by itself, and that is never breaking.
 - A file that is one of scrutate's index files under another name, a hard link either way round,
   is left out of every search scrutate walks itself on Unix (`grep`, the index and so `search`,
   `refs` and the MCP tools, the Grep hook), where only a path naming it was refused. The walk says
-  so once on stderr and `check` lists each one (`left_out` in `--json`); a path that names one is
-  refused with the index file it is and that removing the hard link, by its path, lets it be
-  searched again. Every file under `.scrutate/` that can hold a file's text reads as binary,
+  so once on stderr and `check` lists each one (`left_out` in `--json`). `grep` still searches such
+  a path when you name it; the Grep hook and the MCP tools (`read_code`, `grep_code`) refuse it, naming the index file
+  it is and saying that removing the hard link, by its path, lets it be searched again. Every file under `.scrutate/` that can hold a file's text reads as binary,
   which keeps such a file out of the searches on Windows too ([Security](docs/SECURITY.md)).
 - `watch` and `serve --watch` drop from the indexes a file that is one of scrutate's index files
   under another name when it comes in as a change, on every platform, where a hard link made while
@@ -724,8 +724,8 @@ incompatible index by itself, and that is never breaking.
   the tables another `Repo` loaded last, keep chunks parsed with them or call a custom type
   unknown ([CLI](docs/CLI.md#custom-languages)).
 - `grep -t cpp` takes `.h` files, as ripgrep's `cpp` type does, `-t objc` takes `.h` and `.m`, and `-t matlab` and
-  `-t puppet` find `.m` and `.pp` files, where they found none: a type now includes the extensions its language shares with another and is told apart in by
-  content ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
+  `-t puppet` find `.m` and `.pp` files, where they found none: a type now includes the extensions its language shares with another, every file of them
+  whatever its content, as ripgrep's types do ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `tsquery --rewrite --write` on Linux and macOS reads and writes through the root as it was
   opened when the plan started and each directory opened from it, refusing links: a directory
   swapped for a link between the read and the write, the root included, sent the write and its
@@ -813,8 +813,8 @@ incompatible index by itself, and that is never breaking.
   `watch` that committed between its reads could drop a hit whose rows it had already picked
   ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - A failed write of `grep`'s output other than a closed pipe (a full disk, a file size limit)
-  is an error with exit code 2, as in ripgrep: it stopped the search and exited 0 or 1 without a
-  word.
+  is an error with exit code 2: it stopped the search and exited 0 or 1 without a word. ripgrep
+  exits 2 too once its output buffer fills; on a small answer it exits 0 without a word.
 - `grep foo . > out.txt` skips `out.txt`, as ripgrep does: it searched its own output and grew
   it until the disk or a file size limit stopped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - A new segment's files and directory are flushed to disk before the database names them, and

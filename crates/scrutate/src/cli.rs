@@ -162,7 +162,7 @@ impl From<FilterArgs> for crate::filter::Filter {
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct GrepArgs {
     /// the pattern (omit it when patterns are given with -e)
-    /// (not a `String`: with -e it is the first path)
+    // not a String: with -e this is the first path, which need not be UTF-8
     #[arg(required_unless_present_any = ["regexp", "type_list"])]
     pub pattern: Option<std::ffi::OsString>,
     /// files or directories to search, `-` for standard input (default: standard input when it is
@@ -172,7 +172,7 @@ pub struct GrepArgs {
     #[arg(short = 'e', long = "regexp", value_name = "PATTERN", allow_hyphen_values = true)]
     pub regexp: Vec<String>,
     /// use the text index (Engine B, built by `scrutate index`) to read only the files that can
-    /// match; results are those of the indexed snapshot of --root
+    /// match; the candidates come from the indexed snapshot of --root, each read as it is now
     #[arg(long)]
     pub index: bool,
     /// with --index: bring the text index up to date first (only changed files are read), so
@@ -304,7 +304,9 @@ struct GrepCli {
     #[arg(long, global = true)]
     no_color: bool,
     /// size limit, in bytes, of the answer, closing line included: whole lines in path order, then
-    /// a line with how many are left (not with --json); without it the answer is whole
+    /// a line with how many are left (not with --json); a first line too long for it is cut to fit,
+    /// to nothing at a small enough size, and the closing lines print even past it; without it the
+    /// answer is whole
     #[arg(long, global = true, value_name = "BYTES", env = "SCRUTATE_GREP_MAX_BYTES")]
     max_bytes: Option<usize>,
     /// lines of the answer to skip, to continue one that --max-bytes cut
@@ -316,7 +318,8 @@ struct GrepCli {
 
 #[derive(Subcommand)]
 enum GrepCmd {
-    /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
+    /// Engine A: instant search of files (no index unless --index or --symbols). PATTERN is a regex
+    /// unless -F, --ident or --fuzzy
     // an option given twice takes its last value, as in ripgrep
     #[command(alias = "g", version, args_override_self = true)]
     Grep(GrepArgs),
@@ -537,7 +540,8 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
 
 #[derive(Subcommand)]
 pub enum Cmd {
-    /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
+    /// Engine A: instant search of files (no index unless --index or --symbols). PATTERN is a regex
+    /// unless -F, --ident or --fuzzy
     // an option given twice takes its last value, as in ripgrep
     #[command(alias = "g", version, args_override_self = true)]
     Grep(GrepArgs),

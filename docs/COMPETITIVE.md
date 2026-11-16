@@ -24,7 +24,7 @@ below 1) and in all 5 cold-cache ones. Its lead over the next tool:
 
 | Corpus | Lead |
 |---|---|
-| Linux kernel tree | 15 to 30% on 12 of the 13 text searches (ugrep in most rows, ripgrep or git grep where ugrep's answer is wrong), 45% with 1.3 million matching lines |
+| Linux kernel tree | 15 to 30% on 12 of the 13 text searches (ugrep in most rows, ripgrep where ugrep's answer is wrong, git grep on the file-type filter), 45% with 1.3 million matching lines |
 | LLVM | 15 to 30% on five rows |
 | 200,000 small files | 24 to 26% |
 | a binary-heavy tree | 24% |
@@ -47,7 +47,7 @@ scrutate reads its capture cache (a cache hit), but on a first run scrutate is t
 times ast-grep's time on a 4-vCPU Linux x86_64 server, section 2). With
 the page cache dropped before every run it takes 0.28 to 0.30 of the next tool's time on all four
 rows (git grep or ugrep, 1.2 to 1.4 s each), because it reads a cold tree on up to 64 threads
-where the others use one per core: 18 to 24% above the time to merely read the files.
+where the others use one per core: 18 to 25% above the time to merely read the files.
 
 **On macOS, opening files is the expensive part, and more threads make it slower.** Reading every
 file of the Linux tree and nothing else (the "read files" column, `bench/rawread.c`) is fastest on
@@ -143,10 +143,10 @@ large queries fast; Scrutate and Zoekt start a process per query and map their i
 Kept running as servers, both rivals answer faster than Scrutate's process per query. On a 4-CPU
 Linux box (AMD EPYC-Milan, 16 GB) with the Linux tree and the 20 queries of `bench/yardstick.py`
 W3, livegrep's server answered 16 (HTTP 500 on two common literals, a phrase and a multiple-literal
-query) in 12.6 ms median. On those 16, zoekt-webserver took 13.2 ms and `scrutate --index` 17.9 ms;
-on all 20, zoekt-webserver took 36 ms and `scrutate --index` 24.3 ms. Scrutate's own server, the MCP
+query) in 12.6 ms median. On those 16, zoekt-webserver took 13.2 ms and `scrutate grep --index` 17.9 ms;
+on all 20, zoekt-webserver took 36 ms and `scrutate grep --index` 24.3 ms. Scrutate's own server, the MCP
 `grep_code` tool, answered 4 of the 20 (two literals and two queries that match nothing) in 1,260 ms
-median, where on the same 4 `scrutate --index` took 7.6 ms, zoekt-webserver 1.4 ms and livegrep
+median, where on the same 4 `scrutate grep --index` took 7.6 ms, zoekt-webserver 1.4 ms and livegrep
 2.0 ms. The other 16 have more than the 5,000 lines `grep_code` returns, so they were not timed. In
 that run each `grep_code` call walked the whole tree before it searched. A server now keeps that
 look between calls (on Linux and Windows; on macOS each call still looks). Measured apart, on
