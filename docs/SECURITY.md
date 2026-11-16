@@ -148,13 +148,18 @@ Checks, at both ends:
   one, so a sandboxed process of the same user that made the name first sees no request; and it
   drops a pipe whose label is below its own level (read with `GetSecurityInfo`), since a process
   id can name another process by the time it is read, and a pipe's label stays as its maker set it.
+  A server whose process id or token cannot be read is dropped too.
 - The server greets with its identity: the executable file (device, inode, size, modification
-  time; on Windows its path, size and times), the version, the index schema and content revisions, the model signatures, every
-  `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
+  and status-change times; on Windows its path, size and times), the version, the index schema and
+  content revisions, the model signatures and the `SCRUTATE_RANKER` file's id taken the same way,
+  every `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
   when all match its own.
-- A request is one line of at most 1 MB, read within 2 seconds in all (a caller that sends a byte
-  now and then is closed then too); the command line gives a session 2 seconds to take it, and
-  the server's write of its answer waits at most 2 seconds for the caller to take it; at most 16 connections at once, a
+- A request is one line of at most 1 MB, read within 2 seconds of the greeting (a caller that
+  sends a byte now and then is closed then too); on Windows the server first waits up to 2 seconds
+  for the caller's first byte, so a request may take up to about 4 seconds there. The command line
+  gives a session 2 seconds to take it, and each write of the server's answer waits at most 2
+  seconds for the caller to take it (on Windows each step of at most 64 KB), so a caller that
+  reads a long answer slowly keeps its connection longer; at most 16 connections at once, a
   further one closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`), an answer slower
   than 60 s, a closed connection or any error makes the command line do the work itself.
 
@@ -188,8 +193,10 @@ Edge cases:
   instance and offers nothing.
 - A killed server's stale socket: a connect is refused at once, and the next `serve` replaces it.
 - A moved root no longer matches the greeting; a deleted root takes the socket with it.
-- A session that would have to wait (its first build or another write running, every reader busy,
-  another process holding the index's write lock) is not used.
+- A session still making its first index, with no file in it yet, is not used. A call that meets
+  a write of the session's own process waits for it up to 250 ms, and one that meets another
+  process's write lock goes on with the index as it is; either answer says what is still pending.
+  With every reader busy, a call waits for one, within the command line's 60 seconds.
 - `SCRUTATE_NO_SESSION=1` turns the use off and `SCRUTATE_SESSION_DEBUG=1` says on stderr why a
   call did not use a session.
 
@@ -201,7 +208,10 @@ setting, the switch, a stale socket, a file that is no socket, two servers, a mo
 root, also reached from another directory with relative arguments; the socket's mode; on Windows
 the same answers, the switch, another build and setting, two servers, the pipe's DACL read
 back, and an open by a local account the test adds, refused) and unit tests in `session.rs` of the return to a renamed working
-directory, the SID's text and the pipe name. A peer of another user on Unix needs a second account
+directory, the SID's text and the pipe name, and on Windows of a session and a caller at the same
+integrity level, the level the pipe carries, a low-integrity reader that gets no greeting, a
+low-integrity process of the same user that cannot answer as the session, a call in the old tree
+once the root moves, and a request a slow session takes whole or never reads. A peer of another user on Unix needs a second account
 to fake, so it is checked by code review only.
 
 ## The main checkout's index in a linked work tree
@@ -715,8 +725,9 @@ link to a file outside the package and a package directory that is a link out of
     `ConvertStringSidToSidW` of `S-1-16-4096` freed by `LocalFree` after `SetTokenInformation`
     takes it with the size of the label and the SID, `CreateProcessAsUserW` with a zeroed
     `STARTUPINFOW` whose size it sets, both returned handles taken into `OwnedHandle`s once, and
-    `GetExitCodeProcess` into a `u32`); two unit tests' `ConnectNamedPipe` for a
-    server that greets and then reads nothing or reads slowly, through the same `Pipe::io`;
+    `GetExitCodeProcess` into a `u32`); three unit tests' `ConnectNamedPipe` for a
+    server that greets and then reads nothing or reads slowly, and for the low-integrity process
+    that takes the pipe's name first, through the same `Pipe::io`;
   - `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 159 libSystem
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
