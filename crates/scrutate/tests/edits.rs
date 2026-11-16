@@ -732,3 +732,35 @@ fn a_new_text_that_adds_or_swallows_code_outside_the_definition_is_refused() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
+
+/// A file its owner marked read-only (no owner write bit on Unix, the read-only attribute on
+/// Windows) is not written: the edit is refused saying so, the file and its mode as they were.
+#[test]
+fn a_read_only_file_is_not_rewritten() {
+    let text = "def f():\n    return 1\n";
+    let mut s = Server::start("read_only", &[("r.py", text)], &["--allow-edits"]);
+    let path = s.root.join("r.py");
+    let mut perms = fs::metadata(&path).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&path, perms.clone()).unwrap();
+    let new_text = "def f():\n    return 2\n";
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "f", "path": "r.py", "new_text": new_text}));
+    assert!(err && out.contains("r.py is read-only") && out.contains("nothing written"), "{out}");
+    let (out, err) = s.call("edit_symbol", json!({"symbol": "f", "path": "r.py", "new_text": new_text, "apply": true, "hash": "0000000000000000"}));
+    assert!(err && out.contains("r.py is read-only"), "{out}");
+    assert_eq!(s.file("r.py"), text);
+    assert_eq!(fs::metadata(&path).unwrap().permissions(), perms);
+    #[cfg(unix)]
+    {
+        // the owner's own write bit decides, whoever else may write
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o464)).unwrap();
+        let (out, err) = s.call("edit_symbol", json!({"symbol": "f", "path": "r.py", "new_text": new_text}));
+        assert!(err && out.contains("r.py is read-only"), "{out}");
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o464);
+    }
+    let mut back = fs::metadata(&path).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    back.set_readonly(false);
+    fs::set_permissions(&path, back).unwrap();
+}

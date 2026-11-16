@@ -38,6 +38,21 @@ impl Edited {
     }
 }
 
+/// How the file at `path` is marked read-only, when it is: on Unix its owner has no write bit,
+/// whoever else may write; elsewhere it has the read-only attribute.
+fn read_only(path: &std::path::Path) -> Option<&'static str> {
+    let md = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        (md.permissions().mode() & 0o200 == 0).then_some("its owner may not write it")
+    }
+    #[cfg(not(unix))]
+    {
+        md.permissions().readonly().then_some("the read-only attribute")
+    }
+}
+
 /// The hash an edit is checked against: 16 hex digits of the file's content hash, so no secret
 /// detector takes it for a key and an answer shows it as it is.
 fn content_hash(bytes: &[u8]) -> String {
@@ -301,6 +316,9 @@ pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, a
         bail!("{rel} is under {top}: edit_symbol never writes there");
     }
     let one = crate::rewrite::open_one(&s.ix.root, &rel)?;
+    if let Some(how) = read_only(&s.ix.root.join(&rel)) {
+        bail!("{rel} is read-only ({how}): edit_symbol does not write a file marked read-only; nothing written");
+    }
     let now = content_hash(&one.read);
     if apply {
         match given {

@@ -1169,9 +1169,11 @@ file's top level or a C++ namespace, `[module] N` in `read_code`) and a window a
 targets: a name that matches one is refused with its kind and lines (`N names a module
 (b.cpp:1-3), not a definition`); name a definition inside it. A call is a dry run unless
 it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewrite` form) and
-`hash:`, 16 hex digits of the file's content hash. `apply: true` writes only with that `hash`,
-and only while the file still has it: a file changed since is refused with its current hash and
-nothing written. Before it writes, the new file is parsed with its language and the edit is
+`hash:`, 16 hex digits of the file's content hash. A file marked read-only (on Unix, no write
+bit for its owner; on Windows, the read-only attribute) is refused, a dry run too: `PATH is
+read-only (...): edit_symbol does not write a file marked read-only; nothing written`.
+`apply: true` writes only with that `hash`, and only while the file still has it: a file changed
+since is refused with its current hash and nothing written. Before it writes, the new file is parsed with its language and the edit is
 refused, with the reason, when it adds a parse error or a missing node (the answer names the
 line of the first one the old file did not have, in the new text when there is one there); when
 the new text does not define the same name and kind where the old definition began (an edit
