@@ -371,6 +371,10 @@ fn others_kept((before, old, target): (&[Def], &str, &Def), (after, new, edited)
 pub fn run(s: &mut Searcher, symbol: &str, path: Option<&str>, new_text: &str, apply: bool, given: Option<&str>) -> Result<Answer> {
     let read = Op::Read { path: path.map(str::to_string), symbol: Some(symbol.to_string()), start: 1, end: None, history: 0 };
     let Answer::Definitions(found, ..) = crate::ops::run_in(s, &read)? else { bail!("no definition matches {}", crate::fmt::echo(symbol)) };
+    // a module (named after its file) or a window is no edit target: when the name matches a
+    // definition too, the definitions alone are the candidates
+    let defined = |r: &crate::index::ChunkRow| !matches!(r.kind.as_str(), "module" | "window");
+    let found: Vec<_> = if found.iter().any(|(r, ..)| defined(r)) { found.into_iter().filter(|(r, ..)| defined(r)).collect() } else { found };
     if found.len() != 1 {
         let first = &found[0].0;
         let example = format!("{}:{}", crate::fmt::shown(&first.path), first.start);

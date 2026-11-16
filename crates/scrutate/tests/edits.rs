@@ -846,8 +846,7 @@ fn a_doc_comment_in_the_new_text_documents_the_definition_once() {
         (
             "f.go",
             "package p\n\nfunc A() int { return 0 }\n\nfunc F() int { return 1 }\n",
-            // by its location: a Go file's module chunk answers to the name too
-            "f.go:5",
+            "F",
             "// F gives five.\nfunc F() int { return 5 }\n",
             "package p\n\nfunc A() int { return 0 }\n\n// F gives five.\nfunc F() int { return 5 }\n",
         ),
@@ -924,7 +923,7 @@ fn a_doc_comment_in_the_new_text_documents_the_definition_once() {
         (
             "r6.go",
             "package p\n\nfunc A() int { return 0 }\n\n// F old\nfunc F() int { return 1 }\n",
-            "r6.go:6",
+            "F",
             "// F new\nfunc F() int { return 5 }\n",
             "package p\n\nfunc A() int { return 0 }\n\n// F new\nfunc F() int { return 5 }\n",
         ),
@@ -967,7 +966,7 @@ fn a_doc_comment_in_the_new_text_documents_the_definition_once() {
             "fn g() {}\n\n// ---- helpers ----\n/// f\nfn f() -> u8 { 5 }\n",
         ),
         ("s6.rs", "fn h() {}\n\n/// old\nstruct S(u8);\n", "S", "// new\nstruct S(u8);\n", "fn h() {}\n\n/// old\n// new\nstruct S(u8);\n"),
-        ("s7.go", "// top\nfunc F() int { return 1 }\n", "s7.go:2", "// F new\nfunc F() int { return 5 }\n", "// top\n// F new\nfunc F() int { return 5 }\n"),
+        ("s7.go", "// top\nfunc F() int { return 1 }\n", "F", "// F new\nfunc F() int { return 5 }\n", "// top\n// F new\nfunc F() int { return 5 }\n"),
         (
             "s8.c",
             "int g(void) { return 0; }\n/** old */\nint f(void) { return 1; }\n",
@@ -1022,6 +1021,36 @@ fn a_doc_comment_in_the_new_text_documents_the_definition_once() {
         // a refusal names its cause: only a new name is a rename
         if out.contains("never renames it") != (file == "q.rs") {
             failed.push(format!("{file}: the refusal does not name its cause: {out}"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+/// A file's module chunk is named after the file and is no edit target, so a definition whose name
+/// the file also has (g.go with `func G`, f.php with `function f`, F.java with `class F`) is the
+/// one candidate, where the module made it two.
+#[test]
+fn a_definition_named_like_its_file_is_edited_not_taken_for_two() {
+    let cases = [
+        ("g.go", "package p\n\nfunc A() int { return 0 }\n\nfunc G() int { return A() }\n", "G", "func G() int { return 5 }\n"),
+        ("f.php", "<?php\nfunction a() { return 0; }\nfunction f() { return a(); }\n", "f", "function f() { return 5; }\n"),
+        ("F.java", "package a;\n\nclass F {\n    int m() { return 0; }\n}\n", "F", "class F {\n    int m() { return 5; }\n}\n"),
+    ];
+    let files: Vec<(&str, &str)> = cases.iter().map(|c| (c.0, c.1)).collect();
+    let mut s = Server::start("named_like_file", &files, &["--allow-edits"]);
+    let mut failed = Vec::new();
+    for (file, text, name, new_text) in cases {
+        let (dry, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text}));
+        if err {
+            failed.push(format!("{file}: refused: {dry}"));
+            continue;
+        }
+        let (out, err) = s.call("edit_symbol", json!({"symbol": name, "path": file, "new_text": new_text, "apply": true, "hash": Server::hash_in(&dry)}));
+        let old: String = text.lines().filter(|l| l.contains(&format!(" {name}"))).map(|l| format!("{l}\n")).collect();
+        let want =
+            if file.ends_with(".java") { text.replacen("class F {\n    int m() { return 0; }\n}\n", new_text, 1) } else { text.replacen(&old, new_text, 1) };
+        if err || s.file(file) != want {
+            failed.push(format!("{file}: {out}\n{:?}", s.file(file)));
         }
     }
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));

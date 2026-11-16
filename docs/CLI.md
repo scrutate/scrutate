@@ -1186,8 +1186,10 @@ with more than one definition is an error that lists each one's kind and locatio
 location to pass (`A names 2 definitions in a.rs: struct at 1-1, impl at 3-7: pass one location
 (a.rs:1) to pick the one to edit`; without `path`, pass `path` or one location). A module (a
 file's top level or a C++ namespace, `[module] N` in `read_code`) and a window are not edit
-targets: a name that matches one is refused with its kind and lines (`N names a module
-(b.cpp:1-3), not a definition`); name a definition inside it. A call is a dry run unless
+targets: a name that matches only one is refused with its kind and lines (`N names a module
+(b.cpp:1-3), not a definition`); name a definition inside it. When the name also matches a
+definition, the module or window is no candidate (a file's module chunk carries the file's name,
+so `func G` in `g.go` is one candidate). A call is a dry run unless
 it passes `apply: true`: the answer gives the unified diff (the `tsquery --rewrite` form) and
 `hash:`, 16 hex digits of the file's content hash. A file marked read-only (on Unix, no write
 bit for its owner; on Windows, the read-only attribute) is refused, a dry run too: `PATH is
