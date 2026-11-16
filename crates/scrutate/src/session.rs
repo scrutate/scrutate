@@ -2956,6 +2956,32 @@ mod tests {
         s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty())
     }
 
+    /// The watch loop's build after a new directory, under a budget that holds one kqueue and not
+    /// two, drops the kqueue in place and builds again: after it a write is named by the kqueue
+    /// alone. Without that, the kqueue is off, no read drains it to ask for another build, and
+    /// every read looks until the next directory change.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_watch_s_build_past_the_budget_beside_the_kqueue_in_place_brings_it_back() {
+        let (root, s, notes) = without_fsevents("kq_drop");
+        assert!(notes.kq_in_place_now());
+        let need = notes.kq_watches();
+        // the kqueue in place draws on the budget too
+        notes.set_kq_budget(need as u64 * 3 / 2);
+        assert!(notes.kq_in_place_now());
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        std::fs::create_dir(root.join("src/d1")).unwrap();
+        // as the watch loop does after its burst over the new directory
+        notes.as_the_watch_sets_its_watches();
+        assert!(notes.kq_watches() > need, "the kqueue is not back after the watch's build: {} watches", notes.kq_watches());
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        std::fs::write(root.join("src/d1/x.py"), "def in_d1():\n    return 1\n").unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "in_d1".into(), limit: 1, exact: true }).unwrap();
+        assert!(a.is_ok_and(|a| !a.is_empty()) && st.files_looked == 1, "named by the kqueue alone: {st:?}");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A budget that holds one kqueue of the tree and not two: a rebuild drops the kqueue in place
     /// first (reads look meanwhile), and the new one then names a write alone.
     #[cfg(target_os = "macos")]

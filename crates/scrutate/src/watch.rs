@@ -891,6 +891,13 @@ impl Notes {
         n.walked = Some(walked);
     }
 
+    /// What the watch loop does after a burst that asks for a walk: its watches set again on the
+    /// tree as it is now (on macOS, a kqueue built when its directories differ).
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn as_the_watch_sets_its_watches(&self) {
+        self.watching(&Arc::new(Walked::new(&self.0.root, &self.0.code)), self.dirs());
+    }
+
     /// The cookies this keeps a name of.
     #[cfg(test)]
     pub(crate) fn cookies_kept(&self) -> usize {
