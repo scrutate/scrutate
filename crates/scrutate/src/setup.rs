@@ -49,7 +49,7 @@ pub fn run(agent: Agent, o: Options) -> Result<i32> {
             s.apply(&mut out)?;
         }
     }
-    print!("{out}");
+    std::io::Write::write_all(&mut std::io::stdout().lock(), out.as_bytes())?;
     Ok(0)
 }
 

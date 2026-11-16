@@ -89,6 +89,64 @@ fn python_repo(name: &str) -> Repo {
     r
 }
 
+/// A reader that goes away early (`| head`) ends a command quietly, as ripgrep: no internal
+/// error, and the exit code a found answer gives. Each output here is larger than a pipe holds
+/// (`completions bash` too, about 100 KB).
+#[test]
+fn a_reader_that_closes_early_ends_each_command_quietly() {
+    let r = Repo::plain("closed_pipe");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
+            .args(args)
+            .current_dir(&r.root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    let module = |f: usize, pad: &str| -> String { (1..=200).map(|i| format!("def f{f}_{i}():\n    return {pad}f{f}_{}()\n\n", i % 200 + 1)).collect() };
+    for f in 1..=3 {
+        r.write(&format!("m{f}.py"), module(f, "").as_bytes());
+    }
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "base"]);
+    for f in 1..=3 {
+        r.write(&format!("m{f}.py"), module(f, " ").as_bytes());
+    }
+    git(&["commit", "-q", "-a", "-m", "head"]);
+    assert_eq!(r.run(&["index"]).0, 0);
+    let commands: [&[&str]; 10] = [
+        &["completions", "bash"],
+        &["review", "--base", "HEAD~1", "--format", "json"],
+        &["review", "--base", "HEAD~1", "--format", "gitlab"],
+        &["review", "--base", "HEAD~1"],
+        &["impact", "--base", "HEAD~1", "--json"],
+        &["impact", "--base", "HEAD~1"],
+        &["grep", "-n", "return", "."],
+        &["refs", "f1_1", "--json"],
+        &["outline", "m1.py", "--json"],
+        &["dead", "--json"],
+    ];
+    for args in commands {
+        let mut child = Command::new(BIN).args(args).current_dir(&r.root).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut first = String::new();
+        std::io::BufRead::read_line(&mut out, &mut first).unwrap();
+        drop(out);
+        let done = child.wait_with_output().unwrap();
+        let err = String::from_utf8_lossy(&done.stderr);
+        assert!(!first.is_empty(), "{args:?}: no output: {err}");
+        assert!(!err.contains("internal error") && !err.contains("Broken pipe"), "{args:?}: {err}");
+        assert!(matches!(done.status.code(), Some(0 | 1)), "{args:?}: {:?} {err}", done.status);
+    }
+}
+
 #[test]
 fn exit_codes_and_plain_output() {
     let r = python_repo("exit");

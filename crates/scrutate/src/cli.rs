@@ -9,6 +9,19 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+
+/// `print!` and `println!` that hand a failed write back instead of panicking: a reader that
+/// closed the pipe (`| head`) ends the command quietly, as ripgrep does.
+macro_rules! out {
+    ($($t:tt)*) => {
+        write!(std::io::stdout().lock(), $($t)*)?
+    };
+}
+macro_rules! outln {
+    ($($t:tt)*) => {
+        writeln!(std::io::stdout().lock(), $($t)*)?
+    };
+}
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 
@@ -1463,10 +1476,10 @@ pub fn run() -> Result<i32> {
             };
             let up = crate::stores::update(&cli.root, w, force)?;
             if let Some(st) = up.code {
-                println!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
+                outln!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
             }
             if let Some(t) = up.text {
-                println!(
+                outln!(
                     "text index: {} files, {} changed, {} removed, {} segment(s), {:.1} MB, {:.1}s",
                     t.files,
                     t.files_changed,
@@ -1485,7 +1498,7 @@ pub fn run() -> Result<i32> {
                 v["text_index"] =
                     serde_json::json!({"files": t.files(), "segments": t.segments(), "bytes": crate::textindex::TextIndex::disk_bytes(&s.ix.root)});
             }
-            println!("{}", serde_json::to_string(&v)?);
+            outln!("{}", serde_json::to_string(&v)?);
             Ok(0)
         }
         Cmd::Search { query, alt, also, k, why, json, filter } => {
@@ -1534,7 +1547,7 @@ pub fn run() -> Result<i32> {
                     crate::ops::mark_vendored(rec, &vendored[*i]);
                     rec["root"] = serde_json::json!(crate::paths::plain_path(&roots[*i].1).to_string_lossy());
                 }
-                println!("{}", serde_json::to_string_pretty(&crate::ops::wrapped(v, None))?);
+                outln!("{}", serde_json::to_string_pretty(&crate::ops::wrapped(v, None))?);
             } else {
                 let marked: Vec<bool> = hits.iter().map(|(h, i)| vendored[*i].is(&h.path)).collect();
                 let hits: Vec<crate::search::Hit> = hits.iter().map(|x| crate::search::Hit { path: shown(x), ..x.0.clone() }).collect();
@@ -1544,7 +1557,7 @@ pub fn run() -> Result<i32> {
                     let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
                     let blocks = crate::fmt::hit_blocks(&hits, &words, true, why);
                     let blocks = blocks.iter().zip(&marked).map(|(b, &m)| if m { crate::ops::mark_hit_block(b, &|_| true) } else { b.clone() }).collect();
-                    println!("{}", crate::ops::paged(blocks, "results", text_room(page.0), page.1));
+                    outln!("{}", crate::ops::paged(blocks, "results", text_room(page.0), page.1));
                 }
             }
             if let (Some(other), false) = (other, json) {
@@ -1558,31 +1571,31 @@ pub fn run() -> Result<i32> {
                 (false, Some(cwd)) => index_above(cwd).unwrap_or_else(|| cwd.clone()),
                 _ => std::path::absolute(&cli.root).unwrap_or(cli.root),
             };
-            println!("{}", serde_json::json!({"root": root.to_string_lossy(), "configuration_file": cfg_path.map(|p| p.to_string_lossy().into_owned())}));
+            outln!("{}", serde_json::json!({"root": root.to_string_lossy(), "configuration_file": cfg_path.map(|p| p.to_string_lossy().into_owned())}));
             Ok(0)
         }
         Cmd::Config { json: false } => {
             match &cfg_path {
                 Some(p) => {
-                    println!("configuration file: {}", p.display());
-                    println!("{}", std::fs::read_to_string(p)?.trim_end());
+                    outln!("configuration file: {}", p.display());
+                    outln!("{}", std::fs::read_to_string(p)?.trim_end());
                     if !cfg_globs.is_empty() {
-                        println!("\ngrep globs, matched from {}: {}", crate::paths::plain_path(&cfg_root).display(), cfg_globs.join(", "));
+                        outln!("\ngrep globs, matched from {}: {}", crate::paths::plain_path(&cfg_root).display(), cfg_globs.join(", "));
                     }
                 }
-                None if root_given => println!(
+                None if root_given => outln!(
                     "no configuration file (looked for $SCRUTATE_CONFIG, {}/{CONFIG_FILE}, $XDG_CONFIG_HOME/scrutate/config.toml)",
                     cfg_root.display()
                 ),
-                None => println!(
+                None => outln!(
                     "no configuration file (looked for $SCRUTATE_CONFIG, {CONFIG_FILE} here and in each directory above up to the repository top, $XDG_CONFIG_HOME/scrutate/config.toml)"
                 ),
             }
-            println!("\nenvironment in effect:");
+            outln!("\nenvironment in effect:");
             let mut vars: Vec<(String, String)> = std::env::vars().filter(|(k, _)| k.starts_with("SCRUTATE_")).collect();
             vars.sort();
             for (k, v) in vars {
-                println!("  {k}={v}");
+                outln!("  {k}={v}");
             }
             let root = match (root_given, &cwd) {
                 (false, Some(cwd)) => index_above(cwd).unwrap_or_else(|| cwd.clone()),
@@ -1590,7 +1603,7 @@ pub fn run() -> Result<i32> {
             };
             let excluded = crate::files::config_excludes(&root);
             if std::env::var_os("SCRUTATE_INDEX_EXCLUDE_DIRS").is_none() && !excluded.is_empty() {
-                println!("\nindex exclude_dirs, from {}: {}", root.join(CONFIG_FILE).display(), excluded.join(", "));
+                outln!("\nindex exclude_dirs, from {}: {}", root.join(CONFIG_FILE).display(), excluded.join(", "));
             }
             Ok(0)
         }
@@ -1622,12 +1635,12 @@ pub fn run() -> Result<i32> {
         Cmd::Review { base, head, format, depth, link } => {
             let r = open_fresh(&cli.root)?.recovering(|s| crate::review::review(s, &base, Some(&head), depth as usize))?;
             match format {
-                ReviewFormat::Markdown => print!("{}", r.markdown(link.as_deref())),
+                ReviewFormat::Markdown => out!("{}", r.markdown(link.as_deref())),
                 ReviewFormat::Json => {
                     let stopped = r.impact.stopped.then_some(crate::ops::Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" });
-                    println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(&cli.root, r.json(), stopped))?)
+                    outln!("{}", serde_json::to_string_pretty(&crate::ops::envelope(&cli.root, r.json(), stopped))?)
                 }
-                ReviewFormat::Gitlab => println!("{}", serde_json::to_string_pretty(&r.gitlab())?),
+                ReviewFormat::Gitlab => outln!("{}", serde_json::to_string_pretty(&r.gitlab())?),
             }
             Ok(i32::from(r.is_empty()))
         }
@@ -1782,7 +1795,7 @@ pub fn run() -> Result<i32> {
                     })
                 }))
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&v)?);
+            outln!("{}", serde_json::to_string_pretty(&v)?);
             Ok(0)
         }
         Cmd::Languages { json: false } => {
@@ -1813,7 +1826,10 @@ pub fn run() -> Result<i32> {
                 Shell::Powershell => clap_complete::Shell::PowerShell,
                 Shell::Elvish => clap_complete::Shell::Elvish,
             };
-            clap_complete::generate(sh, &mut cmd, name, &mut std::io::stdout());
+            // generate panics on a failed write: it writes to memory, and the copy out can fail
+            let mut script = Vec::new();
+            clap_complete::generate(sh, &mut cmd, name, &mut script);
+            std::io::stdout().lock().write_all(&script)?;
             Ok(0)
         }
         Cmd::Sexp { file } => {
@@ -1821,13 +1837,13 @@ pub fn run() -> Result<i32> {
             let rel = file.to_string_lossy().into_owned();
             match crate::parse::spec_for(&rel, &source) {
                 Some(spec) => {
-                    println!("grammar: {}", spec.id);
-                    println!("{}", crate::parse::sexp(spec, &source));
+                    outln!("grammar: {}", spec.id);
+                    outln!("{}", crate::parse::sexp(spec, &source));
                 }
-                None => println!("no grammar for {rel} (heuristic symbols)"),
+                None => outln!("no grammar for {rel} (heuristic symbols)"),
             }
             for c in crate::parse::parse_source(&rel, &source) {
-                println!(
+                outln!(
                     "CHUNK {:<9} {:<30} L{}-{} doc={:?} calls={:?}",
                     c.kind,
                     c.qualname,
@@ -1959,7 +1975,7 @@ fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
             printed(answer, &request, root)?
         }
     };
-    print!("{}", p.out);
+    out!("{}", p.out);
     eprint!("{}", p.err);
     Ok(p.code)
 }
@@ -2122,21 +2138,21 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     if json {
         let mut v = serde_json::to_value(&report)?;
         v["constants"] = serde_json::json!(constants);
-        println!("{}", serde_json::to_string_pretty(&v)?);
+        outln!("{}", serde_json::to_string_pretty(&v)?);
     } else {
-        println!("database: {}", if report.database_ok { "ok" } else { "CORRUPT" });
-        println!("segments: {} checked, {}", report.segments, if report.segments_ok { "ok" } else { "DAMAGED" });
-        println!(
+        outln!("database: {}", if report.database_ok { "ok" } else { "CORRUPT" });
+        outln!("segments: {} checked, {}", report.segments, if report.segments_ok { "ok" } else { "DAMAGED" });
+        outln!(
             "chunks: {} ranked in the database, {} alive in segments{}, {constants} constants and fields (no postings)",
             report.chunks_db,
             report.chunks_alive,
             if report.chunks_db == report.chunks_alive { "" } else { "  MISMATCH" }
         );
         if files {
-            println!("files: {} indexed, {} changed since indexing, {} missing", report.files_indexed, report.files_changed, report.files_missing);
+            outln!("files: {} indexed, {} changed since indexing, {} missing", report.files_indexed, report.files_changed, report.files_missing);
         }
         for p in &report.problems {
-            println!("problem: {p}");
+            outln!("problem: {p}");
         }
         for u in &report.unlisted {
             let fate = if u.age_s > crate::index::GC_AGE_S {
@@ -2146,19 +2162,19 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
             };
             let age = if u.age_s < 120 { format!("{} s", u.age_s) } else { format!("{} min", u.age_s / 60) };
             let size = if u.bytes < 1024 { format!("{} B", u.bytes) } else { format!("{} KB", u.bytes.div_ceil(1024)) };
-            println!("note: segment {} ({size}, {age} old) is in no segment list: {fate}", u.name);
+            outln!("note: segment {} ({size}, {age} old) is in no segment list: {fate}", u.name);
         }
-        println!("{}", if report.ok() { "OK" } else { "PROBLEMS FOUND (run `scrutate index` to repair; `scrutate index --force` rebuilds from scratch)" });
+        outln!("{}", if report.ok() { "OK" } else { "PROBLEMS FOUND (run `scrutate index` to repair; `scrutate index --force` rebuilds from scratch)" });
     }
     Ok(if report.ok() { 0 } else { 1 })
 }
 
 fn print_hits(root: &Path, hits: &[crate::search::Hit], qs: &[String], why: bool, json: bool) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(root, hits_json(hits), None))?);
+        outln!("{}", serde_json::to_string_pretty(&crate::ops::envelope(root, hits_json(hits), None))?);
     } else {
         let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
-        println!("{}", fmt_hits(hits, &words, true, why));
+        outln!("{}", fmt_hits(hits, &words, true, why));
     }
     Ok(())
 }
@@ -2852,6 +2868,8 @@ pub fn main_exit() {
     }));
     let code = match std::panic::catch_unwind(run) {
         Ok(Ok(c)) => c,
+        // the reader of the output went away (`| head`): nothing is wrong
+        Ok(Err(e)) if e.chain().any(|c| c.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)) => 0,
         Ok(Err(e)) => {
             diagnostic("error", &format!("{e:#}"));
             2

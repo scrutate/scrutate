@@ -315,6 +315,9 @@ incompatible index by itself, and that is never breaking.
   directory, or a link it leads through is pointed elsewhere), as `watch` does, where they kept
   answering from the old tree; a command line call made in the old tree is no longer answered by
   that session.
+- A reader that closes early (`| head`) ends `impact`, `review` (every format) and every other
+  command quietly with exit 0, as it ended a search, where they printed "internal error: failed
+  printing to stdout: Broken pipe" and exited 2 ([CLI](docs/CLI.md)).
 - `impact` and `review` read a file moved where the index's rules leave it out (a directory
   `.ignore` or `.gitignore` names) as deleted, with its callers and tests as `git rm` of it gives,
   where they listed nothing ([CLI](docs/CLI.md)).
