@@ -427,6 +427,8 @@ incompatible index by itself, and that is never breaking.
 - `impact --staged` and `review` name the window that holds a changed line outside every
   definition (`b.py:3-3 [window] b`), as the working-tree form does, where they named the whole
   file (`b.py [file]`).
+- `refs` (MCP `references`), resolved or `--textual`, says it stopped only when more occurrences
+  exist, where an answer of exactly `--max-results` occurrences said it was cut.
 - `refs NAME --def PATH` (MCP `references` with `def`) counts `--max-results` over the occurrences
   that resolve to that definition, where it counted every occurrence of the name first and could
   answer "0 references" for a definition in use. It keeps only that definition's occurrences,

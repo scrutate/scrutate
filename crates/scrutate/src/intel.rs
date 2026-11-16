@@ -1248,7 +1248,17 @@ pub fn references_in(s: &Searcher, name: &str, max_results: u64, scope: Option<&
         Some(f) => f.walk(walk),
         None => walk,
     };
-    let (mut groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results), &walk)?;
+    // one line past max_results says whether more exist: the search stopping at exactly max_results does not
+    let q = crate::resolve::name_search(&bare, max_results + 1);
+    let narrowed = crate::stores::grep_files(&s.ix, &q, &walk, s.look.as_ref());
+    let (mut found, stopped) = occurrences_in(&s.ix.root, narrowed.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
+    let past = found.iter().filter(|r| matches!(r, crate::instant::Record::Match(_))).count() as u64 > max_results;
+    if past {
+        let last = found.iter().rposition(|r| matches!(r, crate::instant::Record::Match(_)));
+        found.remove(last.unwrap_or_default());
+    }
+    let truncated = past || stopped && !past;
+    let mut groups = group_by_symbol(&s.ix, found)?;
     if let Some(f) = scope {
         definitions.retain(|d| f.admits(&d.path, &d.kind));
         callers.retain(|h| f.admits_path(&h.path));

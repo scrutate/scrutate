@@ -137,7 +137,8 @@ impl<'a> Names<'a> {
         let read_max = if kinds.is_some() { max_results.max(REFS_KIND_RESOLVE_MAX) } else { max_results };
         let mut kind_of: HashMap<(i64, &str), bool> = HashMap::new();
         let mut bounded: Option<u64>;
-        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, read_max) };
+        // one line past the bound says whether more exist: the search stopping at exactly the bound does not
+        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, read_max + 1) };
         // a name defined in a language that ignores case is looked for in any case, and kept in
         // another case only in a file of such a language
         let mut any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
@@ -153,7 +154,7 @@ impl<'a> Names<'a> {
             }
             // the text index, when it holds the files as the last look found them, says which can match
             let files = crate::stores::grep_files(&s.ix, &q, &walk, s.look.as_ref());
-            let (found, mut truncated) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
+            let (found, stopped) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
             let mut notes = Vec::new();
             let mut hits = Vec::new();
             for r in found {
@@ -167,7 +168,8 @@ impl<'a> Names<'a> {
             let mut narrowed = crate::resolve::Narrowed::default();
             // Engine A stops at `max_results` lines; one long line can hold more uses than that
             let total: usize = hits.iter().map(|h| h.spans.len()).sum();
-            truncated |= total as u64 > read_max;
+            // stopped short of the line past the bound: for a reason of its own (a cancel), so cut
+            let mut truncated = stopped && hits.len() as u64 <= read_max || total as u64 > read_max;
             let mut resolved = 0u64;
             bounded = None;
             'lines: for h in hits {

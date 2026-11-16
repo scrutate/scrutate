@@ -724,3 +724,60 @@ fn an_alias_or_a_constructor_of_another_definition_never_takes_a_slot() {
     assert!(failed.is_empty(), "{}", failed.join("\n"));
     let _ = fs::remove_dir_all(&root);
 }
+
+/// An answer of exactly max_results occurrences is not cut: the search stopping at max_results
+/// lines does not say more exist. Plain, by language, by type and textual, one below and at the count.
+#[test]
+fn an_answer_of_exactly_max_results_is_not_cut() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_exact_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("a.py"), "def nm():\n    return 1\n").unwrap();
+    fs::write(root.join("b.py"), "from a import nm\n\n\ndef u():\n    return nm()\n").unwrap();
+    fs::write(root.join("c.js"), "function q() { return nm() }\n").unwrap();
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let mut failed = Vec::new();
+    for (args, n) in [(vec![], 4), (vec!["--lang", "python"], 3), (vec!["-t", "py"], 3)] {
+        for m in [n - 1, n] {
+            let all: Vec<String> = ["refs", "nm"]
+                .iter()
+                .map(|s| s.to_string())
+                .chain(args.iter().map(|s| s.to_string()))
+                .chain(["--max-results".into(), m.to_string(), "--json".into()])
+                .collect();
+            let out = std::process::Command::new(BIN)
+                .args(&all)
+                .current_dir(&root)
+                .env("SCRUTATE_SEMANTIC", "none")
+                .env("SCRUTATE_NO_SESSION", "1")
+                .output()
+                .unwrap();
+            let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let r = &v["result"];
+            let got = r["definitions"].as_array().into_iter().flatten().map(|d| d["references"].as_array().map_or(0, Vec::len)).sum::<usize>()
+                + r["unresolved"].as_array().map_or(0, Vec::len);
+            if got != m || r["truncated"] != json!(m < n) {
+                failed.push(format!("{args:?} at {m} of {n}: {got} occurrences, truncated {}", r["truncated"]));
+            }
+        }
+    }
+    // --textual counts lines: the four lines that hold `nm`
+    for m in [3, 4] {
+        let out = std::process::Command::new(BIN)
+            .args(["refs", "nm", "--textual", "--max-results", &m.to_string(), "--json"])
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .output()
+            .unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let r = &v["result"];
+        let got: usize = r["references"].as_array().into_iter().flatten().map(|g| g["lines"].as_array().map_or(0, Vec::len)).sum();
+        if got != m || r["truncated"] != json!(m < 4) {
+            failed.push(format!("--textual at {m} of 4: {got} lines, truncated {}", r["truncated"]));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+    let _ = fs::remove_dir_all(&root);
+}
