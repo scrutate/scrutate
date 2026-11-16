@@ -959,9 +959,9 @@ mod unix {
                         continue;
                     }
                     open.fetch_add(1, Ordering::AcqRel);
-                    let (session, hello, done) = (Arc::clone(&session), hello.clone(), Arc::clone(&open));
+                    let (session, hello, done, root) = (Arc::clone(&session), hello.clone(), Arc::clone(&open), root.clone());
                     let served = std::thread::Builder::new().name("scrutate-session-call".into()).spawn(move || {
-                        let _ = serve_one(&session, conn, &hello, answer);
+                        let _ = serve_one(&session, conn, &hello, &root, answer);
                         done.fetch_sub(1, Ordering::AcqRel);
                     });
                     if served.is_err() {
@@ -973,13 +973,24 @@ mod unix {
         Some(Listening { path, id: (md.dev(), md.ino()) })
     }
 
-    fn serve_one(session: &Session, conn: UnixStream, hello: &str, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Result<()> {
+    /// One caller of the session listening for `root`: greeted, its request read and answered.
+    pub(super) fn serve_one(
+        session: &Session,
+        conn: UnixStream,
+        hello: &str,
+        root: &Path,
+        answer: fn(Answer, &Request, &Path) -> Result<Printed>,
+    ) -> Result<()> {
         let mut w = conn.try_clone()?;
         writeln!(w, "{hello}")?;
         conn.set_read_timeout(Some(REQUEST))?;
         let mut line = Vec::new();
         BufReader::new(std::io::Read::take(&conn, MAX_REQUEST)).read_until(b'\n', &mut line)?;
         let request: Request = serde_json::from_slice(&line)?;
+        // greeted for `root`, which the session may have left since for another tree
+        if session.root() != root {
+            return Ok(());
+        }
         let printed = session.run_scanned_pending(&request.op).and_then(|(st, a, pending)| {
             let mut p = answer(a.ok()?, &request, &session.root()).ok()?;
             if let Some(note) = pending.note() {
@@ -1174,6 +1185,43 @@ mod tests {
         assert!(a.is_ok_and(|a| !a.is_empty()), "the new tree's name");
         let (_, a) = s.run_scanned(&symbol("only_v1")).unwrap();
         assert!(a.is_ok_and(|a| a.is_empty()), "the old tree's name");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A caller greeted for the old tree before the session followed its link to another one
+    /// gets no answer, whenever its request comes.
+    #[cfg(unix)]
+    #[test]
+    fn a_caller_greeted_before_the_root_moved_is_not_answered_from_the_new_tree() {
+        use std::io::{Read, Write};
+        fn answered(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+            Ok(Printed { out: "answered\n".into(), ..Default::default() })
+        }
+        let base = std::env::temp_dir().join(format!("scrutate_session_greeted_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for dir in ["v1", "v2"] {
+            std::fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+            std::fs::write(base.join(dir).join("a.py"), "def f():\n    return 1\n").unwrap();
+        }
+        let cur = base.join("cur");
+        std::os::unix::fs::symlink("v1", &cur).unwrap();
+        let s = Session::open(&cur, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        let old = s.root();
+        let request = Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
+        let replies = |s: &Session| {
+            let (mut caller, server) = std::os::unix::net::UnixStream::pair().unwrap();
+            writeln!(caller, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+            unix::serve_one(s, server, "{}", &old, answered).unwrap();
+            let mut said = String::new();
+            caller.read_to_string(&mut said).unwrap();
+            said.lines().count()
+        };
+        assert_eq!(replies(&s), 2, "the greeting and the answer while the root is the old tree");
+        std::os::unix::fs::symlink("v2", base.join("cur.tmp")).unwrap();
+        std::fs::rename(base.join("cur.tmp"), &cur).unwrap();
+        assert!(s.reopen().unwrap());
+        assert_eq!(replies(&s), 1, "only the greeting once the root moved");
         let _ = std::fs::remove_dir_all(base);
     }
 
