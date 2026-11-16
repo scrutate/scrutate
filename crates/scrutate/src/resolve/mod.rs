@@ -349,6 +349,8 @@ pub(crate) struct FileInfo {
     root: std::path::PathBuf,
     hash: String,
     parsed: std::cell::OnceCell<Option<std::sync::Arc<Parsed>>>,
+    /// `defs` by name (`named`)
+    by_name: std::cell::OnceCell<HashMap<String, Vec<usize>>>,
     /// the request's loaded set, which counts the parse this file makes, and whether the file is
     /// still in it
     set: std::rc::Weak<std::cell::RefCell<Loaded>>,
@@ -377,9 +379,23 @@ impl FileInfo {
         parsed.as_ref()?.tree.as_ref()
     }
 
+    /// Its definitions named `name`, in the order of `defs`.
+    fn named<'f>(&'f self, name: &str) -> impl Iterator<Item = &'f Def> + Clone {
+        let by_name = self.by_name.get_or_init(|| {
+            let mut m: HashMap<String, Vec<usize>> = HashMap::new();
+            for (i, d) in self.defs.iter().enumerate() {
+                m.entry(d.name.clone()).or_default().push(i);
+            }
+            m
+        });
+        by_name.get(name).into_iter().flatten().map(|&i| &self.defs[i])
+    }
+
     /// What the request's loaded set counts for it besides its parse.
     fn text_weight(&self) -> usize {
-        self.src.len() + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8) + self.bindings.len() * 64
+        // a definition, and its entry in `by_name` whether or not that is built yet
+        let defs: usize = self.defs.iter().map(|d| 2 * d.name.len() + d.qualname.len() + d.kind.len() + 160).sum();
+        self.src.len() + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8) + self.bindings.len() * 64 + defs
     }
 
     /// The weight of its parse, when it holds one.
@@ -632,6 +648,10 @@ pub struct Resolver<'a> {
     /// definition it stands for (None: several)
     c_names: Option<HashMap<String, Vec<String>>>,
     c_defs: HashMap<i64, Option<i64>>,
+    /// C and C++: what an `#include` of a file names (`c_include`), and the files a lookup from a
+    /// file reads, in order (`c_include_order`)
+    c_includes: HashMap<(String, String), Option<Vec<String>>>,
+    c_orders: HashMap<String, Rc<Vec<String>>>,
     /// C#: type name -> (definition, namespace, class it is nested in); namespace -> its files;
     /// by type, the types it extends and implements
     cs_types: HashMap<String, CsTypes>,
@@ -1189,6 +1209,8 @@ impl<'a> Resolver<'a> {
             php_paths: HashMap::new(),
             c_names: None,
             c_defs: HashMap::new(),
+            c_includes: HashMap::new(),
+            c_orders: HashMap::new(),
             cs_types: HashMap::new(),
             cs_namespaces: None,
             cs_bases: HashMap::new(),
@@ -1256,6 +1278,9 @@ impl<'a> Resolver<'a> {
     /// Drops the loaded copy of `path`; a later use loads it again.
     pub fn forget(&mut self, path: &str) {
         self.loaded.borrow_mut().remove(path);
+        // a lookup's order follows the includes of the files it read; what an include names
+        // (`c_includes`) follows only the repository's list of files
+        self.c_orders.clear();
         // node ids name nodes of trees still loaded
         self.found.clear();
         self.tys.clear();
@@ -1373,6 +1398,7 @@ impl<'a> Resolver<'a> {
             root: self.ix.root.clone(),
             hash,
             parsed: cell,
+            by_name: std::cell::OnceCell::new(),
             set: Rc::downgrade(&self.loaded),
             counted: std::cell::Cell::new(false),
         }
@@ -2593,7 +2619,7 @@ fn has_function_between(n: Node, top: Node) -> bool {
 }
 
 fn top_level<'f>(fi: &'f FileInfo, name: &str) -> Option<&'f Def> {
-    let mut it = fi.defs.iter().filter(|d| d.name == name && d.parent.is_none());
+    let mut it = fi.named(name).filter(|d| d.parent.is_none());
     it.clone().find(|d| d.kind != "impl").or_else(|| it.next())
 }
 
@@ -3138,6 +3164,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(got, Ok(("h5.h".to_string(), "import")));
         assert_eq!(parsed, 2, "a.c for the use and h5.h for f's body, not the four headers between");
+    }
+
+    /// The files a C lookup reads are kept per request in the order it reads them; a header
+    /// forgotten after its includes changed is read again, and the next lookup follows its new
+    /// include. `k` sits ten includes deep, past what the lookup through imports follows, so only
+    /// the walk over the included files finds it.
+    #[test]
+    fn a_lookup_follows_the_new_include_of_a_forgotten_header() {
+        let mut files = vec![("a.c".to_string(), "#include \"h1.h\"\n\nint main(void) {\n    return k();\n}\n".to_string())];
+        for i in 1..4 {
+            files.push((format!("h{i}.h"), format!("#include \"h{}.h\"\nint g{i}(void);\n", i + 1)));
+        }
+        files.push(("h4.h".to_string(), "int g4(void);\n".to_string()));
+        for i in 1..7 {
+            files.push((format!("j{i}.h"), format!("#include \"j{}.h\"\nint i{i}(void);\n", i + 1)));
+        }
+        files.push(("j7.h".to_string(), "static inline int k(void) {\n    return 7;\n}\n".to_string()));
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let (root, s) = indexed("include_forget", &refs);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        let at = |rv: &mut Resolver| rv.resolve_at("a.c", 4, 11, "k").map(|(id, how)| (s.ix.chunk(id).unwrap().unwrap().path, how));
+        let before = at(&mut rv);
+        std::fs::write(root.join("h3.h"), "#include \"h4.h\"\n#include \"j1.h\"\nint g3(void);\n").unwrap();
+        rv.forget("h3.h");
+        let after = at(&mut rv);
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(before, Err("not found"));
+        assert_eq!(after, Ok(("j7.h".to_string(), "import")));
     }
 
     /// A file whose bytes are not those the index parsed, or whose stored bindings are gone, is

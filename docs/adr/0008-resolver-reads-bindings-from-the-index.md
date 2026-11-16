@@ -123,8 +123,24 @@ before build on the three largest names; the first `binds` layout, after `body`,
 a load. Neither is in the table above.
 
 `refs kmalloc_array` parses 280 files where it parsed 3,272. On a name with tens of thousands of
-occurrences most of the time is the walk itself: looking a name up through each use's includes,
-again for every occurrence.
+occurrences most of the time was the walk itself: looking a name up through each use's includes,
+again for every occurrence (`refs mutex_lock`: memcmp 15% of the samples, malloc 13%,
+`lookup_top` 4.4%, `c_include` 4.2%). So the resolver keeps, for one request, what an include
+names, the files a lookup from a file reads in order (the same for every name), and each file's
+definitions by name. Same box and runs as above, with those kept:
+
+| | before | after, with them |
+|---|---|---|
+| `refs kmalloc_array` | 20.9 s, 6.4 s; 722 MB | 31.0 s, 5.9 s; 405 MB |
+| `refs mutex_lock` | 100.8 s, 123.2 s; 6.2 GB | 129.6 s, 76.1 s; 652 MB |
+| `refs spin_lock_irqsave` | 53.0 s, 65.6 s; 4.0 GB | 55.6 s, 41.4 s; 580 MB |
+| `refs list_add` | 21.3 s, 23.4 s; 2.6 GB | 21.8 s, 17.1 s; 492 MB |
+| `refs container_of` | 71.1 s, 89.6 s; 8.0 GB | 96.9 s, 71.1 s; 673 MB |
+| `dead`, the whole Linux tree | 4,179 s; 23.8 GB | 4,642 s; 4.34 GB |
+
+Run 1 here was each binary's first read of its own cold copy; run 2 is the fair comparison. With
+them, `dead` on the whole Linux tree takes 11 percent longer than the build before, where it
+took 54 percent longer without them. The answers are again the same byte for byte.
 
 ## Other choices
 

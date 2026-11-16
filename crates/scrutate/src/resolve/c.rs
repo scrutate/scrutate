@@ -130,12 +130,9 @@ impl Resolver<'_> {
     fn c_included(&mut self, path: &str, fi: &FileInfo, name: &str, line: i64) -> Resolution {
         let mut scopes: Vec<String> = fi.defs.iter().filter(|d| d.kind == "module" && d.start <= line && line <= d.end).map(|d| d.qualname.clone()).collect();
         scopes.push(String::new());
-        let (mut todo, mut seen) = (vec![path.to_string()], HashSet::new());
-        while let Some(f) = todo.pop() {
-            if seen.len() >= MAX_INCLUDED || !seen.insert(f.clone()) {
-                continue;
-            }
-            let ff = if f == path { None } else { Some(self.file(&f)) };
+        let order = self.c_include_order(path, fi);
+        for f in order.iter() {
+            let ff = if f == path { None } else { Some(self.file(f)) };
             let at = ff.as_deref().unwrap_or(fi);
             // an enumerator is in the scope of its enum
             let owner = |d: &Def| {
@@ -143,16 +140,37 @@ impl Resolver<'_> {
                 let q = enumerated.map_or(d.qualname.as_str(), |e| e.qualname.as_str());
                 q.rsplit_once('.').map_or("", |(o, _)| o).to_string()
             };
-            let hit = at.defs.iter().find(|d| d.name == name && d.kind != "impl" && scopes.contains(&owner(d))).map(|d| d.id);
+            let hit = at.named(name).find(|d| d.kind != "impl" && scopes.contains(&owner(d))).map(|d| d.id);
             if let Some(id) = hit {
                 return self.c_definition(id).map(|d| (d, if f == path { "module" } else { "import" })).ok_or("not found");
             }
+        }
+        Err(if self.c_defined(name) { "not found" } else { "external" })
+    }
+
+    /// The files `c_included` reads from `path`, in the order it reads them: `path`, then the
+    /// files its includes name, depth first, at most `MAX_INCLUDED`. The same for every name, so
+    /// kept for the request.
+    fn c_include_order(&mut self, path: &str, fi: &FileInfo) -> Rc<Vec<String>> {
+        if let Some(o) = self.c_orders.get(path) {
+            return Rc::clone(o);
+        }
+        let (mut todo, mut seen, mut order) = (vec![path.to_string()], HashSet::new(), Vec::new());
+        while let Some(f) = todo.pop() {
+            if seen.len() >= MAX_INCLUDED || !seen.insert(f.clone()) {
+                continue;
+            }
+            let ff = if f == path { None } else { Some(self.file(&f)) };
+            let at = ff.as_deref().unwrap_or(fi);
             let includes: Vec<String> = at.bindings.iter().filter(|b| b.local == "*").map(|b| b.module.clone()).collect();
             for m in includes.iter().rev() {
                 todo.extend(self.c_include(&f, m).unwrap_or_default());
             }
+            order.push(f);
         }
-        Err(if self.c_defined(name) { "not found" } else { "external" })
+        let order = Rc::new(order);
+        self.c_orders.insert(path.to_string(), Rc::clone(&order));
+        order
     }
 
     /// `a::b::name`: the definition of that qualified name, else one inside a namespace of that
@@ -321,6 +339,16 @@ impl Resolver<'_> {
     /// path ends with it, those nearest `from` when several do. A system include (`<a/b.h>`)
     /// skips the first step. Include paths of the build are not read.
     fn c_include(&mut self, from: &str, module: &str) -> Option<Vec<String>> {
+        let key = (from.to_string(), module.to_string());
+        if let Some(found) = self.c_includes.get(&key) {
+            return found.clone();
+        }
+        let found = self.c_include_uncached(from, module);
+        self.c_includes.insert(key, found.clone());
+        found
+    }
+
+    fn c_include_uncached(&mut self, from: &str, module: &str) -> Option<Vec<String>> {
         let (system, m) = match module.strip_prefix('<').and_then(|m| m.strip_suffix('>')) {
             Some(m) => (true, m),
             None => (false, module),
