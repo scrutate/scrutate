@@ -291,3 +291,19 @@ fn a_hundred_edits_over_five_languages_land_byte_for_byte_and_every_stale_one_is
     }
     assert_eq!((exact, stale_refused, broken_landed), (80, 20, 0));
 }
+
+/// A nested repository's git directory under another spelling (APFS and NTFS take `.GIT` for
+/// `.git`) is neither indexed nor edited.
+#[test]
+fn a_nested_git_directory_under_another_spelling_is_neither_indexed_nor_edited() {
+    let hook = "def inside_git():\n    return 1\n";
+    let mut s = Server::start("dotgit", &[("vendor/lib/.GIT/hooks/helper.py", hook), ("a.py", PY)], &["--allow-edits"]);
+    let (text, err) = s.call("find_symbol", json!({"name": "inside_git", "exact": true}));
+    assert!(!err && !text.contains(".GIT"), "{text}");
+    let (text, err) = s.call(
+        "edit_symbol",
+        json!({"symbol": "vendor/lib/.GIT/hooks/helper.py:1-2", "new_text": "def inside_git():\n    return 2\n", "apply": true, "hash": "x"}),
+    );
+    assert!(err, "{text}");
+    assert_eq!(s.file("vendor/lib/.GIT/hooks/helper.py"), hook);
+}

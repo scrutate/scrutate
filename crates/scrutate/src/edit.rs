@@ -44,16 +44,15 @@ fn content_hash(bytes: &[u8]) -> String {
     crate::index::content_hash(bytes)[..16].to_string()
 }
 
-/// The directory of `.git` or `.scrutate` that `rel` lies in, by name or by identity: a directory
-/// on the way that is one of them under another spelling (a link, another case) counts.
+/// The directory of `.git` or `.scrutate` that `rel` lies in, at any depth: by its text, under
+/// every spelling git's own rules take for one (`files::own_dir_name`), and by identity with the
+/// root's own, so a link to either counts too.
 fn guarded(root: &std::path::Path, rel: &str) -> Option<&'static str> {
     let dirs: Vec<(&'static str, std::path::PathBuf)> = [".git", ".scrutate"].into_iter().map(|d| (d, root.join(d))).filter(|(_, p)| p.exists()).collect();
     let mut at = root.to_path_buf();
     for part in rel.split('/') {
-        match part {
-            ".git" => return Some(".git"),
-            ".scrutate" => return Some(".scrutate"),
-            _ => {}
+        if let Some(own) = crate::files::own_dir_name(part) {
+            return Some(own);
         }
         at.push(part);
         if let Some((d, _)) = dirs.iter().find(|(_, p)| same_file::is_same_file(&at, p).unwrap_or(false)) {
@@ -198,6 +197,11 @@ mod tests {
         assert_eq!(guarded(&root, ".git/hooks/x.py"), Some(".git"));
         assert_eq!(guarded(&root, "src/.scrutate/x.py"), Some(".scrutate"));
         assert_eq!(guarded(&root, "src/a.py"), None);
+        // a nested repository's git directory, under the spellings APFS and NTFS take for it
+        for p in ["vendor/lib/.GIT/hooks/x.py", "a/.Git./x.py", "a/git~1/x.py", "a/.g\u{200c}it/x.py", "a/.SCRUTATE/x.py"] {
+            assert!(guarded(&root, p).is_some(), "{p}");
+        }
+        assert_eq!(guarded(&root, "a/.github/x.py"), None);
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(root.join(".scrutate"), root.join("meta")).unwrap();

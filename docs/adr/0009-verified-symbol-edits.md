@@ -43,9 +43,10 @@ command line calls use cannot carry one to a running server (one without the fla
 - The write goes through the structural rewrite's writer (`rewrite.rs`): the file is opened by
   its directory with no link on the way, its bytes are checked to still be the ones read, and a
   new file in the same directory is renamed over it, keeping its permissions. A file outside the
-  root, a link, a file under `.git/` or `.scrutate/` (by name, and by file identity for each
-  directory on the way, so a link or another spelling of either counts), and a file the index
-  does not hold are refused. A dry run writes nothing, not even a temporary file. The file's line endings are kept: `new_text` written with `\n` takes the file's `\r\n`.
+  root, a link, a file under `.git/` or `.scrutate/` at any depth (by name under every spelling
+  git's own rules take for its directory, which the index skips too, and by file identity with
+  the root's own, so a link to either counts), and a file the index does not hold are refused. A
+  dry run writes nothing in the repository, not even a temporary file. The file's line endings are kept: `new_text` written with `\n` takes the file's `\r\n`.
 - The answer names the definition's new lines and the file's new hash. The index sees the
   edit at the next call, as it sees any write to the tree.
 

@@ -539,11 +539,15 @@ The MCP server writes no source file unless the user starts it with `serve --all
 environment variable or configuration file turns that on, so a repository cannot. The flag adds
 one tool, `edit_symbol`, marked `readOnlyHint: false` and `destructiveHint: true`, so a client
 that asks before a write asks for it. It writes one file per call, only one the index holds,
-never under `.git/` or `.scrutate/` (by name, and by file identity for each directory on the way,
-so a link or another spelling of either counts), through the structural rewrite's writer: the root opened
+never under `.git/` or `.scrutate/` at any depth: by name under every spelling git's own rules
+take for its directory (case, the code points HFS+ ignores, trailing dots and spaces, the short
+names), which the index skips too, and by file identity with the root's own for each directory on
+the way, so a link to either counts. A directory mounted into the tree from a `.git` (a bind
+mount) is not recognised. Through the structural rewrite's writer: the root opened
 once, each directory below it by name with no link followed, the file a regular file, its bytes
 checked again just before a new file in the same directory is renamed over it, its permissions
-kept. A dry run writes nothing, not even a temporary file. Only an MCP call reaches it: the
+kept. A dry run writes nothing in the repository, not even a temporary file; the read it makes is
+counted, as every read is, in the frecency state file under the user's state directory. Only an MCP call reaches it: the
 operation is never serialized, so the session socket that command line calls use cannot carry
 one to a server, and `batch` refuses the tool by name (the Python bindings have no call that edits). A call writes only
 with `apply: true` and the hash of the file as it is, so an agent that
