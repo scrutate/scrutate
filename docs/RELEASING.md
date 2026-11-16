@@ -39,13 +39,21 @@ The check fails when a file differs from the version, or a date from the version
 `CHANGELOG.md` heading. The release workflow runs it first on the
 tag (less its `v`) and refuses a tag that does not match.
 
-- [ ] `CHANGELOG.md`: the entries under `## [Unreleased]` move into the version's section, dated
-  the day of the tag, `## [Unreleased]` stays as an empty heading, and the link references for
-  both headings sit at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
-  `[X.Y.Z]: .../releases/tag/vX.Y.Z`). `python3 tools/release_notes.py X.Y.Z` prints the notes
-  the release gets and fails until this is done, and while the notes are longer than 124,000
-  characters (GitHub refuses a release body over 125,000, which would stop the release only at
-  its last step, after the tag); the release workflow runs it before it publishes, and a dry run
+- [ ] `CHANGELOG.md`: during a release's work every change goes under `## [Unreleased]`, and
+  `docs/changes/X.Y.Z-summary.md` says what the release is (what it does, its platforms, its
+  limits), each change written as behaviour, not as a fix of a build no release had, and nothing
+  on security beyond docs/SECURITY.md. Edit that file before the tag. Then
+  `python3 tools/fold_changelog.py X.Y.Z YYYY-MM-DD`, with the tag's date, makes the version's
+  section that description, dated, with one sentence linking the full list; moves the full list
+  (every Unreleased entry and the version's old section, verbatim) to `docs/changes/X.Y.Z.md`,
+  which the archives pack; leaves `## [Unreleased]` as an empty heading; puts the link references
+  for both headings at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
+  `[X.Y.Z]: .../releases/tag/vX.Y.Z`); and writes the date into DELIVERY.md, SECURITY.md and
+  CITATION.cff. Nothing is deleted. `python3 tools/release_notes.py X.Y.Z` then prints the notes
+  the release gets, its links pointing at the tag's tree. It fails until the fold is done, while
+  the notes are longer than 124,000 characters (GitHub refuses a release body over 125,000, which
+  would stop the release only at its last step, after the tag), and on a link it cannot make
+  resolve on a release page. The release workflow runs it before it publishes, and a dry run
   fails on it too. Run it before the tag.
 
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
