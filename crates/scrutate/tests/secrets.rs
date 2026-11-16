@@ -1025,6 +1025,7 @@ fn hook_run_holds_for_every_allowed_flag() {
 
 /// A `--` that is a flag's value ends no flags: what `hook run` adds goes where the program's
 /// flags really end, so the search answers as the program alone does.
+#[cfg(unix)]
 #[test]
 fn hook_run_answers_as_the_program_when_a_flag_s_value_is_two_dashes() {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_dashdash_{}", std::process::id()));
