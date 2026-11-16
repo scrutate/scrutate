@@ -482,7 +482,7 @@ impl Parsed {
 /// the heaviest; measure a grammar again when its version changes.
 fn node_bytes(grammar: &str) -> usize {
     match grammar {
-        "csharp" => 168,
+        "csharp" => 176,
         "php" => 149,
         "rust" => 131,
         "python" => 116,
@@ -491,7 +491,7 @@ fn node_bytes(grammar: &str) -> usize {
         "go" => 104,
         "c" => 97,
         "cpp" => 90,
-        _ => 168,
+        _ => 176,
     }
 }
 

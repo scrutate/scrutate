@@ -25,7 +25,7 @@ Where the time went (a build with phase timers, and `perf`):
 Two causes. For a C name with nothing in front, the resolver walks the files the use's file
 includes, up to 64, and loaded each one by parsing it, though that walk reads only a file's
 definitions (from the index) and its `#include` lines. And `Resolver` kept every loaded file,
-tree included, until the request ended; a tree takes 90 to 170 bytes a node in memory, by its grammar
+tree included, until the request ended; a tree takes 90 to 176 bytes a node in memory, by its grammar
 ([ADR 4](0004-parsed-files-kept-across-requests.md)), so a request that touches thousands of
 files held gigabytes.
 
