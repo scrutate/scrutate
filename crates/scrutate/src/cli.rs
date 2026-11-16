@@ -2148,7 +2148,14 @@ fn watch_command(root: &Path) -> Result<i32> {
         // the given path names another tree: that tree's index is opened (made when it has none)
         // and watched in its place
         if r.as_ref().is_err_and(|e| e.is::<crate::watch::RootReplaced>()) {
-            root = std::fs::canonicalize(&given).with_context(|| format!("watch {}", given.display()))?;
+            root = match std::fs::canonicalize(&given) {
+                Ok(root) => root,
+                // replaced, then gone before it could be followed
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(&given).display())
+                }
+                Err(e) => return Err(e).with_context(|| format!("watch {}", given.display())),
+            };
             eprintln!("[scrutate] {}: root replaced; watching the new tree", crate::paths::plain_path(&given).display());
             continue;
         }

@@ -1323,25 +1323,43 @@ const ROOT_GONE_AFTER: Duration = Duration::from_secs(2);
 /// still names itself: a link among them may be pointed at another directory, or dangle for a
 /// moment while it is, and a link may be put where the root was.
 fn root_present(root: &Path, given: &Path, id: &RootId) -> Result<()> {
+    root_present_with(root, given, id, &|p| std::fs::canonicalize(p))
+}
+
+/// `root_present`, with the canonicalize it asks.
+fn root_present_with(root: &Path, given: &Path, id: &RootId, canonicalize: &dyn Fn(&Path) -> std::io::Result<PathBuf>) -> Result<()> {
     let linked = given != root;
+    let missing = || !root.is_dir() || linked && !given.is_dir();
     let t0 = Instant::now();
-    while !root.is_dir() || linked && !given.is_dir() {
-        if t0.elapsed() >= ROOT_GONE_AFTER {
-            anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(given).display());
+    loop {
+        while missing() {
+            if t0.elapsed() >= ROOT_GONE_AFTER {
+                anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(given).display());
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        std::thread::sleep(Duration::from_millis(20));
+        // a link put where the root was: its watches would be on the link, which sees nothing
+        let replaced = linked && canonicalize(given).is_ok_and(|now| now != root)
+            || canonicalize(root).is_ok_and(|now| now != root)
+            || id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id);
+        // the root renamed away while it was looked at (macOS's realpath can answer with the new
+        // name): gone, or back within the grace
+        if replaced && missing() {
+            continue;
+        }
+        return if replaced { Err(RootReplaced.into()) } else { Ok(()) };
     }
-    if linked && std::fs::canonicalize(given).is_ok_and(|now| now != root) {
-        return Err(RootReplaced.into());
+}
+
+/// An error from a call on the watched root, while its path names nothing, is the root gone:
+/// said as such after the grace, or Ok(None) when it is back within it, for the caller to try
+/// again. Any other error is the call's own.
+fn or_gone<T>(r: Result<T>, root: &Path, given: &Path, id: &RootId) -> Result<Option<T>> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(_) if !root.is_dir() || given != root && !given.is_dir() => root_present(root, given, id).map(|()| None),
+        Err(e) => Err(e),
     }
-    // a link put where the root was: its watches would be on the link, which sees nothing
-    if std::fs::canonicalize(root).is_ok_and(|now| now != root) {
-        return Err(RootReplaced.into());
-    }
-    if id.is_some() && root_id(root).is_some_and(|now| Some(now) != *id) {
-        return Err(RootReplaced.into());
-    }
-    Ok(())
 }
 
 /// The order watches are set in: the root first (the watch ends without it), then shallow
@@ -1477,7 +1495,18 @@ pub fn run_noting(
     mut on_change: impl FnMut(&Changes) -> Result<()>,
 ) -> Result<()> {
     let given = root.to_path_buf();
-    let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
+    // a root that went just before (a caller's check found it): gone, or back within the grace
+    let t0 = Instant::now();
+    let root = loop {
+        match std::fs::canonicalize(&given) {
+            Ok(root) => break root,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && t0.elapsed() >= ROOT_GONE_AFTER => {
+                anyhow::bail!("{} is gone: the watched directory was removed or moved", crate::paths::plain_path(&given).display())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(e).with_context(|| format!("watch {}", given.display())),
+        }
+    };
     let id = root_id(&root);
     // a tree that replaced the root has no cookie directory yet
     if let Some(n) = notes {
@@ -1503,7 +1532,11 @@ pub fn run_noting(
     };
     let code = CodeWalk::new(&root);
     let mut dirs = notes.map_or(0, Notes::dirs);
-    let mut walked = Arc::new(sync_watches(&mut watcher, &root, &code, None)?);
+    let mut walked = loop {
+        if let Some(w) = or_gone(sync_watches(&mut watcher, &root, &code, None), &root, &given, &id)? {
+            break Arc::new(w);
+        }
+    };
     // the cookies' directory is in no walk; elsewhere the root's watch covers it
     #[cfg(target_os = "linux")]
     let notes = notes.filter(|n| watcher.watch(&n.0.cookies, RecursiveMode::NonRecursive).is_ok());
@@ -1512,7 +1545,7 @@ pub fn run_noting(
     }
     let mut poll = Poll::new(&walked);
     let mut safety = notes.map(|n| Safety::new(&root, Duration::from_millis(n.0.safety_every.load(Ordering::Relaxed))));
-    on_change(&Changes::All)?;
+    while or_gone(on_change(&Changes::All), &root, &given, &id)?.is_none() {}
     on_ready();
     let debug = debug();
     // a burst whose update failed is tried again, with a walk of the tree, by the next burst or
@@ -1558,7 +1591,12 @@ pub fn run_noting(
         let named = files.filter(|_| !walked.due(&root));
         if named.is_none() {
             dirs = notes.map_or(0, Notes::dirs);
-            walked = Arc::new(sync_watches(&mut watcher, &root, &code, Some(&walked))?);
+            let Some(now) = or_gone(sync_watches(&mut watcher, &root, &code, Some(&walked)), &root, &given, &id)? else {
+                // back within the grace: the next pass walks the tree again
+                (failed, retry_at) = (true, Some(Instant::now()));
+                continue;
+            };
+            walked = Arc::new(now);
             if let Some(n) = notes {
                 n.watching(&walked, dirs);
             }
@@ -2183,6 +2221,28 @@ mod tests {
         };
         assert_eq!(state, "ready");
         assert!(!notes.0.kq_rebuilding.load(Ordering::Acquire));
+    }
+
+    /// The root renamed away while its path is made canonical: macOS's realpath opens the path
+    /// and asks the open directory where it is, so it can answer with the new name. That is the
+    /// root gone, said as such after the grace, not a root replaced by another tree.
+    #[test]
+    fn a_root_renamed_away_while_it_is_made_canonical_is_gone() {
+        let root = tree("canonaway");
+        let away = root.with_extension("away");
+        let _ = std::fs::remove_dir_all(&away);
+        let id = root_id(&root);
+        let renamed = std::sync::atomic::AtomicBool::new(false);
+        let canonicalize = |p: &Path| {
+            if p == root && !renamed.swap(true, Ordering::AcqRel) {
+                std::fs::rename(&root, &away).unwrap();
+                return Ok(away.clone());
+            }
+            std::fs::canonicalize(p)
+        };
+        let r = root_present_with(&root, &root, &id, &canonicalize);
+        assert!(r.as_ref().is_err_and(|e| e.to_string().contains("is gone")), "{r:?}");
+        std::fs::remove_dir_all(&away).unwrap();
     }
 
     #[test]
