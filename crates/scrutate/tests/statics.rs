@@ -16,6 +16,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("files.rs", "CLIMBS", "per thread, a test's count of the directories near_all climbed"),
     ("finder.rs", "ONE", "serializes this process's writes of the shared recent-files list"),
     ("index.rs", "COMP", "per thread, a reused deflate state"),
+    ("kq.rs", "PROCESS", "the watches every kqueue of the process may hold together"),
     ("index.rs", "PARSE", "SCRUTATE_PROFILE timing totals for the process"),
     ("index.rs", "TREESITTER", "SCRUTATE_PROFILE timing totals for the process"),
     ("index.rs", "TOKENIZE", "SCRUTATE_PROFILE timing totals for the process"),

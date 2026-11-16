@@ -2956,6 +2956,38 @@ mod tests {
         s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty())
     }
 
+    /// A budget that holds one kqueue of the tree and not two: a rebuild drops the kqueue in place
+    /// first (reads look meanwhile), and the new one then names a write alone.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_rebuild_that_cannot_sit_beside_the_kqueue_in_place_replaces_it() {
+        let (root, s) = kqueue_in_place("kq_rebuild_budget");
+        for i in 0..10 {
+            std::fs::write(root.join(format!("src/m{i}.py")), format!("def m_{i}():\n    return {i}\n")).unwrap();
+        }
+        let need = {
+            let probe = Session::open_watched(&root, Every::given(None)).unwrap();
+            watching_by_kqueue(&probe);
+            probe.notes().unwrap().kq_watches()
+        };
+        s.notes().unwrap().set_kq_budget(need as u64 * 3 / 2);
+        watching_by_kqueue(&s);
+        std::fs::create_dir(root.join("src/d1")).unwrap();
+        let t0 = Instant::now();
+        for k in 0.. {
+            std::fs::write(root.join("src/d1/x.py"), format!("def in_d1_{k}():\n    return {k}\n")).unwrap();
+            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("in_d1_{k}"), limit: 1, exact: true }).unwrap();
+            assert!(a.is_ok_and(|a| !a.is_empty()), "write {k} in the new directory missed: {st:?}");
+            if st.files_looked == 1 {
+                break;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(10), "the kqueue never came back: {st:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Files the walk's ignore rules leave out take no kqueue watch; an ignore-file edit that
     /// takes them back reaches the index, and a write in one after it is seen.
     #[cfg(target_os = "macos")]

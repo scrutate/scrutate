@@ -376,6 +376,9 @@ struct Shared {
     /// a test's budget of kqueue watches; 0: half the process's descriptors, less a reserve
     #[cfg(target_os = "macos")]
     kq_budget: AtomicU64,
+    /// that budget, which every kqueue of this session draws on
+    #[cfg(target_os = "macos")]
+    kq_test_budget: Mutex<Option<Arc<crate::kq::Budget>>>,
     /// a rebuild a read asked for runs
     #[cfg(target_os = "macos")]
     kq_rebuilding: AtomicBool,
@@ -520,6 +523,8 @@ impl Notes {
             #[cfg(target_os = "macos")]
             kq_budget: AtomicU64::new(0),
             #[cfg(target_os = "macos")]
+            kq_test_budget: Mutex::new(None),
+            #[cfg(target_os = "macos")]
             kq_rebuilding: AtomicBool::new(false),
             #[cfg(target_os = "macos")]
             kq_forced: AtomicBool::new(false),
@@ -577,11 +582,14 @@ impl Notes {
     fn kq_build(&self, epoch: u64, dirs: Vec<(PathBuf, u64)>, walked: &Walked) -> bool {
         let t0 = Instant::now();
         let built = (|| -> std::result::Result<(crate::kq::Registry, bool), crate::kq::Off> {
-            let budget = match self.0.kq_budget.load(Ordering::Relaxed) {
-                0 => None,
-                n => Some(n as usize),
+            let mut reg = match self.0.kq_budget.load(Ordering::Relaxed) {
+                0 => crate::kq::Registry::new(&self.0.root, None)?,
+                // a test's budget, one for every kqueue of this session, as the process's is
+                n => {
+                    let shared = lock(&self.0.kq_test_budget).get_or_insert_with(|| Arc::new(crate::kq::Budget::new(n as usize))).clone();
+                    crate::kq::Registry::sharing(&self.0.root, shared)?
+                }
             };
-            let mut reg = crate::kq::Registry::new(&self.0.root, budget)?;
             let _ = std::fs::create_dir_all(&self.0.cookies);
             // a probe of its own: two builds at once (a read's and the watch's) must not share one
             reg.probe(&self.0.cookies.join(format!("{}probe{epoch}", self.0.prefix)))?;
@@ -603,6 +611,13 @@ impl Notes {
         }
         let (reg, changed) = match built {
             Ok(built) => built,
+            // the budget holds this kqueue or the one in place, not both: drop that one (reads
+            // look meanwhile) and build again
+            Err(crate::kq::Off::Budget) if matches!(*kq, Kq::Ready(..)) => {
+                *kq = Kq::Off("the kqueue is built again without the one before it");
+                drop(kq);
+                return self.kq_build(epoch, dirs, walked);
+            }
             Err(off) => {
                 session_debug(off.why());
                 *kq = Kq::Off(off.why());

@@ -88,7 +88,7 @@ pub(crate) struct Registry {
     entries: Vec<Entry>,
     by_path: HashMap<PathBuf, usize>,
     open: usize,
-    budget: usize,
+    budget: std::sync::Arc<Budget>,
     dev: u64,
     /// files whose watch the system refused for want of the user's access: no note comes for
     /// them, so each drain tries again
@@ -128,10 +128,57 @@ fn refused(e: &std::io::Error) -> Off {
     }
 }
 
+/// Watches every kqueue that draws on it holds together. The process has one, so two sessions
+/// (two `scrutate.Repo` in one Python process) or a rebuild beside the kqueue in place never take
+/// more than half the process's descriptors between them.
+pub(crate) struct Budget {
+    most: usize,
+    open: std::sync::atomic::AtomicUsize,
+}
+
+impl Budget {
+    pub(crate) fn new(most: usize) -> Budget {
+        Budget { most, open: Default::default() }
+    }
+
+    fn take(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        let mut n = self.open.load(Ordering::Acquire);
+        while n < self.most {
+            match self.open.compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return true,
+                Err(now) => n = now,
+            }
+        }
+        false
+    }
+
+    fn give(&self, n: usize) {
+        self.open.fetch_sub(n, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// The process's budget: half its descriptors, less a reserve.
+fn process_budget() -> std::sync::Arc<Budget> {
+    static PROCESS: std::sync::OnceLock<std::sync::Arc<Budget>> = std::sync::OnceLock::new();
+    PROCESS.get_or_init(|| std::sync::Arc::new(Budget::new((descriptor_limit() / 2).saturating_sub(RESERVE)))).clone()
+}
+
+impl Drop for Registry {
+    fn drop(&mut self) {
+        self.budget.give(self.open);
+    }
+}
+
 impl Registry {
-    /// An empty registry for the tree at `root`, whose directories must all be on its device, with
-    /// `budget` descriptors (half the process's, less a reserve, unless a test gives fewer).
+    /// An empty registry for the tree at `root`, whose directories must all be on its device,
+    /// drawing on the process's budget, or on one of `budget` watches its own (a test's).
     pub(crate) fn new(root: &Path, budget: Option<usize>) -> Result<Registry, Off> {
+        Registry::sharing(root, budget.map_or_else(process_budget, |n| std::sync::Arc::new(Budget::new(n))))
+    }
+
+    /// An empty registry drawing on `budget`.
+    pub(crate) fn sharing(root: &Path, budget: std::sync::Arc<Budget>) -> Result<Registry, Off> {
         // SAFETY: kqueue takes no arguments; a descriptor or -1
         let fd = unsafe { libc::kqueue() };
         if fd < 0 {
@@ -140,7 +187,6 @@ impl Registry {
         // SAFETY: a descriptor kqueue just returned, owned from here on
         let kq = unsafe { OwnedFd::from_raw_fd(fd) };
         let dev = std::fs::metadata(root).map_err(|_| Off::Refused)?.dev();
-        let budget = budget.unwrap_or_else(|| (descriptor_limit() / 2).saturating_sub(RESERVE));
         Ok(Registry { kq, entries: Vec::new(), by_path: HashMap::new(), open: 0, budget, dev, shut: Default::default(), free: Vec::new() })
     }
 
@@ -154,13 +200,14 @@ impl Registry {
         if self.by_path.get(path).is_some_and(|&i| self.entries[i].fd.is_some()) {
             return Ok(());
         }
-        if self.open >= self.budget {
+        let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| Off::Refused)?;
+        if !self.budget.take() {
             return Err(Off::Budget);
         }
-        let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| Off::Refused)?;
         // SAFETY: a nul-terminated path; a descriptor for notes only, or -1
         let fd = unsafe { libc::open(c.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC) };
         if fd < 0 {
+            self.budget.give(1);
             let e = std::io::Error::last_os_error();
             // gone already: the directory's note says so
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -204,6 +251,7 @@ impl Registry {
         };
         // SAFETY: one change from a live struct, no events asked back
         if unsafe { libc::kevent(self.kq.as_raw_fd(), &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
+            self.budget.give(1);
             return Err(refused(&std::io::Error::last_os_error()));
         }
         self.entries[i].fd = Some(fd);
@@ -229,6 +277,7 @@ impl Registry {
     fn forget(&mut self, i: usize) {
         if self.entries[i].fd.take().is_some() {
             self.open -= 1;
+            self.budget.give(1);
         }
     }
 
@@ -497,6 +546,27 @@ mod tests {
         assert!(r.drain(&all).unwrap().contains(&Change::Modified(root.join("src/new.py"))));
         std::fs::remove_file(root.join("src/new.py")).unwrap();
         assert!(r.drain(&all).unwrap().contains(&Change::Removed(root.join("src/new.py"))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn two_kqueues_of_one_process_draw_on_one_budget() {
+        let root = tree("shared");
+        let need = registry(&root, None).watches();
+        let budget = std::sync::Arc::new(Budget::new(need * 3 / 2));
+        let paths = [root.to_path_buf(), root.join("src"), root.join("src/sub")];
+        let mut a = Registry::sharing(&root, budget.clone()).unwrap();
+        a.add_tree(&paths, &all).unwrap();
+        let mut b = Registry::sharing(&root, budget.clone()).unwrap();
+        assert_eq!(b.add_tree(&paths, &all), Err(Off::Budget), "the second kqueue past what the two may hold together");
+        drop(b);
+        assert_eq!(budget.open.load(std::sync::atomic::Ordering::Acquire), need, "a refused kqueue gives back what it took");
+        drop(a);
+        let mut b = Registry::sharing(&root, budget.clone()).unwrap();
+        b.add_tree(&paths, &all).unwrap();
+        assert_eq!(budget.open.load(std::sync::atomic::Ordering::Acquire), need);
+        drop(b);
+        assert_eq!(budget.open.load(std::sync::atomic::Ordering::Acquire), 0, "every watch given back");
         let _ = std::fs::remove_dir_all(root);
     }
 

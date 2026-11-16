@@ -937,7 +937,8 @@ kqueue instead, whose notes the system posts inside the call that makes the chan
 them at once, with no wait, and looks at the files they name. Until those watches are in place
 (at the start, after a directory came or went), for a tree with more files and directories
 than half the descriptors a process may open less 1,024 (`sysctl kern.maxfilesperproc`; on a Mac
-where it is 61,440, about 29,700), on a volume whose probe write gives no note, or for a tree that
+where it is 61,440, about 29,700; one budget for the process, so two sessions in it share it),
+on a volume whose probe write gives no note, or for a tree that
 spans devices, every call looks at every file instead
 ([ADR 0001](adr/0001-change-sets-and-the-cookie-barrier.md)). A file the user cannot read gets
 no watch and leaves the others in place: each call tries it again (one `open`), and names it
