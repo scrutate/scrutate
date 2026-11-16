@@ -410,10 +410,28 @@ impl Repo {
     /// Run one operation with the GIL released, on an index brought up to date at most once a
     /// second, as the MCP server runs a tool call (`Session::run`). Calls from several Python
     /// threads run side by side.
+    /// What the code index leaves out, where the answer depends on it, is a `UserWarning` too,
+    /// as the answer's own type has no place for it.
     fn run(&self, py: Python<'_>, op: Op) -> PyResult<Answer> {
+        let answer = self.run_noted(py, op)?;
+        for line in answer.notes() {
+            let line = std::ffi::CString::new(line.as_str()).unwrap_or_default();
+            PyErr::warn(
+                py,
+                &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+                &line,
+                1,
+            )?;
+        }
+        Ok(answer.into_bare())
+    }
+
+    /// `run` with what the code index leaves out kept in the answer (`ops::noted`), for `call`,
+    /// whose envelope and text carry it.
+    fn run_noted(&self, py: Python<'_>, op: Op) -> PyResult<Answer> {
         let r = py.detach(move || {
             self.session
-                .run_counted(&op, &Arc::default(), &Arc::default())
+                .run_noted(&op, &Arc::default(), &Arc::default())
         });
         let (answer, pending) = r.map_err(err)?;
         warn_pending(py, &pending)?;
@@ -750,7 +768,7 @@ impl Repo {
         };
         let op = Op::from_tool(tool, &args).map_err(value_err)?;
         let form = scrutate::ops::Form::from_tool(&args).map_err(value_err)?;
-        let answer = self.run(py, op)?;
+        let answer = self.run_noted(py, op)?;
         let mut v = answer.envelope(&self.root);
         v["text"] = answer
             .text_page(

@@ -170,3 +170,64 @@ fn the_mcp_tools_say_it_in_their_text_and_their_envelope() {
     assert_eq!(field(&c.structured), json!([{"reason": "over 1 MB", "count": 1, "paths": ["big.py"]}]), "{}", c.structured);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn batch_and_a_second_repository_s_answer_carry_it() {
+    let root = repo("batch");
+    fs::write(root.with_extension("ops.jsonl"), "{\"op\": \"find_symbol\", \"name\": \"big_marker\"}\n{\"query\": \"zz_no_such_thing_qq\"}\n").unwrap();
+    let (_, out, err) = run(&root, &["batch", root.with_extension("ops.jsonl").to_str().unwrap()]);
+    let lines: Vec<Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(lines.len(), 2, "{out}\n{err}");
+    for l in &lines {
+        assert_eq!(field(l), json!([{"reason": "over 1 MB", "count": 1, "paths": ["big.py"]}]), "{l}");
+    }
+    // --also: the other repository's answer says what its own index leaves out
+    let other = repo("also_other");
+    let base = root.with_extension("also");
+    fs::create_dir_all(base.join(".git")).unwrap();
+    let base = canon(&base);
+    fs::write(base.join("a.py"), "def nothing_here():\n    return 0\n").unwrap();
+    run(&base, &["index"]);
+    let also = other.to_str().unwrap();
+    let (_, out, _) = run(&base, &["search", "zz_no_such_thing_qq", "--also", also]);
+    assert!(out.contains(&format!("in {also}: {NOTE}")), "{out}");
+    let v: Value = serde_json::from_str(&run(&base, &["search", "zz_no_such_thing_qq", "--also", also, "--json"]).1).unwrap();
+    assert!(
+        field(&v)
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["paths"] == json!(["big.py"]) && r["root"].as_str().is_some_and(|p| p.contains("not_indexed_also_other"))),
+        "{v}"
+    );
+    for d in [root, other, base] {
+        let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[test]
+fn a_dependency_s_answer_says_what_its_own_index_leaves_out() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("not_indexed_deps_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::create_dir_all(root.join("node_modules/leftpad")).unwrap();
+    fs::write(root.join("a.js"), "function main() {\n  return 1;\n}\n").unwrap();
+    fs::write(root.join("package-lock.json"), r#"{"lockfileVersion": 3, "packages": {"": {}, "node_modules/leftpad": {"version": "1.0.0"}}}"#).unwrap();
+    fs::write(root.join("node_modules/leftpad/package.json"), r#"{"name": "leftpad", "version": "1.0.0"}"#).unwrap();
+    fs::write(root.join("node_modules/leftpad/index.js"), "function pad(s) {\n  return s;\n}\n").unwrap();
+    fs::write(root.join("node_modules/leftpad/big.js"), format!("function huge() {{\n  return 1;\n}}\n{}", "var x = 1;\n".repeat(100_000))).unwrap();
+    let root = canon(&root);
+    run(&root, &["index"]);
+    let session = scrutate::session::Session::open(&root, scrutate::session::Every::given(Some(0.0))).unwrap();
+    session.set_cache_dir(root.with_extension("cache"));
+    let c = scrutate::mcp::call_tool(
+        &session,
+        "find_symbol",
+        &json!({"name": "leftpad.huge", "scope": "deps"}),
+        &scrutate::mcp::Settings::new(None),
+        &Default::default(),
+    );
+    assert!(c.text.contains("1 file over 1 MB is not in the index") && c.text.contains("big.js"), "{}", c.text);
+    assert!(field(&c.structured).as_array().is_some_and(|a| a[0]["reason"] == "over 1 MB"), "{}", c.structured);
+    let _ = fs::remove_dir_all(&root);
+}

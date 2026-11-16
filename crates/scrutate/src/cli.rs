@@ -1538,9 +1538,17 @@ pub fn run() -> Result<i32> {
             // (hit, its repository) with the path a reader opens from here: another repository's
             // results carry its path as given
             let mut hits: Vec<(crate::search::Hit, usize)> = Vec::new();
+            // what each repository's index leaves out, where its own answer depends on it
+            let mut notes: Vec<(usize, Vec<String>, serde_json::Value)> = Vec::new();
             for (i, (root, _)) in roots.iter().enumerate() {
                 let op = Op::Search { query: query.clone(), alt: alt.clone(), k, snippets: true }.scoped(filter.clone());
-                let crate::ops::Answer::Hits { hits: part, .. } = open_fresh(root)?.run_as_is(&op)? else { unreachable!("a search answers hits") };
+                let mut repo = open_fresh(root)?;
+                let a = repo.run_as_is(&op)?;
+                let a = crate::ops::noted(&repo.ix, &op, a);
+                if let Some(field) = a.not_indexed_field() {
+                    notes.push((i, a.notes().to_vec(), field.clone()));
+                }
+                let crate::ops::Answer::Hits { hits: part, .. } = a.into_bare() else { unreachable!("a search answers hits") };
                 hits.extend(part.into_iter().map(|h| (h, i)));
             }
             let shown = |(h, i): &(crate::search::Hit, usize)| {
@@ -1562,6 +1570,16 @@ pub fn run() -> Result<i32> {
                     rec["root"] = serde_json::json!(crate::paths::plain_path(&roots[*i].1).to_string_lossy());
                 }
                 let mut v = crate::ops::wrapped(v, None);
+                if !notes.is_empty() {
+                    let root_of = |i: usize| crate::paths::plain_path(&roots[i].1).to_string_lossy().into_owned();
+                    let all = notes.iter().flat_map(|(i, _, f)| {
+                        f.as_array().cloned().unwrap_or_default().into_iter().map(move |mut r| {
+                            r["root"] = serde_json::json!(root_of(*i));
+                            r
+                        })
+                    });
+                    v["not_indexed"] = serde_json::Value::Array(all.collect());
+                }
                 CliRedact::new(&cli.root).json(&mut v);
                 outln!("{}", serde_json::to_string_pretty(&v)?);
             } else {
@@ -1576,6 +1594,14 @@ pub fn run() -> Result<i32> {
                     let mut text = crate::ops::paged(blocks, "results", text_room(page.0), page.1);
                     CliRedact::new(&cli.root).text(&mut text);
                     outln!("{text}");
+                }
+            }
+            if !(json && roots.len() > 1) {
+                for (i, lines, _) in &notes {
+                    let place = if *i == 0 { String::new() } else { format!("in {}: ", roots[*i].0.to_string_lossy().trim_end_matches('/')) };
+                    for l in lines {
+                        outln!("{place}{l}");
+                    }
                 }
             }
             if let (Some(other), false) = (other, json) {
@@ -3017,7 +3043,10 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         if let Some(tool) = req.get("op").and_then(|v| v.as_str()) {
             let started = Instant::now();
             // any operation, named and given arguments as an MCP tool call is
-            let rec = match Op::from_tool(tool, &req).and_then(|op| s.run_as_is(&op)) {
+            let rec = match Op::from_tool(tool, &req).and_then(|op| {
+                let a = s.run_as_is(&op).map_err(|e| crate::ops::noted_error(&s.ix, &op, e))?;
+                Ok(crate::ops::noted(&s.ix, &op, a))
+            }) {
                 Ok(answer) => {
                     let mut rec = answer.envelope(root);
                     rec["op"] = serde_json::json!(tool);
@@ -3058,8 +3087,13 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
             }
         } else {
             let op = Op::Search { query: query.clone(), alt, k, snippets: false };
-            let crate::ops::Answer::Hits { hits, .. } = s.run_as_is(&op)? else { unreachable!("a search answers hits") };
-            rec.insert("hits".into(), hits_json(&hits));
+            let a = s.run_as_is(&op)?;
+            let a = crate::ops::noted(&s.ix, &op, a);
+            let crate::ops::Answer::Hits { hits, .. } = a.bare() else { unreachable!("a search answers hits") };
+            rec.insert("hits".into(), hits_json(hits));
+            if let Some(field) = a.not_indexed_field() {
+                rec.insert("not_indexed".into(), field.clone());
+            }
         }
         if timing {
             rec.insert("ms".into(), serde_json::json!(t.elapsed().as_secs_f64() * 1000.0));

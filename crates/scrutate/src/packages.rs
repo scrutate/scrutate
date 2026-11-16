@@ -1320,6 +1320,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
             let mut inner = |op: &Op| crate::ops::run_in(s, op);
             let mut a = ordered(&mut |op| in_dir(&mut inner, &prefix, op), rest, read, limit, exact, package_dir(&l, start, &prefix))?;
             deps_stop(&mut a);
+            let a = crate::ops::noted_under(&s.ix, a, &prefix, &|p| p.to_string());
             let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: prefix, local: true };
             Ok(Answer::Package(Box::new(note), Box::new(a)))
         }
@@ -1337,6 +1338,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
             let mut a = ordered(&mut |op| in_dir(&mut inner, &sub, op), rest, read, limit, exact, package_dir(&l, start, &sub))?;
             deps_stop(&mut a);
             repath(&mut a, |p| shown_path(&root, &inst.base.join(p)));
+            let a = crate::ops::noted_under(&repo.ix, a, &sub, &|p| shown_path(&root, &inst.base.join(p)));
             let dir = if sub.is_empty() { inst.dir.clone() } else { inst.dir.join(&sub) };
             let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: shown_path(&root, &dir), local: false };
             Ok(Answer::Package(Box::new(note), Box::new(a)))

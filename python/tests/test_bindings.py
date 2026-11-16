@@ -448,3 +448,18 @@ def test_calls_from_several_threads_run_side_by_side_and_see_an_edit(repo):
     r.index()
     assert [h.path for h in r.symbol("arrived_late")] == ["pkg/late.py"]
     assert r.stats()["files"] >= 21
+
+
+def test_a_file_the_index_leaves_out_is_said_in_call_and_as_a_warning(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "small.py").write_text("def small_marker():\n    return 1\n")
+    big = "def big_marker():\n    return 1\n\n\n" + "x = 1  #\n" * 111_200
+    assert len(big) > 1_000_000
+    (tmp_path / "big.py").write_text(big)
+    r = scrutate.Repo(str(tmp_path))
+    v = r.call("find_symbol", {"name": "big_marker"})
+    assert v["not_indexed"] == [{"reason": "over 1 MB", "count": 1, "paths": ["big.py"]}], v
+    assert "1 file over 1 MB is not in the index: big.py" in v["text"]
+    # a typed answer has no place for it: a UserWarning says it
+    with pytest.warns(UserWarning, match="1 file over 1 MB is not in the index: big.py"):
+        assert not r.symbol("big_marker")

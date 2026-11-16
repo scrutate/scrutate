@@ -887,9 +887,46 @@ impl Answer {
     pub fn notes(&self) -> &[String] {
         match self {
             Answer::Noted(n, _) => &n.lines,
+            Answer::Package(_, a) => a.notes(),
             _ => &[],
         }
     }
+
+    /// The `not_indexed` field `noted` added, when it did.
+    pub fn not_indexed_field(&self) -> Option<&Value> {
+        match self {
+            Answer::Noted(n, _) => Some(&n.field),
+            Answer::Package(_, a) => a.not_indexed_field(),
+            _ => None,
+        }
+    }
+
+    /// The answer itself, without what `noted` put around it, owned.
+    pub fn into_bare(self) -> Answer {
+        match self {
+            Answer::Noted(_, a) => a.into_bare(),
+            a => a,
+        }
+    }
+}
+
+/// `a`, a dependency's answer from an index that holds only that dependency (below `prefix` of
+/// it, when it is a directory of the repository), with what that index leaves out there when
+/// `a` found nothing, as `noted` says it for a lookup; `show` spells a path of that index as the
+/// answer spells its paths.
+pub fn noted_under(ix: &crate::index::Index, a: Answer, prefix: &str, show: &dyn Fn(&str) -> String) -> Answer {
+    let ni = ix.not_indexed();
+    let under = |p: &str| prefix.is_empty() || p.starts_with(&format!("{prefix}/"));
+    if !a.is_empty() || ni.is_empty() || !ni.first.iter().any(|p| under(p)) && ni.other == 0 {
+        return a;
+    }
+    let first: Vec<String> = ni.first.iter().filter(|p| under(p)).map(|p| show(p)).collect();
+    let ni =
+        crate::index::NotIndexed { over: if prefix.is_empty() { ni.over } else { first.len() }, first, other: if prefix.is_empty() { ni.other } else { 0 } };
+    if ni.is_empty() {
+        return a;
+    }
+    Answer::Noted(Box::new(Noted { lines: ni.lines(), field: ni.json() }), Box::new(a))
 }
 
 /// What an answer from the code index adds about the files that index leaves out.
@@ -3006,8 +3043,8 @@ impl Answer {
     /// the answer stopped at its limit with more left.
     pub fn envelope(&self, root: &std::path::Path) -> Value {
         let mut v = envelope(root, self.json(), self.stopped());
-        if let Answer::Noted(note, _) = self {
-            v["not_indexed"] = note.field.clone();
+        if let Some(field) = self.not_indexed_field() {
+            v["not_indexed"] = field.clone();
         }
         // the files a structural search left out for their size, as the note in the text says
         if let Answer::Captures(_, _, large) = self
