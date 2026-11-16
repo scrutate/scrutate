@@ -50,3 +50,13 @@ def test_notes_longer_than_a_release_body_takes_stop_the_release():
     out, problems = R.notes(changelog(fits + 1), "0.1.0")
     assert len(out) > R.MAX_CHARS
     assert problems == [f"the notes of 0.1.0 are {len(out):,} characters, {len(out) - R.MAX_CHARS:,} over the 124,000 a release body takes: shorten its section"]
+
+
+def test_links_to_the_repository_point_at_the_tag_and_code_stays_as_written():
+    old = "## [0.1.0] - 2026-11-11\n\n### Added\n- See [CLI](docs/CLI.md#grep), [x](crates/a.rs), [web](https://example.com/a), [here](#added), `[keep](docs/X.md)`.\n"
+    links = "\n[0.1.0]: https://github.com/scrutate/scrutate/releases/tag/v0.1.0\n"
+    out, problems = R.notes(HEAD + "## [Unreleased]\n\n" + old + links, "0.1.0")
+    assert problems == []
+    base = "https://github.com/scrutate/scrutate/blob/v0.1.0"
+    assert f"[CLI]({base}/docs/CLI.md#grep)" in out and f"[x]({base}/crates/a.rs)" in out
+    assert "[web](https://example.com/a)" in out and "[here](#added)" in out and "`[keep](docs/X.md)`" in out

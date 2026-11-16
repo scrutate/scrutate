@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The release notes of VERSION: its section of CHANGELOG.md, without the link references. It fails,
+"""The release notes of VERSION: its section of CHANGELOG.md, without the link references, its links
+to the repository's files pointing at the tag's tree. It fails,
 so that no release goes out with notes that leave its changes out, when:
 - `## [Unreleased]` (in any case, bracketed or not) still holds entries: they would be missing
   from the notes and stay "Unreleased" in every archive (fold them into the version's section
@@ -19,6 +20,17 @@ LINK = re.compile(r"^\[[^\]]+\]: \S")
 # GitHub refuses a release body over 125,000 characters ("body is too long"): no GitHub page
 # states it, the figure is from tool reports (intuit/auto#2418; release-it cuts at 124,000)
 MAX_CHARS = 124_000
+# a link to a file of the repository (`](docs/CLI.md#x)`), not a URL, an anchor or an absolute path
+RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)")
+
+
+def absolute(text: str, base: str) -> str:
+    """`text` with each link to a file of the repository pointing at `base` (the tag's tree), so it
+    resolves on the release page too; inline code is left as written."""
+    parts = text.split("`")
+    for i in range(0, len(parts), 2):
+        parts[i] = RELATIVE.sub(lambda m: f"]({base}/{m.group(1)})", parts[i])
+    return "`".join(parts)
 
 
 def sections(text: str) -> list[tuple[str, list[str]]]:
@@ -54,6 +66,10 @@ def notes(text: str, version: str) -> tuple[str, list[str]]:
     if not re.search(rf"^\[{re.escape(version)}\]: \S", text, re.M):
         problems.append(f"CHANGELOG.md has no link reference [{version}]: URL")
     out = "\n".join(body).strip() + "\n"
+    # a release page resolves a relative link under /releases/tag/, where no file is
+    repo = re.search(rf"^\[{re.escape(version)}\]: (\S+)/releases/tag/", text, re.M)
+    if repo:
+        out = absolute(out, f"{repo.group(1)}/blob/v{version}")
     if len(out) > MAX_CHARS:
         problems.append(f"the notes of {version} are {len(out):,} characters, {len(out) - MAX_CHARS:,} over the {MAX_CHARS:,} a release body takes: shorten its section")
     return out, problems
