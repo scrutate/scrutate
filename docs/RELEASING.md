@@ -32,9 +32,10 @@ test results and artifacts all name one binary by its SHA-256.
 | `packaging/scoop/scrutate.json` | version | yes |
 | the winget manifests and their directory name | version | yes |
 | the examples in the GitHub Action and pre-commit READMEs | version | yes |
-| the `CHANGELOG.md` heading, the title of `docs/DELIVERY.md`, the scope line of `docs/SECURITY.md` | date | no |
+| the title of `docs/DELIVERY.md`, the scope line of `docs/SECURITY.md` | the date of the version's `CHANGELOG.md` heading | yes |
 
-The check fails when a file differs from the version. The release workflow runs it first on the
+The check fails when a file differs from the version, or a date from the version's
+`CHANGELOG.md` heading. The release workflow runs it first on the
 tag (less its `v`) and refuses a tag that does not match.
 
 - [ ] `CHANGELOG.md`: the entries under `## [Unreleased]` move into the version's section, dated

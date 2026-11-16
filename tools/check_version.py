@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fail when a release version differs from the one any shipped package declares.
+"""Fail when a release version differs from the one any shipped package declares, or a release
+date from the date of the version's CHANGELOG section.
 
 usage: check_version.py VERSION   (release.yml passes the tag without its leading v)
 """
@@ -24,6 +25,11 @@ WRITTEN = [
     ("integrations/github/README.md", r"scrutate@v(\S+)"),
     ("integrations/github/README.md", r"version: v(\S+)"),
     ("integrations/pre-commit/README.md", r"rev: v(\S+)"),
+]
+# every place a release writes its date, read against the date of the version's CHANGELOG section
+DATED = [
+    ("docs/DELIVERY.md", r"^# Delivery index: Scrutate \S+ \((\d{4}-\d\d-\d\d)\)"),
+    ("docs/SECURITY.md", r"built from this repository on (\d{4}-\d\d-\d\d)"),
 ]
 WINGET = "packaging/winget/manifests/c/crisnahine/Scrutate"
 
@@ -53,14 +59,31 @@ def declared() -> dict[str, str]:
     return out
 
 
+def dated(version: str, root: str = ROOT) -> list[str]:
+    """What disagrees with the date of the version's CHANGELOG section (none when it has none)."""
+    with open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8") as fh:
+        m = re.search(rf"^## \[{re.escape(version)}\] - (\d{{4}}-\d\d-\d\d)", fh.read(), re.M)
+    if not m:
+        return [f"CHANGELOG.md has no dated ## [{version}] section"]
+    bad = []
+    for f, pattern in DATED:
+        with open(os.path.join(root, f), encoding="utf-8") as fh:
+            found = re.findall(pattern, fh.read(), re.M) or ["(no date found)"]
+        bad += [f"{f} says {d}, CHANGELOG.md's {version} section {m.group(1)}" for d in found if d != m.group(1)]
+    return bad
+
+
 def main() -> int:
     want = sys.argv[1]
     bad = {f: v for f, v in declared().items() if v != want}
     for f, v in bad.items():
         print(f"{f} declares {v}, the tag says {want}")
-    if not bad:
-        print(f"every package declares {want}")
-    return 1 if bad else 0
+    dates = dated(want)
+    for d in dates:
+        print(d)
+    if not bad and not dates:
+        print(f"every package declares {want}, and every release date agrees")
+    return 1 if bad or dates else 0
 
 
 if __name__ == "__main__":
