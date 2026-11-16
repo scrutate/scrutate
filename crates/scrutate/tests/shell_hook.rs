@@ -443,18 +443,18 @@ fn a_sort_value_is_read_as_ripgrep_reads_it() {
         "rg --sort path -n path",
     ] {
         let (want, _, want_code) = sh(&r.root, cmd);
-        let got = rewrite(&r.root, cmd).map(|new| sh(&r.root, &new));
-        if let Some((got, _, got_code)) = got {
-            // in order, but where rg's own order is its parallel walk's
-            let order = |s: &str| {
-                let mut v: Vec<String> = s.lines().map(str::to_string).collect();
-                if cmd.contains("--sort none") {
-                    v.sort();
-                }
-                v
-            };
-            assert_eq!((order(&got), got_code), (order(&want), want_code), "{cmd}");
-        }
+        // every one of these is read-only: one the hook leaves alone would test nothing
+        let new = rewrite(&r.root, cmd).unwrap_or_else(|| panic!("not rewritten: {cmd}"));
+        let (got, _, got_code) = sh(&r.root, &new);
+        // in order, but where rg's own order is its parallel walk's
+        let order = |s: &str| {
+            let mut v: Vec<String> = s.lines().map(str::to_string).collect();
+            if cmd.contains("--sort none") {
+                v.sort();
+            }
+            v
+        };
+        assert_eq!((order(&got), got_code), (order(&want), want_code), "{cmd}");
     }
 }
 

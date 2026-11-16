@@ -59,7 +59,8 @@ fn map_sites(src: &Path) -> BTreeSet<(String, String)> {
 
 /// The site of a map outside every function: a static's initialiser, say.
 const OUTSIDE: &str = "(outside a fn)";
-/// The site of a memmap2 import in a file `ALLOWED` does not list: through it, `Mmap` may go by any name.
+/// The site of a memmap2 import or type alias in a file `ALLOWED` does not list: through it, `Mmap`
+/// may go by any name.
 const IMPORT: &str = "use memmap2";
 
 /// The sites of `text` (the source of `file`) that call something in `MAPS`: the function each call
@@ -72,9 +73,14 @@ fn in_source(file: &str, text: &str) -> Vec<String> {
             out.push(name);
         }
     };
-    let uses: Vec<(usize, usize)> = text.match_indices("use ").map(|(at, _)| (at, text[at..].find(';').map_or(text.len(), |e| at + e))).collect();
+    let word = |at: usize| at == 0 || !text.as_bytes()[at - 1].is_ascii_alphanumeric() && text.as_bytes()[at - 1] != b'_';
+    // `use` and `type` declarations, keyword to `;`: one that names memmap2 can rename `Mmap`
+    let decl =
+        |kw: &'static str| text.match_indices(kw).filter(move |&(at, _)| word(at)).map(|(at, _)| (at, text[at..].find(';').map_or(text.len(), |e| at + e)));
+    let uses: Vec<(usize, usize)> = decl("use ").collect();
+    let types: Vec<(usize, usize)> = decl("type ").collect();
     let listed = ALLOWED.iter().any(|(f, _, _)| *f == file);
-    if !listed && uses.iter().any(|&(a, z)| text[a..z].contains("memmap2")) {
+    if !listed && uses.iter().chain(&types).any(|&(a, z)| text[a..z].contains("memmap2")) {
         add(IMPORT.to_string());
     }
     for (token, only) in MAPS {
@@ -173,7 +179,7 @@ fn code_only(text: &str) -> String {
             }
             blank(&mut out, i, j);
             i = j;
-        } else if (rest.starts_with("r#") || rest.starts_with("r\"")) && !ident(i) {
+        } else if (rest.starts_with("r#") || rest.starts_with("r\"")) && (!ident(i) || b[i - 1] == b'b' && !ident(i - 1)) {
             let hashes = rest[1..].bytes().take_while(|&c| c == b'#').count();
             if rest.as_bytes().get(1 + hashes) != Some(&b'"') {
                 i += 1;
@@ -237,6 +243,15 @@ fn a_memmap2_import_outside_the_listed_files_is_a_site() {
     let src = "use memmap2::Mmap as Mapped;\nfn a(f: &File) {\n    unsafe { Mapped::map(f) };\n}\n";
     assert_eq!(in_source("x.rs", src), [IMPORT]);
     assert!(in_source("npy.rs", src).is_empty());
+}
+
+#[test]
+fn a_raw_byte_string_a_word_with_use_in_it_and_a_type_alias_are_read_as_rust_reads_them() {
+    let src = "fn a() {\n    let p = br\"C:\\\";\n    Npy::open(p);\n}\nfn b() {\n    let q = br#\"x\"y\"#;\n    Npy::open(q);\n}\nfn c() {\n    let reuse = Npy::open(p);\n}\n";
+    assert_eq!(in_source("x.rs", src), ["a", "b", "c"]);
+    let alias = "type M = memmap2::Mmap;\nfn d(f: &File) {\n    unsafe { M::map(f) };\n}\n";
+    assert_eq!(in_source("x.rs", alias), [IMPORT]);
+    assert!(in_source("npy.rs", alias).is_empty());
 }
 
 #[test]
