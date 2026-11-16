@@ -93,6 +93,9 @@ pub(crate) struct Registry {
     /// files whose watch the system refused for want of the user's access: no note comes for
     /// them, so each drain tries again
     shut: std::collections::BTreeSet<PathBuf>,
+    /// entries of paths that are gone, for the next new path: a tree's temporary files come and
+    /// go between rebuilds, and their names would stay
+    free: Vec<usize>,
 }
 
 /// The descriptors this process may open: the soft limit raised to what the system allows a
@@ -138,7 +141,7 @@ impl Registry {
         let kq = unsafe { OwnedFd::from_raw_fd(fd) };
         let dev = std::fs::metadata(root).map_err(|_| Off::Refused)?.dev();
         let budget = budget.unwrap_or_else(|| (descriptor_limit() / 2).saturating_sub(RESERVE));
-        Ok(Registry { kq, entries: Vec::new(), by_path: HashMap::new(), open: 0, budget, dev, shut: Default::default() })
+        Ok(Registry { kq, entries: Vec::new(), by_path: HashMap::new(), open: 0, budget, dev, shut: Default::default(), free: Vec::new() })
     }
 
     /// The watches in place.
@@ -176,9 +179,19 @@ impl Registry {
         let i = match self.by_path.get(path) {
             Some(&i) => i,
             None => {
-                self.entries.push(Entry { path: path.to_path_buf(), fd: None, names: None });
-                self.by_path.insert(path.to_path_buf(), self.entries.len() - 1);
-                self.entries.len() - 1
+                let e = Entry { path: path.to_path_buf(), fd: None, names: None };
+                let i = match self.free.pop() {
+                    Some(i) => {
+                        self.entries[i] = e;
+                        i
+                    }
+                    None => {
+                        self.entries.push(e);
+                        self.entries.len() - 1
+                    }
+                };
+                self.by_path.insert(path.to_path_buf(), i);
+                i
             }
         };
         let change = libc::kevent {
@@ -201,6 +214,16 @@ impl Registry {
         }
         self.open += 1;
         Ok(())
+    }
+
+    /// Forget entry `i` and its path for good; its slot is free at the end of the drain, so no
+    /// note of the same drain reaches the path that takes it.
+    fn drop_entry(&mut self, i: usize, freed: &mut Vec<usize>) {
+        self.forget(i);
+        let path = std::mem::take(&mut self.entries[i].path);
+        self.by_path.remove(&path);
+        self.entries[i].names = None;
+        freed.push(i);
     }
 
     fn forget(&mut self, i: usize) {
@@ -319,6 +342,13 @@ impl Registry {
     /// What changed since the last drain, every change made before this call included. New
     /// files of a watched directory are watched before they are named.
     pub(crate) fn drain(&mut self, keep: &dyn Fn(&Path) -> bool) -> Result<Vec<Change>, Off> {
+        let mut freed = Vec::new();
+        let out = self.drain_into(keep, &mut freed);
+        self.free.append(&mut freed);
+        out
+    }
+
+    fn drain_into(&mut self, keep: &dyn Fn(&Path) -> bool, freed: &mut Vec<usize>) -> Result<Vec<Change>, Off> {
         let mut out = Vec::new();
         // one open each: a file whose access came back is watched and named from now on
         for path in std::mem::take(&mut self.shut) {
@@ -350,7 +380,10 @@ impl Registry {
                         }
                         out.push(Change::Modified(path));
                     }
-                    Err(_) => out.push(Change::Removed(path)),
+                    Err(_) => {
+                        self.drop_entry(i, freed);
+                        out.push(Change::Removed(path));
+                    }
                 }
             } else {
                 out.push(Change::Modified(path));
@@ -381,7 +414,7 @@ impl Registry {
                     if self.entries[i].names.is_some() {
                         out.push(Change::Directory(path.clone()));
                     }
-                    self.forget(i);
+                    self.drop_entry(i, freed);
                 }
                 out.push(Change::Removed(path));
             }
@@ -464,6 +497,23 @@ mod tests {
         assert!(r.drain(&all).unwrap().contains(&Change::Modified(root.join("src/new.py"))));
         std::fs::remove_file(root.join("src/new.py")).unwrap();
         assert!(r.drain(&all).unwrap().contains(&Change::Removed(root.join("src/new.py"))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn files_made_and_removed_leave_no_entry_behind() {
+        let root = tree("churn");
+        let mut r = registry(&root, None);
+        let before = r.entries.len();
+        for i in 0..1000 {
+            let p = root.join(format!("src/tmp_{i}.py"));
+            std::fs::write(&p, "t = 1\n").unwrap();
+            assert!(r.drain(&all).unwrap().contains(&Change::Created(p.clone())));
+            std::fs::remove_file(&p).unwrap();
+            assert!(r.drain(&all).unwrap().contains(&Change::Removed(p.clone())));
+        }
+        assert!(r.entries.len() <= before + 2, "{} entries after 1,000 files made and removed, {before} before", r.entries.len());
+        assert_eq!(r.by_path.len(), r.entries.iter().filter(|e| !e.path.as_os_str().is_empty()).count());
         let _ = std::fs::remove_dir_all(root);
     }
 
