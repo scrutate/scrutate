@@ -18,7 +18,7 @@ use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::name_key;
 
-pub const SCHEMA_VERSION: u32 = 17;
+pub const SCHEMA_VERSION: u32 = 18;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS imports(path TEXT NOT NULL, module TEXT NOT NULL, lin
 CREATE TABLE IF NOT EXISTS dupkeys(id INTEGER PRIMARY KEY, nbody INTEGER NOT NULL, body INTEGER NOT NULL, words INTEGER NOT NULL, ntok INTEGER NOT NULL, bands BLOB);
 CREATE INDEX IF NOT EXISTS imports_path ON imports(path);
 CREATE INDEX IF NOT EXISTS imports_module ON imports(module);
-CREATE TABLE IF NOT EXISTS artifacts(key BLOB PRIMARY KEY, body BLOB NOT NULL, kept BLOB, bytes INTEGER NOT NULL, used INTEGER NOT NULL);
+-- binds before body: a column after a large blob is read only through the blob's overflow pages
+CREATE TABLE IF NOT EXISTS artifacts(key BLOB PRIMARY KEY, binds BLOB, body BLOB NOT NULL, kept BLOB, bytes INTEGER NOT NULL, used INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS artifacts_kept ON artifacts(used) WHERE kept IS NOT NULL;
 ";
 /// Made once the `files` table has the `art` column, which an index of an older schema lacks.
@@ -308,7 +309,7 @@ pub mod prof {
 }
 
 /// Rows, postings, imports and syntax tree of a file, and its artifact as the store keeps it.
-pub type BuiltRows = (Vec<NewRow>, FileLex, Vec<(i64, String)>, Option<PrevParse>, Vec<u8>);
+pub type BuiltRows = (Vec<NewRow>, FileLex, Vec<(i64, String)>, Option<PrevParse>, Vec<u8>, Option<Vec<u8>>);
 
 /// Parse and tokenize a file into its artifact, then derive the rows of `rel` from it, as the rows
 /// of a file found in the store are derived.
@@ -356,6 +357,7 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
             prof::add(&prof::PACK, t);
         }
     }
+    let binds = parsed.binds;
     let art = Artifact { chunks, imports: parsed.imports };
     let t = Instant::now();
     let body = art.encode();
@@ -363,7 +365,7 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
         prof::add(&prof::PACK, t);
     }
     let (rows, lex, imports) = crate::artifacts::derive(rel, Found { art, texts, vecs: None }, model);
-    (rows, lex, imports, tree, body)
+    (rows, lex, imports, tree, body, binds)
 }
 
 enum Processed {
@@ -371,8 +373,9 @@ enum Processed {
     Skip(Stat),
     Same(Stat),
     /// stat, content hash, artifact key, rows, postings, imports, syntax tree, the artifact to
-    /// store (None when this store holds it already), and whether the file was parsed
-    New(Stat, String, Key, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>, Option<Vec<u8>>, bool),
+    /// store with the resolver's bindings when this parse made them (None when this store holds
+    /// it already), and whether the file was parsed
+    New(Stat, String, Key, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>, Option<Stored>, bool),
 }
 
 /// What reading a file found, before it is parsed or found in a store.
@@ -581,7 +584,7 @@ fn read_file(root: &Path, rel: &str, known_hash: Option<&str>) -> Read {
 
 /// A file read as new content: its rows from the artifact a store found (with the body to store
 /// here when it came from another store), else from a parse.
-fn process(rel: &str, read: Read, found: Option<(Found, Option<Vec<u8>>)>, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> Processed {
+fn process(rel: &str, read: Read, found: Option<(Found, Option<Stored>)>, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> Processed {
     let (stat, h, key, raw) = match read {
         Read::Gone => return Processed::Gone,
         Read::Skip(s) => return Processed::Skip(s),
@@ -595,8 +598,8 @@ fn process(rel: &str, read: Read, found: Option<(Found, Option<Vec<u8>>)>, model
         }
         None => {
             let source = decode_source(&raw).unwrap_or_default();
-            let (rows, lex, imports, tree, body) = build_rows(rel, &source, model, prev);
-            (rows, lex, imports, tree, Some(body), true)
+            let (rows, lex, imports, tree, body, binds) = build_rows(rel, &source, model, prev);
+            (rows, lex, imports, tree, Some((body, binds)), true)
         }
     }));
     match built {
@@ -639,21 +642,27 @@ impl Segs {
     }
 }
 
+/// An artifact's encoded body and the resolver's bindings stored beside it.
+type Stored = (Vec<u8>, Option<Vec<u8>>);
+/// An artifact found in a store, with what the store holds of it.
+type FoundRow = (Found, Stored);
+
 /// The artifact of `key` in the index `db`, with its chunk texts, and with its vectors when
 /// `vectors` (the model's width and signature) is given and the segments hold that model's.
 /// Damage to the store is an error with `own` (this checkout's index, rebuilt by the one rule)
-/// and a miss without (another checkout's, which this one never writes). -> the artifact and
-/// its encoded body.
-fn find_artifact(db: &Connection, segs: &mut Segs, key: &Key, vectors: Option<(usize, &str)>, own: bool) -> Result<Option<(Found, Vec<u8>)>> {
-    let damaged = |why: &'static str| -> Result<Option<(Found, Vec<u8>)>> {
+/// and a miss without (another checkout's, which this one never writes).
+fn find_artifact(db: &Connection, segs: &mut Segs, key: &Key, vectors: Option<(usize, &str)>, own: bool) -> Result<Option<FoundRow>> {
+    let damaged = |why: &'static str| -> Result<Option<FoundRow>> {
         match own {
             true => Err(Damaged(why).into()),
             false => Ok(None),
         }
     };
-    let row: Option<(Vec<u8>, Option<Vec<u8>>)> =
-        db.prepare_cached("SELECT body, kept FROM artifacts WHERE key=?1")?.query_row([&key[..]], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-    let Some((body, kept)) = row else { return Ok(None) };
+    let row: Option<(Stored, Option<Vec<u8>>)> = db
+        .prepare_cached("SELECT body, binds, kept FROM artifacts WHERE key=?1")?
+        .query_row([&key[..]], |r| Ok(((r.get(0)?, r.get(1)?), r.get(2)?)))
+        .optional()?;
+    let Some(((body, binds), kept)) = row else { return Ok(None) };
     let Ok(art) = Artifact::decode(&body) else { return damaged("an artifact does not decode") };
     let (texts, ids) = match kept {
         Some(k) => match crate::artifacts::decode_texts(&k) {
@@ -675,7 +684,7 @@ fn find_artifact(db: &Connection, segs: &mut Segs, key: &Key, vectors: Option<(u
         (Some((k, sig)), Some(ids)) if segs.sig == sig && ids.len() == art.lexed() => segs.vectors(&ids, k),
         _ => None,
     };
-    Ok(Some((Found { art, texts, vecs }, body)))
+    Ok(Some((Found { art, texts, vecs }, (body, binds))))
 }
 
 /// The code index of the main checkout of the linked git work tree at `root`. Each lookup reads
@@ -2421,7 +2430,7 @@ impl Index {
                             }
                         }
                         builder.add_file(first, *lex);
-                        self.name_artifact(&key, body.as_deref(), stamp)?;
+                        self.name_artifact(&key, body.as_ref().map(|(b, r)| (b.as_slice(), r.as_deref())), stamp)?;
                         self.db.execute(
                             "INSERT OR REPLACE INTO files(path,size,mtime_ns,hash,ctime_ns,art) VALUES(?1,?2,?3,?4,?5,?6)",
                             params![rel, s.size, s.mtime, h, s.ctime, &key[..]],
@@ -2822,13 +2831,16 @@ impl Index {
 
     /// The artifact `key` named by a file: stored with `body` when this store did not hold it, and
     /// its texts no longer kept, since the file's rows hold them.
-    fn name_artifact(&self, key: &Key, body: Option<&[u8]>, stamp: i64) -> Result<()> {
+    fn name_artifact(&self, key: &Key, body: Option<(&[u8], Option<&[u8]>)>, stamp: i64) -> Result<()> {
         match body {
-            Some(b) => self
+            Some((b, binds)) => self
                 .db
-                .prepare_cached("INSERT OR REPLACE INTO artifacts(key, body, kept, bytes, used) VALUES(?1, ?2, NULL, ?3, ?4)")?
-                .execute(params![&key[..], b, b.len() as i64, stamp])?,
-            None => self.db.prepare_cached("UPDATE artifacts SET kept=NULL, bytes=length(body), used=?2 WHERE key=?1")?.execute(params![&key[..], stamp])?,
+                .prepare_cached("INSERT OR REPLACE INTO artifacts(key, body, kept, bytes, used, binds) VALUES(?1, ?2, NULL, ?3, ?4, ?5)")?
+                .execute(params![&key[..], b, (b.len() + binds.map_or(0, |r| r.len())) as i64, stamp, binds])?,
+            None => self
+                .db
+                .prepare_cached("UPDATE artifacts SET kept=NULL, bytes=length(body)+coalesce(length(binds),0), used=?2 WHERE key=?1")?
+                .execute(params![&key[..], stamp])?,
         };
         Ok(())
     }
@@ -2845,12 +2857,10 @@ impl Index {
                 let mut q = self.db.prepare_cached("SELECT text FROM chunks WHERE path=?1 ORDER BY id")?;
                 let texts: Vec<Vec<u8>> = q.query_map([rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
                 let texts = crate::artifacts::encode_texts(&texts);
-                let n = self.db.prepare_cached("UPDATE artifacts SET kept=?1, bytes=length(body)+?2, used=?3 WHERE key=?4")?.execute(params![
-                    texts,
-                    texts.len() as i64,
-                    stamp,
-                    a
-                ])?;
+                let n = self
+                    .db
+                    .prepare_cached("UPDATE artifacts SET kept=?1, bytes=length(body)+coalesce(length(binds),0)+?2, used=?3 WHERE key=?4")?
+                    .execute(params![texts, texts.len() as i64, stamp, a])?;
                 if n == 0 {
                     return Err(Damaged("a file names an artifact the store does not hold").into());
                 }
@@ -2889,7 +2899,7 @@ impl Index {
         model: Option<&SemanticModel>,
         own: &mut Option<Segs>,
         other: &mut Option<Option<Other>>,
-    ) -> Result<Option<(Found, Option<Vec<u8>>)>> {
+    ) -> Result<Option<(Found, Option<Stored>)>> {
         let vectors = model.map(|m| (m.k, self.sig.as_str()));
         let own = own.get_or_insert_with(|| Segs::new(self.seg_dir.clone(), self.segments(), self.meta("model_sig").unwrap_or_default()));
         if let Some((found, _)) = find_artifact(&self.db, own, key, vectors, true)? {
@@ -3299,6 +3309,13 @@ impl Index {
         let mut st = self.db.prepare(&format!("SELECT DISTINCT name, path FROM chunks WHERE kind IN ({}) ORDER BY name, path", quoted(kinds)))?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
+    }
+
+    /// What the resolver takes from the tree of `path` (`resolve::index_bindings`), when the
+    /// index parsed the bytes of content hash `hash` there or under another path of the same name.
+    pub fn bindings_of(&self, path: &str, hash: &str) -> Result<Option<Vec<u8>>> {
+        let mut st = self.db.prepare_cached("SELECT a.binds FROM files f JOIN artifacts a ON a.key = f.art WHERE f.path=?1 AND f.hash=?2")?;
+        Ok(st.query_row(params![path, hash], |r| r.get::<_, Option<Vec<u8>>>(0)).optional()?.flatten())
     }
 
     /// The imports a file records, as (line, module), by line.
@@ -3766,7 +3783,7 @@ mod tests {
         let hash = super::hex(&<sha1::Sha1 as sha1::Digest>::digest([super::SCHEMA, super::ART_INDEX, super::ART_COLUMN].concat()));
         assert_eq!(
             (super::SCHEMA_VERSION, hash.as_str()),
-            (17, "709ebea109ea8f1c611ac2deded8c478cd57b6ff"),
+            (18, "b91899abd0d7e6b5f636d1c53e989a5e316e23ad"),
             "the schema SQL changed: raise SCHEMA_VERSION and set this hash"
         );
     }

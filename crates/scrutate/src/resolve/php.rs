@@ -99,7 +99,7 @@ fn php_full(b: &Binding) -> String {
 /// The namespace that holds 0-based line `row` of the file: the braced `namespace` block around
 /// it, else the last `namespace X;` above it, else the global one ("").
 fn php_namespace(fi: &FileInfo, row: usize) -> String {
-    let Some(tree) = fi.tree.as_ref() else { return String::new() };
+    let Some(tree) = fi.tree() else { return String::new() };
     let root = tree.root_node();
     let mut cur = root.walk();
     let mut ns = String::new();

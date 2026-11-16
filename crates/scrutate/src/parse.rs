@@ -83,6 +83,8 @@ pub struct Parsed {
     pub chunks: Vec<Chunk>,
     /// (1-based line, imported module as written, normalised)
     pub imports: Vec<(i64, String)>,
+    /// what the resolver takes from the tree (`resolve::index_bindings`), for a language it reads
+    pub binds: Option<Vec<u8>>,
 }
 
 pub const CONTAINERS: &[&str] = &["class", "impl", "interface", "trait", "enum", "struct", "type", "module", "block", "section", "key"];
@@ -1736,7 +1738,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
 
 // ------------------------------------------------------------------------- tier 1: grammars
 /// (chunks, module docstring, imports as (line, module), calls outside every definition as (line, callee))
-type GrammarOutput = (Vec<Chunk>, String, Vec<(i64, String)>, Vec<(i64, String)>);
+type GrammarOutput = (Vec<Chunk>, String, Vec<(i64, String)>, Vec<(i64, String)>, Option<Vec<u8>>);
 
 /// A file's last grammar parse, kept in memory so the next version of the file is parsed
 /// incrementally (tree-sitter reuses the unchanged subtrees).
@@ -1817,7 +1819,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     let src = source.as_bytes();
     if spec.defs.is_empty() && spec.calls.is_empty() && spec.imports.is_empty() && !spec.docstring && !crate::langs::CONSTANT_LANGS.contains(&spec.id) {
         // the walk would find nothing, and HTML's scanner takes time quadratic in the nesting depth
-        return Some(((Vec::new(), String::new(), Vec::new(), Vec::new()), None));
+        return Some(((Vec::new(), String::new(), Vec::new(), Vec::new(), None), None));
     }
     let t = std::time::Instant::now();
     let tree = parse_tree(spec, source, prev)?;
@@ -2083,10 +2085,11 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         }
         loose.retain(|(_, n)| !objects.contains(&n.to_lowercase()));
     }
+    let binds = crate::resolve::index_bindings(path, source, &tree);
     // a tree with errors is not kept: the next parse would likely redo it from scratch anyway
     let keep = (!tree.root_node().has_error() && INCREMENTAL.contains(&spec.id)).then(|| PrevParse { lang: spec.id, source: source.to_string(), tree });
     chunks.extend(consts);
-    Some(((chunks, mdoc, imports, loose), keep))
+    Some(((chunks, mdoc, imports, loose, binds), keep))
 }
 
 // ------------------------------------------------------------------------- tier 2: heuristics
@@ -2561,20 +2564,20 @@ pub fn parse_file(path: &str, source: &str) -> Parsed {
 pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Parsed, Option<PrevParse>) {
     let custom = crate::custom::current();
     if let Some(lang) = custom.for_path(path) {
-        return (Parsed { chunks: finish(path, source, custom_chunks(lang, source), String::new(), Vec::new()), imports: Vec::new() }, None);
+        return (Parsed { chunks: finish(path, source, custom_chunks(lang, source), String::new(), Vec::new()), imports: Vec::new(), binds: None }, None);
     }
     if let Some(spec) = spec_for(path, source) {
-        if let Some(((chunks, mdoc, imports, loose), tree)) = grammar_chunks(spec, path, source, prev) {
+        if let Some(((chunks, mdoc, imports, loose, binds), tree)) = grammar_chunks(spec, path, source, prev) {
             // a parsed file is the grammar's verdict even when it holds no definitions: the
             // keyword heuristics would invent symbols from prose ("namespace so the ...")
-            return (Parsed { chunks: finish(path, source, chunks, mdoc, loose), imports }, tree);
+            return (Parsed { chunks: finish(path, source, chunks, mdoc, loose), imports, binds }, tree);
         }
     }
     // prose has keyword-looking lines ("module will be called foo" in Kconfig help text)
     let base = basename(path);
     let prose = base.starts_with("Kconfig") || base.to_ascii_lowercase().ends_with(".txt");
     let chunks = if prose { Vec::new() } else { heuristic_chunks(path, source) };
-    (Parsed { chunks: finish(path, source, chunks, String::new(), Vec::new()), imports: Vec::new() }, None)
+    (Parsed { chunks: finish(path, source, chunks, String::new(), Vec::new()), imports: Vec::new(), binds: None }, None)
 }
 
 pub fn parse_source(path: &str, source: &str) -> Vec<Chunk> {

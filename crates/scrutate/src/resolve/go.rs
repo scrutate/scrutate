@@ -23,7 +23,7 @@ impl Rules for Go {
         let owner = strip_generics(qualname);
         for f in r.go_dir(dir_of(path)) {
             let gf = r.file(&f);
-            let Some(tree) = gf.tree.as_ref() else { continue };
+            let Some(tree) = gf.tree() else { continue };
             let root = tree.root_node();
             let mut cur = root.walk();
             for m in root.named_children(&mut cur).filter(|n| n.kind() == "method_declaration") {

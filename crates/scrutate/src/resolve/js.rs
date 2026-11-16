@@ -284,7 +284,7 @@ impl Resolver<'_> {
     /// is no definition.
     pub(super) fn required(&mut self, from: &str, b: &Binding) -> bool {
         let fi = self.file(from);
-        let (Some(tree), Some(&at)) = (fi.tree.as_ref(), b.sites.first()) else { return false };
+        let (Some(tree), Some(&at)) = (fi.tree(), b.sites.first()) else { return false };
         tree.root_node()
             .descendant_for_byte_range(at, at)
             .and_then(|n| n.parent())

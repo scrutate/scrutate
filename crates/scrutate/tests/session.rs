@@ -303,6 +303,38 @@ fn a_command_line_call_through_a_session_prints_what_a_fresh_process_prints() {
     }
 }
 
+/// The resolver takes a C file's includes from the index and parses only the trees it reads: a
+/// session, which keeps parses from one request to the next, answers as a fresh process does,
+/// also after a header between the use and the definition changed.
+#[test]
+fn a_lookup_through_included_files_answers_alike_through_a_session_and_fresh() {
+    let r = Repo::new("includes");
+    let root = r.root.clone();
+    fs::write(root.join("a.c"), "#include \"h1.h\"\n\nint main(void) {\n    return f() + g3();\n}\n").unwrap();
+    for i in 1..5 {
+        fs::write(root.join(format!("h{i}.h")), format!("#include \"h{}.h\"\nint g{i}(void);\n", i + 1)).unwrap();
+    }
+    fs::write(root.join("h5.h"), "static inline int f(void) {\n    return 1;\n}\n\nstatic inline int unused(void) {\n    return 2;\n}\n").unwrap();
+    let _server = Server::start(&r.root);
+    let asks: [&[&str]; 4] = [&["refs", "f"], &["callers", "f"], &["refs", "g3"], &["dead"]];
+    for round in 0..2 {
+        if round == 1 {
+            // h3.h now defines g3 itself, and the session reads h3.h's new bytes
+            fs::write(r.root.join("h3.h"), "#include \"h4.h\"\nstatic inline int g3(void) {\n    return 3;\n}\n").unwrap();
+        }
+        for args in asks {
+            let ((code, out, err), said) = r.through(args, &[]);
+            assert_eq!(said, "[scrutate] session: answered by the session", "{args:?}");
+            // the first call after the edit says the session indexed it
+            assert!(err.is_empty() || err.starts_with("[scrutate] indexed 1 changed files"), "{err}");
+            let (fresh_code, fresh_out, _) = r.fresh(args);
+            assert_eq!((code, out), (fresh_code, fresh_out), "round {round}: {args:?}");
+        }
+    }
+    let (_, refs, _) = r.fresh(&["refs", "g3"]);
+    assert!(refs.contains("h3.h:2"), "{refs}");
+}
+
 #[test]
 fn an_edit_is_in_the_next_answer_through_the_session() {
     let r = Repo::new("edit");

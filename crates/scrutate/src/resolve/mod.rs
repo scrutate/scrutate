@@ -332,17 +332,64 @@ pub const TOO_DEEP: &str = "nested too deeply to read";
 /// walks recurse.
 const MAX_DEPTH: usize = 2000;
 
+/// A file as one request reads it: its text, its imports and the index's definitions of it. Its
+/// tree is made the first time something asks for it (`tree`), from `PARSED` or by a parse that
+/// goes into `PARSED`: a file read only for its imports and definitions is never parsed when the
+/// index holds its bindings.
 pub(crate) struct FileInfo {
-    parsed: std::sync::Arc<Parsed>,
+    lang: Option<Lang>,
+    pub(crate) src: String,
+    /// Engine A's columns count these bytes
+    raw: Raw,
+    /// the tree is not read for passing `MAX_DEPTH`
+    deep: bool,
+    bindings: Vec<Binding>,
     defs: Vec<Def>,
+    path: String,
+    root: std::path::PathBuf,
+    hash: String,
+    parsed: std::cell::OnceCell<Option<std::sync::Arc<Parsed>>>,
+    /// the request's loaded set, which counts the parse this file makes, and whether the file is
+    /// still in it
+    set: std::rc::Weak<std::cell::RefCell<Loaded>>,
+    counted: std::cell::Cell<bool>,
 }
 
-impl std::ops::Deref for FileInfo {
-    type Target = Parsed;
-    fn deref(&self) -> &Parsed {
-        &self.parsed
+impl FileInfo {
+    /// The file's tree, None when it has no grammar the resolver reads or is too deep.
+    pub(crate) fn tree(&self) -> Option<&Tree> {
+        if self.deep || self.lang.is_none() {
+            return None;
+        }
+        let parsed = self.parsed.get_or_init(|| {
+            let key = (self.root.clone(), self.path.clone());
+            let kept = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&key, &self.hash);
+            let p = kept.unwrap_or_else(|| {
+                let p = std::sync::Arc::new(parse_text(&self.path, self.src.clone(), self.raw.clone()));
+                PARSED.lock().unwrap_or_else(|e| e.into_inner()).put(key, self.hash.clone(), std::sync::Arc::clone(&p));
+                p
+            });
+            if let Some(set) = self.set.upgrade().filter(|_| self.counted.get()) {
+                set.borrow_mut().grew(p.weight(), &self.path);
+            }
+            Some(p)
+        });
+        parsed.as_ref()?.tree.as_ref()
+    }
+
+    /// What the request's loaded set counts for it besides its parse.
+    fn text_weight(&self) -> usize {
+        self.src.len() + self.raw.as_ref().map_or(0, |(b, l)| b.len() + l.len() * 8) + self.bindings.len() * 64
+    }
+
+    /// The weight of its parse, when it holds one.
+    fn parse_weight(&self) -> usize {
+        self.parsed.get().and_then(|p| p.as_ref()).map_or(0, |p| p.weight())
     }
 }
+
+/// Parses whose tree has gone: a node id kept from such a tree may name a node of a later one.
+static TREES_FREED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A file's decoded text, tree and imports: the same for every request while its bytes stay, so
 /// they are kept across requests (`PARSED`).
@@ -356,6 +403,14 @@ pub(crate) struct Parsed {
     /// the tree was dropped for passing `MAX_DEPTH`
     deep: bool,
     bindings: Vec<Binding>,
+}
+
+impl Drop for Parsed {
+    fn drop(&mut self) {
+        if self.tree.is_some() {
+            TREES_FREED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 impl Parsed {
@@ -451,6 +506,88 @@ impl ParsedStore {
     }
 }
 
+/// The most the files one request holds loaded may weigh (`FileInfo::text_weight` and the
+/// weight of the parses they hold); the least recently used go first, and are loaded again when
+/// asked for again. With `PARSED_CAP` it bounds what the resolver holds.
+pub(crate) const LOADED_CAP: usize = 256 << 20;
+
+/// A request's loaded files, by path, least recently used first beyond a cap.
+struct Loaded {
+    cap: usize,
+    files: HashMap<String, (Rc<FileInfo>, u64)>,
+    by_use: std::collections::BTreeMap<u64, String>,
+    /// the text weight of the files held
+    text: usize,
+    /// the weight of the parses they hold, which grows as they make their trees
+    held: usize,
+    clock: u64,
+}
+
+impl Loaded {
+    fn new(cap: usize) -> Loaded {
+        Loaded { cap, files: HashMap::new(), by_use: Default::default(), text: 0, held: 0, clock: 0 }
+    }
+
+    fn get(&mut self, path: &str) -> Option<Rc<FileInfo>> {
+        let (fi, used) = self.files.get_mut(path)?;
+        self.clock += 1;
+        if let Some(key) = self.by_use.remove(used) {
+            self.by_use.insert(self.clock, key);
+        }
+        *used = self.clock;
+        let fi = Rc::clone(fi);
+        self.evict(path);
+        Some(fi)
+    }
+
+    fn put(&mut self, path: &str, fi: Rc<FileInfo>) {
+        self.remove(path);
+        fi.counted.set(true);
+        self.text += fi.text_weight();
+        self.held += fi.parse_weight();
+        self.clock += 1;
+        self.by_use.insert(self.clock, path.to_string());
+        self.files.insert(path.to_string(), (fi, self.clock));
+        self.evict(path);
+    }
+
+    /// `path`, in the set, made a parse of this weight.
+    fn grew(&mut self, weight: usize, path: &str) {
+        self.held += weight;
+        self.evict(path);
+    }
+
+    /// Drops the least recently used files until the set is under its cap; `path`, the file in
+    /// use, stays whatever it weighs.
+    fn evict(&mut self, path: &str) {
+        while self.text + self.held > self.cap && self.files.len() > 1 {
+            let Some(oldest) = self.by_use.values().find(|p| p.as_str() != path).cloned() else { break };
+            self.remove(&oldest);
+        }
+    }
+
+    fn remove(&mut self, path: &str) {
+        if let Some((_, used)) = self.files.get(path) {
+            self.by_use.remove(&used.clone());
+            self.drop_file(path);
+        }
+    }
+
+    fn drop_file(&mut self, path: &str) {
+        if let Some((fi, _)) = self.files.remove(path) {
+            fi.counted.set(false);
+            self.text -= fi.text_weight();
+            self.held = self.held.saturating_sub(fi.parse_weight());
+        }
+    }
+
+    /// (files, weight) held, for tests.
+    #[cfg(test)]
+    fn weight(&self) -> (usize, usize) {
+        (self.files.len(), self.text + self.held)
+    }
+}
+
 thread_local! {
     /// files this thread parsed for the resolver, for tests
     static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -459,10 +596,11 @@ thread_local! {
 pub struct Resolver<'a> {
     ix: &'a Index,
     files: HashSet<String>,
-    cache: HashMap<String, Rc<FileInfo>>,
+    loaded: Rc<std::cell::RefCell<Loaded>>,
+    /// `TREES_FREED` when `found` and `tys` were last known to name live trees only
+    freed: u64,
     /// the language each file asked about is read in
     langs: std::cell::RefCell<HashMap<String, Option<Lang>>>,
-    parsers: HashMap<&'static str, Parser>,
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
     go_imports: Option<HashMap<String, String>>,
@@ -865,6 +1003,136 @@ fn string_content(n: Node, src: &str) -> String {
 }
 
 // ------------------------------------------------------------------------- import bindings
+/// The bytes on disk and where each line starts, kept when decoding replaced invalid UTF-8.
+type Raw = Option<(Vec<u8>, Vec<usize>)>;
+
+/// The text the resolver reads of a file's bytes, and the bytes beside it when decoding replaced
+/// invalid UTF-8: Engine A's columns count those bytes.
+fn decoded(mut bytes: Vec<u8>) -> (String, Raw) {
+    let src = crate::index::decode_source(&bytes).map(|t| t.into_owned()).unwrap_or_default();
+    // Engine A reads UTF-16 decoded, and UTF-8 without its BOM
+    let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
+    let mut text = src.as_str();
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        bytes.drain(..3);
+        // `src` is empty when the bytes hold a NUL
+        text = src.strip_prefix('\u{FEFF}').unwrap_or(&src);
+    }
+    let raw = (!utf16 && !src.is_empty() && text.as_bytes() != bytes).then(|| {
+        let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
+        (bytes, starts)
+    });
+    (src, raw)
+}
+
+thread_local! {
+    static PARSERS: std::cell::RefCell<HashMap<&'static str, Parser>> = Default::default();
+}
+
+/// What parsing the text of `path` gives the resolver.
+fn parse_text(path: &str, src: String, raw: Raw) -> Parsed {
+    PARSES.with(|n| n.set(n.get() + 1));
+    let spec = crate::langs::detect(path, Some(&src));
+    let lang = spec.and_then(|s| lang_of(s.id));
+    let tree = match (spec, lang) {
+        (Some(spec), Some(_)) => PARSERS.with(|ps| {
+            let mut ps = ps.borrow_mut();
+            let p = ps.entry(spec.id).or_insert_with(|| {
+                let mut p = Parser::new();
+                let _ = p.set_language(&(spec.language)());
+                p
+            });
+            p.parse(src.as_bytes(), None)
+        }),
+        _ => None,
+    };
+    let (deep, bindings) = match (lang, &tree) {
+        (Some(l), Some(t)) => tree_bindings(l, path, t, &src),
+        _ => (false, Vec::new()),
+    };
+    let tree = tree.filter(|_| !deep);
+    Parsed { lang, src, raw, tree, deep, bindings }
+}
+
+/// Whether `tree` is too deep to read, and else the bindings the resolver takes from it.
+fn tree_bindings(lang: Lang, path: &str, tree: &Tree, src: &str) -> (bool, Vec<Binding>) {
+    if too_deep(tree) {
+        return (true, Vec::new());
+    }
+    (false, bindings_of(lang, path, tree.root_node(), src))
+}
+
+/// What `index_bindings` stores: raise it with every change of the layout or of what a language's
+/// `Rules::bindings` makes of a tree. A row of another revision is not read; the file is parsed.
+pub(crate) const BINDINGS_REVISION: u32 = 1;
+
+/// For the code index: what the resolver takes from the tree the index parsed `source` of `rel`
+/// into, encoded, when the resolver reads the file's language. The tree is the one a resolver
+/// parse of the same text makes (`parse::spec_for` and the resolver both detect the language
+/// with `langs::detect`).
+pub(crate) fn index_bindings(rel: &str, source: &str, tree: &Tree) -> Option<Vec<u8>> {
+    let spec = crate::langs::detect(rel, Some(source))?;
+    let lang = lang_of(spec.id)?;
+    let (deep, bindings) = tree_bindings(lang, rel, tree, source);
+    let b: Vec<(&str, &str, Option<&str>, &[usize])> =
+        bindings.iter().map(|b| (b.local.as_str(), b.module.as_str(), b.item.as_deref(), b.sites.as_slice())).collect();
+    serde_json::to_vec(&(BINDINGS_REVISION, grammar_key(spec), spec.id, deep, b)).ok()
+}
+
+/// `index_bindings` read back, when it was made in this layout by the grammar of `spec` as this
+/// build has it: (too deep, bindings).
+fn read_bindings(bytes: &[u8], spec: &'static crate::langs::LangSpec) -> Option<(bool, Vec<Binding>)> {
+    type Row = (String, String, Option<String>, Vec<usize>);
+    let (rev, grammar, id, deep, rows): (u32, String, String, bool, Vec<Row>) = serde_json::from_slice(bytes).ok()?;
+    if rev != BINDINGS_REVISION || id != spec.id || grammar != grammar_key(spec) {
+        return None;
+    }
+    Some((deep, rows.into_iter().map(|(local, module, item, sites)| Binding { local, module, item, sites }).collect()))
+}
+
+/// A text per grammar the resolver reads, whose tree goes into `grammar_key`.
+const GRAMMAR_SAMPLES: &[(&str, &str)] = &[
+    ("python", "import os\nfrom m import a as b\nfrom . import c\n\n\nclass K(b):\n    def f(self, x: int) -> str:\n        return c(x)\n"),
+    ("javascript", "import x, { y as z } from './c';\nconst h = require('./c');\nexport { z as w };\nexport default class K { f(a) { return h(a); } }\n"),
+    ("typescript", "import type { T } from './d';\nexport * from './d';\nexport function f(a: T): number { return a.n; }\n"),
+    ("tsx", "import { T } from './d';\nexport const f = (a: T) => <div>{a.n}</div>;\n"),
+    ("rust", "use crate::m::{A, B as C};\npub use m::*;\nimpl A { fn f(&self) -> C { C::new() } }\n"),
+    ("go", "package g\n\nimport (\n\t\"fmt\"\n\tq \"x/q\"\n)\n\nfunc (s *S) F(a int) { fmt.Println(q.V, a) }\n"),
+    ("java", "import java.util.List;\nimport static java.lang.Math.max;\nclass J extends K { int f(List<Integer> a) { return max(1, a.size()); } }\n"),
+    ("php", "<?php\nnamespace N;\nuse A\\B\\C;\nuse function A\\f as g;\nclass K extends C { function h($a) { return g($a); } }\n"),
+    ("c", "#include <stdio.h>\n#include \"x.h\"\nstatic int f(struct s *p) { return p->n + g(1); }\n"),
+    ("cpp", "#include \"x.h\"\nnamespace n { class K : public B { int f() { return x::y(); } }; }\n"),
+    ("csharp", "using System;\nusing IO = System.IO;\nnamespace N { class C : B { int F(int a) { return Math.Max(a, 1); } } }\n"),
+];
+
+static GRAMMAR_KEYS: std::sync::LazyLock<std::sync::Mutex<HashMap<&'static str, String>>> = std::sync::LazyLock::new(Default::default);
+
+/// The grammar of `spec` as this build has it: its node kinds and fields, and the tree it makes
+/// of its sample text. A stored row made under another grammar is not read, whoever built it.
+fn grammar_key(spec: &'static crate::langs::LangSpec) -> String {
+    if let Some(k) = GRAMMAR_KEYS.lock().unwrap_or_else(|e| e.into_inner()).get(spec.id) {
+        return k.clone();
+    }
+    let language = (spec.language)();
+    let mut table = format!("{} {}\n", language.abi_version(), language.node_kind_count());
+    for id in 0..language.node_kind_count() as u16 {
+        let kind = language.node_kind_for_id(id).unwrap_or("");
+        table.push_str(&format!("{id} {kind} {} {}\n", language.node_kind_is_named(id), language.node_kind_is_visible(id)));
+    }
+    for id in 1..=language.field_count() as u16 {
+        table.push_str(&format!("field {id} {}\n", language.field_name_for_id(id).unwrap_or("")));
+    }
+    if let Some((_, sample)) = GRAMMAR_SAMPLES.iter().find(|(id, _)| *id == spec.id) {
+        let mut parser = Parser::new();
+        if parser.set_language(&language).is_ok() {
+            table.push_str(&parser.parse(sample, None).map(|t| t.root_node().to_sexp()).unwrap_or_default());
+        }
+    }
+    let key: String = crate::tscache::hash(&[b"grammar", table.as_bytes()]).iter().map(|b| format!("{b:02x}")).collect();
+    GRAMMAR_KEYS.lock().unwrap_or_else(|e| e.into_inner()).insert(spec.id, key.clone());
+    key
+}
+
 fn bindings_of(lang: Lang, path: &str, root: Node, src: &str) -> Vec<Binding> {
     rules!(lang, R => bindings_by::<R>(path, root, src))
 }
@@ -900,9 +1168,9 @@ impl<'a> Resolver<'a> {
         Ok(Resolver {
             ix,
             files,
-            cache: HashMap::new(),
+            loaded: Rc::new(std::cell::RefCell::new(Loaded::new(LOADED_CAP))),
+            freed: TREES_FREED.load(std::sync::atomic::Ordering::Relaxed),
             langs: Default::default(),
-            parsers: HashMap::new(),
             crates: None,
             go_dirs: None,
             go_imports: None,
@@ -935,14 +1203,26 @@ impl<'a> Resolver<'a> {
         &self.files
     }
 
-    /// `path` as the resolver reads it: loaded once, then shared by every use of it.
+    /// `path` as the resolver reads it: loaded once and shared by every use of it while the
+    /// request's loaded set holds it (`LOADED_CAP`), loaded again after that.
     pub(crate) fn file(&mut self, path: &str) -> Rc<FileInfo> {
-        if let Some(f) = self.cache.get(path) {
-            return Rc::clone(f);
+        if let Some(f) = self.loaded.borrow_mut().get(path) {
+            return f;
         }
         let fi = Rc::new(self.load(path));
-        self.cache.insert(path.to_string(), Rc::clone(&fi));
+        self.loaded.borrow_mut().put(path, Rc::clone(&fi));
         fi
+    }
+
+    /// Empties `found` and `tys` when a tree has gone since they were filled: their node ids may
+    /// name nodes of a later tree.
+    fn node_ids_live(&mut self) {
+        let now = TREES_FREED.load(std::sync::atomic::Ordering::Relaxed);
+        if now != self.freed {
+            self.freed = now;
+            self.found.clear();
+            self.tys.clear();
+        }
     }
 
     /// The names `path` imports under a local name of its own, as (local, name of the definition
@@ -975,7 +1255,7 @@ impl<'a> Resolver<'a> {
 
     /// Drops the loaded copy of `path`; a later use loads it again.
     pub fn forget(&mut self, path: &str) {
-        self.cache.remove(path);
+        self.loaded.borrow_mut().remove(path);
         // node ids name nodes of trees still loaded
         self.found.clear();
         self.tys.clear();
@@ -983,6 +1263,7 @@ impl<'a> Resolver<'a> {
 
     /// `find()`, run once per scope, `what` and name.
     fn found_in(&mut self, scope: Node, what: &'static str, name: &str, find: impl FnOnce() -> Vec<(usize, usize)>) -> Spans {
+        self.node_ids_live();
         let key = (scope.id(), what, name.to_string());
         if let Some(f) = self.found.get(&key) {
             return Rc::clone(f);
@@ -1049,51 +1330,57 @@ impl<'a> Resolver<'a> {
         let bytes = repo_bytes(&self.ix.root, path).unwrap_or_default();
         let key = (self.ix.root.clone(), path.to_string());
         let hash = crate::index::content_hash(&bytes);
-        let kept = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&key, &hash);
-        let parsed = kept.unwrap_or_else(|| {
-            let parsed = std::sync::Arc::new(self.parse(path, bytes));
-            PARSED.lock().unwrap_or_else(|e| e.into_inner()).put(key, hash, std::sync::Arc::clone(&parsed));
-            parsed
-        });
-        let defs = self.defs_of(path).unwrap_or_default();
-        FileInfo { parsed, defs }
-    }
-
-    fn parse(&mut self, path: &str, mut bytes: Vec<u8>) -> Parsed {
-        PARSES.with(|n| n.set(n.get() + 1));
-        let src = crate::index::decode_source(&bytes).map(|t| t.into_owned()).unwrap_or_default();
-        // Engine A reads UTF-16 decoded, and UTF-8 without its BOM
-        let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
-        let mut text = src.as_str();
-        if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            bytes.drain(..3);
-            // `src` is empty when the bytes hold a NUL
-            text = src.strip_prefix('\u{FEFF}').unwrap_or(&src);
-        }
-        let raw = (!utf16 && !src.is_empty() && text.as_bytes() != bytes).then(|| {
-            let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
-            (bytes, starts)
-        });
+        let (src, raw) = decoded(bytes);
         let spec = crate::langs::detect(path, Some(&src));
         let lang = spec.and_then(|s| lang_of(s.id));
-        let tree = match (spec, lang) {
-            (Some(spec), Some(_)) => {
-                let p = self.parsers.entry(spec.id).or_insert_with(|| {
-                    let mut p = Parser::new();
-                    let _ = p.set_language(&(spec.language)());
-                    p
-                });
-                p.parse(src.as_bytes(), None)
-            }
+        let kept = PARSED.lock().unwrap_or_else(|e| e.into_inner()).get(&key, &hash);
+        // the index's bindings of these bytes, made from the tree its own parse built
+        let stored = match (&kept, spec, lang) {
+            (None, Some(spec), Some(_)) => self.ix.bindings_of(path, &hash).ok().flatten().and_then(|b| read_bindings(&b, spec)),
             _ => None,
         };
-        let deep = tree.as_ref().is_some_and(too_deep);
-        let tree = tree.filter(|_| !deep);
-        let bindings = match (lang, &tree) {
-            (Some(l), Some(t)) => bindings_of(l, path, t.root_node(), &src),
-            _ => Vec::new(),
+        let parsed = match (kept, &stored) {
+            (Some(p), _) => Some(p),
+            (None, Some(_)) => None,
+            (None, None) => {
+                let p = std::sync::Arc::new(parse_text(path, src.clone(), raw.clone()));
+                PARSED.lock().unwrap_or_else(|e| e.into_inner()).put(key, hash.clone(), std::sync::Arc::clone(&p));
+                Some(p)
+            }
         };
-        Parsed { lang, src, raw, tree, deep, bindings }
+        let (deep, bindings) = match (&parsed, stored) {
+            (Some(p), _) => {
+                // the same bytes under the same path are read in the same language
+                debug_assert_eq!(p.lang, lang, "{path}");
+                (p.deep, p.bindings.clone())
+            }
+            (None, Some(s)) => s,
+            (None, None) => (false, Vec::new()),
+        };
+        let defs = self.defs_of(path).unwrap_or_default();
+        let cell = std::cell::OnceCell::new();
+        if let Some(p) = parsed {
+            let _ = cell.set(Some(p));
+        }
+        FileInfo {
+            lang,
+            src,
+            raw,
+            deep,
+            bindings,
+            defs,
+            path: path.to_string(),
+            root: self.ix.root.clone(),
+            hash,
+            parsed: cell,
+            set: Rc::downgrade(&self.loaded),
+            counted: std::cell::Cell::new(false),
+        }
+    }
+
+    fn parse(&mut self, path: &str, bytes: Vec<u8>) -> Parsed {
+        let (src, raw) = decoded(bytes);
+        parse_text(path, src, raw)
     }
 
     fn defs_of(&self, path: &str) -> Result<Vec<Def>> {
@@ -1129,7 +1416,7 @@ impl<'a> Resolver<'a> {
             return Err(if crate::langs::detect(path, Some("")).is_some() { UNREAD } else { "no grammar" });
         }
         let fi = self.file(path);
-        let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else {
+        let (Some(lang), Some(tree)) = (fi.lang, fi.tree()) else {
             if fi.deep {
                 return Err(TOO_DEEP);
             }
@@ -1381,6 +1668,7 @@ impl<'a> Resolver<'a> {
     /// constructor. None when they do not.
     fn type_of(&mut self, path: &str, fi: &FileInfo, lang: Lang, e: Node) -> Option<Ty> {
         // a chain asks for the type of its receiver once to resolve the method and once to type the call
+        self.node_ids_live();
         if let Some(t) = self.tys.get(&e.id()) {
             return Some(t.clone());
         }
@@ -1622,7 +1910,7 @@ impl<'a> Resolver<'a> {
             out.sort();
             out
         });
-        let root = fi.tree.as_ref()?.root_node();
+        let root = fi.tree()?.root_node();
         let at_byte = at.start_byte();
         let reach = self.found_in(scope, "binder reach", name, || {
             in_scope.iter().map(|&(a, b)| root.named_descendant_for_byte_range(a, b).map_or((0, 0), |n| binder_reach(lang, n, scope))).collect()
@@ -1682,7 +1970,7 @@ impl<'a> Resolver<'a> {
         if func.map(|f| f.id()) != enclosing_function(binder).map(|f| f.id()) {
             return None;
         }
-        let scope = func.or_else(|| fi.tree.as_ref().map(|t| t.root_node()))?;
+        let scope = func.or_else(|| fi.tree().map(|t| t.root_node()))?;
         let name = text(at, &fi.src);
         let assigned = self.found_in(scope, "assignment", name, || assignments(scope, name, &fi.src));
         if assigned.iter().any(|&(s, _)| binder.end_byte() <= s && s < at.start_byte()) {
@@ -1909,14 +2197,14 @@ impl<'a> Resolver<'a> {
     fn base_results(&mut self, id: i64) -> Vec<std::result::Result<i64, &'static str>> {
         let Some((path, _)) = self.def_row(id) else { return Vec::new() };
         let fi = self.file(&path);
-        let (Some(lang), Some(_), Some(d)) = (fi.lang, fi.tree.as_ref(), fi.defs.iter().find(|d| d.id == id)) else { return Vec::new() };
+        let (Some(lang), Some(_), Some(d)) = (fi.lang, fi.tree(), fi.defs.iter().find(|d| d.id == id)) else { return Vec::new() };
         rules!(lang, R => R::bases(self, id, &path, &fi, d, lang))
     }
 
     /// The bases a class header names (`class C(A, B)`, `extends`, `implements`), or the trait of
     /// an `impl Trait for T`.
     fn header_bases(&mut self, id: i64, path: &str, fi: &FileInfo, d: &Def, lang: Lang) -> Vec<std::result::Result<i64, &'static str>> {
-        let Some(tree) = fi.tree.as_ref() else { return Vec::new() };
+        let Some(tree) = fi.tree() else { return Vec::new() };
         let mut named: Vec<Node> = Vec::new();
         let mut stack = vec![tree.root_node()];
         while let Some(n) = stack.pop() {
@@ -2232,7 +2520,7 @@ fn statement_at(fi: &FileInfo, line: i64, kinds: &[&str]) -> Option<std::ops::Ra
     let text_line = fi.src.lines().nth(row)?;
     let column = text_line.len() - text_line.trim_start().len();
     let at = Point { row, column };
-    let mut n = fi.tree.as_ref()?.root_node().named_descendant_for_point_range(at, at)?;
+    let mut n = fi.tree()?.root_node().named_descendant_for_point_range(at, at)?;
     loop {
         if kinds.contains(&n.kind()) && n.start_position().row == row {
             return Some(n.byte_range());
@@ -2273,7 +2561,7 @@ const CLASS_NODES: &[&str] = &["class_definition", "class_declaration", "class",
 fn def_node(fi: &FileInfo, id: i64) -> Option<Node<'_>> {
     let d = fi.defs.iter().find(|d| d.id == id)?;
     let (first, last) = ((d.start - 1).max(0) as usize, (d.end - 1).max(0) as usize);
-    let mut stack = vec![fi.tree.as_ref()?.root_node()];
+    let mut stack = vec![fi.tree()?.root_node()];
     while let Some(n) = stack.pop() {
         if n.end_position().row < first || n.start_position().row > last {
             continue;
@@ -2808,7 +3096,7 @@ mod tests {
         let request = || {
             let mut rv = Resolver::new(&s.ix).unwrap();
             for p in ["a.py", "b.py"] {
-                assert!(rv.file(p).tree.is_some());
+                assert!(rv.file(p).tree().is_some());
             }
         };
         let before = parses();
@@ -2821,6 +3109,221 @@ mod tests {
         assert_eq!(parses() - before, 3, "a changed file is parsed again, the other is not");
         drop(s);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A C chain of includes: `a.c` calls `f`, which `h5.h` defines, through `h1.h` to `h4.h`.
+    fn include_chain() -> Vec<(String, String)> {
+        let mut files = vec![("a.c".to_string(), "#include \"h1.h\"\n\nint main(void) {\n    return f();\n}\n".to_string())];
+        for i in 1..5 {
+            files.push((format!("h{i}.h"), format!("#include \"h{}.h\"\nint g{i}(void);\n", i + 1)));
+        }
+        files.push(("h5.h".to_string(), "static inline int f(void) {\n    return 1;\n}\n".to_string()));
+        files
+    }
+
+    /// The headers a C use is looked up through are read for their includes and definitions, which
+    /// the index holds: only the file of the use and the one that defines the name are parsed.
+    #[test]
+    fn a_lookup_through_included_files_parses_only_the_trees_it_reads() {
+        let files = include_chain();
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let (root, s) = indexed("include_chain", &refs);
+        let parses = || PARSES.with(|n| n.get());
+        let before = parses();
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        let got = rv.resolve_at("a.c", 4, 11, "f").map(|(id, how)| (s.ix.chunk(id).unwrap().unwrap().path, how));
+        let parsed = parses() - before;
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(got, Ok(("h5.h".to_string(), "import")));
+        assert_eq!(parsed, 2, "a.c for the use and h5.h for f's body, not the four headers between");
+    }
+
+    /// A file whose bytes are not those the index parsed, or whose stored bindings are gone, is
+    /// parsed, and the answer is the one a parse gives.
+    #[test]
+    fn a_changed_file_or_a_missing_row_is_parsed_as_before() {
+        let files = include_chain();
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let (root, s) = indexed("include_stale", &refs);
+        let parses = || PARSES.with(|n| n.get());
+        let ask = || {
+            let mut rv = Resolver::new(&s.ix).unwrap();
+            let before = parses();
+            let got = rv.resolve_at("a.c", 4, 11, "f").map(|(id, how)| (s.ix.chunk(id).unwrap().unwrap().path, how));
+            (got, parses() - before)
+        };
+        let want = Ok(("h5.h".to_string(), "import"));
+        // h3.h changes after the index read it: its stored bindings are not taken
+        std::fs::write(root.join("h3.h"), "#include \"h4.h\"\nint g3(void); /* changed */\n").unwrap();
+        let stale = ask();
+        // no stored bindings at all: every file the walk reads is parsed
+        rusqlite::Connection::open(root.join(".scrutate").join("index.db")).unwrap().execute("UPDATE artifacts SET binds = NULL", []).unwrap();
+        let none = ask();
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(stale.0, want);
+        assert_eq!(none.0, want);
+        // the store kept a.c, h3.h and h5.h from the first request; the second parses the rest
+        assert_eq!((stale.1, none.1), (3, 3), "stale: a.c, h3.h, h5.h; none: h1.h, h2.h, h4.h");
+    }
+
+    /// What the index stores of a file's imports is what a parse of its bytes gives the resolver,
+    /// in every language the resolver reads, also after an update parsed a file again from its
+    /// previous tree.
+    #[test]
+    fn the_bindings_the_index_stores_are_those_a_parse_gives() {
+        let files = [
+            ("a.py", "import os\nfrom pkg.mod import thing as t, other\nfrom . import sib\n\n\ndef f():\n    import inner\n    return t\n"),
+            ("pkg/mod.py", "thing = 1\nother = 2\n"),
+            ("b.js", "import x, { y as z } from './c';\nconst h = require('./c');\nexport { z as w };\nexport default function () {}\n"),
+            ("c.ts", "import type { T } from './d';\nexport * from './d';\nexport const y = 1;\n"),
+            ("d.ts", "export type T = number;\n"),
+            ("src/lib.rs", "mod m;\nuse crate::m::{A, B as C};\nuse std::collections::HashMap;\npub use m::*;\n"),
+            ("src/m.rs", "pub struct A;\npub struct B;\n"),
+            ("g/g.go", "package g\n\nimport (\n\t\"fmt\"\n\tq \"example.com/x/q\"\n)\n\nfunc G() { fmt.Println(q.V) }\n"),
+            ("J.java", "package p;\nimport java.util.List;\nimport static java.lang.Math.max;\nimport p.q.*;\nclass J {}\n"),
+            ("i.php", "<?php\nnamespace N;\nuse A\\B\\C;\nuse function A\\f as g;\nuse A\\{D, E as F};\n"),
+            ("x.c", "#include <stdio.h>\n#include \"x.h\"\nint main(void) { return 0; }\n"),
+            ("x.h", "#include \"y.h\"\nint x(void);\n"),
+            ("y.cpp", "#include \"x.h\"\nnamespace n { int y() { return x(); } }\n"),
+            ("C.cs", "using System;\nusing IO = System.IO;\nusing static System.Math;\nnamespace N { class C {} }\n"),
+        ];
+        let (root, s) = indexed("binds_equal", &files);
+        let compare = |s: &Searcher, when: &str| {
+            let mut importing = 0;
+            for (p, _) in &files {
+                let bytes = std::fs::read(root.join(p)).unwrap();
+                let hash = crate::index::content_hash(&bytes);
+                let (src, raw) = decoded(bytes);
+                let spec = crate::langs::detect(p, Some(&src)).unwrap();
+                let fresh = parse_text(p, src, raw);
+                let row = s.ix.bindings_of(p, &hash).unwrap().unwrap_or_else(|| panic!("{when}: no row for {p}"));
+                let (deep, stored) = read_bindings(&row, spec).unwrap_or_else(|| panic!("{when}: unreadable row for {p}"));
+                assert_eq!((deep, &stored), (fresh.deep, &fresh.bindings), "{when}: {p}");
+                importing += usize::from(!stored.is_empty());
+            }
+            assert_eq!(importing, 11, "{when}: the files with imports");
+        };
+        compare(&s, "first build");
+        drop(s);
+        // an edit at the top of every file: languages the index reparses from the old tree do so
+        for (p, body) in &files {
+            let edited = if p.ends_with(".php") {
+                body.replacen("<?php\n", "<?php\n// x\n", 1)
+            } else if p.ends_with(".py") {
+                format!("# x\n{body}")
+            } else {
+                format!("// x\n{body}")
+            };
+            std::fs::write(root.join(p), edited).unwrap();
+        }
+        let (s, _) = crate::open_updated(&root, false).unwrap();
+        let s = s.into_searcher();
+        compare(&s, "after an update");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A request's loaded files stay under its cap, trees included; a file that left is loaded
+    /// again when asked for, and gives the same answers.
+    #[test]
+    fn a_request_holds_its_loaded_files_under_a_cap() {
+        let files = include_chain();
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let (root, s) = indexed("loaded_cap", &refs);
+        let ask = |cap: usize| {
+            let mut rv = Resolver::new(&s.ix).unwrap();
+            rv.loaded = Rc::new(std::cell::RefCell::new(Loaded::new(cap)));
+            let mut got = Vec::new();
+            let mut most = 0;
+            for _ in 0..3 {
+                for p in ["a.c", "h1.h", "h2.h", "h3.h", "h4.h", "h5.h"] {
+                    assert!(rv.file(p).tree().is_some());
+                    most = most.max(rv.loaded.borrow().weight().1);
+                }
+                got.push(rv.resolve_at("a.c", 4, 11, "f").map(|(id, how)| (s.ix.chunk(id).unwrap().unwrap().path, how)));
+            }
+            let held = rv.loaded.borrow().weight().0;
+            (got, most, held)
+        };
+        let (all, _, held) = ask(usize::MAX);
+        let one = std::sync::Arc::new(parse_text("h5.h", files[5].1.clone(), None)).weight() + files[5].1.len();
+        let (small, most, few) = ask(one * 2);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(held, 6);
+        assert!(few < 6, "the small cap held {few} files");
+        assert!(most <= one * 2 + one, "held {most} with a cap of {}", one * 2);
+        assert_eq!(small, all);
+        assert!(all.iter().all(|g| *g == Ok(("h5.h".to_string(), "import"))), "{all:?}");
+    }
+
+    /// Files loaded without their trees and then asked for them, each through a hit on the loaded
+    /// set, keep the set under its cap: a tree made after a file was loaded counts at once.
+    #[test]
+    fn trees_made_after_their_files_were_loaded_keep_the_set_under_its_cap() {
+        let body = |i: usize| format!("#include \"h.h\"\n\nint f{i}(int a, int b) {{\n    return a * b + {i} - g(a) + g(b) * (a - b);\n}}\n");
+        let mut files: Vec<(String, String)> = (0..8).map(|i| (format!("f{i}.c"), body(i))).collect();
+        files.push(("h.h".to_string(), "int g(int x);\n".to_string()));
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let (root, s) = indexed("loaded_hits", &refs);
+        let one = std::sync::Arc::new(parse_text("f0.c", body(0), None)).weight() + body(0).len() + 1024;
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        rv.loaded = Rc::new(std::cell::RefCell::new(Loaded::new(3 * one)));
+        let paths: Vec<String> = (0..8).map(|i| format!("f{i}.c")).collect();
+        // the index holds their bindings, so loading them parses none
+        for p in &paths {
+            assert!(rv.file(p).parsed.get().is_none(), "{p} was parsed on load");
+        }
+        let mut most = 0;
+        for p in &paths {
+            let fi = rv.file(p);
+            assert!(fi.tree().is_some());
+            most = most.max(rv.loaded.borrow().weight().1);
+        }
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(most <= 3 * one + one, "the set weighed {most} with a cap of {}", 3 * one);
+    }
+
+    /// The bindings the index stores and `BINDINGS_REVISION` change together: a row of an older
+    /// revision is never read, so a change of what `Rules::bindings` makes raises the revision.
+    #[test]
+    fn the_stored_bindings_and_their_revision_change_together() {
+        let files = [
+            ("a.py", "import os\nfrom m import a as b\nfrom . import c\n"),
+            ("b.js", "import x, { y as z } from './c';\nconst h = require('./c');\nexport { z as w };\n"),
+            ("c.ts", "import type { T } from './d';\nexport * from './d';\n"),
+            ("src/lib.rs", "use crate::m::{A, B as C};\npub use m::*;\n"),
+            ("g.go", "package g\n\nimport (\n\t\"fmt\"\n\tq \"x/q\"\n)\n"),
+            ("J.java", "import java.util.List;\nimport static java.lang.Math.max;\n"),
+            ("i.php", "<?php\nuse A\\B\\C;\nuse function A\\f as g;\n"),
+            ("x.c", "#include <stdio.h>\n#include \"x.h\"\n"),
+            ("C.cs", "using System;\nusing IO = System.IO;\n"),
+        ];
+        let mut all = Vec::new();
+        for (p, src) in files {
+            let spec = crate::langs::detect(p, Some(src)).unwrap();
+            let mut parser = Parser::new();
+            parser.set_language(&(spec.language)()).unwrap();
+            let tree = parser.parse(src, None).unwrap();
+            let row = index_bindings(p, src, &tree).unwrap();
+            let (deep, bindings) = read_bindings(&row, spec).unwrap();
+            all.extend(format!("{p} {deep} {bindings:?}\n").into_bytes());
+            // a row another grammar made is not read
+            let (rev, _, id, deep, rows): (u32, String, String, bool, serde_json::Value) = serde_json::from_slice(&row).unwrap();
+            let other = serde_json::to_vec(&(rev, "another grammar", id, deep, rows)).unwrap();
+            assert_eq!(read_bindings(&other, spec), None, "{p}");
+        }
+        let hash: String = <sha1::Sha1 as sha1::Digest>::digest(&all).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            (BINDINGS_REVISION, hash.as_str()),
+            (1, "58ff2710c87b4bb9213cf9ff58f44b9f6d8313b8"),
+            "what the rules take from a tree changed: raise BINDINGS_REVISION and set this hash"
+        );
     }
 
     /// The store drops the least recently used files to stay under its cap.
@@ -3858,7 +4361,7 @@ mod tests {
         let mut rv = Resolver::new(&s.ix).unwrap();
         let found = rv.import_files("m.rb", 1, "a");
         let used = rv.resolve_at("m.rb", 2, 5, "a");
-        let cached = rv.cache.len();
+        let cached = rv.loaded.borrow().files.len();
         drop(rv);
         drop(s);
         let _ = std::fs::remove_dir_all(&root);

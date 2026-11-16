@@ -833,9 +833,14 @@ standard expression macro answers `macro argument` where the walk would tie it t
 One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolved `refs`, `deps`,
 `rdeps` and the language server's definition and references requests each open one `Names` per
 request and ask what the occurrence at a place refers to; no other module builds a resolver.
-Within a request each file is read and parsed once, however many of its call sites are asked
-about, and a process that answers many requests keeps each file's parse for the next one, found
-by its content and bounded by weight ([ADR 0004](adr/0004-parsed-files-kept-across-requests.md)). Of a `callers` run that keeps nothing (`callers size` on Guava, 1,970 sites), about half is
+Within a request a file is read once while the request's set of loaded files holds it, however
+many of its call sites are asked about; the set holds at most 256 MiB of weight (`LOADED_CAP`,
+weighed as ADR 4's store weighs) and drops the least recently used, so with that store the
+resolver holds at most 512 MiB of weight plus the file in use. A file is parsed only when the resolver reads its tree: the imports of a file the index
+parsed come from the index, stored by content beside its artifact
+([ADR 0008](adr/0008-resolver-reads-bindings-from-the-index.md)). A process that answers many
+requests keeps each file's parse for the next one, found by its content and bounded by weight
+([ADR 0004](adr/0004-parsed-files-kept-across-requests.md)). Of a `callers` run that keeps nothing (`callers size` on Guava, 1,970 sites), about half is
 reading and parsing the call sites' files and half the walk at each site. A fifth used to be
 asking the index, at each call on an outside type, whether the repository extends that type with
 the method; the walker now asks once per type and name.

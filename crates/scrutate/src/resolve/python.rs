@@ -166,7 +166,7 @@ impl Resolver<'_> {
 
 /// Whether the file assigns `name` at its top level (a Python `T = TypeVar("T")` or alias).
 fn top_level_binder(fi: &FileInfo, name: &str) -> bool {
-    let Some(tree) = fi.tree.as_ref() else { return false };
+    let Some(tree) = fi.tree() else { return false };
     let root = tree.root_node();
     let mut cur = root.walk();
     let found = root.named_children(&mut cur).any(|s| {

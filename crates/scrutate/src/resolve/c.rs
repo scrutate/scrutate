@@ -297,7 +297,7 @@ impl Resolver<'_> {
         let fi = self.file(path);
         let Some(d) = fi.defs.iter().find(|d| d.id == id) else { return false };
         let (first, last) = ((d.start - 1).max(0) as usize, (d.end - 1).max(0) as usize);
-        let Some(tree) = fi.tree.as_ref() else { return false };
+        let Some(tree) = fi.tree() else { return false };
         let mut stack = vec![tree.root_node()];
         while let Some(n) = stack.pop() {
             if n.end_position().row < first || n.start_position().row > last {

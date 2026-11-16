@@ -217,7 +217,7 @@ impl Rules for Rust {
 /// Whether impl block `s` is one of type `id`: its `for` type resolves to `id`.
 fn rust_impl_of(r: &mut Resolver, s: &Symbol, id: i64) -> bool {
     let fi = r.file(&s.path);
-    let Some(tree) = fi.tree.as_ref() else { return false };
+    let Some(tree) = fi.tree() else { return false };
     // an impl block has no name of its own for def_node to match: it is the impl_item on its line
     let row = (s.start - 1).max(0) as usize;
     let mut stack = vec![tree.root_node()];
@@ -448,7 +448,7 @@ impl Resolver<'_> {
     /// The `mod name;` declarations of a Rust file: (line, name, the file of that module).
     pub fn rust_mods(&mut self, from: &str) -> Vec<(i64, String, Option<String>)> {
         let fi = self.file(from);
-        let (Some(Lang::Rust), Some(tree)) = (fi.lang, &fi.tree) else { return Vec::new() };
+        let (Some(Lang::Rust), Some(tree)) = (fi.lang, fi.tree()) else { return Vec::new() };
         let mut out = Vec::new();
         let mut stack = vec![(tree.root_node(), self.rust_own_dir(from))];
         while let Some((n, dir)) = stack.pop() {
