@@ -626,3 +626,147 @@ fn dead_is_the_functions_nothing_calls_however_they_share_lines() {
     eprintln!("{edges} calls, {pairs} of them from a definition on its callee's own line");
     assert!(pairs >= 20, "only {pairs} same-line calls drawn");
 }
+
+/// Each line, and the same definitions one to a line: `dead` gives the same answer, a neighbour's
+/// modifier (`private`, `internal`, `public`, `export`, `pub`, `extern`, `override`, an attribute)
+/// read as nobody's but its own.
+#[test]
+fn a_definition_s_modifiers_are_its_own_however_its_line_is_shared() {
+    let rust_lib = "[package]\nname = \"t\"\nversion = \"0.1.0\"\n";
+    // (file, the definitions as one line's parts, what holds them on each side)
+    let rows: &[(&str, &[&str], &str, &str)] = &[
+        ("K.kt", &["private fun x() = 1", "fun api() = x()", "private fun lone() = 2"], "class K { ", " }"),
+        ("K.kt", &["fun api() = x()", "private fun x() = 1", "private fun lone() = 2"], "class K { ", " }"),
+        ("S.scala", &["private def x() = 1", "def api() = x()", "private def lone() = 2"], "class S { ", " }"),
+        ("S.scala", &["def api() = x()", "private def x() = 1", "private def lone() = 2"], "class S { ", " }"),
+        (
+            "b.php",
+            &["private function x() { return 1; }", "function api() { return $this->x(); }", "private function lone() { return 2; }"],
+            "<?php class Box { ",
+            " }",
+        ),
+        (
+            "b.php",
+            &["function api() { return $this->x(); }", "private function x() { return 1; }", "private function lone() { return 2; }"],
+            "<?php class Box { ",
+            " }",
+        ),
+        ("P.java", &["public int api() { return x(); }", "private int x() { return 1; }", "private int lone() { return 2; }"], "class P { ", " }"),
+        ("P.java", &["private int x() { return 1; }", "public int api() { return x(); }", "private int lone() { return 2; }"], "public class P { ", " }"),
+        ("P.cs", &["public int Api() { return X(); }", "private int X() { return 1; }", "private int Lone() { return 2; }"], "class P { ", " }"),
+        ("P.cs", &["internal int Api() { return X(); }", "private int X() { return 1; }", "private int Lone() { return 2; }"], "class P { ", " }"),
+        ("src/lib.rs", &["pub fn api() -> i32 { a() }", "fn a() -> i32 { 1 }", "fn lone() -> i32 { 2 }"], "", ""),
+        ("src/lib.rs", &["extern \"C\" fn cb() -> i32 { a() }", "fn a() -> i32 { 1 }", "fn lone() -> i32 { 2 }"], "", ""),
+        ("src/lib.rs", &["#[no_mangle] fn hook() -> i32 { a() }", "fn a() -> i32 { 1 }", "fn lone() -> i32 { 2 }"], "", ""),
+        ("a.ts", &["export function api() { return a(); }", "function a() { return 1; }", "function lone() { return 2; }"], "", ""),
+        ("a.ts", &["function a() { return 1; }", "export function api() { return a(); }", "function lone() { return 2; }"], "", ""),
+        (
+            "o.ts",
+            &["class B { m(): number { return 1; } }", "class C extends B { override m(): number { return 2; } lone(): number { return 3; } }"],
+            "",
+            "\nexport const used = [new C()];",
+        ),
+    ];
+    for &(file, parts, open, close) in rows {
+        let dead_of = |text: String| {
+            let mut files = vec![(file, text.as_str())];
+            if file.ends_with(".rs") {
+                files.push(("Cargo.toml", rust_lib));
+            }
+            let r = Repo::new("modifiers", &files);
+            names(&r.json(&["dead"]), "dead")
+        };
+        let one = dead_of(format!("{open}{}{close}\n", parts.join(if file.ends_with(".kt") || file.ends_with(".scala") { "; " } else { " " })));
+        let split = dead_of(format!("{}\n{}\n{}\n", open.trim_end(), parts.join("\n"), close.trim_start()));
+        assert_eq!(one, split, "{file} {parts:?}: one line against one definition a line");
+    }
+}
+
+/// Generated trees with modifiers drawn at random (Kotlin and Java methods `private` or not,
+/// TypeScript functions exported or not, a Rust library's functions `pub` or not), one to three
+/// to a line: `dead` lists exactly those that are no entry point and that nothing calls.
+#[test]
+fn dead_takes_each_definition_s_own_modifiers_however_they_share_lines() {
+    let (mut shared, mut entries) = (0, 0);
+    for seed in [5u64, 9, 21, 33, 47] {
+        let mut state = seed;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize
+        };
+        let (mut files, mut want) = (Vec::new(), Vec::new());
+        for lang in ["kt", "java", "ts", "rs"] {
+            let n = 10;
+            let names: Vec<String> = (0..n).map(|i| format!("{lang}{seed}_{i}_zq")).collect();
+            let open: Vec<bool> = (0..n).map(|_| next() % 2 == 0).collect();
+            let mut called = vec![false; n];
+            let calls: Vec<Vec<usize>> = (0..n)
+                .map(|i| {
+                    let mut c: Vec<usize> = (0..next() % 3).map(|_| next() % n).filter(|&j| j != i).collect();
+                    c.sort_unstable();
+                    c.dedup();
+                    c.iter().for_each(|&j| called[j] = true);
+                    c
+                })
+                .collect();
+            let def = |i: usize| {
+                let sum: String = calls[i].iter().map(|&j| format!("{}(v) + ", names[j])).collect();
+                let (pub_, name) = (open[i], &names[i]);
+                match lang {
+                    "kt" => format!("{}fun {name}(v: Int): Int = {sum}v", if pub_ { "" } else { "private " }),
+                    "java" => format!("{} int {name}(int v) {{ return {sum}v; }}", if pub_ { "public" } else { "private" }),
+                    "ts" => format!("{}function {name}(v: number): number {{ return {sum}v; }}", if pub_ { "export " } else { "" }),
+                    _ => format!("{}fn {name}(v: i32) -> i32 {{ {sum}v }}", if pub_ { "pub " } else { "" }),
+                }
+            };
+            let mut order: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                order.swap(i, next() % (i + 1));
+            }
+            let (head, sep, tail, file) = match lang {
+                "kt" => ("class K {\n", "; ", "}\n", "K.kt"),
+                "java" => ("public class P {\n", " ", "}\n", "P.java"),
+                "ts" => ("", " ", "", "a.ts"),
+                _ => ("", " ", "", "src/lib.rs"),
+            };
+            let mut text = head.to_string();
+            let mut at = 0;
+            while at < n {
+                let group = &order[at..(at + 1 + next() % 3).min(n)];
+                shared += group.len() - 1;
+                text += &group.iter().map(|&i| def(i)).collect::<Vec<_>>().join(sep);
+                text += "\n";
+                at += group.len();
+            }
+            text += tail;
+            let qual = |i: usize| match lang {
+                "kt" => format!("K.{}", names[i]),
+                "java" => format!("P.{}", names[i]),
+                _ => names[i].clone(),
+            };
+            entries += open.iter().filter(|&&o| o).count();
+            want.extend((0..n).filter(|&i| !open[i] && !called[i]).map(|i| format!("{file} {}", qual(i))));
+            files.push((file.to_string(), text));
+        }
+        files.push(("Cargo.toml".into(), "[package]\nname = \"t\"\nversion = \"0.1.0\"\n".into()));
+        let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+        let r = Repo::new(&format!("modifier_lines_{seed}"), &files);
+        want.sort();
+        assert_eq!(names(&r.json(&["dead"]), "dead"), want, "seed {seed}: {files:#?}");
+    }
+    eprintln!("{entries} entry points, {shared} definitions sharing a line with the one before");
+    assert!(shared >= 30, "only {shared} shared lines drawn");
+}
+
+/// A C `typedef struct fe {..} fe;` on one line is no class and its member: the pair stays
+/// undecided (its name stands on lines tied to the other), not an entry point by a holder that
+/// shares its name.
+#[test]
+fn a_typedef_of_a_struct_of_its_own_name_is_no_constructor() {
+    let r = Repo::new(
+        "typedef_pair",
+        &[("a.c", "typedef struct fe { int v[10]; } fe;\nstatic void use(fe *x) { (void)x; }\nint main(void) { fe a; use(&a); return 0; }\n")],
+    );
+    let v = r.json(&["dead"]);
+    assert_eq!(names(&v, "undecided"), ["a.c fe.fe"], "{v:#}");
+}

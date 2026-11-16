@@ -418,6 +418,11 @@ incompatible index by itself, and that is never breaking.
   counts as its own only inside the span its grammar gives it. Where no grammar gives a span, a
   definition whose name stands again on that line is undecided, with why
   ([CLI](docs/CLI.md#engine-b)).
+- `dead` reads a definition's modifiers from its own text where another definition shares its
+  line: a Kotlin, Scala or PHP public method after a `private` one on the same line was listed as
+  dead, and a private method or function after a `public`, `export`, `pub` or `extern` one (Java,
+  C#, TypeScript, Rust) was taken for an entry point and never listed; a one-line class's methods
+  now have that class as their holder ([CLI](docs/CLI.md#engine-b)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it

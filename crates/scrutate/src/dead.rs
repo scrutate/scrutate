@@ -109,8 +109,11 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
                 .get(rel.as_str())
                 .map(|v| v.iter().copied().filter(|s| KINDS.contains(&s.kind.as_str()) && inside(&s.path)).collect())
                 .unwrap_or_default();
-            let rules = if mine.is_empty() { Vec::new() } else { file_rules(root, rel, &src, &mine, &by_file[rel.as_str()]) };
-            let spans = edge_spans(rel, &src, &mine, &found, &id_by_sym);
+            // parsed once, when a definition shares a line with another or names itself again there
+            let chunks: std::cell::OnceCell<Vec<crate::parse::Chunk>> = Default::default();
+            let parsed = || chunks.get_or_init(|| crate::parse::parse_file_with(rel, &src, None).0.chunks).as_slice();
+            let rules = if mine.is_empty() { Vec::new() } else { file_rules(root, rel, &src, &mine, &by_file[rel.as_str()], &parsed) };
+            let spans = edge_spans(&mine, &found, &id_by_sym, &parsed);
             (found, rules, false, spans)
         })
         .collect();
@@ -417,10 +420,23 @@ struct Facts<'a> {
     /// TypeScript: the file adds to a module or the global scope, whose interfaces merge with its own
     augments: bool,
     src: &'a str,
+    /// the spans of the definitions that share their first line with another (None: no grammar gave one)
+    own: HashMap<i64, Option<(usize, usize)>>,
 }
 
-fn file_rules(root: &Path, rel: &str, src: &str, mine: &[&Symbol], all: &[&Symbol]) -> Vec<(i64, Rule)> {
+fn file_rules<'a>(root: &Path, rel: &str, src: &str, mine: &[&Symbol], all: &[&Symbol], parsed: &dyn Fn() -> &'a [crate::parse::Chunk]) -> Vec<(i64, Rule)> {
     let lang = crate::langs::detect(rel, Some(src)).map_or("", |s| s.id);
+    // a definition whose first line another one starts or ends on: its modifiers are read from its
+    // own span, as a neighbour's would be read as its own from the line
+    let mut edges: HashMap<i64, usize> = HashMap::new();
+    for s in all {
+        *edges.entry(s.start).or_default() += 1;
+        if s.end != s.start {
+            *edges.entry(s.end).or_default() += 1;
+        }
+    }
+    let own: HashMap<i64, Option<(usize, usize)>> =
+        all.iter().filter(|d| edges.get(&d.start).copied().unwrap_or(0) > 1).map(|d| (d.id, span_of(parsed(), d))).collect();
     let lines: Vec<&str> = src.lines().collect();
     let facts = Facts {
         lang,
@@ -435,14 +451,20 @@ fn file_rules(root: &Path, rel: &str, src: &str, mine: &[&Symbol], all: &[&Symbo
         augments: matches!(lang, "typescript" | "tsx") && (src.contains("declare module") || src.contains("declare global")),
         lines,
         src,
+        own,
     };
     mine.iter()
         .map(|d| {
-            // the innermost holder: a class, a type or an impl around it
-            let parent = all
-                .iter()
-                .filter(|p| p.id != d.id && p.start <= d.start && d.end <= p.end && (p.start, p.end) != (d.start, d.end))
-                .min_by_key(|p| p.end - p.start);
+            // the innermost holder: a class, a type or an impl around it; by their spans where they
+            // share a line (a one-line class), else by their lines
+            // (methods and functions alone: a C `typedef struct s {..} s;` is no class and member)
+            let holds = |p: &Symbol| match (facts.own.get(&p.id), facts.own.get(&d.id)) {
+                (Some(Some((pa, pb))), Some(Some((da, db)))) if matches!(d.kind.as_str(), "method" | "function") => {
+                    pa <= da && db <= pb && (pa, pb) != (da, db)
+                }
+                _ => p.start <= d.start && d.end <= p.end && (p.start, p.end) != (d.start, d.end),
+            };
+            let parent = all.iter().filter(|p| p.id != d.id && holds(p)).min_by_key(|p| p.end - p.start);
             (d.id, rule(rel, &facts, d, parent.copied()))
         })
         .collect()
@@ -452,7 +474,12 @@ fn file_rules(root: &Path, rel: &str, src: &str, mine: &[&Symbol], all: &[&Symbo
 /// outside of: their name more than once on their first line, or on a last line of their own.
 /// Such a file is parsed again for its definitions' spans (`parse::Chunk::bytes`); one that needs
 /// none is not.
-fn edge_spans(rel: &str, src: &str, mine: &[&Symbol], found: &[(u32, i64, usize)], id_by_sym: &HashMap<i64, u32>) -> Vec<(i64, Option<(usize, usize)>)> {
+fn edge_spans<'a>(
+    mine: &[&Symbol],
+    found: &[(u32, i64, usize)],
+    id_by_sym: &HashMap<i64, u32>,
+    parsed: &dyn Fn() -> &'a [crate::parse::Chunk],
+) -> Vec<(i64, Option<(usize, usize)>)> {
     let edge = |s: &Symbol| {
         let Some(&id) = id_by_sym.get(&s.id) else { return false };
         let on = |line: i64| found.iter().filter(|&&(n, l, _)| n == id && l == line).count();
@@ -462,14 +489,12 @@ fn edge_spans(rel: &str, src: &str, mine: &[&Symbol], found: &[(u32, i64, usize)
     if wanted.is_empty() {
         return Vec::new();
     }
-    let chunks = crate::parse::parse_file_with(rel, src, None).0.chunks;
-    wanted
-        .into_iter()
-        .map(|s| {
-            let span = chunks.iter().find(|c| c.qualname == s.qualname && c.kind == s.kind && (c.start, c.end) == (s.start, s.end)).and_then(|c| c.bytes());
-            (s.id, span)
-        })
-        .collect()
+    wanted.into_iter().map(|s| (s.id, span_of(parsed(), s))).collect()
+}
+
+/// The span the grammar gave the chunk of `s`.
+fn span_of(chunks: &[crate::parse::Chunk], s: &Symbol) -> Option<(usize, usize)> {
+    chunks.iter().find(|c| c.qualname == s.qualname && c.kind == s.kind && (c.start, c.end) == (s.start, s.end)).and_then(|c| c.bytes())
 }
 
 /// Whether `rel` is a source file of a Rust library crate: under the `src/` of the nearest
@@ -503,11 +528,45 @@ fn named_line<'a>(f: &Facts<'a>, d: &Symbol) -> (usize, &'a str) {
         .map_or((first, f.lines.get(first).copied().unwrap_or("")), |i| (i, f.lines[i]))
 }
 
+/// `line` (one of `f.lines`) with the text of every definition that shares a line blanked out.
+fn outside_definitions(f: &Facts, line: &str) -> String {
+    let at = line.as_ptr() as usize - f.src.as_ptr() as usize;
+    let mut out = line.as_bytes().to_vec();
+    for &(a, b) in f.own.values().flatten() {
+        let (from, to) = (a.max(at), b.min(at + line.len()));
+        if from < to {
+            out[from - at..to - at].fill(b' ');
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The text before `d`'s name that holds its own modifiers and attributes: on the line that names
+/// it, or from its own span where another definition shares its first line. None: no span says
+/// which part of that line is its own.
+fn before<'a>(f: &Facts<'a>, d: &Symbol) -> Option<&'a str> {
+    match f.own.get(&d.id) {
+        Some(Some((a, b))) => {
+            // what is written before its span on its line belongs to it too (`export` before a
+            // function node), back to the end of a neighbour or a holder's `{`
+            let line = f.src[..*a].rfind('\n').map_or(0, |i| i + 1);
+            let from = f.src[line..*a].rfind(['{', '}', ';']).map_or(line, |i| line + i + 1);
+            let text = &f.src[from..*b];
+            Some(&text[..word_at(text, &d.name).unwrap_or(0)])
+        }
+        Some(None) => None,
+        None => {
+            let decl = named_line(f, d).1;
+            Some(&decl[..word_at(decl, &d.name).unwrap_or(0)])
+        }
+    }
+}
+
 /// Whether an attribute or decorator of `d` (above the line that names it, or on that line before
 /// the name) may register it: any but the inert ones.
 fn registered(f: &Facts, d: &Symbol) -> bool {
-    let (at, decl) = named_line(f, d);
-    let before = &decl[..word_at(decl, &d.name).unwrap_or(0)];
+    let at = named_line(f, d).0;
+    let before = before(f, d).unwrap_or("");
     let first = (d.start.max(1) - 1) as usize;
     let above = f.lines.get(first..at).unwrap_or(&[]);
     above.iter().map(|l| l.trim()).chain(before.split_whitespace()).any(|a| {
@@ -526,19 +585,30 @@ fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
     if crate::text::is_test_path(path) || main {
         return Rule::Entry;
     }
+    let shared = |s: &Symbol| f.own.get(&s.id).is_some_and(Option::is_none);
+    if shared(d) || parent.is_some_and(shared) {
+        return Rule::Base("another definition shares its line, and no grammar span says which of the line's modifiers are its own".into());
+    }
     let in_type = parent.filter(|p| p.kind != "function" && p.kind != "method");
     // an attribute on the type or impl around it registers its methods too (`#[pymethods]`)
     if registered(f, d) || in_type.is_some_and(|p| registered(f, p)) {
         return Rule::Entry;
     }
-    let decl = named_line(f, d).1;
-    let before = &decl[..word_at(decl, name).unwrap_or(0)];
+    let before = before(f, d).unwrap_or("");
+    // its own text where it shares its line, else the line that names it
+    let decl = match f.own.get(&d.id) {
+        Some(Some((a, b))) => &f.src[*a..*b],
+        _ => named_line(f, d).1,
+    };
     let words: Vec<&str> = before.split(|c: char| !word_char(c)).filter(|w| !w.is_empty()).collect();
     let word = |w: &str| words.contains(&w);
     if word("override") || matches!(name, "constructor" | "initialize") || parent.is_some_and(|p| p.name == name) {
         return Rule::Entry;
     }
-    let header = |p: &Symbol| named_line(f, p).1;
+    let header = |p: &Symbol| match f.own.get(&p.id) {
+        Some(Some((a, b))) => &f.src[*a..*b],
+        _ => named_line(f, p).1,
+    };
     match f.lang {
         "python" => {
             let quoted = || f.src.contains(&format!("'{name}'")) || f.src.contains(&format!("\"{name}\""));
@@ -548,9 +618,16 @@ fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
             }
         }
         "rust" => {
-            let trait_impl = in_type.is_some_and(|p| {
-                let first = (p.start.max(1) - 1) as usize;
-                f.lines[first..f.lines.len().min(p.end as usize)].iter().find(|l| has_word(l, "impl")).is_some_and(|l| l.contains(" for "))
+            let trait_impl = in_type.is_some_and(|p| match f.own.get(&p.id) {
+                // its own header, up to its body
+                Some(Some((a, b))) => {
+                    let text = &f.src[*a..*b];
+                    text[..text.find('{').unwrap_or(text.len())].contains(" for ")
+                }
+                _ => {
+                    let first = (p.start.max(1) - 1) as usize;
+                    f.lines[first..f.lines.len().min(p.end as usize)].iter().find(|l| has_word(l, "impl")).is_some_and(|l| l.contains(" for "))
+                }
             });
             let public = |b: &str| b.split_whitespace().any(|w| w == "pub");
             let pub_trait = in_type.is_some_and(|p| p.kind == "trait" && public(header(p)));
@@ -568,7 +645,16 @@ fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
         "javascript" | "typescript" | "tsx" => {
             let exported_class = in_type.is_some_and(|p| has_word(header(p), "export"));
             let merged = f.augments && matches!(d.kind.as_str(), "interface" | "type" | "class");
-            if path.ends_with(".d.ts") || merged || word("export") || exported_class || f.exports.iter().any(|l| has_word(l, name)) {
+            // where it shares its line, an export list there is what the line holds outside the
+            // definitions' own text: `export function api` exports `api`, not its neighbour
+            let listed = match f.own.get(&d.id) {
+                Some(Some(_)) => {
+                    let rest = outside_definitions(f, named_line(f, d).1);
+                    (has_word(&rest, "export") || has_word(&rest, "exports")) && has_word(&rest, name)
+                }
+                _ => f.exports.iter().any(|l| has_word(l, name)),
+            };
+            if path.ends_with(".d.ts") || merged || word("export") || exported_class || listed {
                 return Rule::Entry;
             }
         }
@@ -621,6 +707,33 @@ fn extends(lang: &str, header: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With no span for a definition that shares its line, rule() cannot say which of the line's
+    /// modifiers are its own: the definition is undecided when nothing names it, never dead and
+    /// never an entry point, and so is one whose holder is in that state.
+    #[test]
+    fn a_definition_sharing_its_line_with_no_span_is_undecided() {
+        let sym =
+            |id: i64, kind: &str, name: &str| Symbol { id, path: "a.kt".into(), kind: kind.into(), name: name.into(), qualname: name.into(), start: 1, end: 1 };
+        let (k, x) = (sym(1, "class", "K"), sym(2, "method", "x"));
+        let src = "class K { private fun x() = 1; fun api() = x() }";
+        let facts = |own: HashMap<i64, Option<(usize, usize)>>| Facts {
+            lang: "kotlin",
+            lines: vec![src],
+            rust_lib: false,
+            go_package: None,
+            exports: Vec::new(),
+            py_all: false,
+            augments: false,
+            src,
+            own,
+        };
+        let undecided = |r: Rule| matches!(r, Rule::Base(why) if why.contains("no grammar span"));
+        assert!(undecided(rule("a.kt", &facts([(2, None)].into_iter().collect()), &x, Some(&k))));
+        assert!(undecided(rule("a.kt", &facts([(1, None), (2, Some((10, 29)))].into_iter().collect()), &x, Some(&k))));
+        // with its span, its own `private` decides: no entry point
+        assert!(matches!(rule("a.kt", &facts([(1, Some((0, src.len()))), (2, Some((10, 29)))].into_iter().collect()), &x, Some(&k)), Rule::Plain));
+    }
 
     #[test]
     fn a_name_counts_as_a_whole_word_in_any_spelling_of_its_letters() {
