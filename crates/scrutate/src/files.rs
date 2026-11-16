@@ -920,6 +920,26 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+    /// A file only the repository's walk lists (hidden, so the text walk leaves it out, and in no
+    /// index: a `.lock`) joins a kept look when a change set names it, as a fresh look finds it.
+    #[test]
+    fn a_kept_look_gains_a_file_only_the_repository_s_walk_lists() {
+        let root = std::env::temp_dir().join(format!("scrutate_kept_repo_only_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join("a.py"), "x = 1\n").unwrap();
+        let kept = super::KeptLook::default();
+        super::looked(&root, Some(&kept)).unwrap();
+        std::fs::write(root.join(".deps.lock"), "lock foo\n").unwrap();
+        let named = crate::stores::Named { code: Vec::new(), text: Vec::new(), repo: vec![".deps.lock".to_string()] };
+        super::patch_look(&root, &kept, &crate::stores::Changes::Named(named));
+        let paths = |v: &[super::Found]| v.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
+        let fresh = paths(&super::look(&root, false).unwrap());
+        assert!(fresh.contains(&".deps.lock".to_string()), "a fresh look leaves the file out: {fresh:?}");
+        assert_eq!(paths(&super::looked(&root, Some(&kept)).unwrap()), fresh);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A file made after a guard took the identities, given the inode number of an index file
     /// deleted since (ext4 hands it on), is no index file to any guard.
     #[cfg(unix)]
