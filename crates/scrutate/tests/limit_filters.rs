@@ -248,6 +248,111 @@ fn a_filtered_search_short_at_its_bound_says_so() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A tree of `functions` functions named `token` (what the exact source finds, 60 more each time
+/// the candidates widen), 1,000 classes without the word (a sixth of the chunks or more: too many
+/// for the kind to narrow the candidates at once) and `holders` classes that hold it, indexed, and
+/// its root.
+fn search_bound_tree(name: &str, functions: usize, holders: usize) -> std::path::PathBuf {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    for i in 0..functions.div_ceil(10) {
+        let body: String = (0..10).map(|k| format!("def token():\n    return {i} + {k}\n\n\n")).collect();
+        fs::write(root.join(format!("f{i}.py")), body).unwrap();
+    }
+    for i in 0..100 {
+        let body: String = (0..10).map(|k| format!("class Plain{i}x{k}:\n    v = {k}\n\n\n")).collect();
+        fs::write(root.join(format!("c{i}.py")), body).unwrap();
+    }
+    let body: String = (0..holders).map(|k| format!("class Holder{k}:\n    v = \"token\"\n\n\n")).collect();
+    fs::write(root.join("holders.py"), body).unwrap();
+    let out = std::process::Command::new(BIN)
+        .arg("index")
+        .current_dir(&root)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("SCRUTATE_NO_SESSION", "1")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    root
+}
+
+/// `search token --kind class -k 10` on `root`, with no semantic model: (CLI JSON, CLI text, MCP
+/// `search_code` text, its structured content from `serve --structured`).
+fn filtered_search(root: &Path) -> (Value, String, String, Value) {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let run = |json: bool| {
+        let mut args = vec!["search", "token", "--kind", "class", "-k", "10"];
+        if json {
+            args.push("--json");
+        }
+        let out = std::process::Command::new(BIN)
+            .args(&args)
+            .current_dir(root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    use std::io::{BufRead, Write};
+    let mut serve = std::process::Command::new(BIN)
+        .args(["--root", &root.to_string_lossy(), "serve", "--structured"])
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env("SCRUTATE_NO_SESSION", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = serve.stdin.take().unwrap();
+    let mut output = std::io::BufReader::new(serve.stdout.take().unwrap());
+    let initialize = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}});
+    let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "search_code", "arguments": {"query": "token", "kinds": ["class"], "k": 10}}});
+    writeln!(input, "{initialize}\n{call}").unwrap();
+    let answer = (0..)
+        .map_while(|_| {
+            let mut line = String::new();
+            (output.read_line(&mut line).unwrap() > 0).then(|| serde_json::from_str::<Value>(&line).unwrap())
+        })
+        .find(|v| v["id"] == json!(2))
+        .unwrap();
+    let _ = serve.kill();
+    let _ = serve.wait();
+    let result = &answer["result"];
+    let text = result["content"][0]["text"].as_str().unwrap_or("").to_string();
+    (serde_json::from_str(&run(true)).unwrap(), run(false), text, result["structuredContent"].clone())
+}
+
+/// No class holds the query and 5,000 functions do: the widened candidates stop at their bound
+/// with none of the kind, and every form of the answer says so.
+#[test]
+fn a_filtered_search_that_finds_none_by_its_bound_says_it_stopped_there() {
+    let root = search_bound_tree("search_bound_none", 5000, 0);
+    let (json, text, mcp, structured) = filtered_search(&root);
+    let _ = fs::remove_dir_all(&root);
+    let stop = scrutate::search::FILTER_STOP;
+    assert!(json["result"].as_array().is_none_or(Vec::is_empty) && json["stopped_reason"] == json!(stop), "{json}");
+    assert!(text.contains(stop), "{text}");
+    assert!(mcp.contains(stop) && structured["stopped_reason"] == json!(stop), "{mcp}\n{structured}");
+}
+
+/// Three classes hold the query and 200 functions do: the candidates run out before the bound, so
+/// the answer holds the three and says nothing of a bound.
+#[test]
+fn a_filtered_search_that_runs_out_before_its_bound_says_nothing_of_it() {
+    let root = search_bound_tree("search_bound_short", 200, 3);
+    let (json, text, mcp, structured) = filtered_search(&root);
+    let _ = fs::remove_dir_all(&root);
+    let stop = scrutate::search::FILTER_STOP;
+    assert!(json["result"].as_array().map_or(0, Vec::len) == 3 && json["stopped_reason"].is_null(), "{json}");
+    assert!(!text.contains(stop) && text.contains("Holder"), "{text}");
+    assert!(!mcp.contains(stop) && structured["stopped_reason"].is_null(), "{mcp}\n{structured}");
+}
+
 /// A name written as a path finds its definition by the stored qualified names however many share
 /// its last part: `zz::Holder::push` finds `Holder.push` indexed after 10,100 other methods `push`,
 /// where the lookup read only the first 10,000 of them and answered "(no results)".
