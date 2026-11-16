@@ -26,8 +26,8 @@ to Python objects one batch at a time.
 `grep` checks its arguments when called: `ValueError` for a bad pattern, glob or file type or no
 paths, `FileNotFoundError` for a missing path; `threads=` is capped at 256. Matches come in the
 order the files are searched; `sort=True` gives the order of `rg --sort path` and the CLI's
-`--sort` (`a/b` before `a-b`, then by line), and the first match then waits for the whole
-search. With `max_results=N` it is the first N matches in that order, the same on every run, and
+`--sort` (`a/b` before `a-b`, then by line), and a file's matches then wait for the files before
+it. With `max_results=N` it is the first N matches in that order, the same on every run, and
 the search stops once they are in. `Repo.read()` raises `FileNotFoundError` for a missing file,
 `ValueError` for a path outside the repository and `OSError` otherwise. Ctrl-C stops a `scrutate.grep(...)` or
 a `Repo.index()` within about 100 ms; an interrupted update stops at its next batch of files and

@@ -2552,7 +2552,8 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let mut collected: Vec<Record> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
     let mut counts: Vec<Record> = Vec::new();
-    let defer = out.sort || out.count || out.files_with_matches || out.symbols;
+    // with --sort the search already hands the lines over in order
+    let defer = out.count || out.files_with_matches || out.symbols;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
     let groups = q.before > 0 || q.after > 0;

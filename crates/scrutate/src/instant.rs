@@ -2853,13 +2853,22 @@ enum Feed<'a> {
 /// A file the walking thread found: path, path as reported, size, named.
 type Found = (PathBuf, Arc<str>, Option<u64>, bool);
 
-/// A file a thread takes, as `Found`.
-type Item<'a> = (std::borrow::Cow<'a, Path>, Arc<str>, Option<u64>, bool);
+/// A file a thread takes, as `Found`, and the channel of its own its records go to when a list is
+/// handed over file by file (`schedule_in_order`).
+type Item<'a> = (std::borrow::Cow<'a, Path>, Arc<str>, Option<u64>, bool, Option<mpsc::SyncSender<Vec<Record>>>);
+
+/// Batches of one file's hits waiting for the caller at most, when a list is handed over file by
+/// file: the files searched ahead of the one handed over hold no more of them.
+const FILE_BATCHES: usize = 4;
+
+/// The receiving end of each file's channel of a list handed over file by file, once its file is
+/// taken.
+type Slots = [Mutex<Option<mpsc::Receiver<Vec<Record>>>>];
 
 /// The files the threads of a list or of the walking thread take, one at a time.
 enum Items<'a> {
     Found(Mutex<mpsc::Receiver<Found>>),
-    List { files: &'a [(PathBuf, Arc<str>, bool)], next: AtomicUsize, stop_at: Option<u64> },
+    List { files: &'a [(PathBuf, Arc<str>, bool)], next: AtomicUsize, stop_at: Option<u64>, slots: Option<&'a Slots> },
 }
 
 impl Items<'_> {
@@ -2872,17 +2881,23 @@ impl Items<'_> {
         match self {
             Items::Found(rx) => {
                 let (path, rel, size, named) = rx.lock().ok()?.recv().ok()?;
-                Some((path.into(), rel, size, named))
+                Some((path.into(), rel, size, named, None))
             }
-            Items::List { files, next, stop_at } => {
+            Items::List { files, next, stop_at, slots } => {
                 // checked before a file is taken, so the files searched are always the first ones
                 if stop_at.is_some_and(|n| s.c.matches.load(Ordering::Relaxed) >= n) {
                     return None;
                 }
-                let (path, rel, named) = files.get(next.fetch_add(1, Ordering::Relaxed))?;
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                let (path, rel, named) = files.get(i)?;
                 // standard input has no size, whatever a file named `-` holds
                 let size = if s.q.want_bytes && !(*named && path.as_os_str() == "-") { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
-                Some((path.as_path().into(), Arc::clone(rel), size, *named))
+                let own = slots.map(|slots| {
+                    let (tx, rx) = mpsc::sync_channel(FILE_BATCHES);
+                    *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(rx);
+                    tx
+                });
+                Some((path.as_path().into(), Arc::clone(rel), size, *named, own))
             }
         }
     }
@@ -2988,8 +3003,13 @@ impl<'a> Threads<'a> {
         let mut fw = file_worker(s.q);
         let mut files = 0u32;
         while !s.stop.is_set() {
-            let Some((path, rel, size, named)) = items.next(s) else { break };
-            search_one(&mut fw, &s.run(&matcher, &tx), &path, rel, size, named);
+            let Some((path, rel, size, named, own)) = items.next(s) else { break };
+            if own.is_some() {
+                // wakes `schedule_in_order` to look for the file; a full channel already will
+                let _ = tx.try_send(Vec::new());
+            }
+            search_one(&mut fw, &s.run(&matcher, own.as_ref().unwrap_or(&tx)), &path, rel, size, named);
+            drop(own);
             if self.after_file(&mut files) {
                 while self.grow(sc, items, &tx, false) {}
             }
@@ -3020,7 +3040,7 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
     let roots = match feed {
         Feed::List(files, stop_at) => {
             let threads = Threads::new(s, p.counted(files.len() <= policy::SMALL_SEARCH), p.threads());
-            let items = Items::List { files, next: AtomicUsize::new(0), stop_at };
+            let items = Items::List { files, next: AtomicUsize::new(0), stop_at, slots: None };
             let (tx, rx) = hit_channel();
             std::thread::scope(|sc| {
                 for _ in 0..threads.first().min(files.len().max(1)) {
@@ -3175,6 +3195,61 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
     })
 }
 
+/// `schedule` of a list that hands its records over file by file in list order: each file's index
+/// with each of its records, then with `None` at its end. A file is searched while those before
+/// it are handed over, holding at most `FILE_BATCHES` batches; files never started are not
+/// handed over.
+#[cfg(not(target_os = "wasi"))]
+fn schedule_in_order(files: &[(PathBuf, Arc<str>, bool)], stop_at: Option<u64>, s: &Common, each: &mut dyn FnMut(usize, Option<Record>)) {
+    let (p, c) = (s.p, s.c);
+    let threads = Threads::new(s, p.counted(files.len() <= policy::SMALL_SEARCH), p.threads());
+    let slots: Vec<_> = files.iter().map(|_| Mutex::new(None)).collect();
+    let items = Items::List { files, next: AtomicUsize::new(0), stop_at, slots: Some(&slots) };
+    let (tx, rx) = hit_channel();
+    std::thread::scope(|sc| {
+        for _ in 0..threads.first().min(files.len().max(1)) {
+            threads.grow(sc, &items, &tx, true);
+        }
+        drop(tx);
+        let take = |i: usize| slots[i].lock().unwrap_or_else(|p| p.into_inner()).take();
+        for i in 0..files.len() {
+            // files are taken in order: one never taken once every thread has ended is the end
+            let Some(file) = (loop {
+                if let Some(file) = take(i) {
+                    break Some(file);
+                }
+                if rx.recv().is_err() {
+                    break take(i);
+                }
+            }) else {
+                break;
+            };
+            for batch in file {
+                #[cfg(test)]
+                c.queued.fetch_sub(1, Ordering::Relaxed);
+                batch.into_iter().for_each(|r| each(i, Some(r)));
+            }
+            each(i, None);
+        }
+        #[cfg(not(test))]
+        let _ = c;
+    });
+}
+
+/// `schedule_in_order` on wasi: one file at a time.
+#[cfg(target_os = "wasi")]
+fn schedule_in_order(files: &[(PathBuf, Arc<str>, bool)], stop_at: Option<u64>, s: &Common, each: &mut dyn FnMut(usize, Option<Record>)) {
+    for (i, file) in files.iter().enumerate() {
+        if s.stop.is_set() || stop_at.is_some_and(|n| s.c.matches.load(Ordering::Relaxed) >= n) {
+            break;
+        }
+        if let Err(e) = schedule(Feed::List(std::slice::from_ref(file), None), s, &mut |r| each(i, Some(r))) {
+            s.c.failed(e.to_string());
+        }
+        each(i, None);
+    }
+}
+
 /// `schedule` on wasi, which starts no thread: the calling thread walks in order and searches each
 /// file as it is found, handing its records over before the next.
 #[cfg(target_os = "wasi")]
@@ -3185,9 +3260,9 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
     let mut fw = file_worker(q);
     match feed {
         Feed::List(files, stop_at) => {
-            let items = Items::List { files, next: AtomicUsize::new(0), stop_at };
+            let items = Items::List { files, next: AtomicUsize::new(0), stop_at, slots: None };
             while !stop.is_set() {
-                let Some((path, rel, size, named)) = items.next(s) else { break };
+                let Some((path, rel, size, named, _)) = items.next(s) else { break };
                 search_one(&mut fw, &r, &path, rel, size, named);
                 take_held(on_hit);
             }
@@ -3293,62 +3368,31 @@ fn list_files(roots: &[PathBuf], labels: &[PathBuf], f: &Files, p: &Policy, c: &
 }
 
 /// `Query::first_in_path_order`: search `files` in their order until `max_results` matches are
-/// in, let the files started meanwhile finish, then hand over the first `max_results` matches
-/// (all without it) in file and line order.
+/// in, let the files started meanwhile finish, and hand over the first `max_results` matches (all
+/// without it) in file and line order, each file's as the files before it are done.
 fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit: &mut dyn FnMut(Record), t0: Instant) -> Stats {
     let (c, stop) = (s.c, s.stop);
     let n = s.q.max_results;
     // no file holds more than `n` of the first `n`; the cut below stops the rest
     let q = Query { max_results: None, max_count: n.map(|n| s.q.max_count.map_or(n, |m| m.min(n))).or(s.q.max_count), ..s.q.clone() };
-    let mut records = Vec::new();
-    if let Err(e) = schedule(Feed::List(&files, n), &Common { q: &q, ..*s }, &mut |r| records.push(r)) {
-        c.failed(e.to_string());
-    }
-    // a file that several roots reach is listed once per root under one label: the k-th copy of a
-    // record belongs to its k-th listing
-    let mut listed: std::collections::HashMap<&str, Vec<usize>> = Default::default();
-    for (i, f) in files.iter().enumerate() {
-        listed.entry(&*f.1).or_default().push(i);
-    }
-    let listing = |label: &str| {
-        let mut s = label;
-        loop {
-            if let Some(v) = listed.get(s) {
-                return Some(v);
-            }
-            // an archive member, `archive.zip{member}`
-            s = &s[..s.rfind('{')?];
-        }
-    };
-    let at: Vec<usize> = {
-        let mut copies: std::collections::HashMap<(&str, u64, u64), usize> = Default::default();
-        records
-            .iter()
-            .map(|r| {
-                let column = if let Record::Match(l) | Record::Context(l) = r { l.column } else { 0 };
-                let copy = copies.entry((r.path(), r.order(), column)).or_insert(0);
-                *copy += 1;
-                listing(r.path()).map_or(usize::MAX, |v| v[(*copy - 1).min(v.len() - 1)])
-            })
-            .collect()
-    };
-    let mut keyed: Vec<(usize, Record)> = at.into_iter().zip(records).collect();
-    keyed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path().cmp(b.1.path())).then(a.1.order().cmp(&b.1.order())));
     let cap = n.unwrap_or(u64::MAX);
     let (mut left, mut files_matched, mut last) = (cap, 0u64, None::<Arc<str>>);
     // the file and the last line of the after-context of the last match the cut takes
     let mut tail: Option<(Arc<str>, u64)> = None;
-    for (_, mut r) in keyed {
+    // past the cut and that after-context: what is still found is dropped
+    let mut done = false;
+    let mut hand = |mut r: Record| {
+        if done {
+            return;
+        }
         if left == 0 {
             // that after-context; a match in it prints as a match, as ripgrep prints one after -m's
             // last, and is not counted
-            let Some((path, end)) = &tail else { break };
-            let (Record::Context(l) | Record::Match(l)) = &r else { break };
-            if l.path != *path || l.line > *end {
-                break;
+            match (&tail, &r) {
+                (Some((path, end)), Record::Context(l) | Record::Match(l)) if l.path == *path && l.line <= *end => on_hit(r),
+                _ => done = true,
             }
-            on_hit(r);
-            continue;
+            return;
         }
         let take = match &mut r {
             Record::Match(_) | Record::File { .. } => 1,
@@ -3369,7 +3413,17 @@ fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit
             tail = (s.q.after > 0).then(|| (Arc::clone(&l.path), l.line + s.q.after as u64));
         }
         on_hit(r);
-    }
+    };
+    // an archive's members are handed over by name, so its records wait for its end
+    let mut held = Vec::new();
+    schedule_in_order(&files, n, &Common { q: &q, ..*s }, &mut |i, r| match r {
+        Some(r) if s.f.search_zip && crate::archive::Kind::of(&files[i].1).is_some() => held.push(r),
+        Some(r) => hand(r),
+        None => {
+            held.sort_by(|a: &Record, b: &Record| a.path().cmp(b.path()).then(a.order().cmp(&b.order())));
+            held.drain(..).for_each(&mut hand);
+        }
+    });
     let total = c.matches.load(Ordering::Relaxed);
     match n {
         Some(n) => Stats { matches: n - left, files_matched, cancelled: stop.is_set() || total >= n, ..stats(c, t0, stop) },
@@ -3647,6 +3701,38 @@ mod tests {
             // a sender counts itself before it waits
             assert!(most <= HIT_BATCHES + 1 + f.threads, "{dir} {small_tree:?} {split_file_bytes}: {most} batches waited");
         }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn records_in_path_order_reach_the_caller_while_the_search_runs() {
+        let root = std::env::temp_dir().join(format!("scrutate_sorted_stream_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let lines = "abc e\n".repeat(100_000);
+        for i in 0..6 {
+            std::fs::write(root.join(format!("{i}.txt")), &lines).unwrap();
+        }
+        let o = Query { first_in_path_order: true, ..query("e", Mode::Literal) };
+        let f = Files { threads: 3, ..Files::walk(vec![root.clone()]) };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut got = Vec::new();
+        let stats = search(
+            &o,
+            &f,
+            Arc::clone(&cancel),
+            Output::Records(&mut |r| {
+                cancel.store(true, Ordering::Relaxed);
+                got.push(r);
+            }),
+        )
+        .unwrap();
+        // the first record leaves before the files are searched, so a stop then finds far fewer
+        assert!(stats.matches < 100_000, "{} matches found before the first record left", stats.matches);
+        let lines: Vec<(Arc<str>, u64)> = got.into_iter().map(|r| (Arc::clone(r.path()), r.order())).collect();
+        let mut sorted = lines.clone();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        assert_eq!(lines, sorted);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

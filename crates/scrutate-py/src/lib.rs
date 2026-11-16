@@ -250,8 +250,8 @@ impl Drop for GrepIter {
 ///
 /// mode: "regex" (default), "literal", "identifier" (every casing of an identifier) or "fuzzy"
 /// (within `fuzzy_edits` edits). Returns an iterator of `Match`, in the order the files are
-/// searched, or with `sort=True` in the order of `rg --sort path` (the first match then waits for
-/// the whole search); `sort=True` with `max_results=N` gives the first N matches in that order.
+/// searched, or with `sort=True` in the order of `rg --sort path` (a file's matches then wait for
+/// the files before it); `sort=True` with `max_results=N` gives the first N matches in that order.
 #[pyfunction]
 #[pyo3(signature = (pattern, paths=vec![".".to_string()], *, mode="regex", case="sensitive", word=false, multiline=false,
                     invert=false, hidden=false, no_ignore=false, follow_links=false, globs=vec![], types=vec![],
