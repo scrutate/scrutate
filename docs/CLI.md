@@ -947,17 +947,22 @@ root it does its own work) and the ranked part of `find`. Not `impact`, since gi
 command's own environment, nor `files`, which needs no index. The files that changed are looked
 at first, as for a tool call (every file when the watch cannot vouch for fewer), and the output is the same bytes and exit code a fresh process gives (about 12 ms in
 place of 28 ms on a copy of this repository). The meeting point is a socket file on Unix,
-`.scrutate/session.sock` (owner only; no network port), removed when the server exits, and a
-named pipe on Windows, `\\.\pipe\scrutate-session-<hash of the user and root>` (owner only,
-local callers only), which goes away with the server and leaves no file. A
+`.scrutate/session.sock` (owner only; no network port), removed when the server exits or its root
+moves to another tree, and a named pipe on Windows, `\\.\pipe\scrutate-session-<hash of the user
+and root>` (owner only, local callers only), which goes away with the server, or when it stops
+listening because its root moved to another tree, and leaves no file. A
 command never starts a server. When anything about the server differs from how the command would
-do the work (another build of scrutate, another `SCRUTATE_*` setting, another root, a stale
-socket), the command does the work itself and says nothing;
+do the work (another build of scrutate, another `SCRUTATE_*` setting that can change an answer,
+which is every one but `SCRUTATE_ROOT`, `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`,
+`SCRUTATE_SESSION_WAIT_MS`, `SCRUTATE_MAX_BYTES` and `SCRUTATE_REFRESH_INTERVAL`, another root, a
+stale socket), the command does the work itself and says nothing;
 `SCRUTATE_SESSION_DEBUG=1` says why on stderr, and `SCRUTATE_NO_SESSION=1` turns the use off. A
 command waits 20 ms for the server's greeting (a server stopped in a terminal costs no more);
 `SCRUTATE_SESSION_WAIT_MS` sets another wait for a machine too busy to greet in time. A server
 that takes no request for 2 s once it greeted (stopped or stuck, with a request longer than the
-socket or, on Windows, the pipe holds) is given up as well. Of two
+socket or, on Windows, the pipe holds) is given up as well, and so is one whose answer takes over
+60 s. A server takes at most 16 connections at once (a further caller does its own work) and a
+request of at most 1 MiB. Of two
 servers on one root, the first offers the socket.
 
 - Every tool but `reindex` and `edit_symbol` is marked read-only (`readOnlyHint`), and all as
@@ -1046,7 +1051,8 @@ Per tool:
 - `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short `tools/list`: a few words
   per tool, no argument descriptions, and for a read-only tool only `readOnlyHint` and
   `openWorldHint` (the other two hints matter only for a tool that writes). The three shared
-  arguments (`response_format`, and `max_bytes` and `offset` for every tool but `reindex`) are
+  arguments (`response_format` for every tool but `edit_symbol`, and `max_bytes` and `offset` for
+  every tool but `reindex` and `edit_symbol`) are
   left out of each schema and named once, with types and defaults, in the server's
   `instructions`. Every other argument name, type, enum, default and `required` is the full
   list's, and a call is checked as without the option. On this repository's server the full
@@ -1070,7 +1076,9 @@ Per tool:
   2.1.322 shows the JSON in place of the text, and the text is the form with the snippets
   (measured with that client on 2026-11-11). Turn it on for a client whose scripts read tool
   results, such as Codex in Code Mode.
-- Each call runs on its own thread, so `notifications/cancelled` reaches it, and calls run side
+- Each call runs on its own thread, up to 32 in flight, so `notifications/cancelled` reaches it;
+  a call past that runs on the thread that reads the messages, so nothing more is read, a cancel
+  of it included, until it ends. Calls run side
   by side, each on its own reader (up to the number of cores, at least 2 and at most 8; one more
   waits for a reader). On cancel, a call waiting for the index or a reader stops, an index update
   it runs (`reindex`, or the scan before a read) stops and rolls back at its next batch, a
