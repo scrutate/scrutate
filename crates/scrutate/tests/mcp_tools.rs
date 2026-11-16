@@ -749,6 +749,19 @@ fn a_call_through_an_imported_module_is_not_a_call_of_a_local_namesake() {
 }
 
 // a line break or a tab is not allowed in a Windows file name
+/// The hint that a long definition goes on names its file with escapes, and the path it gives reads
+/// the rest.
+#[cfg(unix)]
+#[test]
+fn a_long_definition_s_continuation_hint_names_its_file_with_escapes() {
+    let body = format!("def long_fn():\n{}", "    x = 1\n".repeat(450));
+    let mut r = Repo::new("escaped_long", &[("evil\nlong.py", body.as_str())]);
+    let text = r.ok("read_code", json!({"symbol": "long_fn"}));
+    let hint = text.lines().last().unwrap();
+    assert!(hint.ends_with(r"read_code path=evil\nlong.py start=401)"), "{hint}");
+    assert!(r.ok("read_code", json!({"path": r"evil\nlong.py", "start": 401})).contains("x = 1"));
+}
+
 #[cfg(unix)]
 #[test]
 fn a_location_printed_with_escapes_can_be_passed_back() {

@@ -1094,7 +1094,7 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let read = |r: ChunkRow| -> Result<(ChunkRow, String, Vec<crate::index::Symbol>)> {
                 let mut text = read_range(s, &r.path, r.start, r.end.min(r.start.saturating_add(READ_LINES - 1)))?.0.join("\n");
                 if r.end - r.start + 1 > READ_LINES {
-                    text.push_str(&format!("\n(the definition goes on to line {}: read_code path={} start={})", r.end, r.path, r.start + READ_LINES));
+                    text.push_str(&format!("\n(the definition goes on to line {}: read_code path={} start={})", r.end, shown(&r.path), r.start + READ_LINES));
                 }
                 let mut inner = s.ix.symbols_in(&r.path).unwrap_or_default();
                 inner.retain(|m| m.id != r.id && r.start <= m.start && m.end <= r.end);
