@@ -378,7 +378,8 @@ the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends.
 shape of the output (colour, headings, separators, JSON, odd names) cannot matter: it walks what
 the search could read, hidden and ignored entries taken and links followed where the search
 follows them, and refuses the search, running nothing, when a path it names lies inside an index directory or the walk reaches
-one of the index directories' files or directories by device and inode (a link, a hard link
+one of the index directories' files or directories by device and inode (on Windows by the file
+handle's volume and index: a link, a hard link
 under another name, a nested repository's index), or when the walk is too large to check
 (over 1,000,000 entries or 5 seconds); `read_code`, `grep_code` and the Grep hook
 refuse such a path the same way. Not covered: a link or a hard link made while the search runs

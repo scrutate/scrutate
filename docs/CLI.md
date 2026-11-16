@@ -1510,7 +1510,8 @@ scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD
 `LD_AUDIT` and every `DYLD_*` variable removed. Scrutate's own index directory is never shown (its files hold the repository's text, see
 [Security](SECURITY.md)), decided before the search runs, by file identity, never by reading its output: the files of
 the `.scrutate` directories of the current directory, of those above it and of every one inside
-the searched paths are known by device and inode. Before it runs a `grep` or `rg`, `hook run`
+the searched paths are known by device and inode (on Windows by the file handle's volume and
+index). Before it runs a `grep` or `rg`, `hook run`
 walks what the search could read (each path it names, or the current directory for `rg` and a
 recursive `grep`): hidden and ignored entries taken, a link it names followed, a link met inside
 followed only where the search follows it (`grep -R`, `rg -L`), each directory entered once, and a

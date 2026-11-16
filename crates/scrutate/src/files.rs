@@ -40,12 +40,15 @@ pub enum Reach {
 }
 
 /// The files of the index directories a search could reach, known by identity (device and
-/// inode), so a file is found as one of them whatever path leads to it: another case, a chain of
+/// inode; on Windows the file handle's volume and index), so a file is found as one of them whatever path leads to it: another case, a chain of
 /// links, a hard link. They start as the index directory of `start` and of each directory above
 /// it; `reached_by_search` adds every one its walk meets.
 pub struct IndexFiles {
     #[cfg(unix)]
     ids: std::collections::HashSet<(u64, u64)>,
+    /// elsewhere a file's identity is its handle (on Windows its volume and file index)
+    #[cfg(not(unix))]
+    handles: Vec<same_file::Handle>,
 }
 
 impl IndexFiles {
@@ -53,6 +56,8 @@ impl IndexFiles {
         let mut index = IndexFiles {
             #[cfg(unix)]
             ids: std::collections::HashSet::new(),
+            #[cfg(not(unix))]
+            handles: Vec::new(),
         };
         let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
         for dir in start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()) {
@@ -74,7 +79,10 @@ impl IndexFiles {
             }
         }
         #[cfg(not(unix))]
-        let _ = dir;
+        {
+            let walk = ignore::WalkBuilder::new(dir).standard_filters(false).follow_links(false).build();
+            self.handles.extend(walk.flatten().filter_map(|e| same_file::Handle::from_path(e.path()).ok()));
+        }
     }
 
     /// Whether a search of `roots` could read an index file or directory, by identity or by a
@@ -147,7 +155,7 @@ impl IndexFiles {
             })
         };
         #[cfg(not(unix))]
-        let hit = entries.into_iter().find(|(p, _, _)| inside_index_dir(p));
+        let hit = entries.into_iter().find(|(p, _, _)| inside_index_dir(p) || same_file::Handle::from_path(p).is_ok_and(|h| self.handles.contains(&h)));
         hit.map_or(Reach::Clear, |e| Reach::Index(e.0))
     }
 
@@ -160,6 +168,10 @@ impl IndexFiles {
             if std::fs::metadata(path).is_ok_and(|md| self.ids.contains(&(md.dev(), md.ino()))) {
                 return true;
             }
+        }
+        #[cfg(not(unix))]
+        if same_file::Handle::from_path(path).is_ok_and(|h| self.handles.contains(&h)) {
+            return true;
         }
         inside_index_dir(path)
     }
@@ -619,6 +631,33 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+    /// An index file is known by identity, through a hard link too, by its own path and in
+    /// another case, and a walk before a search reaches it through the hard link, also after the
+    /// file grew; a file outside is not.
+    #[test]
+    fn an_index_file_is_known_whatever_path_leads_to_it() {
+        use std::io::Write as _;
+        let root = std::env::temp_dir().join(format!("scrutate_index_files_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".scrutate/tsquery")).unwrap();
+        std::fs::write(root.join(".scrutate/tsquery/c.bin"), b"cache").unwrap();
+        std::fs::write(root.join("app.py"), b"print(1)").unwrap();
+        let mut index = IndexFiles::near(&root);
+        assert_eq!(index.reached_by_search(&[&root], false, WALK_ENTRIES), Reach::Clear);
+        std::fs::hard_link(root.join(".scrutate/tsquery/c.bin"), root.join("hard.bin")).unwrap();
+        assert!(index.holds(&root.join(".scrutate/tsquery/c.bin")));
+        assert!(index.holds(&root.join("hard.bin")), "a hard link to an index file");
+        assert!(index.holds(&root.join(".SCRUTATE/tsquery/c.bin")));
+        assert!(!index.holds(&root.join("app.py")));
+        assert_eq!(index.reached_by_search(&[&root], false, WALK_ENTRIES), Reach::Index(root.join("hard.bin")));
+        // an index file that grows in place after the link was made (NTFS lists the link's old
+        // size until it is opened by that name) is still found through the link
+        std::fs::OpenOptions::new().append(true).open(root.join(".scrutate/tsquery/c.bin")).unwrap().write_all(&[0; 70_000]).unwrap();
+        let mut index = IndexFiles::near(&root);
+        assert_eq!(index.reached_by_search(&[&root], false, WALK_ENTRIES), Reach::Index(root.join("hard.bin")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A tree of `n` files under `root/name`.
     #[cfg(unix)]
     fn files(root: &Path, name: &str, n: usize) -> PathBuf {
