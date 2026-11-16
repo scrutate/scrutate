@@ -21,3 +21,12 @@ def test_a_verdict_that_kept_three_of_six_platforms_fails():
     problems = G.platform_problems(read("docs/INSTALL.md"), old)
     assert [p.split(" name ")[1].split(",")[0] for p in problems] == ["macOS x86_64", "Windows x86_64", "Windows ARM64"]
     assert G.platform_problems("no table", old) == ["docs/INSTALL.md or docs/RELEASE_READINESS.md: no platform table or no verdict to compare"]
+
+
+def test_a_verdict_that_names_a_platform_only_to_rule_it_out_fails():
+    install = read("docs/INSTALL.md")
+    good = read("docs/RELEASE_READINESS.md")
+    for said in ("and Windows x86_64 (not on Windows ARM64)", "and Windows x86_64, but not yet Windows ARM64", "and Windows x86_64, except Windows ARM64"):
+        bad = good.replace("Windows x86_64 and Windows\nARM64", said, 1)
+        assert bad != good
+        assert G.platform_problems(install, bad) == ["docs/RELEASE_READINESS.md: the verdict does not name Windows ARM64, which docs/INSTALL.md supports"], said

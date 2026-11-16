@@ -20,8 +20,9 @@ LINK = re.compile(r"^\[[^\]]+\]: \S")
 # GitHub refuses a release body over 125,000 characters ("body is too long"): no GitHub page
 # states it, the figure is from tool reports (intuit/auto#2418; release-it cuts at 124,000)
 MAX_CHARS = 124_000
-# a link to a file of the repository (`](docs/CLI.md#x)`), not a URL, an anchor or an absolute path
-RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/|\.\./)([^)\s]+)\)")
+# a link to a file of the repository (`](docs/CLI.md#x)`), not a URL, an anchor, an absolute path or
+# an angle link (left for link_problems: `<docs/CLI.md>` would become `.../<docs/CLI.md>`)
+RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/|\.\./|<)([^)\s]+)\)")
 # what is left of a link after the rewrite that does not resolve on a release page
 UNRESOLVED = re.compile(r"\]\((?!https?://|#)")
 

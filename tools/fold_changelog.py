@@ -17,7 +17,8 @@ import re
 import sys
 
 LINK_REF = re.compile(r"^\[[^\]]+\]: \S")
-RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/)([^)\s]+)\)")
+# an angle link is left as written: tools/release_notes.py refuses it
+RELATIVE = re.compile(r"\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:|#|/|<)([^)\s]+)\)")
 
 
 def rebase(text: str, from_dir: str, to_dir: str) -> str:
@@ -55,6 +56,8 @@ def fold(changelog: str, summary: str, version: str, date: str, repo: str) -> tu
     refs = [line for line in lines if LINK_REF.match(line)]
     unreleased = trim([line for line in lines[unrel + 1:stop] if not LINK_REF.match(line)])
     old = trim([line for line in lines[ver + 1:end] if not LINK_REF.match(line)]) if ver is not None else []
+    if not [line for line in unreleased if line.strip() and not line.startswith("#")]:
+        raise SystemExit(f"CHANGELOG.md has nothing under `## [Unreleased]` to fold into {version}")
     stood = (f"then its section as it stood ({lines[ver][3:]})." if ver is not None else "").strip()
     later = trim([line for line in lines[end:] if not LINK_REF.match(line)])
     full = [
@@ -102,6 +105,8 @@ def main(argv: list[str]) -> int:
     full_path = os.path.join(a.root, "docs", "changes", f"{a.version}.md")
     if os.path.exists(full_path):
         raise SystemExit(f"{full_path} exists: {a.version} is folded already")
+    if not os.path.isfile(summary_path):
+        raise SystemExit(f"docs/changes/{a.version}-summary.md is missing: write what {a.version} is there first (docs/RELEASING.md)")
     with open(path, encoding="utf-8") as f, open(summary_path, encoding="utf-8") as g:
         changelog, full = fold(f.read(), g.read(), a.version, a.date, a.repo)
     with open(full_path, "w", encoding="utf-8") as f:

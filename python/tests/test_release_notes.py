@@ -74,3 +74,9 @@ def test_a_link_the_rewrite_cannot_make_resolve_stops_the_release():
     assert problems("a stray ` and [b](docs/y.md)") == odd
     # a double-backtick span holding a backtick cannot be split apart: refused, not guessed at
     assert problems("``[a](docs/x.md) has ` in it`` then [b](docs/y.md)") == odd
+
+
+def test_an_angle_link_without_a_space_is_not_rewritten_into_a_broken_one():
+    links = "\n[0.1.0]: https://github.com/scrutate/scrutate/releases/tag/v0.1.0\n"
+    out, problems = R.notes(HEAD + "## [Unreleased]\n\n## [0.1.0] - 2026-11-11\n\n### Added\n- [t](<docs/CLI.md>)\n" + links, "0.1.0")
+    assert [p.split(":")[0] for p in problems] == ["a link that does not resolve on a release page"], out

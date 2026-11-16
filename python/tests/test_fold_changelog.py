@@ -84,3 +84,25 @@ def test_a_release_after_the_first_folds_from_unreleased_alone(folded):
         "[Unreleased]: https://github.com/scrutate/scrutate/compare/v0.2.0...HEAD",
         "[0.2.0]: https://github.com/scrutate/scrutate/releases/tag/v0.2.0",
     ]
+
+
+def test_a_missing_summary_is_one_line_and_nothing_is_written(tmp_path):
+    shutil.copy(os.path.join(ROOT, "CHANGELOG.md"), tmp_path / "CHANGELOG.md")
+    with pytest.raises(SystemExit) as e:
+        F.main(["0.2.0", "2026-12-15", "--root", str(tmp_path)])
+    assert str(e.value) == "docs/changes/0.2.0-summary.md is missing: write what 0.2.0 is there first (docs/RELEASING.md)"
+    assert read(tmp_path / "CHANGELOG.md") == read(os.path.join(ROOT, "CHANGELOG.md"))
+    assert not (tmp_path / "docs/changes/0.2.0.md").exists()
+
+
+def test_a_release_with_nothing_under_unreleased_is_refused(folded):
+    # right after a fold, Unreleased is an empty heading: a second release now would describe nothing
+    (folded / "docs/changes/0.2.0-summary.md").write_text("A second release.\n", encoding="utf-8")
+    before = read(folded / "CHANGELOG.md")
+    with pytest.raises(SystemExit, match=r"nothing under `## \[Unreleased\]` to fold into 0.2.0"):
+        F.main(["0.2.0", "2026-12-15", "--root", str(folded)])
+    assert read(folded / "CHANGELOG.md") == before and not (folded / "docs/changes/0.2.0.md").exists()
+
+
+def test_an_angle_link_is_left_as_written_for_the_notes_check_to_refuse():
+    assert F.rebase("see [c](<../CLI.md>) and [d](../CLI.md)", "docs/changes", "") == "see [c](<../CLI.md>) and [d](docs/CLI.md)"

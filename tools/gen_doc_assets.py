@@ -1268,7 +1268,10 @@ def platform_problems(install, readiness):
     if not rows or not verdict:
         return ["docs/INSTALL.md or docs/RELEASE_READINESS.md: no platform table or no verdict to compare"]
     said = " ".join(verdict.group(1).split())
-    return [f"docs/RELEASE_READINESS.md: the verdict does not name {p}, which docs/INSTALL.md supports" for p in rows if p not in said]
+    # "not on Windows ARM64" or "except ..." names a platform to rule it out
+    ruled_out = re.compile(r"\b(?:not|no|except|without)(?:\s+[A-Za-z]+){0,2}\s*$", re.I)
+    named = [p for p in rows if any(not ruled_out.search(said[: m.start()]) for m in re.finditer(re.escape(p), said))]
+    return [f"docs/RELEASE_READINESS.md: the verdict does not name {p}, which docs/INSTALL.md supports" for p in rows if p not in named]
 
 
 def check_platforms(problems):

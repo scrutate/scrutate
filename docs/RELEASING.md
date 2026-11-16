@@ -49,7 +49,8 @@ tag (less its `v`) and refuses a tag that does not match.
   which the archives pack; leaves `## [Unreleased]` as an empty heading; puts the link references
   for both headings at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
   `[X.Y.Z]: .../releases/tag/vX.Y.Z`); and writes the date into DELIVERY.md, SECURITY.md and
-  CITATION.cff. Nothing is deleted. `python3 tools/release_notes.py X.Y.Z` then prints the notes
+  CITATION.cff. Nothing is deleted. It writes nothing when the summary file is missing or nothing is
+  written under `## [Unreleased]`. `python3 tools/release_notes.py X.Y.Z` then prints the notes
   the release gets, its links pointing at the tag's tree. It fails until the fold is done, while
   the notes are longer than 124,000 characters (GitHub refuses a release body over 125,000, which
   would stop the release only at its last step, after the tag), and on a link it cannot make
