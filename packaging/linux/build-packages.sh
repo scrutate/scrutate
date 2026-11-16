@@ -1,12 +1,12 @@
 #!/bin/sh
 # Builds the .deb and .rpm into dist/. Run from the repository root, in rust:1-slim-bookworm:
 #   docker run --rm -v "$PWD":/src -w /src rust:1-slim-bookworm sh packaging/linux/build-packages.sh
-# With TARGET set it packages the release binary already at target/$TARGET/release/scrutate and
-# installs nothing with apt (release.yml, on the -linux-gnu runners).
+# With TARGET set it packages the release binary already at $CARGO_TARGET_DIR (or target)/$TARGET/
+# release/scrutate and installs nothing with apt (release.yml, on the -linux-gnu runners).
 set -eux
 cargo install --locked -j 3 cargo-deb@3.8.0 cargo-generate-rpm@0.21.1
 if [ -n "${TARGET:-}" ]; then
-  out=target/$TARGET
+  out=${CARGO_TARGET_DIR:-target}/$TARGET
   set -- --target "$TARGET"
 else
   apt-get update -qq
