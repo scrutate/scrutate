@@ -869,6 +869,19 @@ impl AnyMatcher {
         }
     }
 
+    /// Whether `searcher` reads a whole file onto the heap for this matcher (a multi-line search
+    /// whose pattern can match a line break) rather than through its line buffer.
+    fn reads_whole(&self, searcher: &Searcher) -> bool {
+        match self {
+            AnyMatcher::Literal(m) => searcher.multi_line_with_matcher(m),
+            AnyMatcher::Regex(m) => searcher.multi_line_with_matcher(m),
+            AnyMatcher::Fuzzy(m) => searcher.multi_line_with_matcher(m.as_ref()),
+            #[cfg(feature = "pcre2")]
+            AnyMatcher::Pcre2(m) => searcher.multi_line_with_matcher(m),
+            AnyMatcher::FuzzyRegex(m) => searcher.multi_line_with_matcher(m.as_ref()),
+        }
+    }
+
     fn search_file<S: Sink>(&self, searcher: &mut Searcher, file: &std::fs::File, sink: S) -> Result<(), S::Error> {
         match self {
             AnyMatcher::Literal(m) => searcher.search_file(m, file, sink),

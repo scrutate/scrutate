@@ -89,7 +89,10 @@ impl Source for Disk {
         #[cfg(windows)]
         let _ = std::io::Seek::seek(&mut &self.file, std::io::SeekFrom::Start(0));
         match widest {
-            Some(widest) => m.search_reader(s, Watch { r: &self.file, widest }, sink),
+            // a multi-line search reads the file whole, sized from its length, and grows no line
+            // buffer for Watch to see
+            Some(widest) if !m.reads_whole(s) => m.search_reader(s, Watch { r: &self.file, widest }, sink),
+            Some(_) => m.search_file(s, &self.file, sink),
             None => m.search_file(s, &self.file, sink),
         }
     }
