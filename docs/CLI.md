@@ -353,8 +353,9 @@ definition, under the same bound as `--kind`. With `--kind`, `--max-results` cou
 keeps: a kind is known once an occurrence is resolved, so the search resolves occurrences until
 that many are kept, at most 10,000 (or `--max-results` when larger), dropping the others as it
 goes, and an answer cut there says how many it read. The bound is a count: on the Linux tree a
-read that runs to it took 3 to 19 seconds by the name (`refs kfree --def mm/slub.c:6781
---max-results 20`: 19.1 s and 458 MB, its 17 uses past the bound). Narrow the files with `-g`,
+read that runs to it takes about 3.5 to 21 seconds by the name, from `refs size --kind
+function` (3.53 s) to `refs kfree --def mm/slub.c:6781 --max-results 20` (21.4 s and 492 MB, its
+17 uses past the bound). Narrow the files with `-g`,
 `-t` or `--lang`, which narrow the search before anything is resolved. When no definition of the name has
 one of the kinds, the answer is empty at once and says so.
 

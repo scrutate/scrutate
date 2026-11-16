@@ -35,8 +35,8 @@ pub type Importer = (String, i64, String);
 
 /// The most occurrences a narrowed `references` (kinds, `--def`) reads to find max_results of the
 /// kept definitions, or max_results when it is larger: a count, never a clock. On the Linux tree a
-/// read that runs to it took 3 to 19 seconds by the name (`refs kfree --def mm/slub.c:6781`: 19.1 s,
-/// 458 MB).
+/// read that runs to it takes about 3.5 to 21 seconds by the name: `refs size --kind function`
+/// 3.53 s, `refs kfree --def mm/slub.c:6781 --max-results 20` 21.4 s and 492 MB.
 pub const REFS_KIND_RESOLVE_MAX: u64 = 10_000;
 
 /// One request's view of what the names of the repository refer to.
