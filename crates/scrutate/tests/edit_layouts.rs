@@ -400,6 +400,26 @@ fn tainted(ext: &str, which: usize) -> &'static str {
     }
 }
 
+/// How many copies of the generated cases `form` makes: a file named like each top-level target,
+/// or a sibling in another case beside one whose flipped name the file does not hold already.
+fn planned_variants(cases: &[Case], form: Form) -> usize {
+    cases
+        .iter()
+        .skip(FIXED.len())
+        .filter(|c| c.target.1 == 0 && !c.name().is_empty() && !c.name().contains('.'))
+        .filter(|c| {
+            form == Form::Like || {
+                let name = c.name();
+                let mut chars = name.chars();
+                let head = chars.next().unwrap();
+                let flip: String = if head.is_uppercase() { head.to_lowercase().collect() } else { head.to_uppercase().collect() };
+                let flip = flip + chars.as_str();
+                flip != name && !c.text.contains(&flip)
+            }
+        })
+        .count()
+}
+
 /// How many of `FIXED` lead it and must be refused.
 const REFUSED_ROWS: usize = 6;
 
@@ -457,9 +477,50 @@ fn replaced(text: &str, dry: &str, file: &str) -> (usize, usize) {
     (a, at(e + 1))
 }
 
+/// The forms the generated cases are tried in, each a test of its own, so they run side by side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Form {
+    /// each case's new text, dry run and applied
+    Plain,
+    /// followed by a statement, a comment or a string left open, or an attribute
+    Tainted,
+    /// led by a comment
+    Led,
+    /// in a file named like the target
+    Like,
+    /// beside a sibling named like the target in another case
+    Case,
+}
+
 #[test]
 fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
-    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("edit_layouts_{}", std::process::id()));
+    layouts(Form::Plain);
+}
+
+#[test]
+fn a_new_text_with_code_outside_the_definition_is_refused_in_every_layout() {
+    layouts(Form::Tainted);
+}
+
+#[test]
+fn a_new_text_led_by_a_comment_applies_in_every_layout() {
+    layouts(Form::Led);
+}
+
+#[test]
+fn a_file_named_like_its_target_answers_as_any_other() {
+    layouts(Form::Like);
+}
+
+#[test]
+fn a_sibling_named_in_another_case_changes_no_answer() {
+    layouts(Form::Case);
+}
+
+/// The generated cases tried in `form`, in a tree and sessions of its own; every case the form
+/// takes is counted and asserted, so no form can drop cases unseen.
+fn layouts(form: Form) {
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("edit_layouts_{form:?}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     let cases = cases(300);
     // a session per few files, so a call's look at its tree stays small
@@ -474,7 +535,7 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
     }
     let edits = scrutate::mcp::Settings::new(None).allowing_edits();
     let cancel = Arc::default();
-    let (mut applied, mut refused, mut tainted_cases, mut led_cases) = (0, 0, 0, 0);
+    let (mut applied, mut refused, mut tainted_cases, mut led_cases, mut dry_ok) = (0, 0, 0, 0, 0);
     // each case's first answer, by its name
     let mut first: Vec<bool> = Vec::new();
     // (language, kind) -> (targets reached, applied, refused)
@@ -509,7 +570,7 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
         let now = || fs::read_to_string(root.join(&c.file)).unwrap();
         // the same new text with code after the definition, or a comment or string left open to
         // swallow what follows: refused, the file as it was
-        if k >= FIXED.len() {
+        if form == Form::Tainted && k >= FIXED.len() {
             let tail = tainted(c.file.rsplit('.').next().unwrap_or(""), k % 3);
             let mut bad = args.clone();
             bad["new_text"] = json!(format!("{}{tail}", c.new_text()));
@@ -521,6 +582,34 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
             if now() != c.text {
                 broken.push(format!("{}: a new text followed by {tail:?} changed the file", c.file));
             }
+        }
+        if matches!(form, Form::Tainted | Form::Like | Form::Case) {
+            continue;
+        }
+        // the same new text with a comment before it documents the definition, and applies
+        if form == Form::Led {
+            if !dry.is_error {
+                dry_ok += 1;
+                let first = c.new_text().lines().next().unwrap_or("");
+                let indent = &first[..first.len() - first.trim_start().len()];
+                let note = match c.file.rsplit('.').next().unwrap_or("") {
+                    "rs" => "/// lead",
+                    "py" => "# lead",
+                    "js" | "ts" | "java" => "/** lead */",
+                    _ => "// lead",
+                };
+                let mut led = args.clone();
+                led["new_text"] = json!(format!("{indent}{note}\n{}", c.new_text()));
+                let got = call(led);
+                led_cases += 1;
+                if got.is_error {
+                    broken.push(format!("{}: the new text with a comment before it was refused: {}", c.file, got.text));
+                } else if replaced(&c.text, &got.text, &c.file) != c.lines() {
+                    // no line outside the target's own goes (these targets have no doc comment above)
+                    broken.push(format!("{}: the new text with a comment before it replaced other lines: {}", c.file, got.text));
+                }
+            }
+            continue;
         }
         if dry.is_error {
             refused += 1;
@@ -543,27 +632,6 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
         }
         if c.alone && refused_alone(c.kind()).is_some() {
             broken.push(format!("{}: {} is refused by design but its dry run passed: {}", c.file, c.kind(), dry.text));
-        }
-        // the same new text with a comment before it documents the definition, and applies
-        {
-            let first = c.new_text().lines().next().unwrap_or("");
-            let indent = &first[..first.len() - first.trim_start().len()];
-            let note = match c.file.rsplit('.').next().unwrap_or("") {
-                "rs" => "/// lead",
-                "py" => "# lead",
-                "js" | "ts" | "java" => "/** lead */",
-                _ => "// lead",
-            };
-            let mut led = args.clone();
-            led["new_text"] = json!(format!("{indent}{note}\n{}", c.new_text()));
-            let got = call(led);
-            led_cases += 1;
-            if got.is_error {
-                broken.push(format!("{}: the new text with a comment before it was refused: {}", c.file, got.text));
-            } else if replaced(&c.text, &got.text, &c.file) != c.lines() {
-                // no line outside the target's own goes (these targets have no doc comment above)
-                broken.push(format!("{}: the new text with a comment before it replaced other lines: {}", c.file, got.text));
-            }
         }
         let hash = dry.text.lines().find_map(|l| l.strip_prefix("hash: ")).unwrap_or_else(|| panic!("{}", dry.text)).trim().to_string();
         let mut apply = args;
@@ -612,16 +680,17 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
     // the same cases with the file named like the target (a file's module chunk carries the
     // file's name) and with a sibling whose name differs from the target's only by case: each
     // answers as its original first did
-    let vroot = base.join("variants");
-    fs::create_dir_all(vroot.join(".git")).unwrap();
     let mut variants = Vec::new();
-    for (k, c) in cases.iter().enumerate().skip(FIXED.len()) {
+    for (k, c) in cases.iter().enumerate().skip(FIXED.len()).filter(|_| matches!(form, Form::Like | Form::Case)) {
         let name = c.name().to_string();
         if c.target.1 != 0 || name.is_empty() || name.contains('.') {
             continue;
         }
         let ext = c.file.rsplit('.').next().unwrap_or("");
-        variants.push((k, format!("like{k}/{name}.{ext}"), c.text.clone()));
+        if form == Form::Like {
+            variants.push((k, format!("like{k}/{name}.{ext}"), c.text.clone()));
+            continue;
+        }
         let mut chars = name.chars();
         let head = chars.next().unwrap();
         let flip: String = if head.is_uppercase() { head.to_lowercase().collect() } else { head.to_uppercase().collect() };
@@ -632,38 +701,50 @@ fn an_edit_keeps_every_other_definition_whatever_shares_its_lines() {
             variants.push((k, format!("case{k}.{ext}"), format!("{}{sep}\n{sibling}\n", c.text)));
         }
     }
-    for (_, file, text) in &variants {
-        let p = vroot.join(file);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, text).unwrap();
-    }
-    let vsession = Session::open(&vroot, Every::given(Some(0.0))).unwrap();
-    for (k, file, text) in &variants {
-        let c = &cases[*k];
-        let got = scrutate::mcp::call_tool(&vsession, "edit_symbol", &json!({"symbol": c.name(), "path": file, "new_text": c.new_text()}), &edits, &cancel);
-        if got.is_error != first[*k] {
-            broken.push(format!(
-                "{file}: answers {} where {} {}: {}",
-                if got.is_error { "refused" } else { "applied" },
-                c.file,
-                if first[*k] { "was refused" } else { "applied" },
-                got.text
-            ));
+    let mut tried = 0;
+    for (g, group) in variants.chunks(32).enumerate() {
+        let vroot = base.join(format!("v{g}"));
+        fs::create_dir_all(vroot.join(".git")).unwrap();
+        for (_, file, text) in group {
+            let p = vroot.join(file);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
         }
-        if fs::read_to_string(vroot.join(file)).unwrap() != *text {
-            broken.push(format!("{file}: a dry run changed the file"));
+        let vsession = Session::open(&vroot, Every::given(Some(0.0))).unwrap();
+        for (k, file, text) in group {
+            let c = &cases[*k];
+            let got = scrutate::mcp::call_tool(&vsession, "edit_symbol", &json!({"symbol": c.name(), "path": file, "new_text": c.new_text()}), &edits, &cancel);
+            tried += 1;
+            if got.is_error != first[*k] {
+                broken.push(format!(
+                    "{file}: answers {} where {} {}: {}",
+                    if got.is_error { "refused" } else { "applied" },
+                    c.file,
+                    if first[*k] { "was refused" } else { "applied" },
+                    got.text
+                ));
+            }
+            if fs::read_to_string(vroot.join(file)).unwrap() != *text {
+                broken.push(format!("{file}: a dry run changed the file"));
+            }
         }
     }
-    drop(vsession);
-    eprintln!(
-        "edit layouts: {} cases, {applied} applied, {refused} refused: {why:?}; {tainted_cases} tainted new texts refused; {led_cases} led by a comment applied; {} named like the file or beside a name in another case, as their originals",
-        cases.len(),
-        variants.len()
-    );
-    for ((lang, kind), (n, a, r)) in &reached {
-        eprintln!("  {lang:<5} {kind:<26} targets {n:>3}  applied {a:>3}  refused {r:>3}");
+    // every case the form takes was tried
+    let n = cases.len();
+    let (done, planned) = match form {
+        Form::Plain => (applied + refused, n),
+        Form::Tainted => (tainted_cases, n - FIXED.len()),
+        Form::Led => (led_cases, dry_ok),
+        Form::Like | Form::Case => (tried, planned_variants(&cases, form)),
+    };
+    eprintln!("edit layouts, {form:?}: {done} of {planned} tried; {n} cases, {applied} applied, {refused} refused: {why:?}");
+    if form == Form::Plain {
+        for ((lang, kind), (n, a, r)) in &reached {
+            eprintln!("  {lang:<5} {kind:<26} targets {n:>3}  applied {a:>3}  refused {r:>3}");
+        }
+        assert!(applied > n / 4 && refused > n / 10, "{applied} applied, {refused} refused");
     }
-    assert!(applied > cases.len() / 4 && refused > cases.len() / 10, "{applied} applied, {refused} refused");
+    assert!(done == planned && planned > 0, "{form:?}: {done} tried of {planned}");
     assert!(broken.is_empty(), "{}", broken.join("\n\n"));
     drop(sessions);
     let _ = fs::remove_dir_all(&base);
