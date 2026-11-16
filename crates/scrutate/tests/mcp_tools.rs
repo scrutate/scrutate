@@ -318,6 +318,10 @@ fn read_code_says_where_it_stopped() {
     assert_eq!(r.ok("read_code", json!({"path": "empty.py"})), "empty.py is empty");
     assert_eq!(r.ok("read_code", json!({"path": "three.py", "start": 10})), "three.py has 3 lines: start=10 is past the end");
     assert!(r.err("read_code", json!({"path": "three.py", "start": 3, "end": 2})).contains("end (2) is before start (3)"));
+    // a start before the first line is the first line, also when end is compared with it
+    assert!(r.err("read_code", json!({"path": "three.py", "start": -5, "end": -1})).contains("end (-1) is before start (1)"));
+    let text = r.ok("read_code", json!({"path": "three.py", "start": -5, "end": 1}));
+    assert!(text.contains("lines 1-1 of 3"), "{text}");
 }
 
 #[test]

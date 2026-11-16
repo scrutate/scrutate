@@ -332,7 +332,8 @@ impl Op {
                         "missing path or symbol: read_code takes path (a file; start and end pick lines) or symbol (a name, Class.method or a path:start-end location)"
                     );
                 }
-                let (start, end) = (line("start")?.unwrap_or(1), line("end")?);
+                // a start before the first line is the first line, here as where the lines are read
+                let (start, end) = (line("start")?.unwrap_or(1).max(1), line("end")?);
                 if let Some(end) = end.filter(|e| *e < start) {
                     bail!("end ({end}) is before start ({start})");
                 }
