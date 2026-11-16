@@ -756,6 +756,8 @@ pub struct Resolver<'a> {
     cs_types: HashMap<String, CsTypes>,
     cs_namespaces: Option<HashMap<String, Vec<String>>>,
     cs_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
+    /// C++: by class, its bases the repository holds, and whether one of them it does not
+    c_bases: HashMap<i64, Rc<(Vec<i64>, bool)>>,
     /// by class: the classes it inherits from, in method resolution order (`linearized`)
     orders: HashMap<i64, Rc<Vec<i64>>>,
     /// by scope node id, what was looked for and name: the byte ranges found, so a use in a big
@@ -1324,6 +1326,7 @@ impl<'a> Resolver<'a> {
             cs_types: HashMap::new(),
             cs_namespaces: None,
             cs_bases: HashMap::new(),
+            c_bases: HashMap::new(),
             orders: HashMap::new(),
             found: HashMap::new(),
             tys: HashMap::new(),

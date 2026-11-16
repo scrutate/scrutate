@@ -113,8 +113,7 @@ impl Resolver<'_> {
                 return self.c_definition(m).map(|d| (d, "member")).ok_or("not found");
             }
             // a base the repository does not hold may declare it
-            let (_, missing) = self.c_base_names(class);
-            if missing {
+            if self.c_base_names(class).1 {
                 return Err("not found");
             }
         }
@@ -231,9 +230,18 @@ impl Resolver<'_> {
             .map(|r| r.id)
     }
 
-    /// The names of the bases of class `id` (`class D : public B`), and whether one of them is
-    /// not a class of the repository.
-    fn c_base_names(&mut self, id: i64) -> (Vec<i64>, bool) {
+    /// The bases of class `id` (`class D : public B`), and whether one of them is not a class of
+    /// the repository; kept for the request.
+    fn c_base_names(&mut self, id: i64) -> Rc<(Vec<i64>, bool)> {
+        if let Some(b) = self.c_bases.get(&id) {
+            return Rc::clone(b);
+        }
+        let b = Rc::new(self.c_base_names_read(id));
+        self.c_bases.insert(id, Rc::clone(&b));
+        b
+    }
+
+    fn c_base_names_read(&mut self, id: i64) -> (Vec<i64>, bool) {
         let Some((path, _)) = self.def_row(id) else { return (Vec::new(), false) };
         let fi = self.file(&path);
         let Some(node) = def_node(&fi, id) else { return (Vec::new(), false) };
@@ -262,7 +270,7 @@ impl Resolver<'_> {
     }
 
     fn c_bases(&mut self, id: i64) -> Vec<i64> {
-        self.c_base_names(id).0
+        self.c_base_names(id).0.clone()
     }
 
     /// The definition a function or method declaration `id` stands for: the one definition of

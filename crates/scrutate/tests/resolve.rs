@@ -498,6 +498,16 @@ fn cpp_names_resolve_through_namespaces_classes_and_bases() {
 }
 
 #[test]
+fn cpp_each_class_finds_a_member_in_its_own_bases() {
+    let a = "#pragma once\nclass A {\npublic:\n    void run() {}\n};\n";
+    let b = "#pragma once\nclass B {\npublic:\n    void run() {}\n};\n";
+    let d =
+        "#include \"a.hpp\"\n#include \"b.hpp\"\n\nclass D1 : public A {\n    void x() { run(); }\n};\n\nclass D2 : public B {\n    void y() { run(); }\n};\n";
+    let r = Repo::new("cpp_bases", &[("a.hpp", a), ("b.hpp", b), ("d.cpp", d)]);
+    assert_eq!(r.resolved("run"), expect(&[("a.hpp", 4, "a.hpp"), ("b.hpp", 4, "b.hpp"), ("d.cpp", 5, "a.hpp"), ("d.cpp", 9, "b.hpp")]));
+}
+
+#[test]
 fn csharp_names_resolve_through_namespaces_usings_and_typed_values() {
     let shape = "namespace Acme.Models;\n\npublic interface IShape { double Area(); }\n\npublic partial class Circle : IShape\n{\n    private double r;\n    public Circle(double r) { this.r = r; }\n    public double Area() => 3 * r * r;\n    public static Circle Unit() => new Circle(1);\n}\n";
     let extra = "namespace Acme.Models\n{\n    public partial class Circle\n    {\n        public Report Summary() { return new Report(Area()); }\n    }\n\n    public class Report\n    {\n        public Report(double v) { }\n        public bool Ok() { return true; }\n    }\n}\n";
