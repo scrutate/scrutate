@@ -49,6 +49,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("instant.rs", "ONE_LINE", "per thread, search statistics for tests"),
     ("instant.rs", "NO_ONE_LINE", "per thread, search statistics for tests"),
     ("instant.rs", "MOST_QUEUED", "per thread, search statistics for tests"),
+    ("instant.rs", "PAUSE_TAKEN", "tests only: a test's pause after taking a file, keyed by a file name of that test's own"),
     ("memory.rs", "LAST", "when the process last gave memory back"),
     ("lazy_bind.rs", "SYSTEM", "the handle of the system library, the same for the process"),
     ("policy.rs", "DEBUG", "SCRUTATE_GREP_DEBUG, read once per process"),
