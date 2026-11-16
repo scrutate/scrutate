@@ -79,6 +79,10 @@ struct Repo {
 
 impl Repo {
     fn new() -> Repo {
+        Repo::acme("acme")
+    }
+    /// The tree of `new` under its own tag.
+    fn acme(tag: &str) -> Repo {
         let files = [
             ("pom.xml".to_string(), "<project><artifactId>acme</artifactId></project>\n"),
             (format!("{SHAPES}/Shape.java"), "package com.acme.shapes;\n\npublic interface Shape {\n    double area();\n}\n"),
@@ -105,7 +109,7 @@ impl Repo {
             (format!("{APP}/Main.java"), MAIN),
             ("src/test/java/com/acme/app/MainTest.java".to_string(), MAIN_TEST),
         ];
-        Repo::with("acme", &files)
+        Repo::with(tag, &files)
     }
 
     fn with(tag: &str, files: &[(String, &str)]) -> Repo {
@@ -623,4 +627,31 @@ fn an_instance_call_on_a_default_package_class_another_directory_holds_is_extern
     assert!(r.names(&["callees", "Main.run", "--json"]).is_empty(), "callees by name fallback");
     let (_, out) = r.run(&["callers", "ex/a/Util.java:2"]);
     assert_eq!(out.trim(), "(no results)", "callers by name");
+}
+
+/// `--def` counts max_results over the occurrences it lists, those that stand for every overload
+/// included (an import, a method reference): the first M of the whole answer, cut when more exist.
+#[test]
+fn def_counts_the_occurrences_that_stand_for_every_overload() {
+    let r = Repo::acme("def_overloads");
+    let util = format!("{APP}/Util.java");
+    for def in [format!("{util}:4"), format!("{util}:8")] {
+        let rows = |v: &serde_json::Value| -> Vec<String> {
+            v["definitions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|d| d["references"].as_array().unwrap().iter())
+                .map(|o| format!("{}:{}", o["path"].as_str().unwrap(), o["line"]))
+                .collect()
+        };
+        let whole = r.json(&["refs", "scale", "--def", &def, "--json"]);
+        let all = rows(&whole);
+        assert_eq!(all.len(), 5, "{def}: {whole}");
+        for m in [1, 2, 5] {
+            let v = r.json(&["refs", "scale", "--def", &def, "--max-results", &m.to_string(), "--json"]);
+            assert_eq!(rows(&v), all[..m], "{def} at {m}: {v}");
+            assert_eq!(v["truncated"], serde_json::json!(m < all.len()), "{def} at {m}: {v}");
+        }
+    }
 }

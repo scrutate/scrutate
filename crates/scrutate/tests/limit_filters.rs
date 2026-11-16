@@ -70,7 +70,7 @@ type Keeps = Box<dyn Fn(&str, &str) -> bool>;
 
 /// A filter the tools take, and its rule.
 fn filters(rng: &mut Rng) -> (Value, Keeps) {
-    match rng.below(5) {
+    match rng.below(6) {
         0 => {
             let d = rng.below(3);
             (json!({"globs": [format!("d{d}/**")]}), Box::new(move |p: &str, _: &str| p.starts_with(&format!("d{d}/"))))
@@ -82,6 +82,7 @@ fn filters(rng: &mut Rng) -> (Value, Keeps) {
         }
         2 => (json!({"kinds": ["function"]}), Box::new(|_: &str, k: &str| k == "function")),
         3 => (json!({"kinds": ["class", "struct", "type"]}), Box::new(|_: &str, k: &str| matches!(k, "class" | "struct" | "type"))),
+        4 => (json!({"types": ["py"]}), Box::new(|p: &str, _: &str| p.ends_with(".py"))),
         _ => {
             let d = rng.below(3);
             (
@@ -118,6 +119,16 @@ fn occurrences(v: &Value) -> Vec<(String, u64, u64)> {
     all
 }
 
+/// The items of an answer in their order, for the tools whose items are a list or groups of lines.
+fn items(v: &Value) -> Vec<String> {
+    let r = &v["result"];
+    let lines = |g: &Value| -> Vec<String> { g["lines"].as_array().into_iter().flatten().map(|l| format!("{}:{}", g["path"], l["line"])).collect() };
+    match r["groups"].as_array() {
+        Some(groups) => groups.iter().flat_map(lines).collect(),
+        None => r.as_array().into_iter().flatten().map(|i| format!("{}:{}:{}", i["path"], i["line"], i["column"])).collect(),
+    }
+}
+
 #[test]
 fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
     let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_filters_{}", std::process::id()));
@@ -126,6 +137,7 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
     let settings = scrutate::mcp::Settings::new(None);
     let cancel = Arc::default();
     let (mut rows, mut broken) = (0, Vec::new());
+    let mut covered = std::collections::BTreeSet::new();
     for r in 0..24 {
         let root = base.join(format!("r{r}"));
         let n = 2 + rng.below(59);
@@ -141,6 +153,12 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
         let all = listed(&call("find_symbol", json!({"name": "nm", "limit": 500, "exact": true})));
         for _ in 0..4 {
             let (filter, keeps) = filters(&mut rng);
+            for k in filter.as_object().unwrap().keys() {
+                covered.insert(format!("find_symbol {k}"));
+                covered.insert(format!("references {k}"));
+                covered.insert(format!("search_code {k}"));
+            }
+            covered.insert("find_symbol exact".to_string());
             let limit = 1 + rng.below(n.min(25));
             rows += 1;
             let want: Vec<String> = all.iter().filter(|(_, p, k)| keeps(p, k)).take(limit).map(|d| d.0.clone()).collect();
@@ -164,9 +182,67 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
                     want.first()
                 ));
             }
+            // search is ranked: every hit passes, and at least k when that many pass unfiltered
+            let k = 1 + rng.below(10);
+            rows += 1;
+            let hits = |v: &Value| -> Vec<(String, String)> {
+                v["result"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|h| (h["path"].as_str().unwrap_or("").into(), h["kind"].as_str().unwrap_or("").into()))
+                    .collect()
+            };
+            let passing = hits(&call("search_code", json!({"query": "nm", "k": 200}))).iter().filter(|(p, k)| keeps(p, k)).count();
+            let got = hits(&call("search_code", with(json!({"query": "nm", "k": k}), &filter)));
+            if got.iter().any(|(p, k)| !keeps(p, k)) || got.len() < k.min(passing) {
+                broken.push(format!("r{r} (n={n}) search_code {filter} k {k}: {} hits where {passing} pass ({got:?})", got.len()));
+            }
+        }
+        // references with def: the occurrences of that one definition, the first max_results of them
+        let target = &all[rng.below(all.len())];
+        let line = target.0.rsplit(':').next().unwrap_or("1").split('-').next().unwrap_or("1");
+        let def = format!("{}:{line}", target.1);
+        let max = 1 + rng.below(4);
+        rows += 1;
+        let full = occurrences(&call("references", json!({"name": "nm", "def": def, "max_results": 5000})));
+        let cut = occurrences(&call("references", json!({"name": "nm", "def": def, "max_results": max})));
+        if cut[..] != full[..full.len().min(max)] {
+            broken.push(format!(
+                "r{r} (n={n}) references def {def} max_results {max}: {} occurrences where the first {} of {} pass",
+                cut.len(),
+                full.len().min(max),
+                full.len()
+            ));
+        }
+        covered.insert("references def".to_string());
+        // the other narrowing arguments: the answer with a limit is the first items of the one without
+        let d = rng.below(3);
+        let others = [
+            ("references", json!({"name": "nm", "textual": true, "globs": [format!("d{d}/**")]}), "max_results", 5000, "references textual"),
+            ("grep_code", json!({"pattern": "nm", "path": format!("d{d}")}), "max_results", 5000, "grep_code path"),
+            ("grep_code", json!({"pattern": "nm", "globs": [format!("d{d}/**")]}), "max_results", 5000, "grep_code globs"),
+            ("find_files", json!({"query": format!("f{}", rng.below(n))}), "limit", 500, "find_files query"),
+            ("structural_search", json!({"lang": "python", "query": "(function_definition) @f"}), "limit", 5000, "structural_search lang"),
+            ("duplicates", json!({"min_tokens": 5, "threshold": 0.5}), "limit", 500, "duplicates min_tokens threshold"),
+        ];
+        for (tool, args, key, big, pair) in others {
+            let limit = 1 + rng.below(2 * n);
+            rows += 1;
+            let full = items(&call(tool, with(args.clone(), &json!({key: big}))));
+            let cut = items(&call(tool, with(args.clone(), &json!({key: limit}))));
+            if cut[..] != full[..full.len().min(limit)] {
+                broken.push(format!(
+                    "r{r} (n={n}) {tool} {args} {key} {limit}: {} items where the first {} of {} pass",
+                    cut.len(),
+                    full.len().min(limit),
+                    full.len()
+                ));
+            }
+            covered.insert(pair.to_string());
         }
     }
-    eprintln!("limit filters: {rows} rows, {} failed", broken.len());
+    eprintln!("limit filters: {rows} rows, {} failed; covered: {}", broken.len(), covered.into_iter().collect::<Vec<_>>().join(", "));
     assert!(broken.is_empty(), "{}", broken.join("\n"));
     let _ = fs::remove_dir_all(&base);
 }
@@ -432,9 +508,85 @@ fn references_with_kinds_stop_at_their_bound_and_say_why() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// `references --def` counts max_results over the occurrences of the definition it names, never
+/// over every occurrence of the name: 400 files define and use a function `Thing`, then a class
+/// `Thing` used 7 times; its answer holds min(M, all of its occurrences) at every M.
+#[test]
+fn references_def_counts_the_occurrences_of_that_definition() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_def_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("zz")).unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    for i in 0..400 {
+        fs::write(root.join(format!("f{i}.py")), format!("def Thing():\n    return {i}\n\n\ndef use_{i}():\n    Thing()\n    return Thing()\n")).unwrap();
+    }
+    let uses: String = (0..7).map(|_| "    Thing()\n").collect();
+    fs::write(root.join("zz/last.py"), format!("class Thing:\n    pass\n\n\ndef use_last():\n{uses}")).unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        serde_json::from_slice::<Value>(&out.stdout).unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&out.stdout)))
+    };
+    let count =
+        |v: &Value| -> usize { v["result"]["definitions"].as_array().into_iter().flatten().map(|d| d["references"].as_array().map_or(0, Vec::len)).sum() };
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let full = count(&run(&["refs", "Thing", "--def", "zz/last.py", "--max-results", "5000", "--json"]));
+    assert!(full >= 7, "{full}");
+    for m in [1usize, 3, 7, 8, 50, 200] {
+        let ms = m.to_string();
+        let got = count(&run(&["refs", "Thing", "--def", "zz/last.py", "--max-results", &ms, "--json"]));
+        assert_eq!(got, full.min(m), "--max-results {m}");
+        let got = count(&run(&["refs", "Thing", "--def", "zz/last.py", "-g", "**/*.py", "--max-results", &ms, "--json"]));
+        assert_eq!(got, full.min(m), "-g, --max-results {m}");
+    }
+    // the answer counts the occurrences tied to other definitions and to none
+    let text = String::from_utf8_lossy(
+        &std::process::Command::new(BIN)
+            .args(["refs", "Thing", "--def", "zz/last.py"])
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .into_owned();
+    assert!(text.contains("other occurrences resolve to other definitions, 0 are unresolved"), "{text}");
+    // more than 10,000 other uses come first: the read stops there with none of the class's kept, and
+    // says it stopped, in text and JSON, never as if there were none
+    let calls: String = (0..10_050).map(|_| "    Thing()\n").collect();
+    fs::write(root.join("a_many.py"), format!("def Thing():\n    return 0\n\n\ndef many():\n{calls}")).unwrap();
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let text = String::from_utf8_lossy(
+        &std::process::Command::new(BIN)
+            .args(["refs", "Thing", "--def", "zz/last.py", "--max-results", "5"])
+            .current_dir(&root)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .into_owned();
+    assert!(text.contains("10000 occurrences were resolved"), "{text}");
+    let v = run(&["refs", "Thing", "--def", "zz/last.py", "--max-results", "5", "--json"]);
+    assert!(
+        v["result"]["truncated"] == json!(true) && v["result"]["stopped_reason"].as_str().is_some_and(|r| r.contains("narrow the name or the files")),
+        "{v}"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// One kept occurrence past max_results, the last one read, still marks the answer cut: a method
 /// a0 with its definition line and 7 uses, after 40 uses of a function a0, at --max-results 7, by
-/// kind.
+/// kind, by --def, and by --def with a glob.
 #[test]
 fn the_occurrence_past_max_results_marks_the_answer_cut_when_it_is_the_last() {
     const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
@@ -453,12 +605,52 @@ fn the_occurrence_past_max_results_marks_the_answer_cut_when_it_is_the_last() {
     };
     let count =
         |v: &Value| -> usize { v["result"]["definitions"].as_array().into_iter().flatten().map(|d| d["references"].as_array().map_or(0, Vec::len)).sum() };
-    let args = ["--kind", "method"];
-    let all: Vec<&str> = ["refs", "a0"].into_iter().chain(args.iter().copied()).chain(["--max-results", "5000", "--json"]).collect();
-    let full = run(&all);
-    assert!(count(&full) == 8 && full["result"]["truncated"] == json!(false), "{args:?} whole: {full}");
-    let cut: Vec<&str> = ["refs", "a0"].into_iter().chain(args.iter().copied()).chain(["--max-results", "7", "--json"]).collect();
-    let v = run(&cut);
-    assert!(count(&v) == 7 && v["result"]["truncated"] == json!(true), "{args:?} at 7: {v}");
+    for args in [&["--kind", "method"][..], &["--def", "m.py:2"], &["--def", "m.py:2", "-g", "**/*.py"]] {
+        let all: Vec<&str> = ["refs", "a0"].into_iter().chain(args.iter().copied()).chain(["--max-results", "5000", "--json"]).collect();
+        let full = run(&all);
+        assert!(count(&full) == 8 && full["result"]["truncated"] == json!(false), "{args:?} whole: {full}");
+        let cut: Vec<&str> = ["refs", "a0"].into_iter().chain(args.iter().copied()).chain(["--max-results", "7", "--json"]).collect();
+        let v = run(&cut);
+        assert!(count(&v) == 7 && v["result"]["truncated"] == json!(true), "{args:?} at 7: {v}");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A narrowed read (`--def`, a kind) whose only uses are unresolved shows them, and never reads as
+/// unused: `x.go()` on an untyped `x` may be either class's `go`, in text, JSON and MCP.
+#[test]
+fn a_narrowed_answer_shows_the_unresolved_uses() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_unresolved_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("m.py"), "class A:\n    def go(self):\n        return 1\n\n\nclass B:\n    def go(self):\n        return 2\n").unwrap();
+    fs::write(root.join("u.py"), "def use(x):\n    return x.go()\n").unwrap();
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let run = |args: &[&str]| -> String {
+        let out =
+            std::process::Command::new(BIN).args(args).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for args in [&["--def", "m.py:2"][..], &["--kind", "method"]] {
+        let all: Vec<&str> = ["refs", "go"].into_iter().chain(args.iter().copied()).collect();
+        let text = run(&all);
+        assert!(text.contains("unresolved (1):") && text.contains("u.py:2:"), "{args:?}: {text}");
+        if args[0] == "--def" {
+            assert!(text.contains("(1 other occurrences resolve to other definitions, 1 are unresolved)"), "{text}");
+        }
+        let json: Vec<&str> = all.iter().copied().chain(["--json"]).collect();
+        let v: Value = serde_json::from_str(&run(&json)).unwrap();
+        let u = &v["result"]["unresolved"];
+        assert!(u.as_array().is_some_and(|a| a.len() == 1 && a[0]["path"] == "u.py") && v["result"]["unresolved_count"] == 1, "{args:?}: {v}");
+    }
+    let settings = scrutate::mcp::Settings::new(None);
+    let cancel = Arc::default();
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    for args in [json!({"name": "go", "def": "m.py:2"}), json!({"name": "go", "kinds": ["method"]})] {
+        let r = scrutate::mcp::call_tool(&session, "references", &args, &settings, &cancel);
+        assert!(r.text.contains("u.py:2:"), "{args}: {}", r.text);
+        assert_eq!(r.structured["result"]["unresolved"].as_array().map(Vec::len), Some(1), "{args}: {}", r.structured);
+    }
     let _ = fs::remove_dir_all(&root);
 }

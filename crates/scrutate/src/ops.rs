@@ -1007,10 +1007,17 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Refs { name, max_results, def, .. } => {
             let name = &name.trim().to_string();
-            let refs = Names::new(s)?.references(name, *max_results)?;
-            let only = match def {
-                Some(spec) => Some(definition_at(s, &refs, name, spec)?),
-                None => None,
+            let mut names = Names::new(s)?;
+            // the definition --def names is picked before anything is read, so max_results counts
+            // the occurrences that resolve to it, not every one of the name
+            let (refs, only) = match def {
+                Some(spec) => {
+                    let only = definition_of(s, &mut names, name, spec)?;
+                    let first = names.first_overload(only);
+                    let keep = |d: &ChunkRow, why: &str| of_def(only, first, d, why);
+                    (names.references_kept(name, *max_results, None, Some(&keep))?, Some(only))
+                }
+                None => (names.references(name, *max_results)?, None),
             };
             Answer::Resolved { name: name.clone(), refs, only, max_results: *max_results }
         }
@@ -1484,13 +1491,18 @@ fn run_scoped(s: &mut Searcher, op: &Op, f: &crate::filter::Compiled) -> Result<
                 let refs = crate::resolve::Resolved { no_kind: true, ..Default::default() };
                 return Ok(Answer::Resolved { name: name.clone(), refs, only: None, max_results: *max_results });
             }
-            // with kinds, references_in keeps only the occurrences of those kinds as it resolves them
-            let mut refs = Names::new(s)?.references_in(name, *max_results, Some(f))?;
-            // the definition --def names is found whatever the file filters keep
+            let mut names = Names::new(s)?;
+            // the definition --def names is found whatever the file filters keep, and before
+            // anything is read, so max_results counts the occurrences that resolve to it
             let only = match def {
-                Some(spec) => Some(definition_at(s, &refs, name, spec)?),
+                Some(spec) => Some(definition_of(s, &mut names, name, spec)?),
                 None => None,
             };
+            // with kinds or --def, only the occurrences of the kept definitions are kept as they resolve
+            let first = only.and_then(|o| names.first_overload(o));
+            let keep = |d: &ChunkRow, why: &str| f.admits_kind(&d.kind) && only.is_none_or(|o| of_def(o, first, d, why));
+            let keep: Option<crate::names::Keep> = if f.has_kinds() || only.is_some() { Some(&keep) } else { None };
+            let mut refs = names.references_kept(name, *max_results, Some(f), keep)?;
             // the file filters pick occurrences by their own file; a kind picks the definitions
             let by_kind: std::collections::HashSet<i64> = refs.definitions.iter().filter(|d| f.admits_kind(&d.kind)).map(|d| d.id).collect();
             refs.occurrences.retain(|o| f.admits_path(&o.path) && (!f.has_kinds() || matches!(o.resolution, Ok((id, _)) if by_kind.contains(&id))));
@@ -1541,6 +1553,19 @@ fn definition_at(s: &Searcher, refs: &Resolved, name: &str, spec: &str) -> Resul
         .ok_or_else(|| anyhow!("no definition of {} in {}", echo(name), echo(spec)))
 }
 
+/// Whether an occurrence resolved to `d` (`why`) is one of `only`'s, as `Resolved::of` lists them:
+/// one tied to the first of `only`'s overloads as an overload stands for each of them.
+fn of_def(only: i64, first: Option<i64>, d: &ChunkRow, why: &str) -> bool {
+    d.id == only || why == "overload" && Some(d.id) == first
+}
+
+/// The definition of `name` that `spec` points at, among the definitions references lists, before
+/// any occurrence is read.
+fn definition_of(s: &Searcher, names: &mut Names, name: &str, spec: &str) -> Result<i64> {
+    let defs = crate::resolve::Resolved { definitions: names.definitions_of(name)?, ..Default::default() };
+    definition_at(s, &defs, name, spec)
+}
+
 /// The closing line of an answer that stopped at its limit.
 pub fn stop_line(stopped: Option<Stop>, noun: &str) -> String {
     stopped.map(|s| if bound_reason(s.how) { format!("({})", s.how) } else { format!("(stopped at {} {noun}: {})", s.at, s.how) }).unwrap_or_default()
@@ -1567,7 +1592,7 @@ fn resolved_reason(name: &str, refs: &crate::resolve::Resolved) -> Option<String
     } else {
         refs.bounded.map(|n| {
             format!(
-                "{n} occurrences were resolved and fewer than max_results were of those kinds (at most {} are): narrow the name or the files",
+                "{n} occurrences were resolved and fewer than max_results were of the definitions asked for (at most {} are resolved): narrow the name or the files",
                 crate::names::REFS_KIND_RESOLVE_MAX
             )
         })
@@ -1675,16 +1700,12 @@ fn resolved_brief(r: &Resolved, only: Option<i64>) -> Vec<Vec<Brief>> {
         out.push(vec![Brief::at(&d.path, d.start, d.end, &format!("{} ({} references{outside})", named(&d.qualname), occ.len()))]);
         out.extend(occ.into_iter().map(occurrence));
     }
-    let unresolved: Vec<_> = r.unresolved().collect();
-    match only {
-        Some(id) => {
-            let elsewhere = r.occurrences.len() - unresolved.len() - r.of(id).count();
-            out.push(vec![Brief::text(format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved)", unresolved.len()))]);
-        }
-        None => {
-            out.push(vec![Brief::head(format!("unresolved ({}):", unresolved.len()))]);
-            out.extend(unresolved.into_iter().map(occurrence));
-        }
+    if let Some(id) = only {
+        out.push(vec![Brief::text(r.others_line(id))]);
+    }
+    if only.is_none() || r.unresolved_count() > 0 {
+        out.push(vec![Brief::head(r.unresolved_head())]);
+        out.extend(r.unresolved().map(occurrence));
     }
     out.extend(r.notes.iter().map(|(path, note)| vec![Brief::text("note: ").then_path(path).then(format!(": {note}"))]));
     out
@@ -2761,7 +2782,7 @@ impl Answer {
                     }
                 }
             }
-            Answer::Resolved { only, .. } => {
+            Answer::Resolved { .. } => {
                 if let Some(defs) = v["definitions"].as_array_mut() {
                     defs.retain_mut(|d| {
                         let head = w.take(1);
@@ -2772,9 +2793,7 @@ impl Answer {
                     });
                 }
                 w.take(1);
-                if only.is_none() {
-                    list(&mut w, &mut v["unresolved"]);
-                }
+                list(&mut w, &mut v["unresolved"]);
                 if v.get("notes").is_some() {
                     list(&mut w, &mut v["notes"]);
                     if len(&v["notes"]) == 0 {
@@ -2934,11 +2953,13 @@ impl Answer {
                 if let Some(why) = resolved_reason(name, refs) {
                     v["stopped_reason"] = json!(why);
                 }
-                if only.is_none() {
-                    v["unresolved"] = refs
-                        .unresolved()
-                        .map(|o| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "reason": o.resolution.err()})))
-                        .collect();
+                v["unresolved"] =
+                    refs.unresolved().map(|o| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "reason": o.resolution.err()}))).collect();
+                if let Some(n) = &refs.narrowed {
+                    v["unresolved_count"] = json!(refs.unresolved_count());
+                    if only.is_some() {
+                        v["other_definitions"] = json!(n.elsewhere);
+                    }
                 }
                 if !refs.notes.is_empty() {
                     v["notes"] = refs.notes.iter().map(|(path, note)| json!({"path": path, "note": note})).collect();

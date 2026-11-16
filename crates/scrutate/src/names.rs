@@ -61,6 +61,9 @@ pub struct Names<'a> {
 /// The most a request keeps of its nested `references` answers.
 pub(crate) const NESTED_MEMO: usize = 16 << 20;
 
+/// Whether an occurrence resolved to a definition, for the reason given, is kept.
+pub type Keep<'k> = &'k dyn Fn(&ChunkRow, &str) -> bool;
+
 impl<'a> Names<'a> {
     pub fn new(s: &'a Searcher) -> Result<Names<'a>> {
         // started first: the store keeps what every read of the request saw
@@ -98,13 +101,39 @@ impl<'a> Names<'a> {
 
     /// `references`, Engine A walking only the files `scope` can admit.
     pub fn references_in(&mut self, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>) -> Result<Resolved> {
+        let kinds = scope.filter(|f| f.has_kinds());
+        let keep = |d: &ChunkRow, _: &str| kinds.is_none_or(|f| f.admits_kind(&d.kind));
+        let keep: Option<Keep> = if kinds.is_some() { Some(&keep) } else { None };
+        self.references_kept(name, max_results, scope, keep)
+    }
+
+    /// The first of the overloads of `id`, which stands for them all where a call's arguments do
+    /// not pick one; None for a definition without overloads.
+    pub fn first_overload(&mut self, id: i64) -> Option<i64> {
+        match self.rv.overloads(id)[..] {
+            [first, _, ..] => Some(first),
+            _ => None,
+        }
+    }
+
+    /// The definitions `references` of `name` can resolve its occurrences to, as it lists them:
+    /// a definition `--def` names is picked among these before anything is read.
+    pub fn definitions_of(&self, name: &str) -> Result<Vec<ChunkRow>> {
+        let bare = crate::intel::bare_name(self.s, name)?;
+        Ok(self.s.ix.definitions(&bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, &bare)).collect())
+    }
+
+    /// `references_in`, keeping only the occurrences that resolve to a definition `keep` admits,
+    /// given the definition and why it was resolved to: `max_results` counts those, as they are
+    /// resolved, and the others are dropped.
+    pub fn references_kept(&mut self, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>, keep: Option<Keep>) -> Result<Resolved> {
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
-        // with kinds an occurrence counts once it resolves to a definition of a kept kind, so the
-        // search reads on, resolving at most REFS_KIND_RESOLVE_MAX (or max_results when larger)
-        let kinds = scope.filter(|f| f.has_kinds());
+        // with `keep` an occurrence counts once it resolves to a kept definition, so the search
+        // reads on, resolving at most REFS_KIND_RESOLVE_MAX (or max_results when larger)
+        let kinds = keep;
         let read_max = if kinds.is_some() { max_results.max(REFS_KIND_RESOLVE_MAX) } else { max_results };
-        let mut kind_of: HashMap<i64, bool> = HashMap::new();
+        let mut kind_of: HashMap<(i64, &str), bool> = HashMap::new();
         let mut bounded: Option<u64>;
         let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, read_max) };
         // a name defined in a language that ignores case is looked for in any case, and kept in
@@ -116,7 +145,7 @@ impl<'a> Names<'a> {
             None => walk,
         };
         // an alias in such a language (`use function Lib\phpfn as pf`) is used in any case too
-        let (mut occurrences, notes, mut truncated) = loop {
+        let (mut occurrences, notes, mut truncated, narrowed) = loop {
             if any_case {
                 q.pattern.case = crate::instant::Case::Insensitive;
             }
@@ -133,6 +162,7 @@ impl<'a> Names<'a> {
                 }
             }
             let mut occurrences = Vec::new();
+            let mut narrowed = crate::resolve::Narrowed::default();
             // Engine A stops at `max_results` lines; one long line can hold more uses than that
             let total: usize = hits.iter().map(|h| h.spans.len()).sum();
             truncated |= total as u64 > read_max;
@@ -164,25 +194,37 @@ impl<'a> Names<'a> {
                     }
                     // the occurrence as this file spells it
                     let resolution = self.tie(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare)).resolution();
+                    let o = Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution };
                     if let Some(f) = kinds {
                         resolved += 1;
                         // an occurrence of another kind is dropped as it resolves, never held
                         let kept = match resolution {
-                            Ok((id, _)) => match kind_of.get(&id) {
+                            Ok((id, why)) => match kind_of.get(&(id, why)) {
                                 Some(&k) => k,
                                 None => {
-                                    let k = s.ix.chunk(id)?.is_some_and(|d| f.admits_kind(&d.kind));
-                                    kind_of.insert(id, k);
+                                    let k = s.ix.chunk(id)?.is_some_and(|d| f(&d, why));
+                                    kind_of.insert((id, why), k);
                                     k
                                 }
                             },
                             Err(_) => false,
                         };
+                        // the others are counted, and the unresolved kept up to max_results
                         if !kept {
+                            if scope.is_none_or(|sc| sc.admits_path(&o.path)) {
+                                if resolution.is_ok() {
+                                    narrowed.elsewhere += 1;
+                                } else {
+                                    narrowed.unresolved_count += 1;
+                                    if (narrowed.unresolved.len() as u64) < max_results {
+                                        narrowed.unresolved.push(o);
+                                    }
+                                }
+                            }
                             continue;
                         }
                     }
-                    occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
+                    occurrences.push(o);
                 }
             }
             // the search itself stopped at the bound's lines with fewer than max_results kept
@@ -196,7 +238,7 @@ impl<'a> Names<'a> {
             }
             let alias = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if s.ix.chunk(id).ok().flatten().is_some_and(|d| d.name != *bare));
             if any_case || !bare.is_ascii() || !occurrences.iter().any(|o| self.langs.folds(&o.path, "function") && alias(o)) {
-                break (occurrences, notes, truncated);
+                break (occurrences, notes, truncated, narrowed);
             }
             any_case = true;
         };
@@ -286,12 +328,13 @@ impl<'a> Names<'a> {
         let mut first_overload = HashMap::new();
         if occurrences.iter().any(|o| matches!(o.resolution, Ok((_, "overload")))) {
             for d in &definitions {
-                if let [first, _, ..] = self.rv.overloads(d.id)[..] {
+                if let Some(first) = self.first_overload(d.id) {
                     first_overload.insert(d.id, first);
                 }
             }
         }
-        Ok(Resolved { definitions, occurrences, truncated, bounded, no_kind: false, notes, first_overload, outside: Default::default() })
+        let narrowed = kinds.is_some().then_some(narrowed);
+        Ok(Resolved { definitions, occurrences, truncated, bounded, no_kind: false, notes, first_overload, outside: Default::default(), narrowed })
     }
 
     /// The occurrences `references(word, max_results)` gives that read as an instantiation, kept

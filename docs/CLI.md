@@ -348,7 +348,8 @@ walks only the files the globs and types (or, with no type, the languages' file 
 `--max-results` counts only those; its file filters pick each occurrence by its own file, and a
 definition outside them heads the occurrences they keep, marked `(outside the filter)`
 (`outside_filter` in the JSON). `--kind` picks the definitions, and `--def` names one whatever
-the file filters keep. With `--kind`, `--max-results` counts only the occurrences of the kinds it
+the file filters keep; with `--def`, `--max-results` counts the occurrences that resolve to that
+definition, under the same bound as `--kind`. With `--kind`, `--max-results` counts only the occurrences of the kinds it
 keeps: a kind is known once an occurrence is resolved, so the search resolves occurrences until
 that many are kept, at most 10,000 (or `--max-results` when larger), dropping the others as it
 goes, and an answer cut there says how many it resolved; narrow the files with `-g`, `-t` or
@@ -631,7 +632,12 @@ resolution: definitions, callers and every occurrence grouped by enclosing symbo
 misses anything, and works without an index). Both search the files the MCP `grep_code` tool
 searches: hidden files included, the directories the index skips left out. With `--json`, each
 definition has a `references` list (`path`, `line`, `column` in bytes, `text`, `via`) and the
-document an `unresolved` list with a `reason` (left out with `--def`). A file whose search a NUL
+document an `unresolved` list with a `reason`. `--def` and `--kind` still resolve every
+occurrence they read: the unresolved ones are listed, at most `--max-results` of them, with
+`unresolved_count` counting every one the read saw (an unresolved use may be a use of the
+definition asked for), and `--def` ends with `(N other occurrences resolve to other definitions, M
+are unresolved)`, `other_definitions` in JSON, over the occurrences read when the answer stopped
+early. A file whose search a NUL
 byte stopped after a match is named in a final `note:` line (`notes` in JSON, each with `path`
 and `note`): a use after that byte is not listed. Resolution reads the index's definitions and
 parses the files holding occurrences again, so it needs no index change. The MCP `references`

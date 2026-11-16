@@ -1059,7 +1059,11 @@ the filter that heads some is marked so (`Resolved::outside`). With kinds, an oc
 once it resolves to a definition of a kept kind. When no definition of the name has a kept kind,
 refs answers at once and says so; otherwise the search reads on until it has read every occurrence
 or resolved 10,000 (`REFS_KIND_RESOLVE_MAX`, or `max_results` when that is larger), keeps those of
-the kept kinds, cuts to `max_results`, and says when the bound left it short.
+the kept kinds, cuts to `max_results`, and says when the bound left it short. `--def` reads the
+same way (`Names::references_kept` takes a predicate on the definition an occurrence resolves to
+and why), and both narrowed reads count the occurrences they resolve to other definitions and keep
+those they cannot resolve (`Resolved::narrowed`): an unresolved one may be a use of the definition
+asked for.
 
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
 the repository is small enough to index on the spot; otherwise identifier grep. `grep --index`

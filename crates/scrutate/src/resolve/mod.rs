@@ -3074,6 +3074,16 @@ impl Occurrence {
     }
 }
 
+/// What a read narrowed to some definitions (`--def`, kinds) saw of the rest, as it resolved
+/// each occurrence: the count tied to other definitions, and those tied to none (at most
+/// max_results kept, every one counted): an unresolved occurrence may be a use of the one asked for.
+#[derive(Default)]
+pub struct Narrowed {
+    pub elsewhere: u64,
+    pub unresolved: Vec<Occurrence>,
+    pub unresolved_count: u64,
+}
+
 #[derive(Default)]
 pub struct Resolved {
     /// definitions named `name`, plus any other definition an occurrence resolved to
@@ -3093,6 +3103,8 @@ pub struct Resolved {
     pub(crate) first_overload: HashMap<i64, i64>,
     /// definitions a filter leaves out that head the occurrences it keeps
     pub outside: std::collections::HashSet<i64>,
+    /// with `--def` or kinds, what the read saw outside the definitions kept
+    pub narrowed: Option<Narrowed>,
 }
 
 impl Resolved {
@@ -3101,7 +3113,29 @@ impl Resolved {
         self.occurrences.iter().filter(move |o| matches!(o.resolution, Ok((d, why)) if d == id || (why == "overload" && Some(d) == first)))
     }
     pub fn unresolved(&self) -> impl Iterator<Item = &Occurrence> {
-        self.occurrences.iter().filter(|o| o.resolution.is_err())
+        self.occurrences.iter().filter(|o| o.resolution.is_err()).chain(self.narrowed.iter().flat_map(|n| n.unresolved.iter()))
+    }
+
+    /// How many unresolved occurrences the answer saw, listed or not.
+    pub fn unresolved_count(&self) -> u64 {
+        let listed = self.occurrences.iter().filter(|o| o.resolution.is_err()).count() as u64;
+        listed + self.narrowed.as_ref().map_or(0, |n| n.unresolved_count)
+    }
+
+    /// The heading of the unresolved occurrences: their count, and how many are listed when fewer.
+    pub fn unresolved_head(&self) -> String {
+        let (all, listed) = (self.unresolved_count(), self.unresolved().count() as u64);
+        if listed < all { format!("unresolved ({all}, the first {listed} listed):") } else { format!("unresolved ({all}):") }
+    }
+
+    /// The line a `--def` answer for `only` gives before its unresolved occurrences.
+    pub fn others_line(&self, only: i64) -> String {
+        let elsewhere = match &self.narrowed {
+            Some(n) => n.elsewhere,
+            None => (self.occurrences.len() - self.unresolved().count() - self.of(only).count()) as u64,
+        };
+        let read = if self.truncated { ", in the occurrences read before the answer stopped" } else { "" };
+        format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved{read})", self.unresolved_count())
     }
 }
 
@@ -3135,17 +3169,15 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
             out.push_str(&format!("    {}:{}:{}: {}{mark}\n", shown(&o.path), o.line, o.column, o.shown_line().0));
         }
     }
-    let unresolved: Vec<&Occurrence> = r.unresolved().collect();
-    match only {
-        Some(id) => {
-            let elsewhere = r.occurrences.len() - unresolved.len() - r.of(id).count();
-            out.push_str(&format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved)\n", unresolved.len()));
-        }
-        None => {
-            out.push_str(&format!("unresolved ({}):\n", unresolved.len()));
-            for o in unresolved {
-                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.shown_line().0, o.resolution.err().unwrap_or("")));
-            }
+    if let Some(id) = only {
+        out.push_str(&r.others_line(id));
+        out.push('\n');
+    }
+    if only.is_none() || r.unresolved_count() > 0 {
+        out.push_str(&r.unresolved_head());
+        out.push('\n');
+        for o in r.unresolved() {
+            out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.shown_line().0, o.resolution.err().unwrap_or("")));
         }
     }
     for (path, note) in &r.notes {
