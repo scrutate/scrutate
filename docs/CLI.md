@@ -704,7 +704,9 @@ rename, `renamed_from`, the old path, and on the note of definitions past the fi
 `path`, `qualname`, `start` and `end`), `more_findings` and `stopped`. `--max-bytes` pages the text by whole lines,
 as the other answers. No change is exit code 1. Errors (exit 2): a directory outside a git
 repository, git missing, a revision git does not know, two revisions with no merge base, a file
-with unmerged changes. A revision that starts with `-` is refused before git runs, so it can
+under the root with unmerged changes (one outside it is not read), a git that fails (named with
+git's reason or how it ended: `git diff-index: ended by signal 11 (a crash) and gave no reason`),
+a base copy git does not have (`git cat-file: OID missing`). A revision that starts with `-` is refused before git runs, so it can
 never be read as an option. The command line does not send `impact` to a running `serve`: git
 runs in the command's own environment. Git runs at the root, and a relative `GIT_DIR`,
 `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` is read from the directory the command

@@ -903,14 +903,14 @@ they do. It reads the diff through `git.rs`, which runs `git` in the root, the o
 starts: `git diff-index --raw -z` (`git diff-tree` between two commits) for each file's status,
 modes and blob ids, the same with `-p -U0` for the changed lines of each side, `git ls-files
 --others --exclude-standard` for untracked files, `git rev-parse` and `git merge-base` for the
-base commit, and one `git cat-file --batch` for the base copies (and, with `--staged`, the staged
+base commit, and one `git cat-file --batch` for the base copies (and, with `--staged` or `review`, the new side's
 copies). `read --history` reads a definition's commits through it too: `git log -L
 start,end:path -s` on HEAD's copy (`Git::line_log`), the lines first found there through `git
 diff-index -p -U0 HEAD -- path` when the file has uncommitted edits (`Git::at_head`); in a shallow clone the
 commits the history stops at (`Git::shallow_boundaries`) are marked as the cut, never as a change.
 Every call goes through `Git::command`, the one place git starts (`tests/git_spawns.rs` holds the
 code to it): it runs only commands that read (`READS`; a diff is plumbing, which never refreshes
-the index), empties every filter driver the configuration names (`Git::no_filters`), and passes `--no-optional-locks`,
+the index), empties every filter driver the configuration names (`Git::no_filters`, which stops when git cannot list them), and passes `--no-optional-locks`,
 `core.fsmonitor=false`, `log.showSignature=false` (no gpg), `--no-ext-diff` and `--no-textconv`
 on every diff and log, and `GIT_NO_LAZY_FETCH=1` (no fetch in a partial clone), so git writes nothing and starts no helper of its own; a revision is checked
 before it is passed (none starts with `-`) and resolved to
@@ -926,7 +926,9 @@ are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJEC
 process, its configuration and programs included; any other name is refused before git runs. On Windows
 each path Git hands git, its directory and these values, goes in its plain form (`git::plain`),
 since git does not read a verbatim one (`\\?\C:\x`, what `canonicalize` gives). Each hunk's new lines map onto the index's definitions
-of the file as it is now, and its old lines onto the definitions a parse of the base copy gives
+of the file as it is now (the working tree), or for git's copy (`--staged`, `review`) onto a parse of
+it, each definition named where the index holds it and a line outside them by that parse's window,
+and its old lines onto the definitions a parse of the base copy gives
 (`parse::parse_file`, the parse the index stores); a definition is matched across the sides by
 kind and qualified name ([CLI](CLI.md#impact) has the statuses and windows). The callers are
 followed breadth first through one `Names` for the whole request, each step the answer of
