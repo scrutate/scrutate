@@ -659,7 +659,7 @@
   "step": "the SBOM, bound to the archives it describes",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
- "release.yml:release:f4e3c9b1e9": {
+ "release.yml:release:1d8ca4c87f": {
   "step": "draft, attach, publish",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },

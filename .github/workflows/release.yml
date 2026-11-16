@@ -278,9 +278,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # the notes are this version's section of CHANGELOG.md; a release without one stops here
-          awk -v v="[$VERSION]" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          test -s "$RUNNER_TEMP/notes.md"
+          # the notes are this version's section of CHANGELOG.md; a release stops here without one, or
+          # while ## [Unreleased] still holds entries the notes would leave out
+          python3 tools/release_notes.py "$VERSION" --out "$RUNNER_TEMP/notes.md"
           if [ "$REHEARSAL" = true ]; then
             tag=rehearsal-$GITHUB_RUN_ID
             # a draft makes no tag until it is published; the tag check covers a draft that did

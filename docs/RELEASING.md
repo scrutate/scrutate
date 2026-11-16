@@ -37,6 +37,13 @@ test results and artifacts all name one binary by its SHA-256.
 The check fails when a file differs from the version. The release workflow runs it first on the
 tag (less its `v`) and refuses a tag that does not match.
 
+- [ ] `CHANGELOG.md`: the entries under `## [Unreleased]` move into the version's section, dated
+  the day of the tag, `## [Unreleased]` stays as an empty heading, and the link references for
+  both headings sit at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
+  `[X.Y.Z]: .../releases/tag/vX.Y.Z`). `python3 tools/release_notes.py X.Y.Z` prints the notes
+  the release gets and fails until this is done; the release workflow runs it before it
+  publishes, and a dry run fails on it too.
+
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
 locked `notify` and `notify-types` need. A `ci.yml` job runs `cargo check` with it, so a dependency update
 that raises it fails there. README.md and docs/INSTALL.md name it too.
@@ -300,7 +307,9 @@ gh run watch "$(gh run list --workflow release.yml -L 1 --json databaseId -q '.[
 ```
 
 It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` and
-`security.yml` too. The sign-and-publish job runs in the `rehearsal` environment: it attests every
+`security.yml` too. Its sign-and-publish job stops at the notes step while `## [Unreleased]`
+holds entries, as a tag would (step 1): on `main` before the fold, that is the expected end of a
+dry run, not a broken pipeline. The sign-and-publish job runs in the `rehearsal` environment: it attests every
 file (real, public attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
 `refs/tags/v0.1.0` rejects them), makes a draft release `rehearsal-<run id>` with every file,
 checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for this
