@@ -199,3 +199,23 @@ of the edited file (about 185 ms on 14,520 files with either build). Setting the
 in 442 ms, off the read path. Memory: a server on 14,520 files holds 16,639 descriptors and about
 19.5 MB more resident memory with the kqueue (about 1.2 KB per watch, the paths kept for each; the
 kernel's own per-watch memory is not in that count).
+
+Two more, each measured on one Mac (Apple M3 Pro), with how to measure them again:
+
+- Files the user cannot read, tried again 32 a drain. `cargo test --release -p scrutate --lib --
+  --ignored --nocapture shut_files_cost` (ignored by default) prints two medians over 20 drains: a
+  drain with 10,000 such files, 0.52 ms (0.44 to 0.88; 0.50 ms in the Reviewer's run), and one with
+  none, 0.019 ms. The same test before the bound, when a drain tried them all, gave 155.6 ms (150.5
+  to 237.8, load about 6). Through a running server, on a 10,200-file tree with 10,000 of them mode
+  000, a read took 20.8 ms median over 30 reads, against 13.3 ms with them readable (load about 3.5,
+  the Reviewer's run).
+- The budget under a hard limit. Lower both limits so the kqueue's share is smaller than the tree,
+  `ulimit -Sn 2600; ulimit -Hn 2600` (from any soft limit, in bash and zsh; `ulimit -Hn` alone
+  fails while the soft limit is above it, and `ulimit -n` in zsh sets the soft one alone, which the
+  server raises back), then `SCRUTATE_SESSION_DEBUG=1 scrutate serve` in a 2,000-file tree: every
+  read logs "every file, the tree has more files than the kqueue's share of descriptors" and looks
+  at the tree, and 20 reads after edits and new files missed 0; the server holds 15 descriptors
+  (`lsof -p <pid>`, 16 lines with its header), so a refused build keeps none. The same at hard limits
+  of 2,048 and 4,096 (20 writes each, 0 missed), and under `--refresh-interval` at 2,048: edits and
+  new directories' files 5 of 5 (the Reviewer's runs). A tree that grows past the share logs it from
+  then on.
