@@ -418,7 +418,15 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
                 [.., last] => last,
                 [] => "",
             };
-            vec![l.name.clone(), last.to_string()]
+            // the package name the code uses when it is not the last part: gopkg.in/yaml.v3 is
+            // `yaml`, github.com/mattn/go-sqlite3 is `sqlite3`
+            let cut = last.rsplit_once('.').filter(|(_, v)| major(v)).map_or(last, |(b, _)| b);
+            let cut = cut.strip_prefix("go-").filter(|c| !c.is_empty()).unwrap_or(cut);
+            let mut names = vec![l.name.clone(), last.to_string()];
+            if cut != last {
+                names.push(cut.to_string());
+            }
+            names
         }
         Eco::Python => {
             let mine: Vec<String> = dists.iter().filter(|d| normalized(&d.name) == normalized(&l.name)).flat_map(Dist::tops).collect();

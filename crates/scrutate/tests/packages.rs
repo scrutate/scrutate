@@ -332,6 +332,24 @@ fn a_go_module_is_read_from_the_module_cache_at_the_version_go_mod_requires() {
 }
 
 #[test]
+fn a_go_module_is_found_by_the_package_name_the_code_uses_without_a_v_suffix_or_go_prefix() {
+    let t = Tree::new("go_names");
+    t.go_mod("require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tgithub.com/mattn/go-sqlite3 v1.14.22\n)");
+    t.store("gomod/gopkg.in/yaml.v3@v3.0.1/yaml.go", "package yaml\n\nfunc Unmarshal(in []byte, out any) error {\n\treturn nil\n}\n");
+    t.store("gomod/github.com/mattn/go-sqlite3@v1.14.22/sqlite3.go", "package sqlite3\n\ntype SQLiteDriver struct {\n\tExtensions []string\n}\n");
+    for (name, want) in [
+        ("yaml.Unmarshal", "yaml.v3@v3.0.1/yaml.go:3-5"),
+        ("yaml.v3.Unmarshal", "yaml.v3@v3.0.1/yaml.go:3-5"),
+        ("sqlite3.SQLiteDriver", "go-sqlite3@v1.14.22/sqlite3.go:3-5"),
+        ("go-sqlite3.SQLiteDriver", "go-sqlite3@v1.14.22/sqlite3.go:3-5"),
+    ] {
+        let (code, out, err) = t.run(&["symbol", "--deps", name]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(out.contains(want), "{name}: {out}");
+    }
+}
+
+#[test]
 fn the_tools_take_scope_deps_and_answer_the_same() {
     let t = Tree::new("tools");
     t.cargo_lock(&[("serde", "1.0.200")]);
