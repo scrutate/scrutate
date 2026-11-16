@@ -1223,6 +1223,17 @@ fn a_concise_page_too_long_for_max_bytes_still_says_how_to_go_on() {
     assert!(text.contains("call again with offset="), "{text}");
 }
 
+/// A concise read_code from an offset past the file's last line says there is no more, as the
+/// detailed one does, whatever the offset.
+#[test]
+fn a_concise_read_code_past_the_last_line_says_no_more() {
+    let mut r = Repo::new("concise_past_end", &[("pkg/a.py", "def used():\n    return 1\n\ndef other():\n    return 2\n")]);
+    for offset in [10u64, i64::MAX as u64, u64::MAX] {
+        let text = r.ok("read_code", json!({"path": "pkg/a.py", "response_format": "concise", "offset": offset}));
+        assert!(text.contains("(no more lines: 5 in all)") && !text.contains("no definition starts"), "offset {offset}: {text}");
+    }
+}
+
 /// A tool's path that leaves the repository and comes back into it names the repository's
 /// directory, as the same path without the detour does.
 #[test]

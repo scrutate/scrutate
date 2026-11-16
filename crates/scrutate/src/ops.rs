@@ -2153,7 +2153,8 @@ impl Parts {
         for line in lines {
             line.write(&mut page, &mut out);
         }
-        if let (false, Some((_, first, _))) = (any, &self.file) {
+        // past the last item `close` says there is no more
+        if let (false, true, Some((_, first, _))) = (any, count > 0, &self.file) {
             let last = first + (offset + count) as i64 - 1;
             push_line(&mut out, &format!("(no definition starts in lines {}-{last}: response_format detailed shows them)", first + offset as i64));
         }
