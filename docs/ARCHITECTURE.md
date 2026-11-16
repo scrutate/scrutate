@@ -259,6 +259,21 @@ found, what a call is, how imports look), a keyword heuristic tier, and overlapp
 Each definition becomes a *chunk* with fields name / qualified name / signature / documentation /
 body / path, plus call edges and imports. A new language is a registry entry and a sample file.
 
+A file with a syntax error still yields definitions. tree-sitter recovers around the error and
+leaves an ERROR or MISSING node where it gave up, and the registry reads the definitions in the
+rest of the tree. Where it recovers is the runtime's choice, and that changes between tree-sitter
+releases. Moving from 0.26.13 to 0.27.2 changed the trees of 1,766 of 109,987 files (LLVM; Linux's
+`kernel/`, `scripts/` and `tools/`; a corpus of small files; this repository). Each of the 1,766
+has an ERROR or MISSING node in one of its two trees, and no file that parses cleanly changed. Over them and the 16 Scala
+and Jsonnet files whose grammars moved too, the definitions went from 43,073 to 43,350. Counted
+by kind and name, 341 were gained and 64 lost. The 64 are in 13 files, and the 6 of those that
+end with fewer are compiler test inputs written to be invalid. The worst is clang's
+`test/SemaCXX/attr-print.cpp`, from 12 definitions to 1. The one library source among the 13,
+libc++'s `__type_traits/strip_signature.h`, lost 2 and gained 6, from 34 to 38. Counted with
+line ranges too, 386 were gained and 109 lost, and 46 files lose at least one. 10 of those 46 are
+library sources (in compiler-rt, OpenMP, libc, libc++, LLVM's headers and Google Benchmark),
+where a definition is found on other lines.
+
 A definition's documentation is the comment block right above it, with no blank line between;
 attributes, decorators, annotations and type specs (Rust `#[...]`, `@Get(...)`, `@override`,
 Elixir `@spec`, Erlang `-spec`) may stand in between. It is the lines of those comment nodes,

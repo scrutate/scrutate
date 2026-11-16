@@ -220,7 +220,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#conventions)).
 - tree-sitter 0.27.2 (was 0.26.13), tree-sitter-scala 0.26.13 (was 0.26.9) and
   tree-sitter-jsonnet 0.1.1 (was 0.0.1): Jsonnet's `for` object comprehensions parse as their own
-  node, and Scala's case bodies by their indentation.
+  node, and Scala's case bodies by their indentation. A file with a syntax error can yield other
+  definitions, since 0.27 recovers from errors elsewhere. Over 1,766 such files in LLVM and Linux,
+  341 definitions were gained and 64 lost, and clang's `test/SemaCXX/attr-print.cpp` fell from 12
+  to 1 (docs/ARCHITECTURE.md, Parsing).
 - `grep --max-results N` with after-context (`-A`, `-C`) prints the context of the Nth match
   before it stops, as `-m N` does, where it stopped at the match; a match inside that context
   prints as a match, as ripgrep prints one after `-m`'s last, and does not count toward N
