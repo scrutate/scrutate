@@ -11,7 +11,8 @@ The eleven changes from upstream:
 1. The global git excludes path is parsed without compiling a regex (`excludes_file_span`).
 2. An idle walker thread waits 10 us at first, doubling up to the original 1 ms, before looking
    for work again (`Worker::get_work`).
-3. Gitignore lines of three common shapes are matched without a regex (`gitignore::Simple`).
+3. Gitignore lines of three common shapes are matched without a regex (`gitignore::Simple`), and a
+   matcher used often compiles all its globs into one set (`Full`).
 4. A parallel walk can start more threads while it runs (`WalkBuilder::grow_threads`).
 5. The global git excludes file is read only when a walk meets a repository
    (`IgnoreInner::git_global`).
