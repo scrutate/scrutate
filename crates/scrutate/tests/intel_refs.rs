@@ -1802,6 +1802,22 @@ fn refs_callers_and_callees_take_the_names_symbol_takes() {
 }
 
 #[test]
+fn scoped_textual_refs_keep_a_caller_in_scope_past_200_outside_it() {
+    let many: String = (0..210).map(|i| format!("def a{i:03}():\n    log()\n\n\n")).collect();
+    let r = Repo::new(
+        "scoped_callers",
+        &[
+            ("lib.py", "def log():\n    pass\n"),
+            ("a/many.py", &format!("from lib import log\n\n\n{many}")),
+            ("z/one.py", "from lib import log\n\n\ndef z_only():\n    log()\n"),
+        ],
+    );
+    let t = r.json(&["refs", "log", "--textual", "-g", "z/**", "--json"]);
+    let callers: Vec<&str> = t["callers"].as_array().unwrap().iter().map(|c| c["path"].as_str().unwrap()).collect();
+    assert_eq!(callers, ["z/one.py"], "{t}");
+}
+
+#[test]
 fn a_window_location_works_where_lines_are_enough_and_is_named_where_a_symbol_is_needed() {
     let app = |name: &str, port: u32| {
         format!(

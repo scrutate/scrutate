@@ -1534,7 +1534,8 @@ pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<Referenc
 pub fn references_in(s: &Searcher, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>) -> Result<References> {
     let bare = bare_name(s, name)?;
     let mut definitions = s.ix.definitions(&bare)?;
-    let mut callers = s.callers(name, 200)?;
+    // the scope is applied before the 200 are counted, so callers outside it take no place
+    let mut callers = s.callers(name, if scope.is_some() { usize::MAX } else { 200 })?;
     let walk = crate::files::repository_files(&s.ix.root);
     let walk = match scope {
         Some(f) => f.walk(walk),
@@ -1554,6 +1555,7 @@ pub fn references_in(s: &Searcher, name: &str, max_results: u64, scope: Option<&
     if let Some(f) = scope {
         definitions.retain(|d| f.admits(&d.path, &d.kind));
         callers.retain(|h| f.admits_path(&h.path));
+        callers.truncate(200);
         groups.retain(|g| f.admits_path(&g.path));
     }
     Ok(References { definitions, callers, groups, truncated })
