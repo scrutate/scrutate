@@ -173,10 +173,9 @@ impl IndexFiles {
         }
         #[cfg(unix)]
         let hit = {
-            use std::os::unix::fs::MetadataExt;
             // a link is read through: its target decides; another entry's inode is its own
             entries.into_iter().find(|(p, ino, link)| {
-                (*link || ino.is_none_or(|i| self.inos.contains(&i))) && std::fs::metadata(p).is_ok_and(|m| self.ids.contains_key(&(m.dev(), m.ino())))
+                (*link || ino.is_none_or(|i| self.inos.contains(&i))) && std::fs::metadata(p).is_ok_and(|m| self.twin_by(&m, *link).is_some())
             })
         };
         #[cfg(not(unix))]
@@ -187,14 +186,6 @@ impl IndexFiles {
     /// Whether `path` is one of those files or directories, or lies inside any index directory by
     /// its name (`inside_index_dir`), links followed.
     pub fn holds(&self, path: &Path) -> bool {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if std::fs::metadata(path).is_ok_and(|md| self.ids.contains_key(&(md.dev(), md.ino()))) {
-                return true;
-            }
-        }
-        #[cfg(not(unix))]
         if self.twin_of(path).is_some() {
             return true;
         }
@@ -205,15 +196,30 @@ impl IndexFiles {
     pub fn twin_of(&self, path: &Path) -> Option<PathBuf> {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
-            let md = std::fs::metadata(path).ok()?;
-            self.ids.get(&(md.dev(), md.ino())).cloned()
+            let linked = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+            self.twin_by(&std::fs::metadata(path).ok()?, linked).map(Path::to_path_buf)
         }
+        // a file index the system handed on to a new file names none: the index file's own path
+        // must still open as the same file
         #[cfg(not(unix))]
         {
             let h = same_file::Handle::from_path(path).ok()?;
-            self.handles.iter().find(|(k, _)| *k == h).map(|(_, p)| p.clone())
+            self.handles.iter().find(|(k, p)| *k == h && same_file::Handle::from_path(p).is_ok_and(|now| now == h)).map(|(_, p)| p.clone())
         }
+    }
+
+    /// The index file or directory a file of metadata `md` (links followed) is, when it still is
+    /// one. Under another name a file has a second link, unless reached through a symbolic link
+    /// (`linked`); and the index file's own path must still name that device and inode, since one
+    /// deleted after the identities were taken frees its inode number for the next new file.
+    #[cfg(unix)]
+    fn twin_by(&self, md: &std::fs::Metadata, linked: bool) -> Option<&Path> {
+        use std::os::unix::fs::MetadataExt;
+        if !(linked || md.is_dir() || md.nlink() > 1) {
+            return None;
+        }
+        let twin = self.ids.get(&(md.dev(), md.ino()))?;
+        std::fs::symlink_metadata(twin).is_ok_and(|now| now.dev() == md.dev() && now.ino() == md.ino()).then_some(twin.as_path())
     }
 
     /// The index file or directory that `e`, met by a walk under a name outside any index
@@ -221,13 +227,11 @@ impl IndexFiles {
     /// entry that shares an index file's inode costs a stat.
     #[cfg(unix)]
     fn twin(&self, e: &ignore::DirEntry) -> Option<&Path> {
-        use std::os::unix::fs::MetadataExt;
         if !(e.path_is_symlink() || e.ino().is_some_and(|i| self.inos.contains(&i))) {
             return None;
         }
-        let md = std::fs::metadata(e.path()).ok()?;
-        let twin = self.ids.get(&(md.dev(), md.ino()))?;
-        (!inside_index_dir_named(e.path())).then_some(twin.as_path())
+        let twin = self.twin_by(&std::fs::metadata(e.path()).ok()?, e.path_is_symlink())?;
+        (!inside_index_dir_named(e.path())).then_some(twin)
     }
 }
 
@@ -916,6 +920,36 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+    /// A file made after a guard took the identities, given the inode number of an index file
+    /// deleted since (ext4 hands it on), is no index file to any guard.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_given_a_deleted_index_file_s_inode_is_in_every_walk() {
+        use std::os::unix::fs::MetadataExt;
+        let root = std::env::temp_dir().join(format!("scrutate_reused_inode_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".scrutate/seg")).unwrap();
+        std::fs::write(root.join(".scrutate/seg/tf1.npy"), b"segment").unwrap();
+        // identities taken once, as a kept look or a running watch takes them
+        let (guard, index) = (WalkGuard::new(&[&root]), IndexFiles::near(&root));
+        let freed = std::fs::metadata(root.join(".scrutate/seg/tf1.npy")).unwrap().ino();
+        std::fs::remove_file(root.join(".scrutate/seg/tf1.npy")).unwrap();
+        let Some(rel) = (0..4096).map(|i| format!("f{i}.txt")).find(|rel| {
+            std::fs::write(root.join(rel), b"mine").unwrap();
+            std::fs::metadata(root.join(rel)).unwrap().ino() == freed
+        }) else {
+            eprintln!("skipped: no new file got the freed inode {freed} here (tmpfs and some others never reuse one)");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        };
+        let path = root.join(&rel);
+        let e = ignore::WalkBuilder::new(&root).hidden(false).build().flatten().find(|e| e.path() == path).unwrap();
+        assert!(!guard.leaves_out(&e), "{rel} has the freed inode and is no index file");
+        assert!(index.twin_of(&path).is_none() && !index.holds(&path), "{rel}");
+        assert!(!NamedGuard::new(&root).leaves_out(&rel), "{rel}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// An index file is known by identity, through a hard link too, by its own path and in
     /// another case, and a walk before a search reaches it through the hard link, also after the
     /// file grew; a file outside is not.

@@ -413,7 +413,10 @@ either way round) is refused with a line that names the index file and says to r
 link, by its path, to search it again. The searches scrutate walks itself (`scrutate grep`, the
 index's walk and so `search`, `refs` and the MCP tools, the Grep hook) leave such a file out: on
 Unix the inode comes with each directory entry, so a file that is one of the index files by
-device and inode is in no answer, whichever of its names was there first. The walk says so once
+device and inode is in no answer, whichever of its names was there first. Only a file with a
+second link (or one reached through a symbolic link) is looked up, and a match counts only while
+the index file's own path still names that device and inode, so a new file that the file system
+gave the inode number of an index file deleted since is searched as any other. The walk says so once
 on stderr, and `scrutate check` lists each one with the index file it is. On Windows the walks
 would have to open every entry to know it, so they do not. There, what keeps an index file's
 text out of their answers is that every file scrutate writes under `.scrutate/` that can hold a
