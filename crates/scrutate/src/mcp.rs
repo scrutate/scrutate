@@ -91,8 +91,8 @@ fn instructions(short: bool, max_bytes: usize) -> String {
         return INSTRUCTIONS.to_string();
     }
     format!(
-        "{INSTRUCTIONS} Every tool also takes response_format (\"detailed\", the default, or \"concise\"), and every tool but \
-reindex takes max_bytes (an integer, default {max_bytes}) and offset (an integer, default 0)."
+        "{INSTRUCTIONS} Every tool but edit_symbol also takes response_format (\"detailed\", the default, or \"concise\"), and \
+every tool but reindex and edit_symbol takes max_bytes (an integer, default {max_bytes}) and offset (an integer, default 0)."
     )
 }
 

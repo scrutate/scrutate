@@ -1056,7 +1056,7 @@ Per tool:
   left out of each schema and named once, with types and defaults, in the server's
   `instructions`. Every other argument name, type, enum, default and `required` is the full
   list's, and a call is checked as without the option. On this repository's server the full
-  list is 17,055 bytes and the short one 5,657, plus 186 bytes of instructions (the list before
+  list is 17,055 bytes and the short one 5,657, plus 218 bytes of instructions (the list before
   `response_format` was 13,968).
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
   `structuredContent` to every result, beside its text: the envelope with `complete`
