@@ -188,6 +188,26 @@ fn three_foo_files(d: &Dir, n: usize) {
 }
 
 #[test]
+fn of_count_and_files_with_matches_the_later_wins_as_in_ripgrep() {
+    let d = Dir::new("count_or_files");
+    three_foo_files(&d, 1);
+    // `-m 9` takes the command to the full parser; without it, the quick one
+    for extra in [&[][..], &["-m", "9"][..]] {
+        let run = |flags: &[&str], path: &str| {
+            let mut args = vec!["grep"];
+            args.extend(flags);
+            args.extend(extra);
+            args.extend(["foo", path]);
+            d.run(&args).1
+        };
+        assert_eq!(run(&["-c", "-l"], "d1/f0.txt"), "d1/f0.txt\n", "{extra:?}");
+        assert_eq!(run(&["-l", "-c"], "d1/f0.txt"), "3\n", "{extra:?}");
+        assert_eq!(run(&["-c", "-l"], "d1"), "d1/f0.txt\n", "{extra:?}");
+        assert_eq!(run(&["-l", "-c"], "d1"), "d1/f0.txt:3\n", "{extra:?}");
+    }
+}
+
+#[test]
 fn max_count_is_a_per_file_limit_of_the_search() {
     let d = Dir::new("maxcount");
     three_foo_files(&d, 8);
