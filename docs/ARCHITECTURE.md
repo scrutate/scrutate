@@ -1077,7 +1077,8 @@ file before it as `:start-end`; the sizes are in [CLI](CLI.md#serve-mcp) (`tests
 around it (see "Keeping the stores current" above). After an operation it checks the files the
 answer cites and the files its arguments name against the index, one `stat` each, and updates
 and reruns once when one changed ([CLI](CLI.md#serve-mcp)). `read_code` by path streams the file
-through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python
+through a 64 KB buffer; a file over 1 MB stops after the last line it shows, a smaller one is read
+on to count its lines. The MCP server, the Python
 bindings, the language server and `watch` reach one through their session (`session.rs`). The MCP
 server builds the first index in the background, answering "still building" after a 20 second
 wait. A cancelled call sets the flag the index update checks between batches, so a `reindex` or
