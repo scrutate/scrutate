@@ -926,6 +926,13 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Callees { resolved, external, from, stopped }
         }
         Op::Read { path, symbol: Some(symbol), history, .. } => {
+            // a file the index leaves out has no definition: the path's own refusal says why
+            if let Some(p) = path.as_deref().filter(|p| inside(&s.ix.root, p)) {
+                let respelt = respelled(&s.ix, p);
+                if let Some(why) = std::fs::canonicalize(s.ix.root.join(&*respelt)).ok().and_then(|c| index_refusal(s, &echo(p), &respelt, &c)) {
+                    bail!("{why}");
+                }
+            }
             let mut rows = match crate::intel::location(symbol) {
                 Some((path, line)) => s.ix.chunk_at(&repo_path(s, path), line)?.into_iter().collect(),
                 None => {
@@ -1105,6 +1112,16 @@ fn repo_file(root: &std::path::Path, path: &str) -> Option<std::fs::File> {
     std::fs::File::open(canon).ok()
 }
 
+/// Why `path` (as respelled, `canon` once canonicalized) is not read: it lies in an index
+/// directory or is one of its files under another name.
+fn index_refusal(s: &Searcher, shown: &str, path: &str, canon: &std::path::Path) -> Option<String> {
+    let index = crate::files::IndexFiles::near(&s.ix.root);
+    (canon.strip_prefix(&s.ix.root).is_ok_and(crate::files::inside_index_dir_named)
+        || crate::files::inside_index_dir_named(std::path::Path::new(path))
+        || index.holds(canon))
+    .then(|| crate::files::refused(shown, canon, &index, "read"))
+}
+
 /// Lines `start..=end` of a repository file, numbered, read only as far as they go and at most
 /// `READ_BYTES` of them; and how many lines the file has, when the read reached its end or the
 /// file is small enough to count them.
@@ -1123,12 +1140,8 @@ pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec
         Ok(c) if c.starts_with(&s.ix.root) => c,
         _ => bail!("cannot read {shown}"),
     };
-    let index = crate::files::IndexFiles::near(&s.ix.root);
-    if canon.strip_prefix(&s.ix.root).is_ok_and(crate::files::inside_index_dir_named)
-        || crate::files::inside_index_dir_named(std::path::Path::new(path))
-        || index.holds(&canon)
-    {
-        bail!("{}", crate::files::refused(&shown, &canon, &index, "read"));
+    if let Some(why) = index_refusal(s, &shown, path, &canon) {
+        bail!("{why}");
     }
     if !canon.is_file() {
         bail!("{shown} is not a regular file");
