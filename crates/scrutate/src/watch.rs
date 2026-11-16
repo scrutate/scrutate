@@ -331,6 +331,10 @@ const BARRIER: Duration = Duration::from_secs(1);
 pub(crate) const ORDER_PROVES: bool = !cfg!(target_os = "macos");
 /// Events kept for reads at most; past this the next read walks the tree.
 const MOST_NOTED: usize = 10_000;
+/// Kqueue builds one rebuild runs at most while the tree's directories keep changing under it;
+/// reads look meanwhile.
+#[cfg(target_os = "macos")]
+const KQ_BUILDS: usize = 4;
 
 /// What a watch saw, for the reads of a session (`fresh::Freshness`): every event as it arrives,
 /// so a read waits for no burst and no update. A read writes a cookie file and waits for its
@@ -364,6 +368,48 @@ struct Shared {
     arrived: Condvar,
     #[cfg(target_os = "macos")]
     flush: Mutex<Option<fsevents::Flush>>,
+    /// the per-file kqueue that proves a read's change set on macOS (`kq.rs`)
+    #[cfg(target_os = "macos")]
+    kq: Mutex<Kq>,
+    #[cfg(target_os = "macos")]
+    kq_epoch: AtomicU64,
+    /// a test's budget of kqueue watches; 0: half the process's descriptors, less a reserve
+    #[cfg(target_os = "macos")]
+    kq_budget: AtomicU64,
+    /// a rebuild a read asked for runs
+    #[cfg(target_os = "macos")]
+    kq_rebuilding: AtomicBool,
+    /// a test's change to the tree between a kqueue's listing and its watches
+    #[cfg(all(test, target_os = "macos"))]
+    kq_between: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+/// Where the macOS kqueue stands; a read takes the look unless it is `Ready`. A new kqueue is
+/// built beside the one in place, which keeps watching until the swap.
+#[cfg(target_os = "macos")]
+enum Kq {
+    Off(&'static str),
+    /// watching these directories, each with the inode it had then
+    Ready(crate::kq::Registry, Vec<(PathBuf, u64)>),
+}
+
+/// The directories of `walked` inside `root`, sorted, each with its inode now: the same set again
+/// keeps a kqueue in place.
+#[cfg(target_os = "macos")]
+fn kq_dirs(root: &Path, walked: &Walked) -> Vec<(PathBuf, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    // rule files outside the root are polled at every read (`Noted::polled`)
+    let mut dirs: Vec<(PathBuf, u64)> = walked
+        .watched()
+        .into_iter()
+        .filter(|d| d.starts_with(root))
+        .map(|d| {
+            let ino = std::fs::metadata(&d).map_or(0, |m| m.ino());
+            (d, ino)
+        })
+        .collect();
+    dirs.sort();
+    dirs
 }
 
 #[derive(Default)]
@@ -443,7 +489,167 @@ impl Notes {
             arrived: Condvar::new(),
             #[cfg(target_os = "macos")]
             flush: Mutex::default(),
+            #[cfg(target_os = "macos")]
+            kq: Mutex::new(Kq::Off("the watch is not in place")),
+            #[cfg(target_os = "macos")]
+            kq_epoch: AtomicU64::new(0),
+            #[cfg(target_os = "macos")]
+            kq_budget: AtomicU64::new(0),
+            #[cfg(target_os = "macos")]
+            kq_rebuilding: AtomicBool::new(false),
+            #[cfg(all(test, target_os = "macos"))]
+            kq_between: Mutex::new(None),
         }))
+    }
+
+    /// Set a new kqueue up for the tree as it is now, on a thread of its own (a read found a
+    /// directory that came or went); the one in place watches on until the swap.
+    #[cfg(target_os = "macos")]
+    fn kq_rebuild(&self) {
+        if self.0.kq_rebuilding.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let epoch = self.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        let notes = self.clone();
+        let started = std::thread::Builder::new().name("scrutate-kqueue".into()).spawn(move || {
+            let mut epoch = epoch;
+            for _ in 0..KQ_BUILDS {
+                // the directory events noted before the listing began are the ones its kqueue covers
+                let began = notes.dirs();
+                let dirs = kq_dirs(&notes.0.root, &Walked::new(&notes.0.root, &notes.0.code));
+                // a directory no walk enters (an ignored one) came or went: the watches stay as
+                // they are, and a build begun before this one is stale
+                if matches!(&*lock(&notes.0.kq), Kq::Ready(_, old) if *old == dirs) {
+                    let mut n = lock(&notes.0.noted);
+                    n.dirs_walked = n.dirs_walked.max(began);
+                    break;
+                }
+                if !notes.kq_build(epoch, dirs) {
+                    break;
+                }
+                epoch = notes.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+            }
+            notes.0.kq_rebuilding.store(false, Ordering::Release);
+        });
+        if started.is_err() {
+            self.0.kq_rebuilding.store(false, Ordering::Release);
+        }
+    }
+
+    /// Build a kqueue for `dirs` and swap it in, unless a newer build began meanwhile. The one it
+    /// replaces is drained into the notes at the swap, so a change made while both watched is in
+    /// one queue or the other. With no kqueue before it (the first, or after one was dropped) every
+    /// read until a walk is applied looks at the tree whatever the refresh interval; with one
+    /// before, only the new directories need that walk, which the interval may hold back.
+    #[cfg(target_os = "macos")]
+    fn kq_build(&self, epoch: u64, dirs: Vec<(PathBuf, u64)>) -> bool {
+        let t0 = Instant::now();
+        let built = (|| -> std::result::Result<(crate::kq::Registry, bool), crate::kq::Off> {
+            let budget = match self.0.kq_budget.load(Ordering::Relaxed) {
+                0 => None,
+                n => Some(n as usize),
+            };
+            let mut reg = crate::kq::Registry::new(&self.0.root, budget)?;
+            let _ = std::fs::create_dir_all(&self.0.cookies);
+            reg.probe(&self.0.cookies.join(format!("{}probe", self.0.prefix)))?;
+            let paths: Vec<PathBuf> = dirs.iter().map(|(d, _)| d.clone()).collect();
+            #[cfg(test)]
+            if let Some(f) = lock(&self.0.kq_between).take() {
+                f();
+            }
+            reg.add_tree(&paths, &|_| true)?;
+            // a directory made in a parent before that parent was watched is in its listing with
+            // no watch of its own, and no note will name it: the tree's directories listed again
+            // tell whether one came while this was built
+            let changed = kq_dirs(&self.0.root, &Walked::new(&self.0.root, &self.0.code)) != dirs;
+            Ok((reg, changed))
+        })();
+        let mut kq = lock(&self.0.kq);
+        if self.0.kq_epoch.load(Ordering::Acquire) != epoch {
+            return false;
+        }
+        let (reg, changed) = match built {
+            Ok(built) => built,
+            Err(off) => {
+                session_debug(off.why());
+                *kq = Kq::Off(off.why());
+                return false;
+            }
+        };
+        if debug() {
+            eprintln!("[scrutate] kqueue: {} watches in {:.1} ms", reg.watches(), t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        let carried = match std::mem::replace(&mut *kq, Kq::Ready(reg, dirs)) {
+            Kq::Ready(mut old, _) => old.drain(&|_| true).ok(),
+            Kq::Off(_) => None,
+        };
+        drop(kq);
+        match carried {
+            Some(changes) => {
+                self.kq_note(changes);
+                // a directory event noted so far is in the listing behind this kqueue, or the
+                // kqueue, which watches its parent, names it again
+                let mut n = lock(&self.0.noted);
+                n.walk_all("the kqueue watches new directories");
+                n.dirs_walked = n.dirs;
+            }
+            None => {
+                // the look a write made while no kqueue watched its file needs is start-up's
+                let mut n = lock(&self.0.noted);
+                n.walk_all("the kqueue is in place");
+                self.0.walk_owed_below.store(n.walk_below, Ordering::Release);
+                self.0.walk_owed.store(true, Ordering::Release);
+            }
+        }
+        if changed {
+            // reads look until a kqueue built on the tree as it is now is in place
+            lock(&self.0.noted).dirs += 1;
+        }
+        changed
+    }
+
+    /// The kqueue's changes, noted as the events the burst rules read.
+    #[cfg(target_os = "macos")]
+    fn kq_note(&self, changes: Vec<crate::kq::Change>) {
+        use crate::kq::Change;
+        for c in changes {
+            let ev = match c {
+                Change::Modified(p) => Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Content))).add_path(p),
+                Change::Created(p) => Event::new(EventKind::Create(CreateKind::File)).add_path(p),
+                Change::Removed(p) => Event::new(EventKind::Remove(RemoveKind::File)).add_path(p),
+                Change::Directory(p) if p.is_dir() => Event::new(EventKind::Create(CreateKind::Folder)).add_path(p),
+                Change::Directory(p) => Event::new(EventKind::Remove(RemoveKind::Folder)).add_path(p),
+            };
+            self.note(&Ok(ev));
+        }
+    }
+
+    /// The kqueue's notes since the last read, noted as events. Ok(None): it is in place, so the
+    /// change set that follows is a proof. Ok(Some(why)): it is not. Err: it can no longer vouch
+    /// (a directory came or went, a watch was refused). Either way but the first, the read looks.
+    #[cfg(target_os = "macos")]
+    fn kq_drained(&self) -> std::result::Result<Option<&'static str>, &'static str> {
+        let mut kq = lock(&self.0.kq);
+        let reg = match &mut *kq {
+            Kq::Ready(reg, _) => reg,
+            Kq::Off(why) => return Ok(Some(why)),
+        };
+        let changes = match reg.drain(&|_| true) {
+            Ok(c) => c,
+            Err(off) => {
+                *kq = Kq::Off(off.why());
+                return Err(off.why());
+            }
+        };
+        drop(kq);
+        // a directory that came or went is an event the burst rules weigh, as on Linux; the new
+        // kqueue for the tree as it is now is built beside this one, once that event is noted
+        let moved = changes.iter().any(|c| matches!(c, crate::kq::Change::Directory(_)));
+        self.kq_note(changes);
+        if moved {
+            self.kq_rebuild();
+        }
+        Ok(None)
     }
 
     /// Note `raw`'s events as they arrive and pass them on: -> what the watch loop reads instead.
@@ -452,7 +658,11 @@ impl Notes {
         let notes = self.clone();
         let spawned = std::thread::Builder::new().name("scrutate-notes".into()).spawn(move || {
             for ev in raw {
-                notes.note(&ev);
+                // with the kqueue in place it is the reads' proof; FSEvents' late events would
+                // only name again what a read already applied
+                if !notes.kq_ready() {
+                    notes.note(&ev);
+                }
                 if tx.send(ev).is_err() {
                     break;
                 }
@@ -538,6 +748,19 @@ impl Notes {
         n.dirs_walked = dirs;
         n.polled = walked.poll_files.iter().map(|p| (p.clone(), seen(p))).collect();
         n.walked = Some(Arc::clone(walked));
+        drop(n);
+        // on the watch's thread, off the read path: reads look until it is in place. The same
+        // directories (by path and inode) keep the kqueue that watches them
+        #[cfg(target_os = "macos")]
+        {
+            let dirs = kq_dirs(&self.0.root, walked);
+            if !matches!(&*lock(&self.0.kq), Kq::Ready(_, now) if *now == dirs) {
+                let epoch = self.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+                if self.kq_build(epoch, dirs) {
+                    self.kq_rebuild();
+                }
+            }
+        }
     }
 
     /// `run_noting` with these notes.
@@ -555,6 +778,36 @@ impl Notes {
     #[cfg(test)]
     pub(crate) fn set_order_proves(&self, proves: bool) {
         self.0.order_proves.store(proves, Ordering::Relaxed);
+    }
+
+    /// Run `f` in the next kqueue build, between its listing of the directories and its watches.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn kq_between(&self, f: impl FnOnce() + Send + 'static) {
+        *lock(&self.0.kq_between) = Some(Box::new(f));
+    }
+
+    /// Set the kqueue up now, on this thread; whether it is in place after.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn kq_in_place_now(&self) -> bool {
+        let epoch = self.0.kq_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        if self.kq_build(epoch, kq_dirs(&self.0.root, &Walked::new(&self.0.root, &self.0.code))) {
+            self.kq_rebuild();
+        }
+        matches!(*lock(&self.0.kq), Kq::Ready(..))
+    }
+
+    /// At most `n` kqueue watches.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn set_kq_budget(&self, n: u64) {
+        self.0.kq_budget.store(n, Ordering::Relaxed);
+    }
+
+    /// Whether the macOS kqueue proves the reads' change sets now.
+    fn kq_ready(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        return matches!(*lock(&self.0.kq), Kq::Ready(..));
+        #[cfg(not(target_os = "macos"))]
+        false
     }
 
     /// The watch as if in place on the tree as it is now, with no watcher: a test then delivers
@@ -585,6 +838,8 @@ impl Notes {
         #[cfg(target_os = "macos")]
         {
             *lock(&self.0.flush) = None;
+            self.0.kq_epoch.fetch_add(1, Ordering::AcqRel);
+            *lock(&self.0.kq) = Kq::Off("the watch stopped");
         }
     }
 
@@ -647,21 +902,35 @@ impl Freshness for Notes {
         if lock(&self.0.noted).walked.is_none() {
             return all("the watch is not in place", t.get());
         }
-        // a read that applied the walk after the watches' first set has had start-up's walk
+        // a read that applied the walk after the watches' first set (or the first kqueue coming
+        // into place) has had start-up's walk
         if t.get() >= self.0.walk_owed_below.load(Ordering::Acquire) {
             self.0.walk_owed.store(false, Ordering::Release);
         }
-        if !self.0.order_proves.load(Ordering::Relaxed) {
-            // a token of its own: a walk that applied it began after this call did, so it saw
-            // every change made before the call
+        // a token of its own: a walk that applied it began after this call did, so it saw every
+        // change made before the call
+        let own = || {
             let mut n = lock(&self.0.noted);
             n.gen += 1;
-            let now = n.gen;
-            drop(n);
-            return all("FSEvents may number a write after a cookie made later", now);
+            n.gen
+        };
+        // proven: the kqueue drained what changed (macOS); else why it could not, for the look
+        #[cfg(target_os = "macos")]
+        let (proven, why) = match self.kq_drained() {
+            Ok(None) => (true, ""),
+            Ok(Some(why)) => (false, why),
+            Err(why) => return all(why, own()),
+        };
+        #[cfg(not(target_os = "macos"))]
+        let (proven, why) = (false, "the order of this watch's events proves nothing");
+        if !proven && !self.0.order_proves.load(Ordering::Relaxed) {
+            // FSEvents may number a write after a cookie made later
+            return all(why, own());
         }
-        if let Err(why) = self.barrier() {
-            return all(why, t.get());
+        if !proven {
+            if let Err(why) = self.barrier() {
+                return all(why, t.get());
+            }
         }
         let mut n = lock(&self.0.noted);
         let now = n.gen;
@@ -706,7 +975,7 @@ impl Freshness for Notes {
     }
 
     fn order_proves(&self) -> bool {
-        self.0.order_proves.load(Ordering::Relaxed)
+        self.0.order_proves.load(Ordering::Relaxed) || self.kq_ready()
     }
 
     fn owes_a_walk(&self) -> bool {
@@ -1828,7 +2097,8 @@ mod tests {
         assert_eq!(lock(&notes.0.noted).walk_below, first, "a directory outside the root");
         std::fs::create_dir(root.join("src/new")).unwrap();
         notes.watching(&walk(), notes.dirs());
-        assert_eq!(lock(&notes.0.noted).walk_below > first, cfg!(target_os = "linux"), "a directory got its first watch");
+        // macOS: the kqueue is set up again for the new directory, and the next read looks
+        assert_eq!(lock(&notes.0.noted).walk_below > first, cfg!(any(target_os = "linux", target_os = "macos")), "a directory got its first watch");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1864,7 +2134,11 @@ mod tests {
         assert_eq!(w2.watched(), w1.watched(), "the same directories by path");
         notes.watching(&w2, notes.dirs());
         let linux = cfg!(target_os = "linux");
-        assert_eq!(walk_below() > first, linux, "a directory made again had no watch until now");
+        // a kqueue watches an open file, not a path: a directory removed and made again at its
+        // path is another inode its old descriptor says nothing about, so macOS sets the kqueue up
+        // again and the next read walks, or writes there would be missed
+        let macos = cfg!(target_os = "macos");
+        assert_eq!(walk_below() > first, linux || macos, "a directory made again had no watch until now");
         let second = walk_below();
         notes.watching(&walk(), notes.dirs());
         assert_eq!(walk_below(), second, "no directory event since that walk began");

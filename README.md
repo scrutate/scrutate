@@ -176,8 +176,10 @@ Kept running as servers, livegrep and Zoekt answer faster than that process per 
 queries all three answered. In the same run Scrutate's own MCP server answered 4 of the 20, in
 1,260 ms median against 7.6 ms for `scrutate grep --index` on those 4; the other 16 pass the 5,000 lines
 its `grep_code` returns. That run predates the server keeping its look of the tree between calls
-(on Linux and Windows; on macOS each call still looks), which took those 4 from 669.6 to 50.8 ms on
-another machine, a number not comparable with these ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
+(on macOS while its kqueue is in place, so not on a tree with more files and directories than half
+of `kern.maxfilesperproc` less 1,024, about 29,700 where it is 61,440),
+which took those 4 from 669.6 to 50.8 ms on another machine, and on a Mac 7 queries on a 24,866-file
+part of the same tree from 82.7 to 8.4 ms, numbers not comparable with these ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
 
 More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md), [docs/dashboard.html](docs/dashboard.html),
 [docs/COMPETITIVE.md](docs/COMPETITIVE.md) and [docs/QUALITY.md](docs/QUALITY.md) (see

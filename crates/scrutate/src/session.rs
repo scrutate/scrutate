@@ -2052,14 +2052,15 @@ mod tests {
             repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
         }
         let watched = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
-        // a test of the change set, which macOS reads do without (every read looks there)
-        if let Some(notes) = watched.notes() {
+        // a test of the change set: the cookie proves it where its order does, else (macOS) the
+        // kqueue, which the wait below waits for
+        if let Some(notes) = watched.notes().filter(|_| crate::watch::ORDER_PROVES) {
             notes.set_order_proves(true);
         }
         watched.watch(false).unwrap();
         let t0 = Instant::now();
-        while !read(&watched.fresh).watching() {
-            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+        while !read(&watched.fresh).watching() || !read(&watched.fresh).order_proves() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started, or the change sets never came to prove the order (macOS: no kqueue)");
             std::thread::sleep(Duration::from_millis(20));
         }
         let settings = crate::mcp::Settings::new(None);
@@ -2092,14 +2093,15 @@ mod tests {
             repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
         }
         let watched = Session::open_watched(&root, Every::given(None)).unwrap();
-        // a test of the change set, which macOS reads do without (every read looks there)
-        if let Some(notes) = watched.notes() {
+        // a test of the change set: the cookie proves it where its order does, else (macOS) the
+        // kqueue, which the wait below waits for
+        if let Some(notes) = watched.notes().filter(|_| crate::watch::ORDER_PROVES) {
             notes.set_order_proves(true);
         }
         watched.watch(false).unwrap();
         let t0 = Instant::now();
-        while !read(&watched.fresh).watching() {
-            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+        while !read(&watched.fresh).watching() || !read(&watched.fresh).order_proves() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started, or the change sets never came to prove the order (macOS: no kqueue)");
             std::thread::sleep(Duration::from_millis(20));
         }
         let settings = crate::mcp::Settings::new(None);
@@ -2116,6 +2118,52 @@ mod tests {
             per_call.push(looks() - before);
         }
         assert!(per_call[1..].iter().all(|&n| n == 0), "looks per call: {per_call:?}");
+        drop(watched);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory the walks enter, made while the watch runs, costs the calls until the watches
+    /// take it a look at the tree; after that they are back on their change sets.
+    #[test]
+    fn a_new_directory_costs_one_look_and_then_none() {
+        let dir = std::env::temp_dir().join(format!("scrutate_entered_new_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let root = std::fs::canonicalize(&dir).unwrap();
+        std::fs::write(root.join("a.py"), "def foo():\n    return 1\n").unwrap();
+        {
+            let mut repo = crate::stores::Repo::open(&root).unwrap();
+            repo.update_stores(crate::stores::Writer::Index, &crate::stores::Changes::All, false).unwrap();
+        }
+        let watched = Session::open_watched(&root, Every::given(None)).unwrap();
+        // the cookie proves the change set where its order does, else (macOS) the kqueue
+        if let Some(notes) = watched.notes().filter(|_| crate::watch::ORDER_PROVES) {
+            notes.set_order_proves(true);
+        }
+        watched.watch(false).unwrap();
+        let t0 = Instant::now();
+        while !read(&watched.fresh).watching() || !read(&watched.fresh).order_proves() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started, or the change sets never came to prove the order (macOS: no kqueue)");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let settings = crate::mcp::Settings::new(None);
+        let looks = || crate::files::LOOKS.with(|c| c.get());
+        let call = || crate::mcp::call_tool(&watched, "grep_code", &serde_json::json!({"pattern": "foo"}), &settings, &Arc::default());
+        call();
+        std::fs::create_dir_all(root.join("sub/fresh")).unwrap();
+        std::fs::write(root.join("sub/fresh/x.py"), "x = 'foo'\n").unwrap();
+        // the watch's burst over the new directory before the first call, as a build would have it
+        std::thread::sleep(Duration::from_millis(1000));
+        let mut per_call = Vec::new();
+        for i in 0..8 {
+            std::fs::write(root.join("a.py"), format!("def foo():\n    return {i}\n")).unwrap();
+            let before = looks();
+            call();
+            per_call.push(looks() - before);
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        assert!(per_call[4..].iter().all(|&n| n == 0), "looks per call: {per_call:?}");
         drop(watched);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2139,14 +2187,15 @@ mod tests {
                 repo.update_stores(writer, &crate::stores::Changes::All, false).unwrap();
             }
             let watched = Session::open_watched(&root, Every::given(None)).unwrap();
-            // a test of the change set, which macOS reads do without (every read looks there)
-            if let Some(notes) = watched.notes() {
+            // a test of the change set: the cookie proves it where its order does, else (macOS) the
+            // kqueue, which the wait below waits for
+            if let Some(notes) = watched.notes().filter(|_| crate::watch::ORDER_PROVES) {
                 notes.set_order_proves(true);
             }
             watched.watch(false).unwrap();
             let t0 = Instant::now();
-            while !read(&watched.fresh).watching() {
-                assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+            while !read(&watched.fresh).watching() || !read(&watched.fresh).order_proves() {
+                assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started, or the change sets never came to prove the order (macOS: no kqueue)");
                 std::thread::sleep(Duration::from_millis(20));
             }
             let plain = Session::open(&root, Every::given(Some(0.0))).unwrap();
@@ -2764,8 +2813,9 @@ mod tests {
         if let (Some(every), Some(notes)) = (safety, s.notes()) {
             notes.set_safety_every(every);
         }
-        // these tests are of the change set, which macOS reads do without
-        if let Some(notes) = s.notes() {
+        // these tests are of the change set: the cookie's where its order proves, else (macOS)
+        // the kqueue's, which the watch puts in place before the loop below can see one file
+        if let Some(notes) = s.notes().filter(|_| crate::watch::ORDER_PROVES) {
             notes.set_order_proves(true);
         }
         s.build().unwrap();
@@ -2788,8 +2838,8 @@ mod tests {
         // no safety walk lands in the run: a second file looked at is a second look
         let (root, s) = watched_with("barrier", 1, Every::given(Some(3600.0)), Some(Duration::from_secs(3600)));
         s.notes().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
-        // the change set where a cookie proves it, else a look at the tree's 3 files
-        let looked = if crate::watch::ORDER_PROVES { 1 } else { 3 };
+        // the cookie's change set where its order proves, else (macOS) the kqueue's
+        let looked = 1;
         for i in 0..1000 {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }).unwrap();
@@ -2854,6 +2904,120 @@ mod tests {
             std::fs::write(root.join("src/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let a = s.run(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }, &Arc::default()).unwrap();
             assert!(!a.is_empty(), "write {i} missed under the floor");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A session whose notes are in place with no watcher at all (no FSEvents), and a tree of
+    /// three files.
+    #[cfg(target_os = "macos")]
+    fn without_fsevents(name: &str) -> (PathBuf, Arc<Session>, crate::watch::Notes) {
+        let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src/d0")).unwrap();
+        std::fs::write(root.join("src/d0/m0.py"), "def made_0():\n    return 0\n").unwrap();
+        std::fs::write(root.join("src/d0/w.py"), "def written_start():\n    return 0\n").unwrap();
+        std::fs::write(root.join("src/d0/probe.py"), "def probe_0():\n    return 0\n").unwrap();
+        let s = Session::open_watched(&root, Every::given(Some(3600.0))).unwrap();
+        s.build().unwrap();
+        let notes = s.notes().unwrap();
+        notes.in_place_without_a_watcher();
+        (root, s, notes)
+    }
+
+    /// A directory made while a kqueue is built, after its listing of the directories and before
+    /// its parent is watched, has a name in the parent's listing and no watch of its own: a write
+    /// in it is still in the next read's answer.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_directory_made_while_the_kqueue_is_built_is_not_left_unwatched() {
+        let (root, s, notes) = without_fsevents("kqueue_between");
+        assert!(notes.kq_in_place_now());
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        let made = root.join("src/d0/late");
+        notes.kq_between({
+            let made = made.clone();
+            move || std::fs::create_dir(&made).unwrap()
+        });
+        assert!(notes.kq_in_place_now());
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        for k in 0..20 {
+            std::fs::write(made.join("f.py"), format!("def late_{k}():\n    return {k}\n")).unwrap();
+            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("late_{k}"), limit: 1, exact: true }).unwrap();
+            assert!(a.is_ok_and(|a| !a.is_empty()), "write {k} in the directory made during the build missed: {st:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory the walks enter, new or made again at its path, gets a kqueue of its own: a
+    /// write to a file in it is then named by the kqueue, one file looked at.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_new_directory_and_one_made_again_get_the_kqueue() {
+        let root = std::env::temp_dir().join(format!("scrutate_session_kqueue_dirs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src/d0")).unwrap();
+        std::fs::write(root.join("src/d0/m0.py"), "def made_0():\n    return 0\n").unwrap();
+        let s = Session::open_watched(&root, Every::given(None)).unwrap();
+        s.build().unwrap();
+        s.watch(false).unwrap();
+        let t0 = Instant::now();
+        while !read(&s.fresh).watching() || !read(&s.fresh).order_proves() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch or its kqueue never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        let named_alone = |file: &str, tag: &str| {
+            let t0 = Instant::now();
+            for k in 0.. {
+                std::fs::write(root.join(file), format!("def {tag}_{k}():\n    return {k}\n")).unwrap();
+                let (st, a) = s.run_scanned(&Op::Symbol { name: format!("{tag}_{k}"), limit: 1, exact: true }).unwrap();
+                if a.is_ok_and(|a| !a.is_empty()) && st.files_looked == 1 {
+                    return;
+                }
+                assert!(t0.elapsed() < Duration::from_secs(10), "{file}: never named by the kqueue alone, last {st:?}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        std::fs::create_dir_all(root.join("src/d1")).unwrap();
+        named_alone("src/d1/x.py", "new_dir");
+        // made again at its path with no read between: the same paths, another inode
+        std::fs::remove_dir_all(root.join("src/d1")).unwrap();
+        std::fs::create_dir_all(root.join("src/d1")).unwrap();
+        named_alone("src/d1/y.py", "made_again");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_written_just_before_a_call_is_in_its_answer_every_time_through_the_kqueue() {
+        let (root, s, notes) = without_fsevents("kqueue_barrier");
+        assert!(notes.kq_in_place_now());
+        // the first read after the kqueue is in place looks at the tree
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        for i in 0..1000 {
+            std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
+            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }).unwrap();
+            assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
+            assert_eq!(st.files_looked, 1, "write {i}, named by the kqueue alone: {st:?}");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_tree_past_the_kqueue_budget_is_looked_at_by_every_read() {
+        let (root, s, notes) = without_fsevents("kqueue_budget");
+        notes.set_kq_budget(2);
+        assert!(!notes.kq_in_place_now(), "three files and two directories past a budget of two");
+        for i in 0..20 {
+            std::fs::write(root.join("src/d0/w.py"), format!("def over_{i}():\n    return {i}\n")).unwrap();
+            let (st, a) = s.run_scanned(&Op::Symbol { name: format!("over_{i}"), limit: 1, exact: true }).unwrap();
+            assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
+            assert_eq!(st.files_looked, 3, "write {i}, a look at the tree: {st:?}");
         }
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2924,8 +3088,8 @@ mod tests {
     }
 
     /// Where the order proves (Linux, Windows) both sessions read with cookies and each takes only
-    /// its own; on macOS neither writes one and every read looks at the tree, so this covers there
-    /// only that two sessions of one root answer every write.
+    /// its own; on macOS neither writes one (each reads through its own kqueue), so this covers
+    /// there that two sessions of one root answer every write.
     #[test]
     fn two_watched_sessions_of_one_root_in_one_process_keep_their_barriers() {
         let (root, s1) = watched("twin", 1, Every::given(Some(3600.0)));
@@ -2949,7 +3113,8 @@ mod tests {
         assert!(missed.is_empty(), "{} of 100 writes missed: {missed:?}", missed.len());
     }
 
-    /// On macOS, where no read writes a cookie, this covers only that s1 answers every write.
+    /// On macOS, where no read writes a cookie (the kqueue is the proof), this covers that s1
+    /// answers every write.
     #[test]
     fn an_idle_second_watched_session_costs_the_first_no_answer() {
         let (root, s1) = watched("idle_twin", 1, Every::given(Some(3600.0)));

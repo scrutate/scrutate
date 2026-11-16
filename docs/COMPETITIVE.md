@@ -149,11 +149,15 @@ on all 20, zoekt-webserver took 36 ms and `scrutate grep --index` 24.3 ms. Scrut
 median, where on the same 4 `scrutate grep --index` took 7.6 ms, zoekt-webserver 1.4 ms and livegrep
 2.0 ms. The other 16 have more than the 5,000 lines `grep_code` returns, so they were not timed. In
 that run each `grep_code` call walked the whole tree before it searched. A server now keeps that
-look between calls (on Linux and Windows; on macOS each call still looks). Measured apart, on
+look between calls (on macOS while its kqueue is in place: on a tree past the kqueue's share of
+descriptors each call still looks). Measured apart, on
 another machine (an AWS build box, 16 cores) and so not comparable with the rows above, it took the
 same 4 queries from 669.6 to 50.8 ms median: `bench/grep_code_pair.py`, the yardstick's own
 `scrutate-mcp` adapter, the build before the change and the build with it as two servers on one
-index of the Linux tree, asked in turn, 20 rounds.
+index of the Linux tree, asked in turn, 20 rounds. On a Mac (Apple M3 Pro, load 3 to 7), the same
+way on a 24,866-file part of that tree, which the kqueue can watch, the 7 of the 20 it answered went
+from 82.7 to 8.4 ms median; on the whole tree, past the kqueue's share of descriptors there (61,440
+per process), each call still looks (324 and 320 ms).
 
 ## 4. Against "nothing": the code-intelligence engine
 

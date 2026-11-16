@@ -27,6 +27,8 @@ pub mod impact;
 pub mod index;
 pub mod instant;
 pub mod intel;
+#[cfg(target_os = "macos")]
+mod kq;
 pub mod langs;
 pub mod lex;
 pub mod lsp;

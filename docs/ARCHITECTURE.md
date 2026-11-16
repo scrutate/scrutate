@@ -651,7 +651,7 @@ set for both: a watch's events name files of either set, read by the same two wa
 | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 | an index command, `batch` | every file before the first operation; never waits | code index |
-| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives (on macOS every file at every call); when that is every file (or there is no watch), every file at most once per refresh interval; waits up to 250 ms for a write of its own process, never for another process: past that it answers from the last committed index and says which files are pending | code index |
+| an MCP tool call, a bindings call, a language server request | the change set the session's watch gives (on macOS the kqueue's, every file while it is not in place); when that is every file it looks at every file at once, unless a `--refresh-interval` you gave holds that look back until the interval passes (never start-up's look, nor one on macOS while no kqueue is in place), and a held-back look still applies the files the watch named; with no watch, every file at most once per refresh interval; waits up to 250 ms for a write of its own process, never for another process: past that it answers from the last committed index and says which files are pending | code index |
 | an index command a running `serve` answers | the change set, in that session, before the operation (every file when it says so); waits as a tool call does, and says on stderr which files are pending | code index |
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
@@ -667,7 +667,7 @@ stat changed ([ADR 0012](adr/0012-a-fresh-process-look.md)). A command keeps no 
 calls, so a file written just before a call is in its answer. A running server keeps one for
 `grep_code` and `references` (`files::KeptLook`): each change set of its watch looks at the
 files it names again, and a change set of every file drops it, so the next call takes a new look
-(on macOS every read's change set is every file, so each call looks).
+(on macOS while no kqueue is in place every read's change set is every file, so each call looks).
 
 `Writer::text` alone decides whether a text index is kept: `index` (unless `--no-text`) and
 `grep --index --update` build it; every other writer keeps one that exists. `tsquery` keys a
@@ -751,7 +751,17 @@ burst's debounce nor a running update holds up. A read first writes a cookie fil
 `.scrutate/cookies/` and waits for its event: inotify and ReadDirectoryChangesW queue events in
 order, so every change made before the read started is then noted. FSEvents does not (a write can
 get a later event id than a cookie made after it), so on macOS (`watch::ORDER_PROVES` false) a
-read writes no cookie and its change set is every file, a look at the tree. A cookie's name
+read writes no cookie. Its proof there is a kqueue (`kq.rs`): an `EVFILT_VNODE` watch on every
+file and directory of the walk, opened `O_EVTONLY`; XNU posts a vnode's note inside the syscall,
+so a read drains the queue with a zero timeout and notes what it names as events. The watches are
+set on the watch's thread each time the watches are (unless the same directories, by path and
+inode, are watched already), and on a thread of their own when a read's drain finds a directory
+that came or went; a new kqueue is built beside the one in place, which watches on until the swap
+and is drained into the notes then. After the first one (no kqueue before it) the next read walks
+whatever the refresh interval; after a rebuild only the new directories want that walk. Without them (being set, more
+than half the process's descriptors less a reserve, a probe write with no note, a tree on more
+than one device, a refused watch) the read's change set is every file. With the kqueue in place
+FSEvents' events feed only the watch's bursts. A cookie's name
 belongs to its session alone (process id, a number per session and 64 random bits, since two
 containers sharing a bind-mounted root can both be pid 1), so two sessions of one root
 never take each other's cookie; a session keeps only the names it still waits for, and removes
@@ -762,12 +772,14 @@ config file, a directory that came or went, a directory left without a watch, a 
 every watch that changed, the watches set (the first time, and on Linux each time again, since a
 file written while they were set may have no event), more than 10,000 events since the last read,
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
-floor the user gave and the change sets are a proof (`Freshness::order_proves`): on macOS every
-read walks whatever the interval. A walk the floor holds back still applies the files the events
-named since the last walk a read applied, a setting of the watches between them included (`Freshness::named_since`, read with the burst rules but past a
+floor the user gave and the change sets are a proof (`Freshness::order_proves`; on macOS only
+while the kqueue is in place). A walk the floor holds back still applies the files the events
+named since the last walk a read applied, a setting of the watches between them included
+(`Freshness::named_since`, read with the burst rules but past a
 directory that came or went), and start-up's walk is owed from the session's start
 (`Freshness::owes_a_walk`): until a read has applied the walk that follows the watches' first
-set, every read walks whatever the floor, before the watch is in place too. A named file costs one `stat` (`UpdateStats::files_looked`
+set (on macOS, the first kqueue), every read walks whatever the floor, before the watch is in
+place too. A named file costs one `stat` (`UpdateStats::files_looked`
 counts them) and a read with nothing named costs no lock. A safety walk on the watch's thread
 (`watch::Safety`, every 60 s or 50 times its own cost) feeds in, as events, what changed with no
 event since its last walk.

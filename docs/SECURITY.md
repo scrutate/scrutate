@@ -748,6 +748,14 @@ link to a file outside the package and a package directory that is a link out of
     `GetExitCodeProcess` into a `u32`); three unit tests' `ConnectNamedPipe` for a
     server that greets and then reads nothing or reads slowly, and for the low-integrity process
     that takes the pipe's name first, through the same `Pipe::io`;
+  - `kq.rs` (macOS only): `kqueue`; `open` of a nul-terminated path with `O_EVTONLY |
+    O_CLOEXEC`, each returned descriptor taken into an `OwnedFd` once; `kevent` with one change
+    from a live `struct kevent` and no events asked back, or with no changes and a zeroed array of
+    256 events whose length it passes and a zero timeout, reading only the first `n` it returns;
+    `sysctlbyname("kern.maxfilesperproc")` into an `int` with its size, `getrlimit`/`setrlimit`
+    of `RLIMIT_NOFILE` within the hard limit; and in its tests `fcntl(F_GETPATH)` into a
+    `PATH_MAX` buffer. `kq::tests` write, replace, create and remove files and move directories
+    under a registry and count the descriptors it holds;
   - `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 159 libSystem
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
@@ -790,6 +798,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/hook.rs` | 2 |
   | `crates/scrutate/src/index.rs` | 6 |
   | `crates/scrutate/src/instant.rs` | 2 |
+  | `crates/scrutate/src/kq.rs` | 11 |
   | `crates/scrutate/src/lazy_bind.rs` | 7 |
   | `crates/scrutate/src/lex.rs` | 1 |
   | `crates/scrutate/src/npy.rs` | 14 |

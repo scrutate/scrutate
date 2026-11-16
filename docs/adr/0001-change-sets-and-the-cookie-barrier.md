@@ -1,6 +1,6 @@
 # 1. Change sets and the cookie barrier
 
-Status: accepted, 2026-11-14; amended 2026-11-15 for macOS (see the end).
+Status: accepted, 2026-11-14; amended 2026-11-15 and 2026-11-16 for macOS (see the end).
 
 ## Context
 
@@ -51,10 +51,11 @@ platforms, for the same guarantee the cookie gives.
 ## Consequences
 
 - A read whose change set is empty costs the barrier and no lock. A read that names files costs
-  one `stat` per named file (`UpdateStats::files_looked`). Replaced on macOS by the amendment
-  below: a read there looks at the tree.
+  one `stat` per named file (`UpdateStats::files_looked`). On macOS see the amendments below: a
+  read there costs a kqueue drain and the same `stat` per named file while the kqueue is in
+  place, and a look at the tree while it is not.
 - The barrier is one file create and delete per read, plus one event's trip through the OS.
-  Replaced on macOS by the amendment below, which writes no cookie there.
+  Replaced on macOS by the amendments below, which write no cookie there.
 - The cookie directory gets its own watch on Linux; elsewhere the root's watch covers it.
 - Every session of a root sees every cookie's event, so a cookie's name holds its process id,
   a number per session and 64 random bits (two containers sharing a bind-mounted root can both
@@ -63,8 +64,8 @@ platforms, for the same guarantee the cookie gives.
   what every read cost before.
 - The test `session::tests::a_file_written_just_before_a_call_is_in_its_answer_every_time` writes
   a file and reads it back 1,000 times through the watch, with no miss and one file looked at
-  each time. Replaced on macOS by the amendment below: there each read looks at the tree's three
-  files.
+  each time. On macOS it runs through the kqueue (second amendment below), with one file looked
+  at each time too.
 
 ## Amendment, 2026-11-15: macOS reads look at the tree
 
@@ -83,8 +84,8 @@ is numbered after the cookie's. Watchman met the same reordering ("Cookie files 
 sufficient", commit d1795de4ec, 2021) and added a flush after the cookie is seen, which does not
 help when the write's event is numbered later.
 
-So on macOS (`watch::ORDER_PROVES` false, held per `Notes`) a read writes no cookie and its change
-set is every file: the read looks at the tree, at once, and indexes what changed. Each read takes
+So on macOS (`watch::ORDER_PROVES` false, held per `Notes`) a read writes no cookie and, until the
+kqueue of the next amendment is in place, its change set is every file: the read looks at the tree, at once, and indexes what changed. Each read takes
 a token of its own, so a walk counts for a read only when it began after the read did. The cookie
 code stays for the platforms whose queue keeps the order: on Linux (inotify, one queue for every
 watch of an instance, kernel 7.0, 4 vCPU) the same probe under its flood saw the cookie first 0
@@ -98,3 +99,78 @@ ms). The look grows with the tree. A command line call through `serve` already l
 and is unchanged (`symbol` through it: 10.2 and 15.0 ms before, 9.8 and 12.4 ms after, two rounds
 of 15 calls each). A barrier cheaper than the look that is still a proof is the open item
 (ARCH-01m).
+
+## Amendment, 2026-11-16: a kqueue proves macOS reads
+
+The look costs a read O(files) on macOS (115 ms at 14,520 files above). The proof that costs less
+is the kernel's own order. XNU posts a vnode's kqueue note inside the syscall that changes it, before
+the syscall returns: `VNOP_WRITE` calls `post_event_if_success(vp, _err, NOTE_WRITE)` after the file
+system's write, `VNOP_CREATE` and `VNOP_REMOVE` post `NOTE_WRITE` on the directory, `VNOP_RENAME`
+posts on both directories, `NOTE_DELETE` on a replaced target and `NOTE_RENAME` on the moved vnode,
+`VNOP_SETATTR` posts `NOTE_ATTRIB` (bsd/vfs/kpi_vfs.c), and `lock_vnode_and_post` runs `KNOTE` on
+the vnode's list under the vnode lock (bsd/vfs/vfs_subr.c), which activates the note on its kqueue.
+A read that starts after a write returned takes the kqueue's lock in `kevent` and finds that note:
+the order is the kernel's, not a daemon's.
+
+So on macOS `watch::Notes` keeps a kqueue (`kq.rs`) with an `EVFILT_VNODE` watch on every file and
+directory of the walk inside the root, each opened `O_EVTONLY`. A read drains it with a zero timeout,
+no cookie and no wait, and notes what it names (a file written or replaced, a file made or removed
+in a watched directory) as events; the change set follows by the rules above. FSEvents' events then
+feed only the watch's bursts.
+
+- Watch, then look. The watches are set on the watch's thread whenever the watches are set (the
+  same directories by path and inode keep the kqueue they have), and on a thread of their own when
+  a read's drain finds a directory that came, went or moved. A directory is watched before it is
+  listed, and listed until two listings agree; a file is watched before it is named. Reads look at
+  the tree until the first kqueue is in place, and the first read after that looks too, whatever
+  the refresh interval, so a file changed before its watch existed is in that look, which starts
+  after every watch does.
+- No gap on a rebuild. A new kqueue is built beside the one in place, which keeps watching until
+  the swap and is drained into the notes at it: a change made while both watched is in one queue
+  or the other, so a file the watch knew is never missed. Only the new directories want a walk
+  then, which a refresh interval the user gave may hold back, as on Linux. A directory that came or
+  went is noted as such for the burst rules, with the other changes of the same drain. A directory
+  made in a parent before the build watched that parent is in the parent's listing with no watch
+  of its own, and no later note names it, so each build lists the tree's directories again once
+  its watches are set: when they changed, reads keep looking and another build follows. A
+  directory no walk enters (an ignored one) changes no listing, so it asks for no build.
+- The budget: at most half of `RLIMIT_NOFILE` (raised to the process ceiling,
+  `kern.maxfilesperproc`, as Go's runtime does at start) less 1,024 kept for the index and the
+  rest of the process. A tree with more files and directories, or any refused watch (`EMFILE`,
+  `ENFILE` or another error) drops every watch: reads take the look, never a part of a tree that
+  claims proof.
+- Descriptors, where this design can fail quietly: one open descriptor per file and directory of
+  the walk, for as long as the session runs (16,639 for the 14,520-file tree below; a 100,000-file
+  tree needs about 110,000). Raising the soft limit to `kern.maxfilesperproc` (61,440 on the Mac
+  measured here; lower on some) gives at most half of it to the kqueue, less the reserve, so a
+  tree past about 29,700 files and directories here never gets the kqueue: every read looks at
+  the tree, as with R4-FR-01, and `SCRUTATE_SESSION_DEBUG=1` says why on each read. A watch
+  refused later (a new file past the budget, or the system out of descriptors) drops the whole
+  kqueue the same way; no read ever rests on a part of the tree.
+- A probe: before it is in place, a file in `.scrutate/cookies/` is watched, written, and its note
+  must be in the drain at once, or the volume reports nothing through kqueue (some network, FUSE or
+  external volumes) and reads take the look. A tree with a directory on another device takes the
+  look too.
+- Not seen, as before: a write through a memory map makes no `VNOP_WRITE`, and a file reached through
+  a link to outside the tree has no watch. The safety walk stays for those.
+
+Tested: `kq::tests` (a write is in the next drain 1,000 times; a file replaced by a temporary file's
+rename 1,000 times is named each time, with the same descriptors under its tree before and after;
+a new file is watched before it is named; a directory renamed away and back asks for new watches;
+a tree past the budget keeps no descriptor; the temporary directory's probe), and the session
+tests `a_file_written_just_before_a_call_is_in_its_answer_every_time_through_the_kqueue` (1,000
+writes with no FSEvents at all, one file looked at each time) and
+`a_tree_past_the_kqueue_budget_is_looked_at_by_every_read`; the injected-order test stays. Not
+tested here: a volume whose probe fails (no such volume on the machines this ran on; the code takes
+the look on that path).
+
+Numbers, Apple M3 Pro, load 2 to 4. The C probe (`bench/kqueue_order.c`) on 16,799 files and
+directories under a file-event flood: 20,000 in-place writes and 5,000 replaces by rename, each
+followed at once by a zero-timeout drain, missed 0; a drain took 12.7 us and 14.1 us on average.
+Through the yardstick's resident MCP adapter (`find_symbol`, the look build and the kqueue build
+called in turn): on a 726-file copy of this repository 6.9 ms median before, 0.84 ms after; on
+14,520 files 108.3 ms before, 5.8 ms after. A call right after an edit is bound by the index update
+of the edited file (about 185 ms on 14,520 files with either build). Setting the watches: 16,622
+in 442 ms, off the read path. Memory: a server on 14,520 files holds 16,639 descriptors and about
+19.5 MB more resident memory with the kqueue (about 1.2 KB per watch, the paths kept for each; the
+kernel's own per-watch memory is not in that count).

@@ -264,7 +264,8 @@ incompatible index by itself, and that is never breaking.
 - The MCP `grep_code` tool and `references` of a running server read the tree's files from a look
   the server keeps up to date with its watch, where each call walked the whole tree first: on the
   Linux tree a call no longer pays that walk, a query that matches nothing included (on Linux and
-  Windows; on macOS every call still looks at the tree) ([CLI](docs/CLI.md#serve-mcp)).
+  Windows, and on macOS while its kqueue is in place: on a Mac 7 queries on a 24,866-file part of
+  the Linux tree went from 82.7 to 8.4 ms median) ([CLI](docs/CLI.md#serve-mcp)).
 - A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter
   grammars with `-fjump-tables`, which GCC 15 drops at the `-O0` their `parser.c` asks for:
   parsing was 1.8 times slower (Linux's C sources, 22 s against 12 s); a build outside the
@@ -304,9 +305,14 @@ incompatible index by itself, and that is never breaking.
   walk takes when that is longer. On Linux and Windows
   each call looks only at the files the watch says changed since the last call, one `stat` each,
   where it looked at every file of the tree: a cookie file the call writes and waits for keeps
-  every write made before the call in its answer. On macOS every call still looks at every file,
-  whatever `--refresh-interval` says: FSEvents can give a write a later event than a cookie made
-  after it, so the cookie proves nothing there. When the watch cannot vouch for fewer files, or
+  every write made before the call in its answer. On macOS, where FSEvents can give a write a
+  later event than a cookie made after it, the server watches every file and directory through a
+  kqueue instead, whose notes the system posts inside the call that makes the change: a call reads
+  them at once and looks at the files they name (on 14,520 files, `find_symbol` through the server
+  takes 5.8 ms where a look at the tree took 108 ms). While those watches are not in place, for a
+  tree past half the process's descriptors less 1,024 (`kern.maxfilesperproc`; about 29,700 files
+  and directories where it is 61,440), or on a volume that gives no kqueue notes, every macOS
+  call looks at every file. When the watch cannot vouch for fewer files, or
   cannot start, the call looks at every file as before. `SCRUTATE_SESSION_DEBUG=1` says why
   ([ADR 0001](docs/adr/0001-change-sets-and-the-cookie-barrier.md), [CLI](docs/CLI.md)).
 - A fresh process opens an index whose database it saw pass a check as fast as a running one:

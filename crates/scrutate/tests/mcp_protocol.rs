@@ -304,10 +304,10 @@ fn an_explicit_refresh_interval_is_a_floor() {
     let (mut floor, said) = Session::start_said(&r, &["serve", "--refresh-interval", "3600"]);
     let mut id = 1;
     assert!(floor.text(id, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
-    // start-up done: the watch is in place and a read applied the walk that follows it, so a
-    // plain call looks at no file (macOS looks at every file at every call)
+    // start-up done: the watch (on macOS the kqueue) is in place and a read applied the walk that
+    // follows it, so a plain call looks at no file
     let t0 = std::time::Instant::now();
-    while !cfg!(target_os = "macos") {
+    loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
         while said.try_recv().is_ok() {}
         id += 1;
@@ -326,15 +326,13 @@ fn an_explicit_refresh_interval_is_a_floor() {
     let seen = floor.text(id, "find_symbol", find("arrived_later")).contains("pkg/new_dir/later.py");
     std::thread::sleep(std::time::Duration::from_millis(100));
     lines.extend(std::iter::from_fn(|| said.try_recv().ok()));
-    // macOS: every call looks at every file. Linux: the new directory has no inotify watch, so its
-    // file has no event, and the walk that lists it waits for the floor. Windows: the subtree watch
-    // has an event for the file, and the watch's walk over the new directory lets the call name it:
-    // one stat, no walk.
-    assert_eq!(seen, !cfg!(target_os = "linux"), "seen on macOS and Windows, not on Linux; the call said {lines:?}");
-    if !cfg!(target_os = "macos") {
-        assert!(!walked(&lines), "a walk of every file within the interval: {lines:?}");
-        assert!(lines.iter().any(|l| l.contains("the refresh interval holds that walk back")), "{lines:?}");
-    }
+    // Linux: the new directory has no inotify watch, so its file has no event, and the walk that
+    // lists it waits for the floor. macOS: the kqueue sees the directory change and asks for that
+    // walk too. Windows: the subtree watch has an event for the file, and the watch's walk over the
+    // new directory lets the call name it: one stat, no walk.
+    assert_eq!(seen, cfg!(windows), "seen on Windows alone; the call said {lines:?}");
+    assert!(!walked(&lines), "a walk of every file within the interval: {lines:?}");
+    assert!(lines.iter().any(|l| l.contains("the refresh interval holds that walk back")), "{lines:?}");
     // an edit of a file the watch knows, and a new file in a directory it knows: no interval
     // holds them back
     let m1 = r.root.join("pkg/m1.py");
@@ -345,8 +343,7 @@ fn an_explicit_refresh_interval_is_a_floor() {
 }
 
 /// New directories made straight after start-up, on an index built before the server (its
-/// first call answers before the watches are set): start-up's one walk, then the floor holds
-/// (macOS looks at every file at every call).
+/// first call answers before the watches are set): start-up's one walk, then the floor holds.
 #[test]
 fn new_directories_right_after_start_up_cost_one_walk_under_a_refresh_interval() {
     let r = Repo::new("refresh_burst", 0);
@@ -372,18 +369,19 @@ fn new_directories_right_after_start_up_cost_one_walk_under_a_refresh_interval()
         seen += usize::from(floor.text(2 + k, "find_symbol", json!({"name": format!("later_{k}")})).contains(&format!("d0/new_{k}/later.py")));
         std::thread::sleep(std::time::Duration::from_millis(100));
         lines.extend(std::iter::from_fn(|| said.try_recv().ok()));
-        // a call before the watch is in place walks (on macOS every call does); the next pays
+        // a call before the watch (on macOS the kqueue) is in place walks; the next pays
         // start-up's walk
         early += usize::from(lines.iter().any(|l| l.contains("the watch is not in place") || l.contains("FSEvents may number")));
         walks += usize::from(walked(&lines));
         told.push(format!("new_{k}: {lines:?}"));
     }
-    // macOS: every call looks at every file. Windows: each call names the new directory's file, as
-    // in an_explicit_refresh_interval_is_a_floor. Linux: start-up's one walk sees one, the rest wait.
-    if cfg!(target_os = "linux") {
-        assert!(seen <= early + 1, "{seen} of 5 new directories seen under the floor, {early} before the watch; the calls said {told:#?}");
-    } else {
+    // Windows: each call names the new directory's file, as in
+    // an_explicit_refresh_interval_is_a_floor. Linux and macOS: start-up's one walk sees one, the
+    // rest wait.
+    if cfg!(windows) {
         assert_eq!(seen, 5, "the calls said {told:#?}");
+    } else {
+        assert!(seen <= early + 1, "{seen} of 5 new directories seen under the floor, {early} before the watch; the calls said {told:#?}");
     }
     assert!(walks <= early + 1, "{walks} walks of every file for 5 new directories, {early} before the watch: one is start-up's; the calls said {told:#?}");
 }
@@ -406,7 +404,7 @@ fn an_edit_followed_by_a_new_directory_is_seen_under_a_refresh_interval() {
     assert!(floor.text(id, "find_symbol", find("base_1")).contains("d1/m1.py"));
     // start-up done, as in an_explicit_refresh_interval_is_a_floor
     let t0 = std::time::Instant::now();
-    while !cfg!(target_os = "macos") {
+    loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
         while said.try_recv().is_ok() {}
         id += 1;
@@ -434,9 +432,7 @@ fn an_edit_followed_by_a_new_directory_is_seen_under_a_refresh_interval() {
         std::thread::sleep(std::time::Duration::from_millis(100));
         lines.extend(std::iter::from_fn(|| said.try_recv().ok()));
         assert!(seen, "edit {k} within the interval, after a new directory; the call said {lines:?}");
-        if !cfg!(target_os = "macos") {
-            assert!(!walked(&lines), "a walk of every file within the interval: {lines:?}");
-        }
+        assert!(!walked(&lines), "a walk of every file within the interval: {lines:?}");
     }
 }
 
