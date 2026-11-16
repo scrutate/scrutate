@@ -394,9 +394,9 @@ incompatible index by itself, and that is never breaking.
 - `impact`, `--staged` and `review` no longer list a test file the change deletes as a test to run.
 - `review`'s comment puts a renamed file's old path in a code span, as every other path: a name
   such as `x<!--.py` hid the rest of the comment, and `@name` notified a user.
-- `review`'s cut comment keeps the line that says the walk stopped, and its last line names the
-  base and head (`--head` when it is not `HEAD`) of the command that prints the whole report, in a
-  code span.
+- `review`'s cut comment keeps the line that says the walk stopped, and its last line names the command that prints the whole report, the same
+  base, head and depth with `--format json` (`--head` and `--depth` when they are not the
+  default), in a code span.
 - `impact --base A..B` and `review --base A..B` say a two-dot range is not a revision and point at
   `A...B` for the merge base, where they said the repository lacked it.
 - A walk stopped at 2,000 callers lists them by distance, path and line, and names no

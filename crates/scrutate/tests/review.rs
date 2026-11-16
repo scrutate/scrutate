@@ -516,19 +516,27 @@ fn the_cut_note_quotes_the_base_it_names() {
     }
     for base in odd {
         let md = t.review(&["--base", base, "--depth", "1"]);
-        assert!(md.contains(&format!("`` scrutate review --base {base} ``")), "{base}: {}", &md[md.len() - 300..]);
+        assert!(md.contains(&format!("`` scrutate review --base {base} --depth 1 --format json ``")), "{base}: {}", &md[md.len() - 300..]);
     }
 }
 
-/// The cut note's command prints the whole report of the same comparison: the head too, when it
-/// is not HEAD.
+/// The cut note's command prints the whole report of the same comparison: the head and the depth
+/// too, when they are not the default, as JSON, which is never cut. The command it names is run.
 #[test]
-fn the_cut_note_names_the_head_it_reviewed() {
+fn the_cut_note_names_the_command_that_prints_the_whole_report() {
     let (t, _) = many_callers("capped_head", "base");
     t.git(&["branch", "feat"]);
     t.git(&["checkout", "-q", "base"]);
     let md = t.review(&["--base", "base", "--head", "feat", "--depth", "1"]);
-    assert!(md.contains("`scrutate review --base base --head feat`"), "{}", &md[md.len() - 300..]);
+    let command = "scrutate review --base base --head feat --depth 1 --format json";
+    assert!(md.contains(&format!("`{command}` prints the whole report")), "{}", &md[md.len() - 300..]);
+    let args: Vec<&str> = command.split(' ').skip(1).collect();
+    let (code, out, err) = t.run(&args);
+    assert_eq!(code, 0, "{err}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    // the whole report: every caller the cut comment left out
+    let callers = v["result"]["callers"].as_array().unwrap().len();
+    assert!(out.len() > 65_536 && callers == 2000, "{} bytes, {callers} callers", out.len());
 }
 
 /// Two dots is a range, a common slip for the merge base's three: the error says which to pass.

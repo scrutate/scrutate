@@ -727,8 +727,9 @@ counts, and a section for each part with items: `Changed definitions`,
 `Notes`. Locations are paths from the repository root; with `--link URL` each links to
 `URL/PATH#Lstart-Lend` (the Action passes `https://github.com/OWNER/REPO/blob/COMMIT`). The body
 is cut at whole lines before 65,536 characters, GitHub's comment limit, with a last line that
-says so and names the command that prints the whole report (with `--head` when the head is not
-`HEAD`), each name in a code span; a line saying the walk stopped is kept inside the limit. `--format json` is the envelope: `impact`'s `result`, `findings` included, with `head`,
+says so and names the command that prints the whole report, the same comparison with `--format json`
+(with `--head` when the head is not `HEAD` and `--depth` when it is not the default), each name
+in a code span; a line saying the walk stopped is kept inside the limit. `--format json` is the envelope: `impact`'s `result`, `findings` included, with `head`,
 `head_commit`, `new_duplicates` (each duplicate finding's group as `dupes --json` gives it) and
 `untested` (the marked definitions' locations). `--format gitlab` is a GitLab Code Quality
 report: a JSON list of issues with `description`, `check_name`, `fingerprint`, `severity` and

@@ -181,7 +181,7 @@ impl Review {
         section("Notes".into(), i.notes.iter().map(|(p, n)| format!("- {}: {}", at(p, None), n.text(code))).collect());
         // the stopped line explains a comment that names no untested change: the cut keeps it
         let last = if i.stopped { vec![String::new(), format!("_The walk stopped at {} callers._", crate::impact::MAX_CALLERS)] } else { Vec::new() };
-        cap(lines, &last, &i.against, &self.head)
+        cap(lines, &last, &i.against, &self.head, i.depth)
     }
 
     pub fn json(&self) -> Value {
@@ -207,10 +207,13 @@ impl Review {
 }
 
 /// The lines joined, then `last`, which is always kept: cut before the line that would pass
-/// `MAX_COMMENT`, with the note that says so.
-fn cap(lines: Vec<String>, last: &[String], base: &str, head: &str) -> String {
+/// `MAX_COMMENT`, with the note that says so and names the command that prints the whole report:
+/// the same comparison and depth as JSON, which is never cut.
+fn cap(lines: Vec<String>, last: &[String], base: &str, head: &str, depth: usize) -> String {
     let and_head = if head == "HEAD" { String::new() } else { format!(" --head {head}") };
-    let note = format!("\n_Cut at {MAX_COMMENT} characters: {} prints the whole report._\n", code(&format!("scrutate review --base {base}{and_head}")));
+    let and_depth = if depth == crate::impact::DEPTH { String::new() } else { format!(" --depth {depth}") };
+    let whole = format!("scrutate review --base {base}{and_head}{and_depth} --format json");
+    let note = format!("\n_Cut at {MAX_COMMENT} characters: {} prints the whole report._\n", code(&whole));
     let tail: String = last.iter().map(|l| format!("{l}\n")).collect();
     let mut out = String::new();
     for l in &lines {
@@ -239,9 +242,10 @@ mod tests {
     #[test]
     fn a_long_report_is_cut_with_a_note_under_the_limit() {
         let lines: Vec<String> = (0..20_000).map(|n| format!("- line {n}")).collect();
-        let out = cap(lines, &[], "main", "HEAD");
+        let out = cap(lines, &[], "main", "HEAD", crate::impact::DEPTH);
         assert!(out.len() <= MAX_COMMENT && out.ends_with("prints the whole report._\n"), "{}", out.len());
-        assert_eq!(cap(vec!["a".into()], &[], "main", "HEAD"), "a\n");
+        assert!(out.contains("`scrutate review --base main --format json` prints"), "{}", &out[out.len() - 200..]);
+        assert_eq!(cap(vec!["a".into()], &[], "main", "HEAD", 1), "a\n");
     }
 
     #[test]
