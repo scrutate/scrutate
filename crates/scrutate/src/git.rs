@@ -102,6 +102,12 @@ pub(crate) fn own_env() -> Vec<(String, String)> {
     absolute_env(&std::env::current_dir().unwrap_or_default(), vars)
 }
 
+/// The git directory's own configuration file: git reads core.worktree there alone, never from an
+/// included file or the global and system ones, which `config --get` also reads.
+fn own_config(dir: &Path) -> String {
+    dir.join("config").to_string_lossy().into_owned()
+}
+
 /// With GIT_DIR and no GIT_WORK_TREE: when that git directory's core.worktree (read against the
 /// git directory, as git reads it) does not hold `root`, why git finds no work tree here, naming
 /// both.
@@ -109,9 +115,9 @@ fn tree_elsewhere(root: &Path, set: &[(String, String)]) -> Option<String> {
     let probe = Git { dir: plain_dir(root), env: Env::Own(set.to_vec()), filters: Default::default() };
     let text = |out: &[u8]| String::from_utf8_lossy(out.trim_ascii_end()).into_owned();
     let (true, dir, _) = probe.output(&["rev-parse", "--absolute-git-dir"]).ok()? else { return None };
-    let (true, tree, _) = probe.output(&["config", "--get", "core.worktree"]).ok()? else { return None };
-    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let dir = PathBuf::from(text(&dir));
+    let (true, tree, _) = probe.output(&["config", "--file", &own_config(&dir), "--get", "core.worktree"]).ok()? else { return None };
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let tree = canonical(&dir.join(text(&tree)));
     let plain = crate::paths::plain_path;
     (!canonical(root).starts_with(&tree)).then(|| {
@@ -152,7 +158,8 @@ impl Git {
         let own = Git { dir: plain_dir(root), env: Env::Given(Vec::new()), filters: Default::default() };
         // none: `checked` already refused it, or git reports no repository
         let Some(named) = dir_of(self) else { return Ok(()) };
-        if dir_of(&own).as_ref() == Some(&named) || self.output(&["config", "--get", "core.worktree"]).is_ok_and(|(ok, _, _)| ok) {
+        if dir_of(&own).as_ref() == Some(&named) || self.output(&["config", "--file", &own_config(&named), "--get", "core.worktree"]).is_ok_and(|(ok, _, _)| ok)
+        {
             return Ok(());
         }
         bail!(

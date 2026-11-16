@@ -634,6 +634,27 @@ fn with_git_dir_alone_a_subdirectory_answers_as_the_root_and_another_repository_
     let (code, text, err) = run(&t.root, &["impact"], &[("GIT_DIR", modules.to_str().unwrap())]);
     assert_eq!(code, Some(2), "{text}{err}");
     assert!(err.contains("a git directory whose work tree is") && err.contains("sub,"), "{err}");
+    // git reads core.worktree from the git directory's own file alone: from an included file or
+    // the global configuration it names no tree, git takes the root, and the guard refuses
+    let m = modules.to_str().unwrap();
+    t.git(&["--git-dir", m, "config", "--unset", "core.worktree"]);
+    let elsewhere = |what: &str| {
+        let p = t.root.with_file_name(format!("impact_worktree_{what}_{}", std::process::id()));
+        fs::write(&p, format!("[core]\n\tworktree = {}\n", t.root.join("sub").display())).unwrap();
+        p
+    };
+    let included = elsewhere("included");
+    t.git(&["--git-dir", m, "config", "include.path", included.to_str().unwrap()]);
+    let (code, text, err) = run(&t.root, &["impact"], &[("GIT_DIR", m)]);
+    assert_eq!(code, Some(2), "included: {text}{err}");
+    assert!(err.contains("is not the git directory of"), "included: {err}");
+    t.git(&["--git-dir", m, "config", "--unset", "include.path"]);
+    let global = elsewhere("global");
+    let (code, text, err) = run(&t.root, &["impact"], &[("GIT_DIR", m), ("GIT_CONFIG_GLOBAL", global.to_str().unwrap())]);
+    assert_eq!(code, Some(2), "global: {text}{err}");
+    assert!(err.contains("is not the git directory of"), "global: {err}");
+    let _ = fs::remove_file(included);
+    let _ = fs::remove_file(global);
 }
 
 #[test]

@@ -706,7 +706,8 @@ the top. A `GIT_DIR` that is not the root's own git directory and has no `core.w
 the command with exit 2 (`read --history` gives that as its note): its history laid over this
 tree would be another repository's; set `GIT_WORK_TREE` with it. One whose `core.worktree`
 names a tree that does not hold the root (a submodule's, from its superproject) stops it too,
-naming that tree. The MCP tool `impact` takes `base`, `staged` and `depth`
+naming that tree. `core.worktree` counts only from the git directory's own `config`, where git
+reads it: one in an included file or the global configuration names no tree. The MCP tool `impact` takes `base`, `staged` and `depth`
 and gives the same answer, findings included.
 
 ### `review`
