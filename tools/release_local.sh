@@ -49,5 +49,6 @@ if command -v maturin >/dev/null; then
   for py in "${pys[@]}"; do maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o dist -i "$py"; done
 fi
 python3 tools/sbom.py --out "dist/scrutate-$v.cdx.json"
-(cd dist && sha256sum -- *.tar.gz *.whl *.cdx.json > SHA256SUMS)
+# no wheel without maturin: a pattern that matches nothing is left out
+(cd dist && shopt -s nullglob && sha256sum -- *.tar.gz *.whl *.cdx.json > SHA256SUMS)
 echo "artifacts:"; ls -la dist
