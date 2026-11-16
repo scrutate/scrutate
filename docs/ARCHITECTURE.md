@@ -445,7 +445,8 @@ NFC with final sigma folded.
     by the next update (an update a read makes, which must not wait, tries without waiting), and
     a cut log keeps at most 4 MB of its file;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
-    writer moved the manifest; an update a read makes, which must not wait, tries its lock once
+    writer moved the manifest or a segment it merged is gone (another update's GC removes one the
+    wall clock aged past `GC_AGE_S` before the compaction's second lock); an update a read makes, which must not wait, tries its lock once
     before the merge and once after it (only the second when there is nothing to merge), and
     leaves the compaction to the next update when another writer holds it (a segment it merged
     meanwhile is removed), which does it even when nothing changed; segment **GC** with an age

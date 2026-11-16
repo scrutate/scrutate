@@ -317,6 +317,9 @@ incompatible index by itself, and that is never breaking.
 - An index that holds no files and cannot be filled (a rebuild cut short after it cleared the
   index, opened where it cannot be written) answers with an error, exit 2, where every search and
   lookup answered "(no results)" as if nothing matched ([CLI](docs/CLI.md)).
+- A compaction whose merged segment another update's clean-up removed before the compaction
+  committed (the clock moved more than 10 minutes meanwhile: a suspend, a clock step) gives up its
+  plan, where it committed a list naming that segment and the next read rebuilt the whole index.
 - `watch` started with a pipe for its input ends when the pipe does, with exit code 0, so it no
   longer outlives an agent or script that started it and was killed; from a terminal or with no
   input it runs as before.

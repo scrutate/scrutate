@@ -2723,7 +2723,11 @@ impl Index {
             }
             return Ok(false);
         }
-        if self.segments() != names {
+        // gc removes a directory the list does not name once its age passes GC_AGE_S by the wall
+        // clock, which can pass between the merge and this lock (a suspend, a clock step): a list
+        // naming a merged segment that is gone would make the next read rebuild everything
+        let merged_gone = new_names.iter().any(|n| !names.contains(n) && !self.seg_dir.join(n).is_dir());
+        if self.segments() != names || merged_gone {
             // another writer changed the manifest while we were merging: our plan is stale. Drop the
             // merged segment (nothing refers to it) and let the next update compact again.
             self.db.execute_batch("ROLLBACK")?;
@@ -2732,7 +2736,7 @@ impl Index {
             }
             self.lex = None;
             self.lex_ver = None;
-            return Ok(true);
+            return Ok(!merged_gone);
         }
         self.set_meta("segments", &serde_json::to_string(&new_names)?)?;
         self.bump_version()?;
@@ -3879,6 +3883,51 @@ mod tests {
         assert!(stray.is_empty(), "segment directories outside the list: {stray:?}");
         ix.update(false).unwrap();
         assert_eq!(ix.segments().len(), 1);
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A merged segment another update's gc removed before the compaction takes its second lock
+    /// (the wall clock moved past GC_AGE_S meanwhile: a suspend, a clock step) makes the
+    /// compaction give up its plan, so the list never names a directory that is gone and the next
+    /// read does not rebuild the index.
+    #[test]
+    fn a_compaction_whose_merged_segment_is_gone_gives_up_its_plan() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_merged_gone_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x\n").unwrap();
+        // a second file keeps the first segment partly alive, so the compaction merges
+        std::fs::write(root.join("b.py"), "def beta(x):\n    return x\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let seg = ix.seg_dir.clone();
+        let listed_then = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let then = std::sync::Arc::clone(&listed_then);
+        let db = root.join(".scrutate/index.db");
+        // as gc does: every segment directory the list does not name is removed
+        super::AFTER_MERGE.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                let c = rusqlite::Connection::open(&db).unwrap();
+                let names: String = c.query_row("SELECT value FROM meta WHERE key='segments'", [], |r| r.get(0)).unwrap();
+                let names: Vec<String> = serde_json::from_str(&names).unwrap();
+                for e in std::fs::read_dir(&seg).unwrap().flatten() {
+                    if !names.contains(&e.file_name().to_string_lossy().into_owned()) {
+                        std::fs::remove_dir_all(e.path()).unwrap();
+                    }
+                }
+                *then.lock().unwrap() = names;
+            }))
+        });
+        std::fs::write(root.join("a.py"), "def alpha(x):\n    return x + 1\n").unwrap();
+        ix.update(false).unwrap();
+        let listed = ix.segments();
+        assert_eq!(listed, *listed_then.lock().unwrap(), "the compaction kept the list it found");
+        assert!(listed.iter().all(|n| ix.seg_dir.join(n).is_dir()), "the list names a segment that is gone: {listed:?}");
+        assert!(ix.check(false).unwrap().problems.is_empty());
+        let st = ix.update(false).unwrap();
+        assert_eq!(st.files_changed, 0, "the next update rebuilt the index: {st:?}");
+        assert_eq!(ix.segments().len(), 1, "the next update compacts what was left");
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }
