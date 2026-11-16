@@ -831,14 +831,13 @@ SCRUTATE_REDACT=off shows them)`; the structured form carries `"redacted": {KIND
 Both forms are redacted, `detailed` and `concise`, before the budget pages them, so a page edge
 never cuts a secret in two, and a structural search capture as its whole line reads it. A path
 that holds a secret is redacted too. The Grep hook and `lsp` answer the same way. The CLI and the
-Python bindings print what the files hold; `SCRUTATE_REDACT=on` redacts the CLI's index answers
-too (`--json` as values, the closing line on stderr): `search` of the one repository, `symbol`,
-`callers`, `callees`, `path`, `map`, `refs`, `read`, `outline`, `deps`, `rdeps`, `similar`,
-`dupes`, `impact`, `files`, `dead` and `grep --index` (each line as a whole, `--json` records as
-values, colour off; a record whose text was redacted loses its `spans`, and a line with nothing
-to redact goes out as the file has it). `search --also` with
-another repository, `tsquery`, `review` and `grep` without `--index` print what the files hold
-under `on` too. `SCRUTATE_REDACT=off` turns redaction off everywhere. No tool argument turns it off, so an agent cannot.
+Python bindings print what the files hold; `SCRUTATE_REDACT=on` redacts every CLI answer that
+prints file text, in text and `--json` (as values, the closing line on stderr), and leaves file
+names and counts as they are: `grep` with or without `--index` line by line with colour off (a
+`--json` record whose text was redacted loses its `spans`), `search` with `--also` too, `read`,
+`symbol`, `refs`, `callers`, `callees`, `similar`, `dupes`, `impact`, `review` in its three
+formats, `tsquery` and the diff of `tsquery --rewrite` (which then no longer applies to a redacted
+line), `batch` and `views`. `SCRUTATE_REDACT=off` turns redaction off everywhere. No tool argument turns it off, so an agent cannot.
 
 Before a call the server brings the index up to date with the files that changed since the last
 call. A watch on the tree (FSEvents on macOS, one inotify watch per directory on Linux,
@@ -1282,7 +1281,7 @@ root.
 
 | Variable | Meaning |
 |---|---|
-| `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook, `hook run` and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts the CLI's index answers too, `grep --index` among them (the list is under [serve](#serve-mcp)); any other value keeps the default and says so on stderr |
+| `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook, `hook run` and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts every CLI answer that prints file text too ([serve](#serve-mcp)); any other value keeps the default and says so on stderr |
 | `SCRUTATE_HOOK_BASH` | `off` (or `0`, `false`, `no`): `hook bash` rewrites nothing, so every shell command runs as written ([setup](#setup-and-the-grep-hook)) |
 | `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none`; a model whose tables do not agree in size is refused with an error |
 | `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's makes `search` fail |

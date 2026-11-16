@@ -416,8 +416,8 @@ fn the_cli_s_json_stays_whole_when_it_redacts() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// `SCRUTATE_REDACT=on` covers `grep --index`, an answer from the index, in text and `--json`,
-/// as it covers `read` and `search`; plain `grep`, which reads the files, prints them as they are.
+/// `SCRUTATE_REDACT=on` covers `grep --index` in text and `--json`, as it covers `read` and
+/// `search`; with `off` the answer is the files as they are.
 #[test]
 fn grep_index_is_redacted_under_redact_on() {
     let (root, secrets) = tree("grep_index");
@@ -452,10 +452,110 @@ fn grep_index_is_redacted_under_redact_on() {
     let latin =
         Command::new(BIN).args(["grep", "--index", "-I", "plain_caf"]).current_dir(&root).env("SCRUTATE_REDACT", "on").stdin(Stdio::null()).output().unwrap();
     assert_eq!(latin.stdout, b"1:NOTE = 1  # plain_caf\xe9\n", "{:?}", String::from_utf8_lossy(&latin.stdout));
-    // the files as they are: plain grep, and grep --index with redaction off
-    assert!(ran(&["grep", "-n", "GITHUB"], "on").0.contains(&token));
+    // the files as they are with redaction off
     assert!(ran(&["grep", "--index", "-n", "GITHUB"], "off").0.contains(&token));
     let _ = fs::remove_dir_all(&root);
+}
+
+/// `SCRUTATE_REDACT=on` covers every CLI answer that prints a line of a file: each command that
+/// can print file text runs over a planted token, in text and JSON where it has both, and the token
+/// is in none of them. A command added later that prints file text fails here until it redacts.
+#[test]
+fn redact_on_covers_every_cli_answer_that_prints_file_text() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_every_cli_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let other = root.with_extension("other");
+    let _ = fs::remove_dir_all(&other);
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    let token = format!("ghp_{}", chars(&mut 4242, ALNUM, 36));
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
+    };
+    let body = |n: i32| format!("def settings():\n    token = \"{token}\"\n    return use_token(token, {n})\n\n\ndef use_token(t, n):\n    return t\n");
+    fs::write(root.join("conf.py"), body(1)).unwrap();
+    fs::write(root.join("copy.py"), body(1).replace("settings", "settings_copy").replace("use_token", "use_token2")).unwrap();
+    fs::write(other.join("far.py"), format!("def far_settings():\n    token = \"{token}\"\n    return token\n")).unwrap();
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "base"]);
+    fs::write(root.join("conf.py"), body(2)).unwrap();
+    let batch = root.join("queries.jsonl");
+    fs::write(&batch, "{\"query\": \"settings token\", \"k\": 5}\n").unwrap();
+    let views = root.with_extension("views.jsonl");
+    fs::write(&views, format!("{{\"file\": \"conf.py\"}}\n{{\"text\": \"token = {token}\", \"path\": \"x.py\"}}\n")).unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("SCRUTATE_REDACT", "on")
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_NO_SESSION", "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    assert!(Command::new(BIN).args(["index", "--text"]).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap().success());
+    assert!(Command::new(BIN).args(["index"]).current_dir(&other).env("SCRUTATE_SEMANTIC", "none").status().unwrap().success());
+    let also = other.to_str().unwrap();
+    let (b, v) = (batch.to_str().unwrap(), views.to_str().unwrap());
+    let calls: Vec<Vec<&str>> = vec![
+        vec!["grep", "-n", "token"],
+        vec!["grep", "--json", "token"],
+        vec!["grep", "-n", "-C", "2", "token"],
+        vec!["grep", "--index", "-n", "token"],
+        vec!["grep", "--index", "--json", "token"],
+        vec!["search", "settings token"],
+        vec!["search", "settings token", "--json"],
+        vec!["search", "settings token", "--also", also],
+        vec!["search", "settings token", "--also", also, "--json"],
+        vec!["find", "settings token"],
+        vec!["find", "token =", "--json"],
+        vec!["symbol", "settings"],
+        vec!["symbol", "settings", "--json"],
+        vec!["read", "conf.py"],
+        vec!["read", "--symbol", "settings", "--json"],
+        vec!["refs", "use_token"],
+        vec!["refs", "use_token", "--json"],
+        vec!["callers", "use_token"],
+        vec!["callers", "use_token", "--json"],
+        vec!["callees", "settings"],
+        vec!["similar", "conf.py:1"],
+        vec!["dupes", "--min-tokens", "5", "--threshold", "0.3"],
+        vec!["dupes", "--min-tokens", "5", "--threshold", "0.3", "--json"],
+        vec!["impact"],
+        vec!["impact", "--json"],
+        vec!["review", "--base", "HEAD"],
+        vec!["review", "--base", "HEAD", "--format", "json"],
+        vec!["review", "--base", "HEAD", "--format", "gitlab"],
+        vec!["tsquery", "python", "(string) @s"],
+        vec!["tsquery", "python", "(string) @s", "--json"],
+        vec!["tsquery", "python", "(string) @s", "--rewrite", "{{s}}x"],
+        vec!["batch", b],
+        vec!["views", v],
+        vec!["dead"],
+        vec!["map"],
+    ];
+    let leaked: Vec<String> = calls
+        .iter()
+        .filter_map(|args| {
+            let (out, err) = run(args);
+            (out.contains(&token) || err.contains(&token)).then(|| format!("{args:?}: {}", out.lines().find(|l| l.contains(&token)).unwrap_or("(stderr)")))
+        })
+        .collect();
+    assert!(leaked.is_empty(), "these printed the token:\n{}", leaked.join("\n"));
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&other);
 }
 
 /// Marks the repository may hold, each with why: none today. A secret-shaped literal in a tracked

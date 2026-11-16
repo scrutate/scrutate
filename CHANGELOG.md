@@ -58,8 +58,8 @@ incompatible index by itself, and that is never breaking.
   HTTP Basic credentials, `.env` lines, quoted passwords, a key's base64 body read without its
   armour, a generic assignment rule, and private keys ([the table](docs/SECURITY.md#secrets-in-answers)).
   `SCRUTATE_REDACT=off`
-  turns it off and `on` turns it on for the CLI's index answers, `grep --index` among them
-  ([Security](docs/SECURITY.md#secrets-in-answers)).
+  turns it off and `on` turns it on for every CLI answer that prints file text, in text and
+  `--json`, leaving file names and counts as they are ([CLI](docs/CLI.md), [Security](docs/SECURITY.md#secrets-in-answers)).
 - Vendored code ranks lower than the project's own in `search` and the MCP `search_code` by a
   fixed margin, so a clearly better vendored match (`WalkBuilder.build_matchers` defined only
   under `vendor/`) still comes first, and it is never left out: `vendor/`, `third_party/`,

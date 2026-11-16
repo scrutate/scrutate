@@ -1547,7 +1547,9 @@ pub fn run() -> Result<i32> {
                     crate::ops::mark_vendored(rec, &vendored[*i]);
                     rec["root"] = serde_json::json!(crate::paths::plain_path(&roots[*i].1).to_string_lossy());
                 }
-                outln!("{}", serde_json::to_string_pretty(&crate::ops::wrapped(v, None))?);
+                let mut v = crate::ops::wrapped(v, None);
+                CliRedact::new(&cli.root).json(&mut v);
+                outln!("{}", serde_json::to_string_pretty(&v)?);
             } else {
                 let marked: Vec<bool> = hits.iter().map(|(h, i)| vendored[*i].is(&h.path)).collect();
                 let hits: Vec<crate::search::Hit> = hits.iter().map(|x| crate::search::Hit { path: shown(x), ..x.0.clone() }).collect();
@@ -1557,7 +1559,9 @@ pub fn run() -> Result<i32> {
                     let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
                     let blocks = crate::fmt::hit_blocks(&hits, &words, true, why);
                     let blocks = blocks.iter().zip(&marked).map(|(b, &m)| if m { crate::ops::mark_hit_block(b, &|_| true) } else { b.clone() }).collect();
-                    outln!("{}", crate::ops::paged(blocks, "results", text_room(page.0), page.1));
+                    let mut text = crate::ops::paged(blocks, "results", text_room(page.0), page.1);
+                    CliRedact::new(&cli.root).text(&mut text);
+                    outln!("{text}");
                 }
             }
             if let (Some(other), false) = (other, json) {
@@ -1634,13 +1638,24 @@ pub fn run() -> Result<i32> {
         Cmd::Impact { base, staged, depth, json } => run_op(&cli.root, Op::Impact { base, staged, depth: depth as usize }, json, page, None),
         Cmd::Review { base, head, format, depth, link } => {
             let r = open_fresh(&cli.root)?.recovering(|s| crate::review::review(s, &base, Some(&head), depth as usize))?;
+            let mut red = CliRedact::new(&cli.root);
             match format {
-                ReviewFormat::Markdown => out!("{}", r.markdown(link.as_deref())),
+                ReviewFormat::Markdown => {
+                    let mut text = r.markdown(link.as_deref());
+                    red.text(&mut text);
+                    out!("{text}")
+                }
                 ReviewFormat::Json => {
                     let stopped = r.impact.stopped.then_some(crate::ops::Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" });
-                    outln!("{}", serde_json::to_string_pretty(&crate::ops::envelope(&cli.root, r.json(), stopped))?)
+                    let mut v = crate::ops::envelope(&cli.root, r.json(), stopped);
+                    red.json(&mut v);
+                    outln!("{}", serde_json::to_string_pretty(&v)?)
                 }
-                ReviewFormat::Gitlab => outln!("{}", serde_json::to_string_pretty(&r.gitlab())?),
+                ReviewFormat::Gitlab => {
+                    let mut v = r.gitlab();
+                    red.json(&mut v);
+                    outln!("{}", serde_json::to_string_pretty(&v)?)
+                }
             }
             Ok(i32::from(r.is_empty()))
         }
@@ -1672,7 +1687,11 @@ pub fn run() -> Result<i32> {
                         None => writeln!(w, "{}: {} replaced", f.shown, f.replaced)?,
                     }
                 }
-            } else if let Err(e) = w.write_all(plan.diff().as_bytes()) {
+            } else if let Err(e) = {
+                let mut diff = plan.diff();
+                CliRedact::new(&cli.root).text(&mut diff);
+                w.write_all(diff.as_bytes())
+            } {
                 if e.kind() != std::io::ErrorKind::BrokenPipe {
                     return Err(e.into());
                 }
@@ -1707,6 +1726,7 @@ pub fn run() -> Result<i32> {
             }
             // with a size limit or an offset the lines are collected and paged as other answers are
             let paging = !json && page != (usize::MAX, 0);
+            let mut red = CliRedact::new(&cli.root);
             let mut lines: Vec<String> = Vec::new();
             // one more than the limit, to tell whether it cut the answer
             let mut seen = 0usize;
@@ -1717,16 +1737,18 @@ pub fn run() -> Result<i32> {
                 if err.is_some() || seen > limit {
                     return;
                 }
+                let mut line = crate::ops::capture_line(&c);
+                red.text(&mut line);
                 if paging {
-                    lines.push(crate::ops::capture_line(&c));
+                    lines.push(line);
                     return;
                 }
                 let r = if json {
-                    serde_json::to_writer(&mut w, &c)
-                        .map_err(|e| std::io::Error::new(e.io_error_kind().unwrap_or(std::io::ErrorKind::Other), e))
-                        .and_then(|_| w.write_all(b"\n"))
+                    let mut v = serde_json::to_value(&c).unwrap_or_default();
+                    red.json(&mut v);
+                    writeln!(w, "{v}")
                 } else {
-                    writeln!(w, "{}", crate::ops::capture_line(&c))
+                    writeln!(w, "{line}")
                 };
                 if let Err(e) = r {
                     err = Some(e);
@@ -1872,8 +1894,7 @@ pub fn run() -> Result<i32> {
 /// query's terms, `{"split"}` a name's subwords and `{"stopwords": true}` the query stop list.
 fn views_command(file: &Path) -> Result<i32> {
     use crate::text::{query_terms, raw_subwords, tokenize2, BODY_CAP, QUERY_STOP};
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = json_lines(None);
     for line in std::io::BufReader::new(std::fs::File::open(file)?).lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -1930,6 +1951,7 @@ fn views_command(file: &Path) -> Result<i32> {
         };
         writeln!(out, "{rec}")?;
     }
+    finish(out)?;
     Ok(0)
 }
 
@@ -2169,12 +2191,65 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     Ok(if report.ok() { 0 } else { 1 })
 }
 
+/// What `SCRUTATE_REDACT=on` does to an answer the CLI prints that holds file text: its text
+/// redacted in place, its JSON as values, and how many on stderr when it ends. Off, nothing.
+struct CliRedact(Option<crate::secrets::Redactor>);
+
+impl CliRedact {
+    fn new(root: &Path) -> CliRedact {
+        let on = crate::secrets::on(false);
+        if on {
+            crate::secrets::know_key_lines_at(root);
+        }
+        CliRedact(on.then(Default::default))
+    }
+
+    fn text(&mut self, text: &mut String) {
+        if let Some(r) = &mut self.0 {
+            // line by line, as a file's lines are
+            let mut out = String::with_capacity(text.len());
+            for (i, line) in text.split('\n').enumerate() {
+                let mut line = line.to_string();
+                r.redact_in_place(&mut line);
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&line);
+            }
+            *text = out;
+        }
+    }
+
+    fn json(&mut self, v: &mut serde_json::Value) {
+        if let Some(r) = &mut self.0 {
+            r.redact_json(v);
+        }
+    }
+}
+
+impl Drop for CliRedact {
+    fn drop(&mut self) {
+        let mut note = String::new();
+        if let Some(r) = &self.0 {
+            crate::secrets::close(&mut note, r.total());
+        }
+        if !note.is_empty() {
+            eprintln!("{note}");
+        }
+    }
+}
+
 fn print_hits(root: &Path, hits: &[crate::search::Hit], qs: &[String], why: bool, json: bool) -> Result<()> {
+    let mut r = CliRedact::new(root);
     if json {
-        outln!("{}", serde_json::to_string_pretty(&crate::ops::envelope(root, hits_json(hits), None))?);
+        let mut v = crate::ops::envelope(root, hits_json(hits), None);
+        r.json(&mut v);
+        outln!("{}", serde_json::to_string_pretty(&v)?);
     } else {
         let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
-        outln!("{}", fmt_hits(hits, &words, true, why));
+        let mut text = fmt_hits(hits, &words, true, why);
+        r.text(&mut text);
+        outln!("{text}");
     }
     Ok(())
 }
@@ -2363,9 +2438,9 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     interrupt::install(Arc::clone(&cancel));
     // Ctrl-C also ends `--update`'s wait for another process's lock
     crate::index::stop_waits_on(Arc::clone(&cancel));
-    // an index answer is redacted under SCRUTATE_REDACT=on, as the other index answers are: line
-    // by line, so without colour and through the general path
-    let redact = out.indexed && crate::secrets::on(false);
+    // under SCRUTATE_REDACT=on a search's lines are redacted, as every answer that prints file
+    // text is: line by line, so without colour and through the general path
+    let redact = crate::secrets::on(false);
     if redact {
         crate::secrets::know_key_lines_at(&out.root);
     }
@@ -2830,14 +2905,45 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
     )
 }
 
+/// Standard output for JSON lines that can hold file text: under `SCRUTATE_REDACT=on` each record
+/// is redacted as values before it is written (`finish` says how many on stderr).
+fn json_lines(root: Option<&Path>) -> Out {
+    let w = Out::Stream(termcolor::BufferedStandardStream::stdout(ColorChoice::Never));
+    if !crate::secrets::on(false) {
+        return w;
+    }
+    if let Some(root) = root {
+        crate::secrets::know_key_lines_at(root);
+    }
+    Out::Redacted(Box::new(Redacting { inner: w, r: Default::default(), line: Vec::new(), json: true }))
+}
+
+/// The last of `json_lines`' output written, and its redactions counted on stderr.
+fn finish(w: Out) -> std::io::Result<()> {
+    match w {
+        Out::Redacted(mut r) => {
+            if !r.line.is_empty() {
+                r.end_line()?;
+            }
+            let mut note = String::new();
+            crate::secrets::close(&mut note, r.r.total());
+            if !note.is_empty() {
+                eprintln!("{note}");
+            }
+            finish(r.inner)
+        }
+        Out::Stream(mut w) => w.flush(),
+        Out::Paged(_) => Ok(()),
+    }
+}
+
 fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Result<i32> {
     let mut s = crate::Repo::open(root)?;
     if let Some(st) = s.refresh(0.0)?.filter(|st| st.files_changed > 0 || st.files_removed > 0) {
         eprintln!("[scrutate] indexed {} changed files ({} chunks, {:.1}s)", st.files_changed, st.chunks, st.seconds);
     }
     let f = std::fs::File::open(file)?;
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = json_lines(Some(root));
     for (n, line) in std::io::BufReader::new(f).lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
@@ -2902,6 +3008,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         }
         writeln!(out, "{}", serde_json::Value::Object(rec))?;
     }
+    finish(out)?;
     Ok(0)
 }
 
