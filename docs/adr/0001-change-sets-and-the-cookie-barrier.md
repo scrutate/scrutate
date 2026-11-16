@@ -134,6 +134,10 @@ feed only the watch's bursts.
   of its own, and no later note names it, so each build lists the tree's directories again once
   its watches are set: when they changed, reads keep looking and another build follows. A
   directory no walk enters (an ignored one) changes no listing, so it asks for no build.
+- A listing keeps each name with its kind (directory, file, or a link, socket or pipe): a name
+  that keeps its place and changes kind, as a link that `git checkout` turns into a file or a
+  directory, is a new file or a new directory to the next drain, and its old watch is dropped so
+  what is there now is watched.
 - The budget: at most half of `RLIMIT_NOFILE` (raised to the process ceiling,
   `kern.maxfilesperproc`, as Go's runtime does at start) less 1,024 kept for the index and the
   rest of the process. A tree with more files and directories, or any refused watch (`EMFILE`,

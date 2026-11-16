@@ -5,7 +5,7 @@
 //! call that returned before it. FSEvents, which numbers events in a daemon, gives no such order
 //! (docs/adr/0001-change-sets-and-the-cookie-barrier.md).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::{CString, OsString};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -58,11 +58,20 @@ pub(crate) enum Change {
     Directory(PathBuf),
 }
 
+/// What a directory entry is: a name that keeps its place but changes kind is a change too.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Dir,
+    File,
+    /// a link, socket or pipe
+    Other,
+}
+
 struct Entry {
     path: PathBuf,
     fd: Option<OwnedFd>,
-    /// a directory's entries as last listed
-    names: Option<HashSet<OsString>>,
+    /// a directory's entries as last listed, each with its kind
+    names: Option<HashMap<OsString, Kind>>,
 }
 
 /// One kqueue watching every file and directory of a tree.
@@ -165,8 +174,10 @@ impl Registry {
             return Err(refused(&std::io::Error::last_os_error()));
         }
         self.entries[i].fd = Some(fd);
-        if dir && self.entries[i].names.is_none() {
-            self.entries[i].names = Some(HashSet::new());
+        if !dir {
+            self.entries[i].names = None;
+        } else if self.entries[i].names.is_none() {
+            self.entries[i].names = Some(HashMap::new());
         }
         self.open += 1;
         Ok(())
@@ -180,40 +191,48 @@ impl Registry {
 
     /// Watch directory `dir`, then each file in it `keep` accepts, listing it until two listings
     /// agree: a file made while the first listing ran is in the second. Every subdirectory's name
-    /// is kept (a new one is a change of the tree's directories); only `add_tree` watches one.
-    /// The new entries, files already watched.
-    fn add_dir(&mut self, dir: &Path, keep: &dyn Fn(&Path) -> bool) -> Result<Vec<(PathBuf, bool)>, Off> {
+    /// is kept (a new one is a change of the tree's directories); only `add_tree` watches one. A
+    /// name whose kind changed (a link that became a file) has its old watch dropped, so the
+    /// file now there is watched.
+    fn add_dir(&mut self, dir: &Path, keep: &dyn Fn(&Path) -> bool) -> Result<(), Off> {
         if std::fs::metadata(dir).is_ok_and(|m| m.dev() != self.dev) {
             return Err(Off::Devices);
         }
         self.add(dir, true)?;
-        let Some(&d) = self.by_path.get(dir) else { return Ok(Vec::new()) };
+        let Some(&d) = self.by_path.get(dir) else { return Ok(()) };
         let mut before = self.entries[d].names.clone().unwrap_or_default();
-        let mut found = Vec::new();
         for _ in 0..LISTINGS {
-            let mut now = HashSet::new();
+            let mut now = HashMap::new();
             for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
                 let path = e.path();
-                let (is_dir, is_file) = e.file_type().map_or((false, false), |t| (t.is_dir(), t.is_file()));
-                if !is_dir && !keep(&path) {
+                let kind = e.file_type().map_or(Kind::Other, |t| {
+                    if t.is_dir() {
+                        Kind::Dir
+                    } else if t.is_file() {
+                        Kind::File
+                    } else {
+                        Kind::Other
+                    }
+                });
+                if kind != Kind::Dir && !keep(&path) {
                     continue;
                 }
-                now.insert(e.file_name());
-                // a link, socket or pipe is named alone: its coming and going is the directory's note
-                if is_file && !self.by_path.get(&path).is_some_and(|&i| self.entries[i].fd.is_some()) {
-                    self.add(&path, false)?;
+                if before.get(&e.file_name()).is_some_and(|k| *k != kind) {
+                    if let Some(&i) = self.by_path.get(&path) {
+                        self.forget(i);
+                    }
                 }
-                if !before.contains(&e.file_name()) {
-                    found.push((path, is_dir));
+                now.insert(e.file_name(), kind);
+                // a link, socket or pipe is named alone: its coming and going is the directory's note
+                if kind == Kind::File && !self.by_path.get(&path).is_some_and(|&i| self.entries[i].fd.is_some()) {
+                    self.add(&path, false)?;
                 }
             }
             if now == before {
                 if let Some(names) = self.entries[d].names.as_mut() {
                     *names = now;
                 }
-                found.sort();
-                found.dedup();
-                return Ok(found);
+                return Ok(());
             }
             before = now;
         }
@@ -314,11 +333,21 @@ impl Registry {
         for d in dirs {
             let dir = self.entries[d].path.clone();
             let old = self.entries[d].names.clone().unwrap_or_default();
-            for (path, is_dir) in self.add_dir(&dir, keep)? {
-                out.push(if is_dir { Change::Directory(path) } else { Change::Created(path) });
-            }
+            self.add_dir(&dir, keep)?;
             let now = self.entries[d].names.clone().unwrap_or_default();
-            for gone in old.difference(&now) {
+            let mut came: Vec<(&OsString, Kind)> = now.iter().filter(|(n, k)| old.get(*n) != Some(k)).map(|(n, k)| (n, *k)).collect();
+            came.sort_unstable_by(|a, b| a.0.cmp(b.0));
+            for (name, kind) in came {
+                let path = dir.join(name);
+                // a directory that left its name to something else is gone as a directory
+                if old.get(name) == Some(&Kind::Dir) {
+                    out.push(Change::Directory(path.clone()));
+                }
+                out.push(if kind == Kind::Dir { Change::Directory(path) } else { Change::Created(path) });
+            }
+            let mut gone: Vec<&OsString> = old.keys().filter(|n| !now.contains_key(*n)).collect();
+            gone.sort_unstable();
+            for gone in gone {
                 let path = dir.join(gone);
                 if let Some(&i) = self.by_path.get(&path) {
                     if self.entries[i].names.is_some() {
@@ -407,6 +436,36 @@ mod tests {
         assert!(r.drain(&all).unwrap().contains(&Change::Modified(root.join("src/new.py"))));
         std::fs::remove_file(root.join("src/new.py")).unwrap();
         assert!(r.drain(&all).unwrap().contains(&Change::Removed(root.join("src/new.py"))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_name_that_changes_kind_is_a_change() {
+        let root = tree("kind");
+        let (link, pkg) = (root.join("src/link.py"), root.join("src/pkg"));
+        std::os::unix::fs::symlink("nowhere.py", &link).unwrap();
+        std::os::unix::fs::symlink("nowhere", &pkg).unwrap();
+        std::fs::write(root.join("src/plain"), "p\n").unwrap();
+        let mut r = registry(&root, None);
+        // a link that becomes a file: a new file, watched
+        std::fs::remove_file(&link).unwrap();
+        std::fs::write(&link, "l = 1\n").unwrap();
+        assert!(r.drain(&all).unwrap().contains(&Change::Created(link.clone())));
+        std::fs::write(&link, "l = 2\n").unwrap();
+        assert!(r.drain(&all).unwrap().contains(&Change::Modified(link.clone())));
+        // a link that becomes a directory, and a file that becomes one: new directories
+        std::fs::remove_file(&pkg).unwrap();
+        std::fs::create_dir(&pkg).unwrap();
+        assert!(r.drain(&all).unwrap().contains(&Change::Directory(pkg.clone())));
+        let plain = root.join("src/plain");
+        std::fs::remove_file(&plain).unwrap();
+        std::fs::create_dir(&plain).unwrap();
+        assert!(r.drain(&all).unwrap().contains(&Change::Directory(plain.clone())));
+        // a directory that becomes a file: gone as a directory, and a new file
+        std::fs::remove_dir(&plain).unwrap();
+        std::fs::write(&plain, "p = 1\n").unwrap();
+        let c = r.drain(&all).unwrap();
+        assert!(c.contains(&Change::Directory(plain.clone())) && c.contains(&Change::Created(plain.clone())), "{c:?}");
         let _ = std::fs::remove_dir_all(root);
     }
 

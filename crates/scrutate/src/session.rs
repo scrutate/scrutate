@@ -2925,6 +2925,90 @@ mod tests {
         (root, s, notes)
     }
 
+    /// A watched session on a tree whose `src/` holds `a.py`, after its kqueue is in place and
+    /// start-up's look is done.
+    #[cfg(target_os = "macos")]
+    fn kqueue_in_place(name: &str) -> (PathBuf, Arc<Session>) {
+        let root = std::env::temp_dir().join(format!("scrutate_session_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.py"), "def made_a():\n    return 0\n").unwrap();
+        (root.clone(), {
+            let s = Session::open_watched(&root, Every::given(None)).unwrap();
+            s.build().unwrap();
+            s
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn watching_by_kqueue(s: &Arc<Session>) {
+        s.watch(false).unwrap();
+        let t0 = Instant::now();
+        while !read(&s.fresh).watching() || !read(&s.fresh).order_proves() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch or its kqueue never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn found(s: &Arc<Session>, name: &str) -> bool {
+        s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty())
+    }
+
+    /// A symlink that becomes a file at its path (as `git checkout` does when a path stops being
+    /// a link) is a new file to the next read.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_symlink_that_becomes_a_file_is_seen() {
+        let (root, s) = kqueue_in_place("kq_link_file");
+        std::os::unix::fs::symlink("nowhere.py", root.join("src/link.py")).unwrap();
+        watching_by_kqueue(&s);
+        std::fs::remove_file(root.join("src/link.py")).unwrap();
+        std::fs::write(root.join("src/link.py"), "def was_a_link():\n    return 1\n").unwrap();
+        assert!(found(&s, "was_a_link"), "the file that replaced a symlink");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A symlink that becomes a directory at its path is a new directory: its file is seen, and
+    /// so is a write in it after.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_symlink_that_becomes_a_directory_is_seen() {
+        let (root, s) = kqueue_in_place("kq_link_dir");
+        std::os::unix::fs::symlink("nowhere", root.join("src/pkg")).unwrap();
+        watching_by_kqueue(&s);
+        std::fs::remove_file(root.join("src/pkg")).unwrap();
+        std::fs::create_dir(root.join("src/pkg")).unwrap();
+        std::fs::write(root.join("src/pkg/m.py"), "def in_pkg_0():\n    return 0\n").unwrap();
+        assert!(found(&s, "in_pkg_0"), "the file in the directory that replaced a symlink");
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(root.join("src/pkg/m.py"), "def in_pkg_1():\n    return 1\n").unwrap();
+        assert!(found(&s, "in_pkg_1"), "a write in that directory after");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file that becomes a directory at its path is a new directory: a write in it after the
+    /// read that saw it is seen too.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_that_becomes_a_directory_is_seen() {
+        let (root, s) = kqueue_in_place("kq_file_dir");
+        std::fs::write(root.join("src/pkg"), "not code\n").unwrap();
+        watching_by_kqueue(&s);
+        std::fs::remove_file(root.join("src/pkg")).unwrap();
+        std::fs::create_dir(root.join("src/pkg")).unwrap();
+        std::fs::write(root.join("src/pkg/m.py"), "def in_pkg_0():\n    return 0\n").unwrap();
+        assert!(found(&s, "in_pkg_0"), "the file in the directory that replaced a file");
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(root.join("src/pkg/m.py"), "def in_pkg_1():\n    return 1\n").unwrap();
+        assert!(found(&s, "in_pkg_1"), "a write in that directory after");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A directory made while a kqueue is built, after its listing of the directories and before
     /// its parent is watched, has a name in the parent's listing and no watch of its own: a write
     /// in it is still in the next read's answer.
