@@ -941,7 +941,11 @@ fn remove(text: &str, c: &Node, idx: usize) -> String {
     } else if idx > 0 {
         splice(text, e[idx - 1].1, e[idx].1, "")
     } else {
-        splice(text, e[0].0, e[1].0, "")
+        // through the comma and the space after it: a comment before the next entry stays
+        let mut p = Parser { s: text.as_bytes(), i: e[0].1 };
+        p.ws().expect("a parsed text");
+        let rest = &text[p.i + 1..];
+        splice(text, e[0].0, text.len() - rest.trim_start().len(), "")
     }
 }
 
@@ -1193,6 +1197,16 @@ mod tests {
         round_trip("{\n\t\"mcpServers\": {\n\t\t\"other\": {\"command\": \"x\"}\n\t}\n}\n");
         round_trip("{\n  \"mcpServers\": {}\n}\n");
         round_trip("// comment\n{\n  /* keep */ \"a\": [1, 2], // tail\n  \"b\": {\"c\": null}\n}\n");
+    }
+
+    #[test]
+    fn taking_out_a_first_member_keeps_the_comment_before_the_next() {
+        let text = "{\n  \"mcp\": {\n    \"scrutate\": {\"command\": \"x\"},\n    // prod database, do not remove\n    \"db\": {\"command\": \"y\"}\n  }\n}\n";
+        let after = unset(text, &["mcp", NAME]).unwrap().unwrap().unwrap();
+        assert_eq!(after, "{\n  \"mcp\": {\n    // prod database, do not remove\n    \"db\": {\"command\": \"y\"}\n  }\n}\n");
+        let text = "{\n  \"mcp\": {\n    \"scrutate\": {\"command\": \"x\"} /* a, b */,\n    \"db\": {\"command\": \"y\"}\n  }\n}\n";
+        let after = unset(text, &["mcp", NAME]).unwrap().unwrap().unwrap();
+        assert_eq!(after, "{\n  \"mcp\": {\n    \"db\": {\"command\": \"y\"}\n  }\n}\n");
     }
 
     #[test]
