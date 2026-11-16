@@ -131,8 +131,10 @@ incompatible index by itself, and that is never breaking.
   on each push, with only the `pull-requests: write` permission and never failing the job;
   `args` is now optional.
 - Every MCP tool but `edit_symbol` takes `response_format`: `detailed` (the default) or
-  `concise`, which keeps every location and name and drops code, snippets and explanations; on
-  this repository a concise answer is 5% to 44% of the detailed one ([CLI](docs/CLI.md)). The
+  `concise`, which keeps every location and name and drops code, snippets and explanations: a
+  concise answer over 1 KB whose detailed form carries code or snippets is at most half of it,
+  and one that is already only places and names (similar code, an outline of long names) saves
+  less ([CLI](docs/CLI.md)). The
   Python `Repo.call` reads it too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short tool list with the same
   tools, arguments and checks: 6,730 bytes against 19,663 (the `tools/list` result as compact

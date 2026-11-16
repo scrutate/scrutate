@@ -1063,9 +1063,9 @@ servers on one root, the first offers the socket.
   | `find_files` | the paths in rank order, with a directory line each time the directory changes |
   | `reindex` | the same line |
 
-  On this repository a concise answer over 1 KB of detailed text is 5% to 44% of it
-  (`tests/concise.rs`); one made mostly of names, such as the outline of a test file whose
-  function names are sentences, saves less. The command line has no concise form.
+  A concise answer over 1 KB whose detailed form carries code or snippets is at most half of it;
+  one that is already only places and names (similar code, an outline of long names) saves less
+  (`tests/concise.rs`). The command line has no concise form.
 - Arguments: a wrong type or a negative number is a tool error naming the argument
   (`k must be a non-negative integer`), as is a required argument left out (`missing required
   argument name`; `read_code` without either says `missing path or symbol` and what each takes),

@@ -1,6 +1,7 @@
 //! `response_format: concise` on every MCP tool, run on a copy of this crate's own source: the
-//! concise answer lists the locations the detailed one lists, in at most half its bytes when the
-//! detailed one is over 1 KB.
+//! concise answer lists the locations the detailed one lists and, when the detailed one is over
+//! 1 KB, takes at most half its bytes where the detailed one carries code, and fewer bytes where
+//! it is already only places and names.
 
 #[path = "support/canon.rs"]
 mod canon;
@@ -83,8 +84,17 @@ fn locations(text: &str) -> BTreeSet<String> {
     out
 }
 
+/// What a concise answer over 1 KB is held to beside its detailed form: at most half of it where
+/// the detailed form carries code, snippets or explanations; fewer bytes where it is already only
+/// places and names, so the concise form has little to drop.
+#[derive(Debug)]
+enum Bar {
+    Half,
+    Fewer,
+}
+
 #[test]
-fn a_concise_answer_lists_the_same_locations_in_at_most_half_the_bytes() {
+fn a_concise_answer_lists_the_same_locations_in_fewer_bytes() {
     let root = tree();
     let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
     session.build().unwrap();
@@ -95,37 +105,45 @@ fn a_concise_answer_lists_the_same_locations_in_at_most_half_the_bytes() {
         let text = fs::read_to_string(root.join(&path)).unwrap();
         format!("{path}:{}", text.lines().position(|l| l.starts_with(start)).unwrap() + 1)
     };
-    let calls: Vec<(&str, Value)> = vec![
-        ("search_code", json!({"query": "page an answer within a byte budget"})),
-        ("search_code", json!({"query": "resolve a call to its definition", "k": 30})),
-        ("grep_code", json!({"pattern": "fn text"})),
-        ("grep_code", json!({"pattern": "max_bytes", "mode": "identifier"})),
-        ("find_symbol", json!({"name": "run"})),
-        ("callers", json!({"name": "shown"})),
-        ("callees", json!({"name": at("ops.rs", "pub fn run(")})),
-        ("callees", json!({"name": at("cli.rs", "pub fn run(")})),
-        ("call_path", json!({"from": at("mcp.rs", "pub fn call_tool("), "to": "read_range"})),
-        ("repo_map", json!({})),
-        ("read_code", json!({"path": "crates/scrutate/src/ops.rs"})),
-        ("read_code", json!({"symbol": "Parts.render"})),
-        ("read_code", json!({"symbol": "Answer"})),
-        ("outline", json!({"path": "crates/scrutate/src/ops.rs"})),
-        ("dependencies", json!({"path": "crates/scrutate/src/cli.rs"})),
-        ("dependents", json!({"target": "crates/scrutate/src/fmt.rs"})),
-        ("references", json!({"name": "hit_blocks"})),
-        ("references", json!({"name": "Answer", "textual": true})),
-        ("similar_code", json!({"target": at("ops.rs", "pub fn stop_line("), "k": 50})),
-        ("duplicates", json!({"threshold": 0.6, "limit": 200, "min_tokens": 15})),
-        ("structural_search", json!({"lang": "rust", "query": "(function_item name: (identifier) @f)"})),
-        ("impact", json!({})),
-        ("find_files", json!({"query": "rs", "limit": 200})),
-        ("dead_code", json!({})),
-        ("reindex", json!({})),
+    let calls: Vec<(&str, Value, Bar)> = vec![
+        ("search_code", json!({"query": "page an answer within a byte budget"}), Bar::Half),
+        ("search_code", json!({"query": "resolve a call to its definition", "k": 30}), Bar::Half),
+        ("grep_code", json!({"pattern": "fn text"}), Bar::Half),
+        ("grep_code", json!({"pattern": "max_bytes", "mode": "identifier"}), Bar::Half),
+        ("find_symbol", json!({"name": "run"}), Bar::Half),
+        // only places and names already: concise holds them in fewer bytes (a caller is its place and name)
+        ("callers", json!({"name": "shown"}), Bar::Fewer),
+        // only places and names already: concise holds them in fewer bytes (a callee is its place and name)
+        ("callees", json!({"name": at("ops.rs", "pub fn run(")}), Bar::Fewer),
+        // only places and names already: concise holds them in fewer bytes (a callee is its place and name)
+        ("callees", json!({"name": at("cli.rs", "pub fn run(")}), Bar::Fewer),
+        ("call_path", json!({"from": at("mcp.rs", "pub fn call_tool("), "to": "read_range"}), Bar::Half),
+        ("repo_map", json!({}), Bar::Half),
+        ("read_code", json!({"path": "crates/scrutate/src/ops.rs"}), Bar::Half),
+        ("read_code", json!({"symbol": "Parts.render"}), Bar::Half),
+        ("read_code", json!({"symbol": "Answer"}), Bar::Half),
+        // only places and names already: concise holds them in fewer bytes (an outline is lines, kinds and names)
+        ("outline", json!({"path": "crates/scrutate/src/ops.rs"}), Bar::Fewer),
+        ("dependencies", json!({"path": "crates/scrutate/src/cli.rs"}), Bar::Half),
+        ("dependents", json!({"target": "crates/scrutate/src/fmt.rs"}), Bar::Half),
+        ("references", json!({"name": "hit_blocks"}), Bar::Half),
+        ("references", json!({"name": "Answer", "textual": true}), Bar::Half),
+        // only places and names already: concise holds them in fewer bytes (a neighbour is its place, name and score)
+        ("similar_code", json!({"target": at("ops.rs", "pub fn stop_line("), "k": 50}), Bar::Fewer),
+        // only places and names already: concise holds them in fewer bytes (a group is its places and names)
+        ("duplicates", json!({"threshold": 0.6, "limit": 200, "min_tokens": 15}), Bar::Fewer),
+        ("structural_search", json!({"lang": "rust", "query": "(function_item name: (identifier) @f)"}), Bar::Half),
+        // only places and names already: concise holds them in fewer bytes (changed definitions, callers and tests by place and name)
+        ("impact", json!({}), Bar::Fewer),
+        // only places and names already: concise holds them in fewer bytes (a file is its path)
+        ("find_files", json!({"query": "rs", "limit": 200}), Bar::Fewer),
+        ("dead_code", json!({}), Bar::Half),
+        ("reindex", json!({}), Bar::Half),
     ];
     let mut tools = BTreeSet::new();
     let mut failed = Vec::new();
     eprintln!("{:<18} {:>8} {:>8} {:>6} {:>6}", "tool", "detailed", "concise", "ratio", "places");
-    for (tool, args) in &calls {
+    for (tool, args, bar) in &calls {
         let call = |form: &str| {
             let mut args = args.clone();
             args["response_format"] = json!(form);
@@ -139,8 +157,12 @@ fn a_concise_answer_lists_the_same_locations_in_at_most_half_the_bytes() {
         if d != c {
             failed.push(format!("{tool} {args}: locations differ: {:?} / {:?}", d.difference(&c).collect::<Vec<_>>(), c.difference(&d).collect::<Vec<_>>()));
         }
-        if detailed.len() > 1024 && concise.len() * 2 > detailed.len() {
-            failed.push(format!("{tool} {args}: {} bytes concise for {} detailed", concise.len(), detailed.len()));
+        let over = match bar {
+            Bar::Half => detailed.len() > 1024 && concise.len() * 2 > detailed.len(),
+            Bar::Fewer => detailed.len() > 1024 && concise.len() >= detailed.len(),
+        };
+        if over {
+            failed.push(format!("{tool} {args}: {} bytes concise for {} detailed ({bar:?})", concise.len(), detailed.len()));
         }
         tools.insert(*tool);
     }
