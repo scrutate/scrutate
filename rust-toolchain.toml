@@ -2,5 +2,5 @@
 # build environments only with the same toolchain (tools/repro_docker.sh checks two of them).
 # The crate itself needs stable Rust >= 1.91 (`rust-version` in Cargo.toml).
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]

@@ -227,7 +227,7 @@ pre-commit in [integrations/](integrations/).
 
 ## Install
 
-From source, with Rust 1.91 or newer (`rust-toolchain.toml` pins 1.99.1):
+From source, with Rust 1.91 or newer (`rust-toolchain.toml` pins 1.100.0):
 
 ```sh
 cargo build --release -p scrutate --locked      # target/release/scrutate

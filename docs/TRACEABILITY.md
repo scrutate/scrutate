@@ -93,7 +93,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
-| R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.99.1, `rust-version` 1.91; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
+| R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.100.0, `rust-version` 1.91; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
 | R-5.2 | Modular, cohesive, independently testable | 51 modules (`lib.rs`); tests per module | test layout | PASS |
 | R-5.3 | Correctness, memory safety, predictable resources, concurrency, maintainability | pinned ranking features (`tests/ranking_pins.rs`) and a ranking quality floor (`bench/quality.py`); unsafe inventory (SECURITY.md); fuzzing with AddressSanitizer; bounded buffers | ranking pins, quality floor, robustness, fuzzing | PASS |
 | R-5.4 | Minimal dependencies | 213 crates in the release binary (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |

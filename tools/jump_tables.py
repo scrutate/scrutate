@@ -42,8 +42,11 @@ def main():
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=REPO, capture_output=True, text=True, check=True).stdout)
     crates = {p["name"]: p for p in meta["packages"] if p["name"].startswith("tree-sitter-")}
     newest = {}
-    for obj in glob.glob(os.path.join(sys.argv[1], "build", "tree-sitter-*", "out", "*parser.o")):
-        name = re.sub(r"-[0-9a-f]{16}$", "", os.path.basename(os.path.dirname(os.path.dirname(obj))))
+    build = os.path.join(sys.argv[1], "build")
+    # build/<crate>-<hash>/out up to Rust 1.99, build/<crate>/<hash>/out from 1.100
+    objs = glob.glob(os.path.join(build, "tree-sitter-*", "out", "*parser.o")) + glob.glob(os.path.join(build, "tree-sitter-*", "*", "out", "*parser.o"))
+    for obj in objs:
+        name = re.sub(r"-[0-9a-f]{16}$", "", os.path.relpath(obj, build).split(os.sep)[0])
         if name in crates and (name not in newest or os.path.getmtime(obj) > os.path.getmtime(newest[name])):
             newest[name] = obj
     if "tree-sitter-c" not in newest:

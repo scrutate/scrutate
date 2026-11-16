@@ -95,7 +95,7 @@ git clone https://github.com/scrutate/scrutate && cd scrutate
 cargo build --release -p scrutate --locked          # a few minutes; binary at target/release/scrutate
 cargo test --release -p scrutate                     # the Rust test suite
 ```
-`rust-toolchain.toml` pins the compiler (1.99.1) for reproducible builds; rustup installs it on
+`rust-toolchain.toml` pins the compiler (1.100.0) for reproducible builds; rustup installs it on
 first use. `--features extra-langs` adds the optional heavy grammars (Fortran, OCaml, F#, Verilog,
 VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more). `.gitattributes` checks
 text files out with LF line ends everywhere, so a Windows build's compiled-in data
