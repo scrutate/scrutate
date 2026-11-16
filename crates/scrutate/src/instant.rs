@@ -3878,6 +3878,53 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// A directory root whose own index directory holds a file that is also one of the root's
+    /// files under another name: that name is in no answer of any walk, the parallel one with
+    /// threads reaching the root's entries together, one thread, the first files on the walking
+    /// thread, and the sorted walk, since the root's own index directory is read before any of
+    /// its entries is checked.
+    #[cfg(unix)]
+    #[test]
+    fn a_root_s_own_index_file_under_another_name_is_in_no_walk() {
+        let root = std::env::temp_dir().join(format!("scrutate_own_index_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".scrutate/tsquery")).unwrap();
+        std::fs::write(root.join(".scrutate/tsquery/c.txt"), "needle in the cache\n").unwrap();
+        std::fs::hard_link(root.join(".scrutate/tsquery/c.txt"), root.join("linked.txt")).unwrap();
+        for i in 0..200 {
+            std::fs::write(root.join(format!("f{i:03}.txt")), "needle\n").unwrap();
+        }
+        // a few roots are looked at before the walk, many when it lists each directory root
+        let others = root.with_extension("others");
+        std::fs::create_dir_all(&others).unwrap();
+        let mut many = vec![root.clone()];
+        for i in 0..20 {
+            many.push(others.join(format!("o{i}.txt")));
+            std::fs::write(many.last().unwrap(), "needle\n").unwrap();
+        }
+        let o = query("needle", Mode::Literal);
+        let m = policy::tests::Given::new(11, Some(5), &WARM_LINUX, Some(8));
+        for roots in [vec![root.clone()], many] {
+            for f in [
+                Files { threads: 8, ..Files::walk(roots.clone()) },
+                Files { threads: 1, ..Files::walk(roots.clone()) },
+                Files { threads: 8, small_tree: Some(1), ..Files::walk(roots.clone()) },
+                Files { threads: 8, small_tree: Some(50), ..Files::walk(roots.clone()) },
+            ] {
+                for _ in 0..5 {
+                    let (lines, _) = scheduled(&m, &o, &f, Feed::Walk(&roots));
+                    let what = format!("{} roots, threads {} small_tree {:?}", roots.len(), f.threads, f.small_tree);
+                    assert_eq!(lines.len(), 199 + roots.len(), "{what}");
+                    assert!(!lines.iter().any(|l| l.contains("linked.txt")), "{what}: {lines:?}");
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&others);
+        let sorted: Vec<PathBuf> = sorted_walk(&root).unwrap().flatten().map(|e| e.into_path()).collect();
+        assert!(sorted.iter().any(|p| p.ends_with("f000.txt")) && !sorted.iter().any(|p| p.ends_with("linked.txt")), "{sorted:?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// `n` files of one matching line each in `dir`, under `root`, listed as an index would.
     fn some_files(root: &Path, dir: &str, n: usize) -> Vec<(PathBuf, Arc<str>, bool)> {
         std::fs::create_dir_all(root.join(dir)).unwrap();

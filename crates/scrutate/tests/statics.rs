@@ -13,6 +13,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("custom.rs", "CURRENT", "the last loaded root's custom languages; an update runs under custom::with for its own root"),
     ("custom.rs", "SCOPED", "per thread, the custom languages of the root custom::with runs for"),
     ("files.rs", "LOOKS", "per thread, a test's count of looks"),
+    ("files.rs", "CLIMBS", "per thread, a test's count of the directories near_all climbed"),
     ("finder.rs", "ONE", "serializes this process's writes of the shared recent-files list"),
     ("index.rs", "COMP", "per thread, a reused deflate state"),
     ("index.rs", "PARSE", "SCRUTATE_PROFILE timing totals for the process"),

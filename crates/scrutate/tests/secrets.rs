@@ -1822,3 +1822,64 @@ fn an_index_file_linked_while_a_watch_runs_is_in_no_later_answer() {
     assert!(leaks.is_empty(), "{}", leaks.join("\n"));
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A file named on the command line that is itself one of the index files of its own directory
+/// under another name is handled by its name: `grep` searches a path it is given, as ripgrep
+/// does, while `read`, the Grep hook, `hook run` and `read_code` refuse it with the hard link's line.
+#[cfg(unix)]
+#[test]
+fn a_named_file_that_is_an_index_file_under_another_name_is_searched_by_grep_and_refused_elsewhere() {
+    const LINKED: &str = "remove the hard link, by its path";
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_named_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::create_dir_all(root.join(".scrutate/tsquery")).unwrap();
+    fs::write(root.join("conf.py"), "def settings():\n    return 1\n").unwrap();
+    fs::write(root.join(".scrutate/tsquery/c.txt"), "needle in the cache\n").unwrap();
+    fs::hard_link(root.join(".scrutate/tsquery/c.txt"), root.join("named.txt")).unwrap();
+    let root = canon(&root);
+    let home = root.with_extension("home");
+    let run = |args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("SCRUTATE_SEMANTIC", "none")
+            .env("SCRUTATE_CACHE_DIR", root.with_extension("cache"))
+            .env_remove("SCRUTATE_REDACT")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    run(&["index"]);
+    let (code, out, _) = run(&["grep", "needle", "named.txt"]);
+    assert!(code == Some(0) && out.contains("needle in the cache"), "grep searches the path it is given: {code:?} {out}");
+    let (code, _, err) = run(&["read", "named.txt"]);
+    assert!(code != Some(0) && err.contains(LINKED), "read: {code:?} {err}");
+    let (code, out, err) = run(&["hook", "run", "--piped", "--", "grep", "needle", "named.txt"]);
+    assert!(code == Some(2) && !out.contains("needle") && err.contains(LINKED), "hook run: {code:?} {out} {err}");
+    let mut c = Command::new(BIN);
+    c.args(["hook", "grep"])
+        .current_dir(&root)
+        .env("HOME", &home)
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("CLAUDE_PROJECT_DIR", &root)
+        .env("SCRUTATE_SEMANTIC", "none")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let input = json!({"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": root.to_str().unwrap(),
+        "tool_input": {"pattern": "needle", "path": "named.txt", "output_mode": "content"}, "tool_use_id": "t1", "permission_mode": "default"});
+    let mut child = c.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+    let hooked = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    assert!(hooked.contains(LINKED) && !hooked.contains("needle in the cache"), "hook grep: {hooked}");
+    std::env::set_var("SCRUTATE_CACHE_DIR", root.with_extension("cache"));
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    let c = scrutate::mcp::call_tool(&session, "read_code", &json!({"path": "named.txt"}), &scrutate::mcp::Settings::new(None), &Default::default());
+    assert!(c.text.contains(LINKED) && !c.text.contains("needle in the cache"), "read_code: {}", c.text);
+    let _ = fs::remove_dir_all(&root);
+}

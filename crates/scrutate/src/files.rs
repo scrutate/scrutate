@@ -56,11 +56,12 @@ pub struct IndexFiles {
 
 impl IndexFiles {
     pub fn near(start: &Path) -> IndexFiles {
-        IndexFiles::near_all(&[start])
+        IndexFiles::near_all(&[start], true).0
     }
 
-    /// The index directories of every one of `starts` and of each directory above them.
-    pub fn near_all(starts: &[impl AsRef<Path>]) -> IndexFiles {
+    /// The index directories of the directories above every one of `starts`, and with `own` of
+    /// each start itself. -> them, and the index directories they hold
+    pub fn near_all(starts: &[impl AsRef<Path>], own: bool) -> (IndexFiles, std::collections::BTreeSet<PathBuf>) {
         let mut index = IndexFiles {
             #[cfg(unix)]
             ids: Default::default(),
@@ -69,15 +70,41 @@ impl IndexFiles {
             #[cfg(not(unix))]
             handles: Vec::new(),
         };
+        // a search may name thousands of files in a few directories: the climb runs once per
+        // directory above them, and a look at a start's own costs a system call per start
         let mut dirs = std::collections::BTreeSet::new();
+        let mut above: std::collections::HashSet<&Path> = std::collections::HashSet::new();
         for start in starts {
-            let start = std::fs::canonicalize(start.as_ref()).unwrap_or_else(|_| start.as_ref().to_path_buf());
-            dirs.extend(start.ancestors().map(|a| a.join(INDEX_DIR)).filter(|d| d.is_dir()));
+            let start = start.as_ref();
+            if own {
+                let own = start.join(INDEX_DIR);
+                if own.is_dir() {
+                    dirs.insert(std::fs::canonicalize(&own).unwrap_or(own));
+                }
+            }
+            above.insert(start.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(start));
         }
-        for dir in dirs {
-            index.add(&dir);
+        let mut climbed = std::collections::HashSet::new();
+        for d in above {
+            #[cfg(test)]
+            CLIMBS.with(|c| c.set(c.get() + 1));
+            let d = std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
+            for a in d.ancestors() {
+                if !climbed.insert(a.to_path_buf()) {
+                    break;
+                }
+                #[cfg(test)]
+                CLIMBS.with(|c| c.set(c.get() + 1));
+                let i = a.join(INDEX_DIR);
+                if i.is_dir() {
+                    dirs.insert(i);
+                }
+            }
         }
-        index
+        for dir in &dirs {
+            index.add(dir);
+        }
+        (index, dirs)
     }
 
     /// Knows the files and directories of the index directory `dir`.
@@ -262,14 +289,63 @@ type InoHash = std::hash::BuildHasherDefault<InoHasher>;
 /// is said once per run on stderr. Elsewhere it leaves out nothing, since the walk would have to open
 /// every entry: there the binary header of every index file that holds text keeps it out of a search.
 #[derive(Clone, Default)]
-pub struct WalkGuard(#[cfg(unix)] Option<Arc<IndexFiles>>);
+pub struct WalkGuard(#[cfg(unix)] Option<Arc<Guard>>);
+
+/// A walk of up to this many roots looks for each root's own index directory before it starts;
+/// one of more reads a directory root's own when it first lists that root.
+#[cfg(unix)]
+const FEW_ROOTS: usize = 16;
+
+#[cfg(unix)]
+enum Guard {
+    Fixed(IndexFiles),
+    Lazy(Guarded),
+}
+
+/// The identities a walk of many roots checks: those of the index directories above its roots,
+/// taken at its start, and those of a directory root's own, taken when the walk first lists that
+/// root, so a root that is a file costs no look.
+#[cfg(unix)]
+struct Guarded {
+    ix: std::sync::RwLock<IndexFiles>,
+    any: std::sync::atomic::AtomicBool,
+    /// the index directories known, and the roots whose own was looked for
+    known: std::sync::Mutex<(std::collections::BTreeSet<PathBuf>, std::collections::HashSet<PathBuf>)>,
+}
+
+#[cfg(unix)]
+impl Guarded {
+    fn enter(&self, root: &Path) {
+        let mut known = self.known.lock().unwrap_or_else(|p| p.into_inner());
+        if known.1.contains(root) {
+            return;
+        }
+        let own = root.join(INDEX_DIR);
+        if own.is_dir() {
+            let own = std::fs::canonicalize(&own).unwrap_or(own);
+            if !known.0.contains(&own) {
+                let mut ix = self.ix.write().unwrap_or_else(|p| p.into_inner());
+                ix.add(&own);
+                self.any.store(!ix.ids.is_empty(), std::sync::atomic::Ordering::Release);
+                known.0.insert(own);
+            }
+        }
+        known.1.insert(root.to_path_buf());
+    }
+}
 
 impl WalkGuard {
     pub fn new(roots: &[impl AsRef<Path>]) -> WalkGuard {
         #[cfg(unix)]
         {
-            let ix = IndexFiles::near_all(roots);
-            WalkGuard((!ix.ids.is_empty()).then(|| Arc::new(ix)))
+            if roots.len() <= FEW_ROOTS {
+                let (ix, _) = IndexFiles::near_all(roots, true);
+                return WalkGuard((!ix.ids.is_empty()).then(|| Arc::new(Guard::Fixed(ix))));
+            }
+            let (ix, dirs) = IndexFiles::near_all(roots, false);
+            let any = std::sync::atomic::AtomicBool::new(!ix.ids.is_empty());
+            let known = std::sync::Mutex::new((dirs, Default::default()));
+            WalkGuard(Some(Arc::new(Guard::Lazy(Guarded { ix: std::sync::RwLock::new(ix), any, known }))))
         }
         #[cfg(not(unix))]
         {
@@ -287,9 +363,28 @@ impl WalkGuard {
 
     pub fn leaves_out(&self, e: &ignore::DirEntry) -> bool {
         #[cfg(unix)]
-        if let Some(twin) = self.0.as_ref().and_then(|ix| ix.twin(e)) {
-            say_left_out(e.path(), twin);
-            return true;
+        match self.0.as_deref() {
+            Some(Guard::Fixed(ix)) => {
+                if let Some(twin) = ix.twin(e) {
+                    say_left_out(e.path(), twin);
+                    return true;
+                }
+            }
+            Some(Guard::Lazy(g)) => {
+                if e.depth() == 1 {
+                    if let Some(root) = e.path().parent() {
+                        g.enter(root);
+                    }
+                }
+                if g.any.load(std::sync::atomic::Ordering::Acquire) {
+                    let ix = g.ix.read().unwrap_or_else(|p| p.into_inner());
+                    if let Some(twin) = ix.twin(e) {
+                        say_left_out(e.path(), twin);
+                        return true;
+                    }
+                }
+            }
+            None => {}
         }
         let _ = e;
         false
@@ -364,7 +459,10 @@ pub fn left_out_line(path: &Path, twin: &Path) -> String {
 pub fn left_out(root: &Path) -> Vec<(PathBuf, PathBuf)> {
     #[cfg(unix)]
     {
-        let Some(ix) = WalkGuard::new(&[root]).0 else { return Vec::new() };
+        let ix = IndexFiles::near(root);
+        if ix.ids.is_empty() {
+            return Vec::new();
+        }
         let skip = skip_dirs(root);
         let mut wb = CodeWalk::rules(root);
         wb.hidden(false).ignore(false).git_ignore(false).git_global(false).git_exclude(false).parents(false);
@@ -761,6 +859,8 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
 thread_local! {
     /// How many looks of a tree this thread took.
     pub static LOOKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many directories `IndexFiles::near_all` resolved or looked into on this thread.
+    pub static CLIMBS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A session's look of the tree (`look(root, false)`), kept up to date with each change set its
@@ -937,6 +1037,43 @@ mod tests {
         let fresh = paths(&super::look(&root, false).unwrap());
         assert!(fresh.contains(&".deps.lock".to_string()), "a fresh look leaves the file out: {fresh:?}");
         assert_eq!(paths(&super::looked(&root, Some(&kept)).unwrap()), fresh);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Many files named in a few directories cost one climb per directory, and every index
+    /// directory is still found: the root's and one above a start by the climb, and a directory
+    /// root's own when the walk first lists that root.
+    #[cfg(unix)]
+    #[test]
+    fn the_index_directories_of_many_files_are_found_with_one_climb_per_directory() {
+        let root = std::env::temp_dir().join(format!("scrutate_many_starts_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for d in [".scrutate", "a/.scrutate", "a/b", "c/.scrutate"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("c/.scrutate/x.bin"), b"index").unwrap();
+        std::fs::hard_link(root.join("c/.scrutate/x.bin"), root.join("c/link.bin")).unwrap();
+        std::fs::write(root.join("c/first.txt"), b"mine").unwrap();
+        let climbs = |n: usize| {
+            let mut starts: Vec<PathBuf> = (0..n).map(|i| root.join(format!("a/b/x{i}.txt"))).collect();
+            starts.extend((0..n).map(|i| root.join(format!("y{i}.txt"))));
+            starts.push(root.join("c"));
+            starts.iter().filter(|p| p.extension().is_some()).for_each(|p| std::fs::write(p, b"x").unwrap());
+            CLIMBS.with(|c| c.set(0));
+            let (index, _) = IndexFiles::near_all(&starts, false);
+            for d in [".scrutate", "a/.scrutate"] {
+                assert!(index.twin_of(&std::fs::canonicalize(root.join(d)).unwrap()).is_some(), "{d}");
+            }
+            let climbs = CLIMBS.with(|c| c.get());
+            // the directory root's own, read as the walk enters it: a hard link to one of its files
+            let guard = WalkGuard::new(&starts);
+            let met = |name: &str| ignore::WalkBuilder::new(root.join("c")).hidden(false).build().flatten().find(|e| e.file_name() == name).unwrap();
+            assert!(guard.leaves_out(&met("link.bin")), "c's own index file, linked under c");
+            climbs
+        };
+        let (few, many) = (climbs(3), climbs(3000));
+        assert_eq!(few, many, "the climb grew with the files named");
+        assert!(many <= 3 + 2 * root.components().count() + 4, "{many}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
