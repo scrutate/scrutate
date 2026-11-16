@@ -3446,6 +3446,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// `references` of a constructor name searches no class once its answer is past max_results, and
+    /// every class name in one search when it must fill: as many searches for 800 classes as for
+    /// 200, where it ran one more per class whatever max_results was (`super().__init__()` in each
+    /// fills the answer at 200 first; at 10,000 it is not full).
+    #[test]
+    fn a_full_constructor_answer_searches_no_class() {
+        // `def` 0: every definition; 1: methods only (`--kind method`); 2: Base.__init__ (`--def`)
+        let searches = |n: usize, max: u64, def: usize| {
+            let mut files = vec![("pkg/core.py".to_string(), "class Base:\n    def __init__(self):\n        self.v = 0\n".to_string())];
+            files.extend((0..n).map(|i| {
+                let body = format!("from pkg.core import Base\n\n\nclass K{i}(Base):\n    def __init__(self, x):\n        super().__init__()\n        self.x = x\n\n\ndef use{i}():\n    return K{i}(1)\n");
+                (format!("m{}/f{i}.py", i % 20), body)
+            }));
+            let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+            let (root, s) = indexed(&format!("full_ctor_{n}"), &refs);
+            crate::names::SEARCHES.with(|c| c.set(0));
+            let keep = |d: &crate::index::ChunkRow, _: &str| match def {
+                1 => d.kind == "method",
+                _ => d.path == "pkg/core.py" && d.start == 2,
+            };
+            let mut names = crate::names::Names::new(&s).unwrap();
+            let r = if def == 0 { names.references("__init__", max) } else { names.references_kept("__init__", max, None, Some(&keep)) }.unwrap();
+            let got = (crate::names::SEARCHES.with(std::cell::Cell::get), r.occurrences.len(), r.truncated);
+            drop(s);
+            let _ = std::fs::remove_dir_all(&root);
+            got
+        };
+        let (a, b) = (searches(200, 200, 0), searches(800, 200, 0));
+        assert!(a.0 == b.0 && a.0 <= 2 && a.1 == 200 && b.1 == 200 && a.2 && b.2, "200 classes: {a:?}, 800: {b:?}");
+        // the main read's 2n + 1, and each class's two that read as one: `K{i}(1)` and `class K{i}(Base)`
+        let (a, b) = (searches(200, 10_000, 0), searches(800, 10_000, 0));
+        assert!(a.0 == b.0 && a.0 <= 3 && a.1 == 801 && b.1 == 3201 && !a.2 && !b.2, "filling, 200 classes: {a:?}, 800: {b:?}");
+        // narrowed, at max_results 20: by kind, and Base.__init__, which every `super().__init__()` calls
+        for def in [1, 2] {
+            let (a, b) = (searches(200, 20, def), searches(800, 20, def));
+            assert!(a.0 == b.0 && a.0 <= 3 && a.1 == 20 && b.1 == 20 && a.2 && b.2, "narrowed {def}, 200 classes: {a:?}, 800: {b:?}");
+        }
+    }
+
     /// A request over more files than its caps hold parses each file a few times at most, however
     /// many classes share a name: `references` of `__init__` asks for every class's
     /// instantiations, and six packages define the same classes.

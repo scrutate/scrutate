@@ -66,6 +66,69 @@ pub(crate) const NESTED_MEMO: usize = 16 << 20;
 /// Whether an occurrence resolved to a definition, for the reason given, is kept.
 pub type Keep<'k> = &'k dyn Fn(&ChunkRow, &str) -> bool;
 
+#[cfg(test)]
+thread_local! {
+    /// How many searches of a name `references` ran, nested ones included.
+    pub(crate) static SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// What `references` keeps of the occurrences its alias and constructor passes find, by the rule
+/// of its main read.
+struct Gate<'k, 'f> {
+    kinds: Option<Keep<'k>>,
+    by_file: Option<&'f crate::filter::Compiled>,
+    listed: HashSet<(String, u64, u64, Option<i64>)>,
+    kind_of: HashMap<(i64, &'static str), bool>,
+    max_results: u64,
+}
+
+impl Gate<'_, '_> {
+    fn key(o: &Occurrence) -> (String, u64, u64, Option<i64>) {
+        (o.path.clone(), o.line, o.column, o.resolution.ok().map(|r| r.0))
+    }
+
+    /// Keeps each of `extra` the read keeps, after `occurrences`; counts the others into
+    /// `narrowed`, a copy retied to a constructor (marked) aside, as its original was counted.
+    fn admit(
+        &mut self,
+        s: &Searcher,
+        extra: Vec<(Occurrence, bool)>,
+        occurrences: &mut Vec<Occurrence>,
+        narrowed: &mut crate::resolve::Narrowed,
+    ) -> Result<()> {
+        for (o, copy) in extra {
+            if self.by_file.is_some_and(|f| !f.admits_path(&o.path)) || !self.listed.insert(Gate::key(&o)) {
+                continue;
+            }
+            let kept = match (self.kinds, o.resolution) {
+                (None, _) => true,
+                (Some(f), Ok((id, why))) => match self.kind_of.get(&(id, why)) {
+                    Some(&k) => k,
+                    None => {
+                        let k = s.ix.chunk(id)?.is_some_and(|d| f(&d, why));
+                        self.kind_of.insert((id, why), k);
+                        k
+                    }
+                },
+                (Some(_), Err(_)) => false,
+            };
+            if kept {
+                occurrences.push(o);
+            } else if !copy {
+                if o.resolution.is_ok() {
+                    narrowed.elsewhere += 1;
+                } else {
+                    narrowed.unresolved_count += 1;
+                    if (narrowed.unresolved.len() as u64) < self.max_results {
+                        narrowed.unresolved.push(o);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<'a> Names<'a> {
     pub fn new(s: &'a Searcher) -> Result<Names<'a>> {
         // started first: the store keeps what every read of the request saw
@@ -129,6 +192,8 @@ impl<'a> Names<'a> {
     /// given the definition and why it was resolved to: `max_results` counts those, as they are
     /// resolved, and the others are dropped.
     pub fn references_kept(&mut self, name: &str, max_results: u64, scope: Option<&crate::filter::Compiled>, keep: Option<Keep>) -> Result<Resolved> {
+        #[cfg(test)]
+        SEARCHES.with(|c| c.set(c.get() + 1));
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
         // with `keep` an occurrence counts once it resolves to a kept definition, so the search
@@ -303,59 +368,54 @@ impl<'a> Names<'a> {
                 }
             }
         }
-        // a constructor's uses are its class's instantiations, as callers reads them
-        for d in &defs {
-            let ctor = d.id;
-            let Some(class) = constructed(s, &langs, std::slice::from_ref(d))?.0.pop() else { continue };
-            // `super(..)` in a JavaScript or TypeScript constructor runs the base class's
-            let mut spelled = vec![class.name.clone()];
-            if matches!(langs.id(&class.path), Some("javascript" | "typescript" | "tsx")) {
-                spelled.push("super".to_string());
+        // one gate for both passes: a file the filter refuses gives nothing, an occurrence already
+        // listed is not listed again, and one not kept is counted aside; a kept one is never cut
+        // for one that is not, and truncated says a kept one lies past max_results
+        let mut gate = Gate { kinds, by_file: scope.filter(|f| f.has_files()), listed: occurrences.iter().map(Gate::key).collect(), kind_of, max_results };
+        gate.admit(s, std::mem::take(&mut extra), &mut occurrences, &mut narrowed)?;
+        // a constructor's uses are its class's instantiations, as callers reads them; once the
+        // answer is past max_results nothing more is kept, so no class is searched
+        let full = |n: usize, truncated: bool| n as u64 > max_results || truncated && n as u64 >= max_results;
+        let mut made_by = Vec::new();
+        if !full(occurrences.len(), truncated) {
+            for d in &defs {
+                let Some(class) = constructed(s, &langs, std::slice::from_ref(d))?.0.pop() else { continue };
+                // `super(..)` in a JavaScript or TypeScript constructor runs the base class's
+                let mut spelled = vec![class.name.clone()];
+                if matches!(langs.id(&class.path), Some("javascript" | "typescript" | "tsx")) {
+                    spelled.push("super".to_string());
+                }
+                made_by.push((d.id, class, spelled));
+            }
+        }
+        // the class names in one search of them all, not one each; `super`, which the memo keeps
+        // once, and a name its language reads in any case are searched as `references` reads them
+        let batched: BTreeSet<String> = made_by
+            .iter()
+            .filter(|(_, class, _)| !self.langs.folds(&class.path, "class"))
+            .flat_map(|(_, _, words)| words.iter().filter(|w| *w != "super" && !(*w == bare && kinds.is_none())).cloned())
+            .collect();
+        // one name alone is searched as before, its search memoized
+        let batched = if batched.len() > 1 { batched } else { BTreeSet::new() };
+        let each = if batched.is_empty() { HashMap::new() } else { self.occurrences_of_each(&batched, read_max)? };
+        for (ctor, class, spelled) in made_by {
+            if full(occurrences.len(), truncated) {
+                truncated = true;
+                break;
             }
             for word in spelled {
                 let made = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if id == class.id) && instantiates(o, &word);
                 // a narrowed read kept only its own occurrences: the class's are read again
                 let of_class: Vec<Occurrence> = if word == bare.as_str() && kinds.is_none() {
                     occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
+                } else if let Some(found) = each.get(&word) {
+                    found.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
+                } else if batched.contains(&word) {
+                    Vec::new()
                 } else {
                     self.instantiations(&word, read_max)?.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
                 };
-                extra.extend(of_class.into_iter().map(|o| (o, true)));
-            }
-        }
-        // one gate for both passes: a file the filter refuses gives nothing, an occurrence already
-        // listed is not listed again, and one not kept is counted aside; a kept one is never cut
-        // for one that is not, and truncated says a kept one lies past max_results
-        let by_file = scope.filter(|f| f.has_files());
-        let key = |o: &Occurrence| (o.path.clone(), o.line, o.column, o.resolution.ok().map(|r| r.0));
-        let mut listed: HashSet<_> = occurrences.iter().map(key).collect();
-        for (o, copy) in extra {
-            if by_file.is_some_and(|f| !f.admits_path(&o.path)) || !listed.insert(key(&o)) {
-                continue;
-            }
-            let kept = match (kinds, o.resolution) {
-                (None, _) => true,
-                (Some(f), Ok((id, why))) => match kind_of.get(&(id, why)) {
-                    Some(&k) => k,
-                    None => {
-                        let k = s.ix.chunk(id)?.is_some_and(|d| f(&d, why));
-                        kind_of.insert((id, why), k);
-                        k
-                    }
-                },
-                (Some(_), Err(_)) => false,
-            };
-            if kept {
-                occurrences.push(o);
-            } else if !copy {
-                if o.resolution.is_ok() {
-                    narrowed.elsewhere += 1;
-                } else {
-                    narrowed.unresolved_count += 1;
-                    if (narrowed.unresolved.len() as u64) < max_results {
-                        narrowed.unresolved.push(o);
-                    }
-                }
+                gate.admit(s, of_class.into_iter().map(|o| (o, true)).collect(), &mut occurrences, &mut narrowed)?;
             }
         }
         if occurrences.len() as u64 > max_results {
@@ -380,6 +440,59 @@ impl<'a> Names<'a> {
         }
         let narrowed = kinds.is_some().then_some(narrowed);
         Ok(Resolved { definitions, occurrences, truncated, bounded, no_kind: false, notes, first_overload, outside: Default::default(), narrowed })
+    }
+
+    /// The occurrences of each of `words` as the main read of `references` of it finds them, its
+    /// first `max_each`, tied where they are: one search of them all. None may be a name a language
+    /// reads in any case.
+    fn occurrences_of_each(&mut self, words: &BTreeSet<String>, max_each: u64) -> Result<HashMap<String, Vec<Occurrence>>> {
+        use unicode_normalization::UnicodeNormalization;
+        #[cfg(test)]
+        SEARCHES.with(|c| c.set(c.get() + 1));
+        let s = self.s;
+        let mut word_of: HashMap<String, String> = HashMap::new();
+        for w in words {
+            word_of.insert(w.nfc().collect(), w.clone());
+            word_of.insert(w.nfd().collect(), w.clone());
+        }
+        let alternatives: BTreeSet<String> = word_of.keys().map(|k| regex::escape(k)).collect();
+        let Some(first) = words.iter().next() else { return Ok(HashMap::new()) };
+        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(first, 1) };
+        q.pattern.text = format!("(?:{})", alternatives.into_iter().collect::<Vec<_>>().join("|"));
+        q.pattern.mode = crate::instant::Mode::Regex;
+        q.max_results = None;
+        let walk = crate::files::repository_files(&s.ix.root);
+        let files = crate::stores::grep_files(&s.ix, &q, &walk, s.look.as_ref());
+        let (found, _) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
+        let (mut out, mut seen): (HashMap<String, Vec<Occurrence>>, HashMap<String, u64>) = Default::default();
+        for r in found {
+            let crate::instant::Record::Match(h) = r else { continue };
+            let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
+            let lang = self.langs.id(&h.path);
+            for &(a, b) in &h.spans {
+                let Some(word) = h.text.get(a..b).and_then(|t| word_of.get(t)).cloned() else { continue };
+                // the main read takes its first max_results spans, a part of a longer name among them
+                let n = seen.entry(word.clone()).or_default();
+                *n += 1;
+                if *n > max_each {
+                    continue;
+                }
+                let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
+                if lang.is_some_and(|l| crate::ident::inside_name(l, &h.text, da, db)) {
+                    continue;
+                }
+                let resolution = self.tie(&h.path, h.line, col, h.text.get(da..db).unwrap_or(&word)).resolution();
+                out.entry(word).or_default().push(Occurrence {
+                    path: h.path.to_string(),
+                    line: h.line,
+                    column: a as u64 + 1,
+                    text: line_text.clone(),
+                    at: da,
+                    resolution,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// The occurrences `references(word, max_results)` gives that read as an instantiation, kept

@@ -55,6 +55,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("resolve/mod.rs", "PARSED", "keyed by root, path and content hash"),
     ("resolve/mod.rs", "PARSES", "per thread, a test's count of parsed files"),
     ("resolve/mod.rs", "PARSES_OF", "per thread, a test's count of parses by path"),
+    ("names.rs", "SEARCHES", "per thread, a test's count of a name's searches"),
     ("resolve/mod.rs", "OWN_STORE", "per thread, a test hook"),
     ("resolve/mod.rs", "OWN_CAP", "per thread, a test hook"),
     ("resolve/mod.rs", "ROW_READS", "per thread, a test's count of index rows read"),
