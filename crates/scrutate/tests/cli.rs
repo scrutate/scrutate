@@ -3324,3 +3324,60 @@ fn profile_set_to_false_no_or_off_prints_no_timings() {
         assert!(said(on), "SCRUTATE_PROFILE={on:?}");
     }
 }
+
+/// A word of its own for `n`: consonants only, so no stem changes it and no stop list holds it.
+fn word(n: usize) -> String {
+    let letters = b"bcdfgkmnprtvwxz";
+    (0..4).map(|k| letters[n / letters.len().pow(k) % letters.len()] as char).collect()
+}
+
+/// A Python function whose body lists these words, six to a line.
+fn listing(words: &[String]) -> String {
+    let rows: String = words.chunks(6).map(|c| format!("        {},\n", c.join(", "))).collect();
+    format!("def f(p):\n    return [\n{rows}    ]\n")
+}
+
+/// Ninety bodies of 120 words, each with one word of its own: every MinHash bucket they share
+/// holds more distinct bodies than `dupes` compares pair by pair.
+fn crowded() -> Vec<(String, String)> {
+    let base: Vec<String> = (2000..2120).map(word).collect();
+    (0..90)
+        .map(|i| {
+            let mut ws = base.clone();
+            ws[5 + i] = word(3000 + i);
+            (format!("crowded/v{i:02}.py"), listing(&ws))
+        })
+        .collect()
+}
+
+#[test]
+fn dupes_finds_a_near_copy_of_much_copied_code_and_names_what_a_crowded_bucket_left_out() {
+    let r = Repo::new("dupes_crowded");
+    let body: Vec<String> = (0..60).map(word).collect();
+    let mut variant = body.clone();
+    variant[30] = word(1000);
+    for i in 0..64 {
+        r.write(&format!("copies/c{i:02}.py"), listing(&body).as_bytes());
+    }
+    r.write("copies/variant.py", listing(&variant).as_bytes());
+    let (code, out, _) = r.run(&["dupes"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("    copies/c00.py:1-13  f  (one of 64 exact copies)\n    copies/variant.py:1-13  f\n"), "{out}");
+    assert!(!out.contains("MinHash bucket"), "{out}");
+    let (_, out, _) = r.run(&["dupes", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["result"].as_array().unwrap().iter().any(|g| g["copies"] == serde_json::json!([64, 1])), "{out}");
+    assert!(v["crowded"].is_null(), "{out}");
+
+    for (path, text) in crowded() {
+        r.write(&path, text.as_bytes());
+    }
+    let (code, out, _) = r.run(&["dupes", "--limit", "5"]);
+    assert_eq!(code, 0, "{out}");
+    let last = out.lines().last().unwrap_or_default();
+    assert!(last.contains("functions fell in a MinHash bucket of more than 64 bodies; a near pair among them that shares no other bucket is not in this answer; first: crowded/v"), "{out}");
+    let (_, out, _) = r.run(&["dupes", "--limit", "5", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["crowded"]["functions"].as_u64().is_some_and(|n| (1..=90).contains(&n)), "{out}");
+    assert_eq!(v["crowded"]["first"].as_array().map(Vec::len), Some(5), "{out}");
+}

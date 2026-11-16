@@ -77,6 +77,9 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
 // ------------------------------------------------------------------------- duplicates (MinHash LSH)
 const HASHES: usize = 64;
 pub(crate) const BANDS: usize = 16; // 16 bands x 4 rows: pairs with Jaccard >= 0.7 collide with probability ~0.98
+/// The most distinct bodies a MinHash bucket may hold and be compared pair by pair: a bucket of m
+/// costs m squared comparisons, so a larger one is not compared and its bodies are named.
+pub(crate) const MAX_BUCKET: usize = 64;
 
 /// What `dupes` compares of one definition, made once from its text as the index stores it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -158,17 +161,30 @@ fn minhash(sh: &HashSet<u64>) -> [u64; HASHES] {
     mh
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct DupGroup {
     pub kind: &'static str, // "exact" (same body text up to whitespace) or "near"
     pub similarity: f32,
     pub members: Vec<(String, String, i64, i64)>, // path, qualname, start, end
     pub tokens: usize,
+    /// for a near pair one of whose members stands for an exact group: how many copies each
+    /// member stands for, in member order (empty when each is one function)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub copies: Vec<usize>,
+}
+
+/// What `dupes` answers: its groups, and the definitions it did not compare.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Dupes {
+    pub groups: Vec<DupGroup>,
+    /// one place for each distinct body of a bucket of more than `MAX_BUCKET` distinct bodies, in
+    /// path and line order: a near pair among them that shares no other bucket is not in the answer
+    pub crowded: Vec<(String, String, i64, i64)>,
 }
 
 /// Duplicate and near-duplicate functions: the same body text up to whitespace, then MinHash/LSH
 /// candidates verified by Jaccard similarity of word 3-gram sets (>= `threshold`; 1 = exact only).
-pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
+pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Dupes> {
     duplicates(ix, &KeyRows::load(ix, min_tokens)?, None, threshold, limit)
 }
 
@@ -236,7 +252,7 @@ impl Wanted {
 /// `min_tokens` body tokens, read from the keys the index keeps: a text is read only for a
 /// definition in a group or in a bucket of 2 to 64. With `focus`, only the groups that share a key
 /// with it, each whole: every definition with a wanted key is read, so no group is cut short.
-pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
+pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, threshold: f32, limit: usize) -> Result<Dupes> {
     let min_tokens = keys.min_tokens;
     let all = focus.is_none();
     let put: Vec<DupKeys> = focus.map(|f| f.put_in.iter().map(|b| DupKeys::of(&b.5)).collect()).unwrap_or_default();
@@ -281,10 +297,14 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
         }
     }
     let near_on = threshold < 1.0;
+    // a bucket counts distinct bodies: the copies of one body stand as one member, so a body
+    // copied many times is still compared with the others
+    let distinct = |m: &[usize]| m.iter().map(|&i| rows[i].1.body).collect::<HashSet<u64>>().len();
+    let (compared, crowded): (Vec<&Vec<usize>>, Vec<&Vec<usize>>) =
+        buckets.values().filter(|m| near_on && distinct(m) > 1).partition(|m| distinct(m) <= MAX_BUCKET);
     // the place of each definition a group or a pair may hold, and the text of each a pair may hold
     let mut needed: HashSet<usize> = exact.values().chain(same_words.values()).filter(|m| m.len() > 1).flatten().copied().collect();
-    let texts_needed: HashSet<usize> = buckets.values().filter(|m| near_on && m.len() > 1 && m.len() <= 64).flatten().copied().collect();
-    needed.extend(&texts_needed);
+    needed.extend(compared.iter().copied().flatten());
     let ids: Vec<i64> = needed.iter().filter(|&&i| i < first_put).map(|&i| rows[i].0).collect();
     let mut place: HashMap<usize, (String, String, i64, i64, String)> = HashMap::new();
     let at: HashMap<i64, usize> = needed.iter().filter(|&&i| i < first_put).map(|&i| (rows[i].0, i)).collect();
@@ -320,7 +340,13 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
             continue;
         }
         in_exact.extend(ms.iter().map(|&i| (i, key)));
-        out.push(DupGroup { kind: "exact", similarity: 1.0, tokens: rows[ms[0]].1.ntok as usize, members: ms.iter().map(|&i| member(i)).collect() });
+        out.push(DupGroup {
+            kind: "exact",
+            similarity: 1.0,
+            tokens: rows[ms[0]].1.ntok as usize,
+            members: ms.iter().map(|&i| member(i)).collect(),
+            copies: Vec::new(),
+        });
     }
     for members in same_words.values().filter(|m| near_on && m.len() > 1) {
         let mut ms: Vec<usize> = members.clone();
@@ -329,10 +355,36 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
         if ms.len() < 2 || ms.iter().all(|i| in_exact.contains_key(i) && in_exact.get(i) == in_exact.get(&ms[0])) {
             continue;
         }
-        out.push(DupGroup { kind: "near", similarity: 1.0, tokens: rows[ms[0]].1.ntok as usize, members: ms.iter().map(|&i| member(i)).collect() });
+        out.push(DupGroup {
+            kind: "near",
+            similarity: 1.0,
+            tokens: rows[ms[0]].1.ntok as usize,
+            members: ms.iter().map(|&i| member(i)).collect(),
+            copies: Vec::new(),
+        });
     }
-    let sets: HashMap<usize, HashSet<u64>> = texts_needed
+    // each bucket as its distinct bodies: the first copy by place, and how many copies it stands for
+    let mut copies: HashMap<usize, usize> = HashMap::new();
+    let bodies: Vec<Vec<usize>> = compared
         .iter()
+        .map(|m| {
+            let mut of_body: HashMap<u64, Vec<usize>> = HashMap::new();
+            for &i in m.iter() {
+                of_body.entry(rows[i].1.body).or_default().push(i);
+            }
+            of_body
+                .into_values()
+                .map(|mut cs| {
+                    cs.sort_by(by_place);
+                    cs.dedup_by(|b, a| overlap(*a, *b));
+                    copies.insert(cs[0], cs.len());
+                    cs[0]
+                })
+                .collect()
+        })
+        .collect();
+    let sets: HashMap<usize, HashSet<u64>> = copies
+        .keys()
         .map(|&i| {
             let text = &place[&i].4;
             let body = text.split_once('\n').map(|(_, b)| b).unwrap_or("");
@@ -341,11 +393,11 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
         .collect();
     let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
     let mut near: Vec<(f32, usize, usize)> = Vec::new();
-    for members in buckets.values().filter(|m| near_on && m.len() > 1 && m.len() <= 64) {
+    for members in &bodies {
         for a in 0..members.len() {
             for b in a + 1..members.len() {
                 let (i, j) = (members[a].min(members[b]), members[a].max(members[b]));
-                if i == j || rows[i].1.words == rows[j].1.words || !seen_pairs.insert((i, j)) {
+                if rows[i].1.words == rows[j].1.words || !seen_pairs.insert((i, j)) {
                     continue;
                 }
                 // a container and the symbol nested inside it share text: not a duplicate
@@ -365,16 +417,45 @@ pub(crate) fn duplicates(ix: &Index, keys: &KeyRows, focus: Option<&Focus>, thre
     for (jac, i, j) in near {
         let tokens = (rows[i].1.ntok as usize).min(rows[j].1.ntok as usize);
         let (i, j) = if by_place(&i, &j).is_le() { (i, j) } else { (j, i) };
-        out.push(DupGroup { kind: "near", similarity: jac, tokens, members: vec![member(i), member(j)] });
+        let n = [copies[&i], copies[&j]];
+        let copies = if n == [1, 1] { Vec::new() } else { n.to_vec() };
+        out.push(DupGroup { kind: "near", similarity: jac, tokens, members: vec![member(i), member(j)], copies });
     }
     // members last: the exact groups come from a hash map, and a cut must not depend on its order
     out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(b.similarity.partial_cmp(&a.similarity).unwrap()).then_with(|| a.members.cmp(&b.members)));
     out.truncate(limit);
+    Ok(Dupes { groups: out, crowded: crowded_places(ix, &rows, &crowded, &place)? })
+}
+
+/// One place for each distinct body of the crowded buckets, the first of its copies by place, in
+/// path and line order.
+fn crowded_places(
+    ix: &Index,
+    rows: &[(i64, DupKeys)],
+    crowded: &[&Vec<usize>],
+    place: &HashMap<usize, (String, String, i64, i64, String)>,
+) -> Result<Vec<(String, String, i64, i64)>> {
+    let members: HashSet<usize> = crowded.iter().copied().flatten().copied().collect();
+    let unplaced: Vec<i64> = members.iter().filter(|i| !place.contains_key(i)).map(|&i| rows[i].0).collect();
+    let more: HashMap<i64, (String, String, i64, i64)> = ix.places_by_id(&unplaced)?.into_iter().map(|(id, p, q, a, b)| (id, (p, q, a, b))).collect();
+    let mut first: HashMap<u64, (String, String, i64, i64)> = HashMap::new();
+    for &i in &members {
+        let at = match place.get(&i) {
+            Some(p) => (p.0.clone(), p.1.clone(), p.2, p.3),
+            None => more[&rows[i].0].clone(),
+        };
+        let slot = first.entry(rows[i].1.body).or_insert_with(|| at.clone());
+        if (&at.0, at.2, at.3, &at.1) < (&slot.0, slot.2, slot.3, &slot.1) {
+            *slot = at;
+        }
+    }
+    let mut out: Vec<(String, String, i64, i64)> = first.into_values().collect();
+    out.sort_by(|x, y| (&x.0, x.2, x.3, &x.1).cmp(&(&y.0, y.2, y.3, &y.1)));
     Ok(out)
 }
 
-/// `dupes` over these definitions, each text read whole: the search `duplicates` replaced, kept
-/// as the oracle its tests compare with.
+/// `dupes` over these definitions, each text read whole and every pair of distinct bodies
+/// compared, with no bucket and no cap: the oracle the tests of `duplicates` compare with.
 #[cfg(test)]
 pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshold: f32, limit: usize) -> Vec<DupGroup> {
     let mut exact: HashMap<u64, Vec<usize>> = HashMap::new();
@@ -383,7 +464,7 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
     let mut word_key: Vec<u64> = Vec::with_capacity(rows.len());
     let mut sets: Vec<HashSet<u64>> = Vec::with_capacity(rows.len());
     let mut sizes: Vec<usize> = Vec::with_capacity(rows.len());
-    let mut buckets: HashMap<(usize, u64), Vec<usize>> = HashMap::new();
+    let mut of_body: HashMap<u64, Vec<usize>> = HashMap::new();
     for (i, (_, _, _, _, _, text)) in rows.iter().enumerate() {
         // skip the signature line: duplicates differ in name but not in body
         let body = text.split_once('\n').map(|(_, b)| b).unwrap_or("");
@@ -404,16 +485,9 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
             same_words.entry(words).or_default().push(i);
         }
         let sh = shingles(&toks);
+        // what has MinHash bands is what `duplicates` can pair
         if sh.len() >= 8 {
-            let mh = minhash(&sh);
-            let rows_per_band = HASHES / BANDS;
-            for b in 0..BANDS {
-                let mut key = 0xcbf29ce484222325u64; // gitleaks:allow (FNV-1a's offset basis)
-                for v in &mh[b * rows_per_band..(b + 1) * rows_per_band] {
-                    key = mix64(key ^ *v);
-                }
-                buckets.entry((b, key)).or_default().push(i);
-            }
+            of_body.entry(seq).or_default().push(i);
         }
         sets.push(sh);
     }
@@ -433,6 +507,7 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
             similarity: 1.0,
             tokens: sizes[ms[0]],
             members: ms.iter().map(|&i| (rows[i].1.clone(), rows[i].2.clone(), rows[i].3, rows[i].4)).collect(),
+            copies: Vec::new(),
         });
     }
     // a threshold of 1 asks for exact duplicates only
@@ -449,37 +524,46 @@ pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshol
             similarity: 1.0,
             tokens: sizes[ms[0]],
             members: ms.iter().map(|&i| (rows[i].1.clone(), rows[i].2.clone(), rows[i].3, rows[i].4)).collect(),
+            copies: Vec::new(),
         });
     }
-    let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
-    let mut near: Vec<(f32, usize, usize)> = Vec::new();
-    for (_, members) in buckets.iter().filter(|(_, m)| threshold < 1.0 && m.len() > 1 && m.len() <= 64) {
-        for a in 0..members.len() {
-            for b in a + 1..members.len() {
-                let (i, j) = (members[a].min(members[b]), members[a].max(members[b]));
-                if i == j || word_key[i] == word_key[j] || !seen_pairs.insert((i, j)) {
-                    continue;
-                }
-                // a container and the symbol nested inside it share text: not a duplicate
-                if rows[i].1 == rows[j].1 && rows[i].3 <= rows[j].4 && rows[j].3 <= rows[i].4 {
-                    continue;
-                }
-                let inter = sets[i].intersection(&sets[j]).count() as f32;
-                let union = sets[i].union(&sets[j]).count().max(1) as f32;
-                let jac = inter / union;
-                if jac >= threshold {
-                    near.push((jac, i, j));
-                }
+    // a container and the symbol nested inside it share text: not a duplicate
+    let overlap = |a: usize, b: usize| rows[a].1 == rows[b].1 && rows[a].3 <= rows[b].4 && rows[b].3 <= rows[a].4;
+    // one member per distinct body: the first of its copies by place, and how many there are
+    let mut bodies: Vec<(usize, usize)> = of_body
+        .into_values()
+        .map(|mut cs| {
+            cs.sort_by(by_place);
+            cs.dedup_by(|b, a| overlap(*a, *b));
+            (cs[0], cs.len())
+        })
+        .collect();
+    bodies.sort_unstable();
+    // a body, and how many copies it stands for
+    type Counted = (usize, usize);
+    let mut near: Vec<(f32, Counted, Counted)> = Vec::new();
+    for a in 0..bodies.len() {
+        for b in a + 1..bodies.len() {
+            let (i, j) = (bodies[a].0, bodies[b].0);
+            if threshold >= 1.0 || word_key[i] == word_key[j] || overlap(i, j) {
+                continue;
+            }
+            let inter = sets[i].intersection(&sets[j]).count() as f32;
+            let union = sets[i].union(&sets[j]).count().max(1) as f32;
+            let jac = inter / union;
+            if jac >= threshold {
+                near.push((jac, bodies[a], bodies[b]));
             }
         }
     }
-    for (jac, i, j) in near {
-        let (i, j) = if by_place(&i, &j).is_le() { (i, j) } else { (j, i) };
+    for (jac, x, y) in near {
+        let ((i, ni), (j, nj)) = if by_place(&x.0, &y.0).is_le() { (x, y) } else { (y, x) };
         out.push(DupGroup {
             kind: "near",
             similarity: jac,
             tokens: sizes[i].min(sizes[j]),
             members: vec![(rows[i].1.clone(), rows[i].2.clone(), rows[i].3, rows[i].4), (rows[j].1.clone(), rows[j].2.clone(), rows[j].3, rows[j].4)],
+            copies: if (ni, nj) == (1, 1) { Vec::new() } else { vec![ni, nj] },
         });
     }
     // members last: the exact groups come from a hash map, and a cut must not depend on its order
@@ -722,20 +806,50 @@ pub(crate) mod duplicates_tests {
         }
     }
 
+    /// `dupes_in`'s groups less the pairs `duplicates` cannot see, cut to `limit`: two bodies are
+    /// compared only in a MinHash bucket they share (a band of the same index with the same key)
+    /// of at most `MAX_BUCKET` distinct bodies. A pair that shares a bucket, each one crowded,
+    /// must have both its members among `crowded`; one that shares none is what the sampling
+    /// misses.
+    pub(crate) fn seen(mut groups: Vec<DupGroup>, rows: &[&crate::index::Body], crowded: &[(String, String, i64, i64)], limit: usize) -> Vec<DupGroup> {
+        let keys: HashMap<(&str, &str, i64, i64), DupKeys> = rows.iter().map(|r| ((r.1.as_str(), r.2.as_str(), r.3, r.4), DupKeys::of(&r.5))).collect();
+        let key = |m: &(String, String, i64, i64)| keys[&(m.0.as_str(), m.1.as_str(), m.2, m.3)];
+        let mut bucket: HashMap<(usize, u64), HashSet<u64>> = HashMap::new();
+        for k in keys.values() {
+            for (b, band) in k.bands.iter().flatten().enumerate() {
+                bucket.entry((b, *band)).or_default().insert(k.body);
+            }
+        }
+        // the buckets two bodies share, each as whether it is crowded
+        let shared = |x: &DupKeys, y: &DupKeys| -> Vec<bool> {
+            x.bands.zip(y.bands).map_or(Vec::new(), |(p, q)| {
+                p.iter().zip(&q).enumerate().filter(|(_, (u, v))| u == v).map(|(b, (u, _))| bucket[&(b, *u)].len() > MAX_BUCKET).collect()
+            })
+        };
+        groups.retain(|g| match g.members.as_slice() {
+            [x, y] if key(x).words != key(y).words => {
+                let buckets = shared(&key(x), &key(y));
+                if !buckets.is_empty() && buckets.iter().all(|&full| full) {
+                    assert!(crowded.contains(x) && crowded.contains(y), "{x:?} and {y:?} share only crowded buckets and are not named");
+                }
+                buckets.contains(&false)
+            }
+            _ => true,
+        });
+        groups.truncate(limit);
+        groups
+    }
+
+    // of the oracle's pairs, `seen` drops those sharing no bucket (sampling) and asserts those sharing only crowded ones are named; the rest must be equal
     fn agree(root: &Path) -> std::result::Result<(), TestCaseError> {
         let mut ix = Index::open(root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         for (min, threshold, limit) in [(30, 0.75, 50), (8, 0.5, 3), (5, 1.0, 1000), (30, 0.75, usize::MAX)] {
             let rows = ix.bodies(CODE_KINDS, min).unwrap();
-            let want = dupes_in(&rows.iter().collect::<Vec<_>>(), min, threshold, limit);
-            prop_assert_eq!(
-                duplicates(&ix, &KeyRows::load(&ix, min).unwrap(), None, threshold, limit).unwrap(),
-                want,
-                "min {} threshold {} limit {}",
-                min,
-                threshold,
-                limit
-            );
+            let rows: Vec<&crate::index::Body> = rows.iter().collect();
+            let got = duplicates(&ix, &KeyRows::load(&ix, min).unwrap(), None, threshold, limit).unwrap();
+            let want = seen(dupes_in(&rows, min, threshold, usize::MAX), &rows, &got.crowded, limit);
+            prop_assert_eq!(got.groups, want, "min {} threshold {} limit {}", min, threshold, limit);
         }
         Ok(())
     }
@@ -785,6 +899,77 @@ pub(crate) mod duplicates_tests {
         }
         agree(&root).unwrap();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A word of its own for `n`: consonants only, so no stem changes it and no stop list holds it.
+    fn word(n: usize) -> String {
+        let letters = b"bcdfgkmnprtvwxz";
+        (0..4).map(|k| letters[n / letters.len().pow(k) % letters.len()] as char).collect()
+    }
+
+    /// A tree of Python functions, one per file, each body the words it is given.
+    fn index_of(name: &str, bodies: &[(String, Vec<String>)]) -> (PathBuf, Index) {
+        let root = std::env::temp_dir().join(format!("scrutate_dupes_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for (file, words) in bodies {
+            let rows: String = words.chunks(6).map(|c| format!("        {},\n", c.join(", "))).collect();
+            std::fs::write(root.join(file), format!("def f(p):\n    return [\n{rows}    ]\n")).unwrap();
+        }
+        let mut ix = Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        (root, ix)
+    }
+
+    #[test]
+    fn a_near_copy_of_a_body_copied_more_than_a_bucket_holds_is_found_against_its_copies() {
+        let body: Vec<String> = (0..60).map(word).collect();
+        let mut variant = body.clone();
+        variant[30] = word(1000);
+        for copies in [63, 64, 65] {
+            let mut files: Vec<(String, Vec<String>)> = (0..copies).map(|i| (format!("c{i:03}.py"), body.clone())).collect();
+            files.push(("variant.py".into(), variant.clone()));
+            let (root, ix) = index_of(&format!("copies{copies}"), &files);
+            let got = dupes(&ix, 30, 0.75, usize::MAX).unwrap();
+            let exact: Vec<&DupGroup> = got.groups.iter().filter(|g| g.kind == "exact").collect();
+            assert_eq!(exact.iter().map(|g| g.members.len()).collect::<Vec<_>>(), [copies], "{copies}");
+            let near: Vec<&DupGroup> = got.groups.iter().filter(|g| g.kind == "near").collect();
+            assert_eq!(near.len(), 1, "{copies}: {near:?}");
+            let names: Vec<&str> = near[0].members.iter().map(|m| m.0.as_str()).collect();
+            assert_eq!((names, near[0].copies.clone()), (vec!["c000.py", "variant.py"], vec![copies, 1]), "{copies}");
+            assert!(got.crowded.is_empty());
+            drop(ix);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn a_bucket_of_more_distinct_bodies_than_it_compares_names_them_and_hides_no_other_pair() {
+        let base: Vec<String> = (0..120).map(word).collect();
+        for (n, crowded) in [(64, false), (90, true)] {
+            let files: Vec<(String, Vec<String>)> = (0..n)
+                .map(|i| {
+                    let mut ws = base.clone();
+                    ws[5 + i] = word(2000 + i);
+                    (format!("v{i:03}.py"), ws)
+                })
+                .collect();
+            let (root, ix) = index_of(&format!("crowded{n}"), &files);
+            let got = dupes(&ix, 30, 0.75, usize::MAX).unwrap();
+            assert_eq!(!got.crowded.is_empty(), crowded, "{n}: {:?}", got.crowded);
+            let rows = ix.bodies(CODE_KINDS, 30).unwrap();
+            let rows: Vec<&crate::index::Body> = rows.iter().collect();
+            let all = dupes_in(&rows, 30, 0.75, usize::MAX);
+            assert_eq!(got.groups, seen(all.clone(), &rows, &got.crowded, usize::MAX), "{n}");
+            if crowded {
+                // pairs lost to the cap: in the oracle at 0.75 or more, not in the answer, both members named
+                let lost: Vec<&DupGroup> = all.iter().filter(|g| !got.groups.contains(g)).collect();
+                assert!(!lost.is_empty(), "{n}: the crowded bucket lost no pair");
+                assert!(lost.iter().all(|g| g.members.iter().all(|m| got.crowded.contains(m))), "{n}: {lost:?}");
+            }
+            drop(ix);
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 }
 

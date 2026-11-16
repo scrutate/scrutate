@@ -664,7 +664,8 @@ impl Repo {
     }
 
     /// Duplicate and near-duplicate functions, as a `Results` list of JSON-compatible dicts:
-    /// `stopped_at` is `limit` when there were more.
+    /// `stopped_at` is `limit` when there were more, and `crowded` the functions in a bucket too
+    /// crowded to compare, one (path, qualname, start, end) per body.
     #[pyo3(signature = (min_tokens=scrutate::ops::DUPES_MIN_TOKENS, threshold=scrutate::ops::DUPES_THRESHOLD, limit=scrutate::ops::DUPES_LIMIT))]
     fn duplicates<'py>(
         &self,
@@ -678,10 +679,11 @@ impl Repo {
             threshold,
             limit,
         };
-        let Answer::Dupes(groups, stopped) = self.run(py, op)? else {
+        let Answer::Dupes(answer, stopped) = self.run(py, op)? else {
             return Err(unexpected());
         };
-        let dicts = groups
+        let dicts = answer
+            .groups
             .iter()
             .map(|g| {
                 let d = PyDict::new(py);
@@ -689,10 +691,15 @@ impl Repo {
                 d.set_item("similarity", g.similarity)?;
                 d.set_item("tokens", g.tokens)?;
                 d.set_item("members", g.members.clone())?;
+                if !g.copies.is_empty() {
+                    d.set_item("copies", g.copies.clone())?;
+                }
                 Ok(d)
             })
             .collect::<PyResult<Vec<_>>>()?;
-        results(py, dicts, stopped)
+        let out = results(py, dicts, stopped)?;
+        out.setattr("crowded", answer.crowded)?;
+        Ok(out)
     }
 
     /// Every use of `name`, each resolved to the definition it refers to, as the `references`

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::fmt::{hit_blocks, hits_json};
 use crate::index::{ChunkRow, UpdateStats};
-use crate::intel::{Capture, DupGroup, RefGroup, References};
+use crate::intel::{Capture, Dupes, RefGroup, References};
 use crate::names::{Dependency, Names};
 
 use crate::fmt::{echo, shown};
@@ -616,7 +616,8 @@ pub fn output_schema(tool: &str) -> Value {
     obj(
         json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped,
             "stopped_reason": {"type": "string", "description": "present when a bounded read stopped short of the limit: why, and what narrows it"},
-            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending, "capped": capped}),
+            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer"), "pending": pending, "capped": capped,
+            "crowded": {"type": "object", "description": format!("duplicates: present when functions fell in a MinHash bucket of more than {} bodies, where a near pair among them that shares no other bucket is not in this answer: how many functions, and the first of them", crate::intel::MAX_BUCKET)}}),
         &["schema", "complete", "result"],
     )
 }
@@ -826,7 +827,7 @@ pub enum Answer {
         max_results: u64,
     },
     Similar(Vec<(Hit, f32, f32)>),
-    Dupes(Vec<DupGroup>, Option<Stop>),
+    Dupes(Dupes, Option<Stop>),
     /// and the files of the language left out for their size
     Captures(Vec<Capture>, Option<Stop>, Vec<crate::intel::TooLarge>),
     Map(Vec<crate::repomap::MapFile>),
@@ -1041,8 +1042,10 @@ pub(crate) fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Similar { target, k } => Answer::Similar(crate::intel::similar(s, target, *k)?),
         Op::Dupes { min_tokens, threshold, limit } => {
-            let (groups, stopped) = cut(crate::intel::dupes(&s.ix, *min_tokens, *threshold, limit.saturating_add(1))?, *limit, RAISE_LIMIT);
-            Answer::Dupes(groups, stopped)
+            let mut d = crate::intel::dupes(&s.ix, *min_tokens, *threshold, limit.saturating_add(1))?;
+            let (groups, stopped) = cut(std::mem::take(&mut d.groups), *limit, RAISE_LIMIT);
+            d.groups = groups;
+            Answer::Dupes(d, stopped)
         }
         Op::Tsquery { lang, query, limit } => {
             let (caps, large) = crate::intel::tsquery(
@@ -1608,6 +1611,29 @@ fn bound_reason(how: &str) -> bool {
     how == SCOPED_SYMBOLS_STOP || how == crate::search::FILTER_STOP
 }
 
+/// How many of the functions in a crowded bucket the closing line of a `dupes` answer names.
+const CROWDED_SHOWN: usize = 5;
+
+/// The closing line of a `dupes` answer with buckets too crowded to compare, else empty.
+fn dupes_notes(d: &Dupes) -> String {
+    let n = d.crowded.len();
+    if n == 0 {
+        return String::new();
+    }
+    let first: Vec<String> = d.crowded.iter().take(CROWDED_SHOWN).map(|(p, q, a, b)| format!("{}:{a}-{b} {}", shown(p), shown(q))).collect();
+    format!(
+        "({n} function{} in a MinHash bucket of more than {} bodies; a near pair among them that shares no other bucket is not in this answer; first: {})",
+        if n == 1 { " fell" } else { "s fell" },
+        crate::intel::MAX_BUCKET,
+        first.join(", ")
+    )
+}
+
+/// After member `k` of a near pair that stands for an exact group: how many copies it is one of.
+fn copies_note(g: &crate::intel::DupGroup, k: usize) -> String {
+    g.copies.get(k).filter(|&&n| n > 1).map(|n| format!("  (one of {n} exact copies)")).unwrap_or_default()
+}
+
 /// Two closing lines, either of them possibly empty.
 fn joined(a: String, b: String) -> String {
     match (a.is_empty(), b.is_empty()) {
@@ -2118,7 +2144,9 @@ impl Answer {
             Answer::Refs { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.groups.iter().map(|g| g.path.as_str())).collect(),
             Answer::Resolved { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.occurrences.iter().map(|o| o.path.as_str())).collect(),
             Answer::Similar(v) => v.iter().map(|h| h.0.path.as_str()).collect(),
-            Answer::Dupes(groups, _) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
+            Answer::Dupes(d, _) => {
+                d.groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).chain(d.crowded.iter().take(CROWDED_SHOWN).map(|m| m.0.as_str())).collect()
+            }
             Answer::Impact(i) => i.cited(),
             Answer::Map(files) => files.iter().map(|f| f.path.as_str()).collect(),
             Answer::Path(p) => [&p.from, &p.to].into_iter().chain(p.steps.iter().map(|s| &s.to)).map(|h| h.path.as_str()).collect(),
@@ -2149,7 +2177,7 @@ impl Answer {
                 None => refs.definitions.is_empty() && refs.occurrences.is_empty() && refs.notes.is_empty(),
             },
             Answer::Similar(v) => v.is_empty(),
-            Answer::Dupes(v, _) => v.is_empty(),
+            Answer::Dupes(d, _) => d.groups.is_empty(),
             Answer::Captures(v, ..) => v.is_empty(),
             Answer::Map(files) => files.is_empty(),
             Answer::Path(p) => !p.found,
@@ -2593,29 +2621,30 @@ impl Answer {
                 brief: Some(v.iter().map(|(h, ..)| vec![Brief::at(&h.path, h.start, h.end, &named(hit_name(h)))]).collect()),
                 ..Parts::default()
             },
-            Answer::Dupes(groups, _) if groups.is_empty() => nothing("no duplicates found".to_string()),
-            Answer::Dupes(groups, stopped) => Parts {
-                items: groups
+            Answer::Dupes(d, _) if d.groups.is_empty() => Parts { head: "no duplicates found".to_string(), tail: dupes_notes(d), ..Parts::default() },
+            Answer::Dupes(d, stopped) => Parts {
+                items: d
+                    .groups
                     .iter()
                     .map(|g| {
                         let mut out = format!("{} ({} tokens, similarity {:.2})", g.kind, g.tokens, g.similarity);
-                        for (p, q, a, b) in &g.members {
-                            out.push_str(&format!("\n    {}:{a}-{b}  {}", shown(p), shown(q)));
+                        for (k, (p, q, a, b)) in g.members.iter().enumerate() {
+                            out.push_str(&format!("\n    {}:{a}-{b}  {}{}", shown(p), shown(q), copies_note(g, k)));
                         }
                         out
                     })
                     .collect(),
-                tail: stop_line(*stopped, "groups"),
+                tail: joined(stop_line(*stopped, "groups"), dupes_notes(d)),
                 noun: "groups",
                 brief: Some(
-                    groups
+                    d.groups
                         .iter()
                         .map(|g| {
                             // one name for members that all have it
                             let one = g.members.windows(2).all(|w| w[0].1 == w[1].1);
                             let mut line = Brief::text(format!("{:.2}", g.similarity));
-                            for (p, q, a, b) in &g.members {
-                                line = line.then(" ").then_at(p, *a, *b);
+                            for (k, (p, q, a, b)) in g.members.iter().enumerate() {
+                                line = line.then(" ").then_at(p, *a, *b).then(copies_note(g, k));
                                 if !one {
                                     line = line.then(format!(" {}", named(q)));
                                 }
@@ -2887,6 +2916,14 @@ impl Answer {
         {
             v["skipped"] = json!({"why": "over 1 MB", "paths": large.iter().map(|t| &t.path).collect::<Vec<_>>()});
         }
+        if let Answer::Dupes(d, _) = self
+            && !d.crowded.is_empty()
+        {
+            v["crowded"] = json!({
+                "functions": d.crowded.len(),
+                "first": d.crowded.iter().take(CROWDED_SHOWN).map(|(p, q, a, b)| json!({"path": p, "qualname": q, "start": a, "end": b})).collect::<Vec<_>>(),
+            });
+        }
         v
     }
 
@@ -3023,7 +3060,7 @@ impl Answer {
                 .iter()
                 .map(|(h, cos, jac)| json!({"path": h.path, "start": h.start, "end": h.end, "kind": h.kind, "qualname": h.qualname, "cosine": cos, "jaccard": jac}))
                 .collect(),
-            Answer::Dupes(groups, _) => serde_json::to_value(groups).unwrap_or_default(),
+            Answer::Dupes(d, _) => serde_json::to_value(&d.groups).unwrap_or_default(),
             Answer::Captures(caps, ..) => serde_json::to_value(caps).unwrap_or_default(),
             Answer::Map(files) => files
                 .iter()
@@ -3296,7 +3333,7 @@ mod tests {
         assert_eq!(Answer::Outline { path: "a.py".into(), rows: vec![] }.text(), "no symbols in a.py (not indexed or no definitions)");
         assert_eq!(Answer::Rdeps { target: "m".into(), rows: vec![], unresolved: 0 }.text(), "nothing imports m");
         assert_eq!(Answer::Hits { hits: vec![], words: vec![], snippet: true, stopped: None }.text(), "(no results)");
-        assert!(Answer::Dupes(vec![], None).is_empty() && Answer::Captures(vec![], None, vec![]).is_empty());
+        assert!(Answer::Dupes(Dupes::default(), None).is_empty() && Answer::Captures(vec![], None, vec![]).is_empty());
         assert_eq!(
             Answer::Rdeps { target: "m".into(), rows: vec![("a.py".into(), 3, "m".into())], unresolved: 0 }.json(),
             json!([{"path": "a.py", "line": 3, "module": "m"}])

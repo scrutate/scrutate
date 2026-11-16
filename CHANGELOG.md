@@ -437,6 +437,15 @@ incompatible index by itself, and that is never breaking.
 - `refs NAME --lang c` (and any file filter) counts `--max-results` over the occurrences in the
   files the filter keeps, where a C++ header's uses could fill the count and be dropped after it,
   answering none of the C header's ([CLI](docs/CLI.md#engine-b)).
+- `dupes` counts a MinHash bucket in distinct bodies, the copies of one body standing as one
+  member, so a near copy of a body copied 64 times or more is found, where it was in no answer: a
+  body with 64 exact copies and one copy changed in one word gave the exact group alone. Such a
+  pair is reported once, against the first copy, which the text marks `(one of 64 exact copies)`
+  and `--json` gives as `copies` (`[64, 1]`), where a body with fewer copies gave a pair per copy.
+  A bucket of more than 64 distinct bodies is still not compared pair by pair, and the answer now
+  says so: a last line counts the functions in such a bucket, says that a near pair among them
+  that shares no other bucket is not in the answer, and names the first five (`crowded` in the
+  JSON, the MCP result and the Python bindings) ([CLI](docs/CLI.md)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it

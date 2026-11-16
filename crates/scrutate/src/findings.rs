@@ -130,6 +130,7 @@ fn new_duplicates(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
     let keys = KeyRows::load(&s.ix, min)?;
     let around_head = Focus { left_out: &none, put_in: &[], paths: &changed, keys: &[] };
     let head: Vec<DupGroup> = crate::intel::duplicates(&s.ix, &keys, Some(&around_head), threshold, usize::MAX)?
+        .groups
         .into_iter()
         .filter(|g| g.members.iter().any(|m| changed.contains(m.0.as_str())))
         .collect();
@@ -141,7 +142,7 @@ fn new_duplicates(s: &Searcher, i: &Impact) -> Result<Vec<DupGroup>> {
     let member: Vec<DupKeys> = head_keys.values().copied().collect();
     let put_in: Vec<&Body> = parsed.iter().collect();
     let around_base = Focus { left_out: &changed, put_in: &put_in, paths: &none, keys: &member };
-    let base = crate::intel::duplicates(&s.ix, &keys, Some(&around_base), threshold, usize::MAX)?;
+    let base = crate::intel::duplicates(&s.ix, &keys, Some(&around_base), threshold, usize::MAX)?.groups;
     let base_keys = member_keys(s, base.iter().flat_map(|g| &g.members), &parsed)?;
     let old = |g: &DupGroup| {
         base.iter().filter(|b| b.members.len() >= g.members.len()).any(|b| {
@@ -257,16 +258,16 @@ mod tests {
             return Ok(Vec::new());
         }
         let rows = s.ix.bodies(CODE_KINDS, min)?;
-        let head: Vec<DupGroup> = crate::intel::dupes_in(&rows.iter().collect::<Vec<_>>(), min, threshold, usize::MAX)
-            .into_iter()
-            .filter(|g| g.members.iter().any(|m| changed.contains(m.0.as_str())))
-            .collect();
+        let all: Vec<&Body> = rows.iter().collect();
+        // the pairs the sampled search can see: those whose bodies share a MinHash bucket
+        let seen = |rs: &[&Body]| crate::intel::duplicates_tests::seen(crate::intel::dupes_in(rs, min, threshold, usize::MAX), rs, &[], usize::MAX);
+        let head: Vec<DupGroup> = seen(&all).into_iter().filter(|g| g.members.iter().any(|m| changed.contains(m.0.as_str()))).collect();
         if head.is_empty() {
             return Ok(head);
         }
         let parsed: Vec<Body> = i.base_copies.iter().flat_map(|(path, src)| bodies_of(path, src, min)).collect();
         let base_rows: Vec<&Body> = rows.iter().filter(|r| !changed.contains(r.1.as_str())).chain(&parsed).collect();
-        let base = crate::intel::dupes_in(&base_rows, min, threshold, usize::MAX);
+        let base = seen(&base_rows);
         // a changed file has a definition at the same place on both sides: one map per side
         let keys = |rs: &[&Body]| -> HashMap<(String, String, i64, i64), u64> {
             rs.iter().map(|r| ((r.1.clone(), r.2.clone(), r.3, r.4), crate::intel::body_key(&r.5))).collect()
@@ -384,6 +385,7 @@ mod tests {
             similarity: 0.9,
             members: vec![("lib/dups.py".into(), "unique".into(), 1, 12), ("lib/fresh.py".into(), "copy_of_unique".into(), 3, 14)],
             tokens: 41,
+            copies: Vec::new(),
         };
         let dup = Finding { path: "lib/fresh.py".into(), start: 3, end: 14, name: "copy_of_unique".into(), what: What::Duplicate(group) };
         assert_eq!((dup.kind(), dup.severity()), ("duplicate", "minor"));

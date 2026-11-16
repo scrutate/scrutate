@@ -1288,3 +1288,39 @@ fn read_code_and_grep_code_refuse_the_index_directory() {
     let all = r.ok("grep_code", json!({"pattern": "plain"}));
     assert!(!all.contains("t.txt"), "{all}");
 }
+
+/// A word of its own for `n`: consonants only, so no stem changes it and no stop list holds it.
+fn word(n: usize) -> String {
+    let letters = b"bcdfgkmnprtvwxz";
+    (0..4).map(|k| letters[n / letters.len().pow(k) % letters.len()] as char).collect()
+}
+
+/// A Python function whose body lists these words, six to a line.
+fn listing(words: &[String]) -> String {
+    let rows: String = words.chunks(6).map(|c| format!("        {},\n", c.join(", "))).collect();
+    format!("def f(p):\n    return [\n{rows}    ]\n")
+}
+
+/// Ninety bodies of 120 words, each with one word of its own: every MinHash bucket they share
+/// holds more distinct bodies than `dupes` compares pair by pair.
+fn crowded() -> Vec<(String, String)> {
+    let base: Vec<String> = (2000..2120).map(word).collect();
+    (0..90)
+        .map(|i| {
+            let mut ws = base.clone();
+            ws[5 + i] = word(3000 + i);
+            (format!("crowded/v{i:02}.py"), listing(&ws))
+        })
+        .collect()
+}
+
+#[test]
+fn duplicates_name_the_functions_a_crowded_bucket_kept_them_from_comparing() {
+    let files = crowded();
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    let mut r = Repo::new("dupes_crowded", &files);
+    let text = r.ok("duplicates", json!({"limit": 5}));
+    assert!(text.lines().last().is_some_and(|l| l.contains("functions fell in a MinHash bucket of more than 64 bodies")), "{text}");
+    let c = call_tool(&r.session, "duplicates", &json!({"limit": 5}));
+    assert!(c.structured["crowded"]["functions"].as_u64().is_some_and(|n| n > 0), "{}", c.structured);
+}

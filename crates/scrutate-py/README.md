@@ -37,7 +37,9 @@ usable, and an update that panicked has rolled back.
 `Repo.symbol`, `Repo.callers`, `Repo.duplicates` and the hits of `Repo.callees` come as a
 `scrutate.Results`: a `list` with one more field, `stopped_at`, the limit when more results were
 left, else `None`. In `Repo.callers`, `undecided` counts the callers the resolver kept without
-knowing whether they call this definition or another of the same name.
+knowing whether they call this definition or another of the same name. In `Repo.duplicates`,
+`crowded` lists, as (path, qualname, start, end), one function for each body in a bucket too
+crowded to compare (see [CLI](../../docs/CLI.md)), empty when there was none.
 
 Every `Repo` method runs the operation the CLI and the MCP tools run, with the same defaults, the
 same check of the files an answer cites, and the same recovery from a damaged index.

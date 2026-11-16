@@ -918,7 +918,10 @@ line says so and names the argument that raises it
 near matches ends with `(100,000 near matches were read before the filter: narrow the name)`
 instead, and its JSON has `stopped_reason`. With `serve --structured` the JSON carries
 `stopped_at`. With `--json` the envelope carries `stopped_at` and that line goes to standard
-error; a `batch` record that stopped carries `stopped_at` too.
+error; a `batch` record that stopped carries `stopped_at` too. A `dupes` or `duplicates` answer
+whose functions fell in a MinHash bucket of more than 64 bodies ends with one more line: how many
+functions, that a near pair among them that shares no other bucket is not in this answer, and
+the first five. The envelope carries it as `crowded` (`functions`, `first`).
 
 `--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer, and of `search`
 and `tsquery` answers (`--json` ignores both). A cut answer keeps whole items and ends with a

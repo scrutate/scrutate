@@ -232,6 +232,8 @@ impl ChunkRow {
 
 /// Id, path, qualified name, start and end line, and text of a chunk.
 pub type Body = (i64, String, String, i64, i64, String);
+/// A chunk's id, path, qualified name and lines, without its text.
+pub type Place = (i64, String, String, i64, i64);
 
 /// A chunk without its text and search fields: what name resolution reads.
 #[derive(Debug, Clone, Default)]
@@ -3306,6 +3308,18 @@ impl Index {
                     Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?, r.get(4)?, unpack_text(r.get_ref(5)?)?))
                 })
                 .optional()?;
+            out.extend(row);
+        }
+        Ok(out)
+    }
+
+    /// Id, path, qualified name and lines of these chunks, those that exist, without their text.
+    pub fn places_by_id(&self, ids: &[i64]) -> Result<Vec<Place>> {
+        let mut out = Vec::with_capacity(ids.len());
+        let mut st = self.db.prepare_cached("SELECT id, path, qualname, start, end FROM chunks WHERE id=?1")?;
+        for &id in ids {
+            let row =
+                st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?, r.get(4)?))).optional()?;
             out.extend(row);
         }
         Ok(out)
