@@ -797,7 +797,7 @@ by its last part (`de::Deserialize` finds `Deserialize`). The answer's first lin
 package, its version, the lockfile and the directory (`serde 1.0.200 (Cargo.lock):
 /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.200`), and every path in it
 is the installed file: from the root when it is inside the repository (`node_modules/...`,
-`.venv/...`), else whole. `--json` wraps the answer as `{"package": {name, version, lockfile,
+`.venv/...`), else whole, written with `/` on Windows too (`C:/Users/me/.cargo/...`). `--json` wraps the answer as `{"package": {name, version, lockfile,
 path}, "answer": ...}`.
 
 | Lockfile at the root | Installed in | When the version is not there |

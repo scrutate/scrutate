@@ -544,7 +544,7 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
                     return Ok(whole(dir));
                 }
             }
-            Err(missing(format!("the cargo registry ({})", src.display())))
+            Err(missing(format!("the cargo registry ({})", crate::paths::plain_path(&src).display())))
         }
         Eco::Npm => {
             let dir = own_dir(l, root, &Path::new("node_modules").join(&l.name))?.ok_or_else(|| missing("node_modules".into()))?;
@@ -580,7 +580,7 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
                 .or_else(|| home().map(|h| h.join("go/pkg/mod")))
                 .ok_or_else(|| missing("the Go module cache".into()))?;
             let dir = cache.join(format!("{}@{}", go_escaped(&l.name), go_escaped(&l.version)));
-            Ok(whole(inside(l, &cache, &dir)?.ok_or_else(|| missing(format!("the Go module cache ({})", cache.display())))?))
+            Ok(whole(inside(l, &cache, &dir)?.ok_or_else(|| missing(format!("the Go module cache ({})", crate::paths::plain_path(&cache).display())))?))
         }
     }
 }
@@ -601,12 +601,12 @@ fn deps_dir() -> Result<PathBuf> {
         if m.uid() != me || m.mode() & 0o022 != 0 {
             bail!(
                 "refused: the cache {} belongs to another user or others may write to it: set SCRUTATE_CACHE_DIR to a directory of your own",
-                crate::fmt::echo(&root.to_string_lossy())
+                crate::fmt::echo(&crate::paths::plain_path(&root).to_string_lossy())
             );
         }
         let m = std::fs::metadata(&deps)?;
         if m.uid() != me {
-            bail!("refused: {} belongs to another user", crate::fmt::echo(&deps.to_string_lossy()));
+            bail!("refused: {} belongs to another user", crate::fmt::echo(&crate::paths::plain_path(&deps).to_string_lossy()));
         }
         if m.mode() & 0o077 != 0 {
             std::fs::set_permissions(&deps, std::fs::Permissions::from_mode(0o700))?;
@@ -632,7 +632,7 @@ fn private_dirs(dir: &Path) -> Result<()> {
     b.recursive(true);
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    b.create(dir).with_context(|| format!("cannot create {}", dir.display()))
+    b.create(dir).with_context(|| format!("cannot create {}", crate::paths::plain_path(dir).display()))
 }
 
 /// Copies the package into `to`, never through a link that leaves it, and stops at the caps.
@@ -657,7 +657,7 @@ fn copy(l: &Locked, inst: &Installed, to: &Path, (max_files, max_bytes): (usize,
         }
         let dest = to.join(rel);
         private_dirs(dest.parent().unwrap_or(to))?;
-        std::fs::copy(&real, &dest).with_context(|| format!("cannot copy {}", real.display()))?;
+        std::fs::copy(&real, &dest).with_context(|| format!("cannot copy {}", crate::paths::plain_path(&real).display()))?;
         Ok(())
     };
     match &inst.files {
@@ -742,7 +742,7 @@ fn cached(l: &Locked, inst: &Installed, caps: (usize, u64), root: &Path) -> Resu
     if std::fs::rename(&tmp, &entry).is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
         if !entry.join("done").is_file() {
-            bail!("cannot put the copy of {} {} in {}", l.name, l.version, entry.display());
+            bail!("cannot put the copy of {} {} in {}", l.name, l.version, crate::paths::plain_path(&entry).display());
         }
     }
     Ok(entry.join("src"))
@@ -770,11 +770,24 @@ impl Note {
     }
 }
 
-/// `p` as an answer names it: from the root when it is inside, else whole.
+/// `p` as an answer names it: from the root when it is inside, else whole; on Windows without the
+/// verbatim prefix and with `/` between its parts, as a path inside is written.
 fn shown_path(root: &Path, p: &Path) -> String {
+    shown_path_on(root, p, cfg!(windows))
+}
+
+fn shown_path_on(root: &Path, p: &Path, windows: bool) -> String {
     match p.strip_prefix(root) {
         Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
-        Err(_) => p.to_string_lossy().into_owned(),
+        Err(_) => {
+            let s = p.to_string_lossy();
+            let s = crate::paths::plain_on(&s, windows);
+            if windows {
+                s.replace('\\', "/")
+            } else {
+                s.into_owned()
+            }
+        }
     }
 }
 
@@ -865,6 +878,16 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_store_path_outside_the_root_is_shown_without_the_verbatim_prefix_and_with_slashes_on_windows() {
+        let root = Path::new(r"\\?\C:\repo");
+        let p = Path::new(r"\\?\C:\home\cargo\registry\src\serde-1.0.200\src\lib.rs");
+        assert_eq!(shown_path_on(root, p, true), "C:/home/cargo/registry/src/serde-1.0.200/src/lib.rs");
+        let share = Path::new(r"\\?\UNC\host\share\gomod\gin@v1.10.0\gin.go");
+        assert_eq!(shown_path_on(root, share, true), "//host/share/gomod/gin@v1.10.0/gin.go");
+        assert_eq!(shown_path_on(root, p, false), p.to_string_lossy());
+    }
 
     #[test]
     fn names_and_versions_keep_to_their_grammar() {
