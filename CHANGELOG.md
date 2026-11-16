@@ -365,6 +365,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `impact --staged` with a root below the repository's top answers with a conflict outside that
+  root, where git 2.53 and 2.54 crash on the `--cached --relative` diff it ran: the staged diff
+  there names the root as its pathspec and scrutate takes the root's part off the paths.
 - An error from a git that crashed or failed without a word names how it ended (`git diff-index:
   ended by signal 11 (a crash) and gave no reason`, or its exit status), where `impact`, `review`
   and `read --history` said `git diff-index: ` and nothing after it.

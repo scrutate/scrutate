@@ -441,6 +441,74 @@ fn a_git_that_crashes_without_a_word_is_named_with_how_it_ended() {
     assert!(err.contains("git diff-index: ended by signal 11 (a crash) and gave no reason"), "{err}");
 }
 
+/// A root below the repository's top, its changes all staged: `--staged` answers as the working
+/// tree does, renames into and out of the root included, and a conflict outside the root (where
+/// git 2.53 crashes on `--cached --relative`) does not stop it.
+#[test]
+fn a_staged_change_under_a_subdirectory_root_answers_as_the_working_tree_does() {
+    let case = |name: &str| {
+        let t = Tree::new(name);
+        t.git(&["init", "-q"]);
+        t.write("sub/a.py", "def a():\n    return 1\n\n\ndef keep():\n    return a()\n");
+        t.write("sub/y.py", "def y():\n    return 2\n");
+        t.write("top/x.py", "def x():\n    return 3\n");
+        t.write("top/u.py", "from sub.y import y\n\n\ndef use():\n    return y()\n");
+        t.commit("base");
+        t
+    };
+    let sub = |t: &Tree, args: &[&str]| -> Value {
+        let out = Command::new(BIN)
+            .args(["--root", t.root.join("sub").to_str().unwrap(), "impact", "--json"])
+            .args(args)
+            .current_dir(t.root.join("sub"))
+            .envs(GIT_ENV)
+            .env("SCRUTATE_SEMANTIC", "none")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.code().is_some_and(|c| c <= 1), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        v["result"].clone()
+    };
+    let parts = |v: &Value| (v["changed"].clone(), v["callers"].clone(), v["tests"].clone(), v["notes"].clone());
+    let moves: [(&str, &[&str]); 4] = [
+        ("staged_sub_edit", &[]),
+        ("staged_sub_inward", &["top/x.py", "sub/x.py"]),
+        ("staged_sub_outward", &["sub/y.py", "top/y.py"]),
+        ("staged_sub_within", &["sub/a.py", "sub/b.py"]),
+    ];
+    for (name, mv) in moves {
+        let t = case(name);
+        if mv.is_empty() {
+            t.write("sub/a.py", "def a():\n    return 5\n\n\ndef keep():\n    return a()\n");
+            t.git(&["add", "-A"]);
+        } else {
+            t.git(&["mv", mv[0], mv[1]]);
+        }
+        let (tree, staged) = (sub(&t, &[]), sub(&t, &["--staged"]));
+        assert_eq!(parts(&staged), parts(&tree), "{name}: staged {staged}\ntree {tree}");
+    }
+    let t = case("staged_sub_conflict");
+    t.git(&["checkout", "-q", "-b", "side"]);
+    t.write("top/t.txt", "side\n");
+    t.commit("side");
+    t.git(&["checkout", "-q", "main"]);
+    t.write("top/t.txt", "main\n");
+    t.commit("main");
+    let merged = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "merge", "-q", "side"])
+        .current_dir(&t.root)
+        .envs(GIT_ENV)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "the merge did not stop at a conflict");
+    t.write("sub/a.py", "def a():\n    return 7\n\n\ndef keep():\n    return a()\n");
+    t.git(&["add", "sub/a.py"]);
+    let v = sub(&t, &["--staged"]);
+    assert_eq!(ids(&v, "changed"), ["a.py:1-2"], "{v}");
+}
+
 #[test]
 fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
     let t = chain("deletednamesake");

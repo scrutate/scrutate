@@ -309,7 +309,18 @@ impl Git {
         // plumbing, which never refreshes the index and so never writes it back
         let mut common: Vec<String> = Vec::new();
         common.push(if matches!(new, New::Commit(_)) { "diff-tree" } else { "diff-index" }.to_string());
-        common.extend(["-r", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-M", "--src-prefix=a/", "--dst-prefix=b/"].map(String::from));
+        // git 2.53 and 2.54 crash on `--cached --relative` below a conflict outside the directory:
+        // the staged diff of a root below the top names the root as its pathspec instead, and the
+        // paths git gives from the top lose the root's own part here
+        let prefix = if matches!(new, New::Staged) {
+            String::from_utf8_lossy(self.run(&["rev-parse", "--show-prefix"])?.trim_ascii()).into_owned()
+        } else {
+            String::new()
+        };
+        let relative: &[&str] = if prefix.is_empty() { &["--relative"] } else { &[] };
+        common.extend(["-r", "--no-color", "--no-ext-diff", "--no-textconv"].map(String::from));
+        common.extend(relative.iter().map(|s| s.to_string()));
+        common.extend(["-M", "--src-prefix=a/", "--dst-prefix=b/"].map(String::from));
         let with = |more: &[&str]| -> Vec<String> {
             let mut v: Vec<String> = common.iter().cloned().chain(more.iter().map(|s| s.to_string())).collect();
             if matches!(new, New::Staged) {
@@ -320,6 +331,9 @@ impl Git {
                 v.push(head.clone());
             }
             v.push("--".into());
+            if !prefix.is_empty() {
+                v.push(".".into());
+            }
             v
         };
         // the working tree's diff reports a file stopped at a conflict as edited, not as unmerged
@@ -346,6 +360,17 @@ impl Git {
                 None => e.submodule || e.old != e.new,
             }
         });
+        if !prefix.is_empty() {
+            let strip = |p: &mut Option<String>| {
+                if let Some(rest) = p.as_deref().and_then(|p| p.strip_prefix(prefix.as_str())) {
+                    *p = Some(rest.to_string());
+                }
+            };
+            for e in &mut entries {
+                strip(&mut e.old);
+                strip(&mut e.new);
+            }
+        }
         if matches!(new, New::Tree) {
             for p in self.run(&["ls-files", "--others", "--exclude-standard", "-z"])?.split(|&b| b == 0).filter(|p| !p.is_empty()) {
                 entries.push(Entry { new: Some(String::from_utf8_lossy(p).into_owned()), untracked: true, ..Entry::default() });
