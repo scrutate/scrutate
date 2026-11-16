@@ -239,6 +239,33 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
             format!(r#"{{"name": "app", "lockfileVersion": 3, "packages": {{"": {{"name": "app"}}, "node_modules/dd": {{"resolved": "d{dd}", "link": true}}, "d{dd}": {{"version": "1.0.0"}}}}}}"#),
         )
         .unwrap();
+        // classes Q0.. with a method `nm`, for the qualified-name pair, from their own draws
+        let mut qr = Rng(0x0a11_ed00 + r as u64);
+        let q = 2 + qr.below(3);
+        let mut q_paths = Vec::new();
+        for j in 0..q {
+            let (ext, text) = if qr.below(2) == 0 {
+                (
+                    "py",
+                    format!(
+                        "class Q{j}:\n    def nm(self):\n        return {j}\n\n\ndef use_q{j}():\n    x = Q{j}()\n{}",
+                        "    x.nm()\n".repeat(1 + qr.below(4))
+                    ),
+                )
+            } else {
+                (
+                    "rs",
+                    format!(
+                        "pub struct Q{j};\nimpl Q{j} {{ pub fn nm(&self) -> u64 {{ {j} }} }}\npub fn use_q{j}(x: &Q{j}) {{ {}}}\n",
+                        "x.nm(); ".repeat(1 + qr.below(4))
+                    ),
+                )
+            };
+            q_paths.push(format!("d{}/q{j}.{ext}", j % 3));
+            let p = root.join(&q_paths[j]);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        }
         fs::create_dir_all(root.join(".git")).unwrap();
         let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
         let call = |tool: &str, args: Value| scrutate::mcp::call_tool(&session, tool, &args, &settings, &cancel).structured;
@@ -310,6 +337,18 @@ fn a_limit_cuts_the_filtered_answer_never_before_the_filter() {
                 broken.push(format!("r{r} (n={n}) references def {def} max_results {max}: {why}"));
             }
         }
+        // references with a qualified name: the occurrences of the one definition it names (its
+        // method `nm` on line 2), the first max_results of them
+        let j = qr.below(q);
+        let name = format!("Q{j}.nm");
+        let max = 1 + qr.below(4);
+        rows += 1;
+        let full = call("references", json!({"name": name, "max_results": 5000}));
+        let cut = call("references", json!({"name": name, "max_results": max}));
+        if let Err(why) = kept_of(&whole, &full, &cut, max, true, &|_, d| d.0 == q_paths[j] && d.1 == 2) {
+            broken.push(format!("r{r} (n={n}) references {name} max_results {max}: {why}"));
+        }
+        covered.insert("references qualified name".to_string());
         // the other narrowing arguments: the answer with a limit is the first items of the one without
         let d = rng.below(3);
         let others = [
@@ -923,5 +962,58 @@ fn an_answer_of_exactly_max_results_is_not_cut() {
         }
     }
     assert!(failed.is_empty(), "{}", failed.join("\n"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A qualified name narrows references to the definitions it names before max_results counts:
+/// `Stack::push` after 6 uses of `Other::push`, at every max_results, on the command line and over
+/// MCP, as `Stack::push` and `Stack.push`; a bare `push` still lists both definitions.
+#[test]
+fn a_qualified_name_counts_the_occurrences_of_the_definitions_it_names() {
+    const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("limit_refs_qualified_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let uses = |v: &str, n: usize| (0..n).map(|_| format!("{v}.push(); ")).collect::<String>();
+    fs::write(
+        root.join("a_other.rs"),
+        format!("pub struct Other;\nimpl Other {{ pub fn push(&self) {{}} }}\npub fn use_other(o: &Other) {{ {}}}\n", uses("o", 6)),
+    )
+    .unwrap();
+    fs::write(
+        root.join("z_stack.rs"),
+        format!("pub struct Stack;\nimpl Stack {{ pub fn push(&self) {{}} }}\npub fn use_stack(s: &Stack) {{ {}}}\n", uses("s", 3)),
+    )
+    .unwrap();
+    std::process::Command::new(BIN).arg("index").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap();
+    let run = |args: &[&str]| -> Value {
+        let out =
+            std::process::Command::new(BIN).args(args).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").env("SCRUTATE_NO_SESSION", "1").output().unwrap();
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|_| panic!("{args:?}: {}", String::from_utf8_lossy(&out.stdout)))
+    };
+    let shape = |v: &Value| -> (Vec<String>, usize) {
+        let defs = v["result"]["definitions"].as_array().cloned().unwrap_or_default();
+        (
+            defs.iter().map(|d| d["qualname"].as_str().unwrap_or("").to_string()).collect(),
+            defs.iter().map(|d| d["references"].as_array().map_or(0, Vec::len)).sum(),
+        )
+    };
+    let both = shape(&run(&["refs", "push", "--max-results", "5000", "--json"])).0;
+    assert_eq!(both, ["Other.push", "Stack.push"], "a bare name lists every definition");
+    let settings = scrutate::mcp::Settings::new(None);
+    let cancel = Arc::default();
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    for name in ["Stack::push", "Stack.push"] {
+        for m in [1usize, 2, 4, 5, 50] {
+            let ms = m.to_string();
+            let cli = shape(&run(&["refs", name, "--max-results", &ms, "--json"]));
+            assert_eq!(cli, (vec!["Stack.push".to_string()], 4.min(m)), "refs {name} --max-results {m}");
+            let mcp = scrutate::mcp::call_tool(&session, "references", &json!({"name": name, "max_results": m}), &settings, &cancel);
+            assert_eq!(shape(&mcp.structured), (vec!["Stack.push".to_string()], 4.min(m)), "MCP references {name} max_results {m}: {}", mcp.text);
+        }
+    }
+    // a dropped argument is never silent: def with textual is refused, as the command line refuses it
+    let both = scrutate::mcp::call_tool(&session, "references", &json!({"name": "push", "def": "z_stack.rs", "textual": true}), &settings, &cancel);
+    assert!(both.is_error && both.text.contains("`def` cannot be used with `textual`"), "{}", both.text);
     let _ = fs::remove_dir_all(&root);
 }

@@ -3128,11 +3128,11 @@ impl Resolved {
         if listed < all { format!("unresolved ({all}, the first {listed} listed):") } else { format!("unresolved ({all}):") }
     }
 
-    /// The line a `--def` answer for `only` gives before its unresolved occurrences.
-    pub fn others_line(&self, only: i64) -> String {
+    /// The line a `--def` or qualified-name answer for `only` gives before its unresolved occurrences.
+    pub fn others_line(&self, only: &[i64]) -> String {
         let elsewhere = match &self.narrowed {
             Some(n) => n.elsewhere,
-            None => (self.occurrences.len() - self.unresolved().count() - self.of(only).count()) as u64,
+            None => (self.occurrences.len() - self.unresolved().count() - only.iter().map(|&id| self.of(id).count()).sum::<usize>()) as u64,
         };
         let read = if self.truncated { ", in the occurrences read before the answer stopped" } else { "" };
         format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved{read})", self.unresolved_count())
@@ -3154,10 +3154,10 @@ pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Query {
     crate::instant::Query { pattern, max_results: Some(max_results), first_in_path_order: true, ..Default::default() }
 }
 
-/// Plain-text rendering of `Names::references`, optionally for the one definition `only`.
-pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
+/// Plain-text rendering of `Names::references`, optionally for the definitions `only`.
+pub fn resolved_text(r: &Resolved, only: Option<&[i64]>) -> String {
     let mut out = String::new();
-    for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
+    for d in r.definitions.iter().filter(|d| only.is_none_or(|o| o.contains(&d.id))) {
         let occ: Vec<&Occurrence> = r.of(d.id).collect();
         let outside = if r.outside.contains(&d.id) { "  (outside the filter)" } else { "" };
         out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references){outside}\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname), occ.len()));
@@ -3169,8 +3169,8 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
             out.push_str(&format!("    {}:{}:{}: {}{mark}\n", shown(&o.path), o.line, o.column, o.shown_line().0));
         }
     }
-    if let Some(id) = only {
-        out.push_str(&r.others_line(id));
+    if let Some(ids) = only {
+        out.push_str(&r.others_line(ids));
         out.push('\n');
     }
     if only.is_none() || r.unresolved_count() > 0 {

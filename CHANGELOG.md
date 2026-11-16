@@ -465,6 +465,12 @@ incompatible index by itself, and that is never breaking.
   file (`b.py [file]`).
 - `refs` (MCP `references`), resolved or `--textual`, says it stopped only when more occurrences
   exist, where an answer of exactly `--max-results` occurrences said it was cut.
+- `refs Stack::push` (MCP `references` with a qualified name) keeps the definitions `symbol`
+  finds for that name and counts `--max-results` over their uses, where it read the name as its
+  last part, listed every `push` and could fill the answer with another one's uses before any of
+  `Stack.push`'s ([CLI](docs/CLI.md#refs)).
+- The MCP `references` tool refuses `def` with `textual`, as the command line does, where it
+  answered the textual form and dropped `def` without a word.
 - `refs NAME --def PATH` (MCP `references` with `def`) counts `--max-results` over the occurrences
   that resolve to that definition, where it counted every occurrence of the name first and could
   answer "0 references" for a definition in use. It keeps only that definition's occurrences,

@@ -185,7 +185,27 @@ impl<'a> Names<'a> {
     /// a definition `--def` names is picked among these before anything is read.
     pub fn definitions_of(&self, name: &str) -> Result<Vec<ChunkRow>> {
         let bare = crate::intel::bare_name(self.s, name)?;
-        Ok(self.s.ix.definitions(&bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, &bare)).collect())
+        let named = self.named(name)?;
+        Ok(self
+            .s
+            .ix
+            .definitions(&bare)?
+            .into_iter()
+            .filter(|d| crate::resolve::same_name(&d.name, &bare) && named.as_ref().is_none_or(|n| n.contains(&d.id)))
+            .collect())
+    }
+
+    /// The definitions a qualified name (`Stack::push`, `Stack.push`) names, found as `symbol`
+    /// finds them; `None` for a bare name, which stands for every definition of it.
+    pub fn named(&self, name: &str) -> Result<Option<Vec<i64>>> {
+        let typed = name.trim();
+        let bare = crate::intel::bare_name(self.s, typed)?;
+        let Some(rest) = typed.strip_suffix(bare.as_str()) else { return Ok(None) };
+        if rest.trim_start_matches('.').is_empty() || rest == "r#" {
+            return Ok(None);
+        }
+        let hits = self.s.find_symbol(typed, REFS_KIND_RESOLVE_MAX as usize)?;
+        Ok(Some(hits.iter().filter(|h| crate::resolve::same_name(&h.name, &bare)).map(|h| h.id).collect()))
     }
 
     /// `references_in`, keeping only the occurrences that resolve to a definition `keep` admits,
