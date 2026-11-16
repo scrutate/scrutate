@@ -80,6 +80,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("text.rs", "OWN", "keyed by canonical root"),
     ("textindex.rs", "TABLE", "per thread, a reused trigram mask table"),
     ("watch.rs", "NOTES", "numbers the watch notes of the process, so two sessions of one root name their cookies apart"),
+    ("watch.rs", "BETWEEN_LIST_AND_WATCH", "a test's step between a watch's listing and its watches, keyed by root"),
 ];
 
 const MUTABLE: &[&str] = &["Mutex", "RwLock", "Cell<", "Cell::", "RefCell", "Atomic", "OnceCell", "OnceLock", "UnsafeCell"];

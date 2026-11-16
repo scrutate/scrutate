@@ -1394,12 +1394,66 @@ fn unwatched_message(unwatched: usize, of: usize, e: &notify::Error) -> String {
     format!("[scrutate] could not watch {unwatched} of {of} directories ({e}); they are checked on a timer instead, every 1 to 30 s{limit}")
 }
 
+/// How many times the tree is listed again when it changed while its watches were set (a
+/// directory it listed gone before its watch, or one made then); past that every directory goes
+/// on the timer.
+#[cfg(target_os = "linux")]
+const SYNC_PASSES: usize = 3;
+
+/// A step a test runs between a watch's listing of the tree and its watches.
+#[cfg(all(test, not(target_os = "macos")))]
+pub(crate) type Step = Box<dyn FnOnce() + Send>;
+
+/// A test's step between a watch's listing of the tree and its watches, by root.
+#[cfg(all(test, not(target_os = "macos")))]
+pub(crate) static BETWEEN_LIST_AND_WATCH: Mutex<Vec<(PathBuf, Step)>> = Mutex::new(Vec::new());
+
+#[cfg(all(test, not(target_os = "macos")))]
+fn between_list_and_watch(root: &Path) {
+    let f = {
+        let mut l = lock(&BETWEEN_LIST_AND_WATCH);
+        l.iter().position(|(r, _)| r == root).map(|i| l.remove(i).1)
+    };
+    if let Some(f) = f {
+        f();
+    }
+}
+
 /// Linux: walk the tree and set one non-recursive inotify watch per directory the walks enter, so
 /// ignored trees cost no watches; new directories get a watch and ones that left lose theirs. Those
-/// left without one (past the watch limit) go to `Poll`. Only an error on `root` itself is returned.
+/// left without one (past the watch limit) go to `Poll`; a tree that changed while it was listed is
+/// listed again. Only an error on `root` itself is returned.
 #[cfg(target_os = "linux")]
 fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: Option<&Walked>) -> Result<Walked> {
-    let mut now = Walked::new(root, code);
+    let mut pass = 1;
+    loop {
+        let mut now = Walked::new(root, code);
+        #[cfg(test)]
+        between_list_and_watch(root);
+        // a directory listed and gone before its watch, or made after the listing in a directory
+        // watched after it: the tree changed while it was listed, and a new name (a move) or a new
+        // directory is in no listing yet and has no watch, so it is listed again
+        let gone = watch_listed(watcher, root, &mut now, old)?;
+        if !gone && Walked::new(root, code).watched() == now.watched() {
+            return Ok(now);
+        }
+        if pass == SYNC_PASSES {
+            eprintln!(
+                "[scrutate] the tree changed each of the {SYNC_PASSES} times its watches were set; every directory is checked on a timer instead, every 1 to 30 s"
+            );
+            now.poll_dirs = now.code.union(&now.text).cloned().collect();
+            now.poll_dirs.sort();
+            now.unwatched = now.poll_dirs.len();
+            return Ok(now);
+        }
+        pass += 1;
+    }
+}
+
+/// The watches of the directories `now` lists; a directory that exists and cannot be watched (the
+/// watch limit, no permission) goes on the timer. -> whether a listed directory was gone.
+#[cfg(target_os = "linux")]
+fn watch_listed(watcher: &mut impl Watcher, root: &Path, now: &mut Walked, old: Option<&Walked>) -> Result<bool> {
     let dirs = now.watched();
     if let Some(old) = old {
         // removals first: a directory moved inside the tree has one inotify watch under both names
@@ -1418,10 +1472,13 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
     let tree_dirs = order.len();
     order.extend(rules_order);
     watcher.watch(root, RecursiveMode::NonRecursive).with_context(|| format!("watch {}", crate::paths::plain_path(root).display()))?;
-    let (mut first, mut first_rules) = (None, None);
+    // after this every directory the listing holds is watched or on the timer: the watch covers it
+    let (mut first, mut first_rules, mut gone) = (None, None, false);
     for (i, d) in order.iter().enumerate().skip(1) {
         if let Err(e) = watcher.watch(d, RecursiveMode::NonRecursive) {
-            if i < tree_dirs {
+            if std::fs::symlink_metadata(d).is_err() {
+                gone = true;
+            } else if i < tree_dirs {
                 now.unwatched += 1;
                 now.poll_dirs.push(d.clone());
                 first.get_or_insert(e);
@@ -1443,7 +1500,7 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
             order.len() - tree_dirs
         );
     }
-    Ok(now)
+    Ok(gone)
 }
 
 /// Windows: one recursive watch on the root (`ReadDirectoryChangesW`), plus one non-recursive watch
@@ -1452,6 +1509,8 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
 #[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
 fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: Option<&Walked>) -> Result<Walked> {
     let now = Walked::new(root, code);
+    #[cfg(test)]
+    between_list_and_watch(root);
     if old.is_none() {
         watcher.watch(root, RecursiveMode::Recursive).with_context(|| format!("watch {}", crate::paths::plain_path(root).display()))?;
     }
@@ -2413,6 +2472,51 @@ mod tests {
         fn kind() -> notify::WatcherKind {
             notify::WatcherKind::NullWatcher
         }
+    }
+
+    /// A watcher under which the tree changes at every pass: watching `src/s{k}` moves it to
+    /// `src/s{k + 1}` first, so the watch of a listed directory always finds its path gone.
+    #[cfg(target_os = "linux")]
+    struct Moving;
+
+    #[cfg(target_os = "linux")]
+    impl Watcher for Moving {
+        fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+            Ok(Moving)
+        }
+        fn watch(&mut self, path: &Path, _: RecursiveMode) -> notify::Result<()> {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if let Some(k) = name.strip_prefix('s').and_then(|k| k.parse::<u32>().ok()) {
+                std::fs::rename(path, path.with_file_name(format!("s{}", k + 1))).unwrap();
+                return Err(notify::Error::path_not_found());
+            }
+            Ok(())
+        }
+        fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+        fn kind() -> notify::WatcherKind {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    /// A tree that changes each time its watches are set is listed again at most `SYNC_PASSES`
+    /// times; after that every directory it lists is on the timer.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_tree_that_keeps_changing_while_watched_goes_on_the_timer() {
+        let root = tree("keeps_moving");
+        std::fs::create_dir_all(root.join("src/s0")).unwrap();
+        std::fs::write(root.join("src/s0/a.py"), "x = 1\n").unwrap();
+        let walked = sync_watches(&mut Moving, &root, &CodeWalk::new(&root), None).unwrap();
+        let moved_to = root.join(format!("src/s{SYNC_PASSES}"));
+        assert!(moved_to.is_dir(), "the tree was not listed {SYNC_PASSES} times");
+        assert!(
+            walked.poll_dirs.contains(&root) && walked.poll_dirs.contains(&root.join("src")),
+            "not every directory is on the timer: {:?}",
+            walked.poll_dirs
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[cfg(target_os = "linux")]

@@ -615,8 +615,12 @@ event, so until then a read asks for every file (`watch::Notes`). Each walk also
 the tree names; on Linux their directories are watched after the tree's own; on Windows they are
 watched beside the recursive watch on the root; on macOS they are polled. Whatever got no watch
 (Linux past `max_user_watches`, a rule directory, the rule files above a macOS root) goes to
-`Poll`, which lists those directories or stats those files on a timer and hands each change to
-the burst as the event a watch would have sent, so no directory without a watch makes a burst
+`Poll`; a listed directory gone before its watch was set goes nowhere, since the tree changed
+while it was listed: it is listed again (`SYNC_PASSES`, 3, at most, then every directory goes to
+`Poll`), as it is when a listing after the watches differs from the one before (a directory
+made meanwhile).
+`Poll` lists those directories or stats those files on a timer and hands each change to the
+burst as the event a watch would have sent, so no directory without a watch makes a burst
 walk the tree. A burst hands its change
 set (the files it names, or every file) to `Repo::update_stores`. There is no new write path: the
 watcher is one more writer behind the same SQLite transaction and text index lock file. The

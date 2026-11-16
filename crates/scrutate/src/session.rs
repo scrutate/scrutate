@@ -2485,6 +2485,109 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// What a step between the watch's listing of the tree and its watches does to `d`.
+    #[cfg(not(target_os = "macos"))]
+    #[derive(Clone, Copy, Debug)]
+    enum Meanwhile {
+        Moved,
+        Removed,
+        Made,
+    }
+
+    /// A tree that changes while its watches are set is watched as it is after: a directory moved
+    /// after the watch listed it, removed, or made then. A file written later under the moved copy,
+    /// in a new directory two levels under it, or in the new directory reaches find_symbol and
+    /// grep_code, through a session that applies its watch's bursts (`serve --watch`) or not.
+    #[cfg(not(target_os = "macos"))]
+    fn a_tree_changed_while_its_watches_are_set(meanwhile: Meanwhile, apply: bool) {
+        let dir = std::env::temp_dir().join(format!("scrutate_session_meanwhile_{}_{meanwhile:?}_{apply}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::create_dir_all(dir.join("d/e")).unwrap();
+        std::fs::write(dir.join("a.py"), "def top():\n    return 0\n").unwrap();
+        std::fs::write(dir.join("d/e/old.py"), "def was_in_d():\n    return 'zqx_needle'\n").unwrap();
+        let root = std::fs::canonicalize(&dir).unwrap();
+        let s = Arc::new(Session::open_watched(&root, Every::given(None)).unwrap());
+        s.build().unwrap();
+        let r = root.clone();
+        let step: Box<dyn FnOnce() + Send> = match meanwhile {
+            Meanwhile::Moved => Box::new(move || std::fs::rename(r.join("d"), r.join("m")).unwrap()),
+            Meanwhile::Removed => Box::new(move || std::fs::remove_dir_all(r.join("d")).unwrap()),
+            Meanwhile::Made => Box::new(move || {
+                std::fs::create_dir_all(r.join("n/e")).unwrap();
+                std::fs::write(r.join("n/e/made.py"), "def made_then():\n    return 'zqx_needle'\n").unwrap();
+            }),
+        };
+        crate::watch::BETWEEN_LIST_AND_WATCH.lock().unwrap().push((root.clone(), step));
+        s.watch(apply).unwrap();
+        let t0 = Instant::now();
+        while !read(&s.fresh).watching() {
+            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(crate::watch::BETWEEN_LIST_AND_WATCH.lock().unwrap().iter().all(|(r, _)| r != &root), "the step never ran");
+        let settings = crate::mcp::Settings::new(None);
+        let grep = |s: &Arc<Session>| crate::mcp::call_tool(s, "grep_code", &serde_json::json!({"pattern": "zqx_needle"}), &settings, &Arc::default()).text;
+        let found =
+            |s: &Arc<Session>, name: &str| s.run_scanned(&Op::Symbol { name: name.into(), limit: 1, exact: true }).unwrap().1.is_ok_and(|a| !a.is_empty());
+        // a file in the tree reaches both tools within the bound, or the step's name says which did not
+        let reaches = |rel: &str, name: &str| {
+            let t0 = Instant::now();
+            loop {
+                let (sym, text) = (found(&s, name), grep(&s).contains(rel));
+                if sym && text {
+                    return;
+                }
+                assert!(t0.elapsed() < Duration::from_secs(10), "{meanwhile:?} (apply {apply}): {rel} reached find_symbol {sym}, grep_code {text}");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        };
+        let base = match meanwhile {
+            Meanwhile::Moved => "m/e",
+            Meanwhile::Removed => "z/w",
+            Meanwhile::Made => "n/e",
+        };
+        let write = |rel: &str, name: &str| {
+            std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(root.join(rel), format!("def {name}():\n    return 'zqx_needle'\n")).unwrap();
+        };
+        match meanwhile {
+            Meanwhile::Moved => reaches("m/e/old.py", "was_in_d"),
+            Meanwhile::Made => reaches("n/e/made.py", "made_then"),
+            Meanwhile::Removed => {}
+        }
+        write(&format!("{base}/later.py"), "written_later");
+        reaches(&format!("{base}/later.py"), "written_later");
+        write(&format!("{base}/x/y/deep.py"), "written_deep");
+        reaches(&format!("{base}/x/y/deep.py"), "written_deep");
+        if let Meanwhile::Removed = meanwhile {
+            assert!(!found(&s, "was_in_d") && !grep(&s).contains("d/e/old.py"), "the removed directory's file is still answered");
+        }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_directory_moved_while_the_watches_are_set_is_watched_under_its_new_name() {
+        a_tree_changed_while_its_watches_are_set(Meanwhile::Moved, false);
+        a_tree_changed_while_its_watches_are_set(Meanwhile::Moved, true);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_directory_removed_while_the_watches_are_set_leaves_the_rest_watched() {
+        a_tree_changed_while_its_watches_are_set(Meanwhile::Removed, false);
+        a_tree_changed_while_its_watches_are_set(Meanwhile::Removed, true);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_directory_made_while_the_watches_are_set_is_watched() {
+        a_tree_changed_while_its_watches_are_set(Meanwhile::Made, false);
+        a_tree_changed_while_its_watches_are_set(Meanwhile::Made, true);
+    }
+
     /// A caller greeted for the old tree before the session followed its link to another one
     /// gets no answer, whenever its request comes.
     #[cfg(unix)]
@@ -3396,6 +3499,33 @@ mod tests {
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("late_{k}"), limit: 1, exact: true }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {k} in the directory made during the build missed: {st:?}");
             std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory moved while a kqueue is built, after its listing of the directories and before
+    /// their watches: a write under the moved copy, and in a new directory two levels under it, is
+    /// in the next reads' answers, as the watches of `sync_watches` give on Linux.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_directory_moved_while_the_kqueue_is_built_is_watched_under_its_new_name() {
+        let (root, s, notes) = without_fsevents("kqueue_moved");
+        assert!(notes.kq_in_place_now());
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        let (from, to) = (root.join("src/d0"), root.join("src/m0"));
+        notes.kq_between(move || std::fs::rename(&from, &to).unwrap());
+        assert!(notes.kq_in_place_now());
+        let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
+        assert!(root.join("src/m0").is_dir(), "the move between the listing and the watches never ran");
+        for (k, rel) in ["src/m0/later.py", "src/m0/x/y/deep.py"].iter().enumerate() {
+            std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(root.join(rel), format!("def moved_{k}():\n    return {k}\n")).unwrap();
+            let t0 = Instant::now();
+            while !found(&s, &format!("moved_{k}")) {
+                assert!(t0.elapsed() < Duration::from_secs(10), "{rel}, written under the copy moved during the build, missed");
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
         drop(s);
         let _ = std::fs::remove_dir_all(&root);

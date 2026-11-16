@@ -460,6 +460,12 @@ incompatible index by itself, and that is never breaking.
   says so: a last line counts the functions in such a bucket, says that a near pair among them
   that shares no other bucket is not in the answer, and names the first five (`crowded` in the
   JSON, the MCP result and the Python bindings) ([CLI](docs/CLI.md)).
+- `watch`, `serve --watch` and the watch behind every running server's reads (on Linux) see
+  every file under a directory moved, removed or made while their watches were being set: the
+  tree is walked again when a directory it listed was gone before its watch or one came, at most
+  3 times, after which every directory is checked on the timer. A directory moved in that window
+  was watched under neither name, and files made under it afterwards reached neither the index
+  nor `grep_code` ([CLI](docs/CLI.md#watch)).
 - `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
   of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
   When no definition of the name has a kept kind it answers at once and says so; otherwise it
