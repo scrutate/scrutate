@@ -418,9 +418,9 @@ fn a_filtered_search_short_at_its_bound_says_so() {
 
 /// A tree of `functions` functions named `token` (what the exact source finds, 60 more each time
 /// the candidates widen), 1,000 classes without the word (a sixth of the chunks or more: too many
-/// for the kind to narrow the candidates at once) and `holders` classes that hold it, indexed, and
-/// its root.
-fn search_bound_tree(name: &str, functions: usize, holders: usize) -> std::path::PathBuf {
+/// for the kind to narrow the candidates at once), `holders` classes that hold it and `parsers`
+/// classes that hold "parse", indexed, and its root.
+fn search_bound_tree(name: &str, functions: usize, holders: usize, parsers: usize) -> std::path::PathBuf {
     const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -435,6 +435,8 @@ fn search_bound_tree(name: &str, functions: usize, holders: usize) -> std::path:
     }
     let body: String = (0..holders).map(|k| format!("class Holder{k}:\n    v = \"token\"\n\n\n")).collect();
     fs::write(root.join("holders.py"), body).unwrap();
+    let body: String = (0..parsers).map(|k| format!("class Parser{k}:\n    v = \"parse\"\n\n\n")).collect();
+    fs::write(root.join("parsers.py"), body).unwrap();
     let out = std::process::Command::new(BIN)
         .arg("index")
         .current_dir(&root)
@@ -447,12 +449,16 @@ fn search_bound_tree(name: &str, functions: usize, holders: usize) -> std::path:
     root
 }
 
-/// `search token --kind class -k 10` on `root`, with no semantic model: (CLI JSON, CLI text, MCP
-/// `search_code` text, its structured content from `serve --structured`).
-fn filtered_search(root: &Path) -> (Value, String, String, Value) {
+/// `search token --kind class -k 10` on `root`, with `alt` as another phrasing and no semantic
+/// model: (CLI JSON, CLI text, MCP `search_code` text, its structured content from `serve
+/// --structured`).
+fn filtered_search(root: &Path, alt: Option<&str>) -> (Value, String, String, Value) {
     const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
     let run = |json: bool| {
         let mut args = vec!["search", "token", "--kind", "class", "-k", "10"];
+        if let Some(a) = alt {
+            args.extend(["--alt", a]);
+        }
         if json {
             args.push("--json");
         }
@@ -479,7 +485,11 @@ fn filtered_search(root: &Path) -> (Value, String, String, Value) {
     let mut input = serve.stdin.take().unwrap();
     let mut output = std::io::BufReader::new(serve.stdout.take().unwrap());
     let initialize = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}});
-    let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "search_code", "arguments": {"query": "token", "kinds": ["class"], "k": 10}}});
+    let mut arguments = json!({"query": "token", "kinds": ["class"], "k": 10});
+    if let Some(a) = alt {
+        arguments["alt_queries"] = json!([a]);
+    }
+    let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "search_code", "arguments": arguments}});
     writeln!(input, "{initialize}\n{call}").unwrap();
     let answer = (0..)
         .map_while(|_| {
@@ -499,8 +509,8 @@ fn filtered_search(root: &Path) -> (Value, String, String, Value) {
 /// with none of the kind, and every form of the answer says so.
 #[test]
 fn a_filtered_search_that_finds_none_by_its_bound_says_it_stopped_there() {
-    let root = search_bound_tree("search_bound_none", 5000, 0);
-    let (json, text, mcp, structured) = filtered_search(&root);
+    let root = search_bound_tree("search_bound_none", 5000, 0, 0);
+    let (json, text, mcp, structured) = filtered_search(&root, None);
     let _ = fs::remove_dir_all(&root);
     let stop = scrutate::search::FILTER_STOP;
     assert!(json["result"].as_array().is_none_or(Vec::is_empty) && json["stopped_reason"] == json!(stop), "{json}");
@@ -512,13 +522,27 @@ fn a_filtered_search_that_finds_none_by_its_bound_says_it_stopped_there() {
 /// the answer holds the three and says nothing of a bound.
 #[test]
 fn a_filtered_search_that_runs_out_before_its_bound_says_nothing_of_it() {
-    let root = search_bound_tree("search_bound_short", 200, 3);
-    let (json, text, mcp, structured) = filtered_search(&root);
+    let root = search_bound_tree("search_bound_short", 200, 3, 0);
+    let (json, text, mcp, structured) = filtered_search(&root, None);
     let _ = fs::remove_dir_all(&root);
     let stop = scrutate::search::FILTER_STOP;
     assert!(json["result"].as_array().map_or(0, Vec::len) == 3 && json["stopped_reason"].is_null(), "{json}");
     assert!(!text.contains(stop) && text.contains("Holder"), "{text}");
     assert!(!mcp.contains(stop) && structured["stopped_reason"].is_null(), "{mcp}\n{structured}");
+}
+
+/// A search with another phrasing reads each phrasing's candidates up to its bound and fuses them:
+/// "token" stops at its bound with no class, "parse" finds 15 classes, and the answer holds 10 and
+/// says nothing of a bound.
+#[test]
+fn a_fused_search_with_k_found_says_nothing_of_a_bound_one_phrasing_reached() {
+    let root = search_bound_tree("search_bound_fused", 5000, 0, 15);
+    let (json, text, mcp, structured) = filtered_search(&root, Some("parse"));
+    let _ = fs::remove_dir_all(&root);
+    let stop = scrutate::search::FILTER_STOP;
+    assert!(json["result"].as_array().map_or(0, Vec::len) == 10 && json["stopped_reason"].is_null(), "{json}");
+    assert!(!text.contains(stop) && text.contains("Parser"), "{text}");
+    assert!(!mcp.contains(stop) && structured["stopped_reason"].is_null() && structured["result"].as_array().map_or(0, Vec::len) == 10, "{mcp}\n{structured}");
 }
 
 /// A name written as a path finds its definition by the stored qualified names however many share
