@@ -14,7 +14,7 @@
 //! a write of this process up to `stores::OWN_WRITE_WAIT`, then answers with what is `Pending`.
 //!
 //! A command line call may use the session `serve` runs, through a socket under the
-//! repository's `.scrutate/` (`listen`, `ask`; Unix only). The session is a cache of work there:
+//! repository's `.scrutate/` on Unix or a named pipe on Windows (`listen`, `ask`). The session is a cache of work there:
 //! anything it cannot vouch for makes the command line do the work itself.
 
 use std::path::{Path, PathBuf};
@@ -157,7 +157,7 @@ pub struct Session {
     kept: crate::files::KeptLook,
     /// what `watch` keeps for the reads, from `open_watched`
     notes: RwLock<Option<crate::fresh::Watching>>,
-    /// the socket `listen` offers this session at, while it is the root's
+    /// the socket or pipe `listen` offers this session at, while it is the root's
     listening: Mutex<Option<PathBuf>>,
     /// ends that watch when the session is dropped
     unwatch: Arc<AtomicBool>,
@@ -308,11 +308,15 @@ impl Session {
         *seed = fresh;
         *lock(&self.opener) = opener;
         if moved {
-            // no call made in the old tree is answered from this one
-            if let Some(socket) = lock(&self.listening).take() {
-                let _ = std::fs::remove_file(socket);
-            }
             *write(&self.root) = now.clone();
+            // no call made in the old tree is answered from this one; a listener woken after the
+            // root changed lets the old pipe's name go
+            if let Some(at) = lock(&self.listening).take() {
+                #[cfg(unix)]
+                let _ = std::fs::remove_file(at);
+                #[cfg(windows)]
+                windows::wake(&at);
+            }
             if self.notes().is_some() {
                 let (fresh, notes) = crate::fresh::for_session(&now);
                 *write(&self.fresh) = fresh;
@@ -1418,6 +1422,13 @@ mod windows {
     /// The session's end. Its pipe goes away with the process, so there is nothing to remove.
     pub struct Listening;
 
+    /// Wakes a listener waiting on the pipe `name` with one caller that sends nothing, so it sees
+    /// the root moved and lets the name go without waiting for a real caller.
+    pub(super) fn wake(name: &Path) {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _ = std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION).open(name);
+    }
+
     /// Offer `session` to command line calls of the same user, until the process exits. None when
     /// it cannot (another session of this root holds the pipe, or anyone else holds its name):
     /// command line calls then do their own work. `answer` prints an answer as the command line
@@ -1440,22 +1451,33 @@ mod windows {
             }
         };
         let hello = serde_json::to_string(&me).ok()?;
+        *lock(&session.listening) = Some(PathBuf::from(&shown));
         let session = Arc::clone(session);
         let open = Arc::new(AtomicUsize::new(0));
         std::thread::Builder::new()
             .name("scrutate-session".into())
             .spawn(move || {
+                // the session has followed its root's link to another tree: no caller of this
+                // tree is answered, and the pipe's name goes with its last instance
+                let moved = || {
+                    let moved = session.root() != root;
+                    if moved {
+                        debug(&format!("stops listening at {shown}: the root moved to another tree"));
+                    }
+                    moved
+                };
                 let mut next = Some(first);
                 while let Some(h) = next.take() {
                     let Ok(pipe) = Pipe::new(h) else { break };
+                    // also before the wait: reopen's wake finds no instance while the last is served
+                    if moved() {
+                        break;
+                    }
                     let connected = match pipe.io(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) }) {
                         Ok(_) => true,
                         Err(e) => e.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32),
                     };
-                    // the session has followed its root's link to another tree: no caller of this
-                    // tree is answered, and the pipe's name goes with its last instance
-                    if session.root() != root {
-                        debug(&format!("stops listening at {shown}: the root moved to another tree"));
+                    if moved() {
                         break;
                     }
                     // the next caller finds an instance waiting while this one is served
@@ -1693,6 +1715,62 @@ mod windows {
             assert!(s.reopen().unwrap(), "the root moved");
             let got = asked(&v1, &request);
             assert!(!matches!(got, Ok(Some(_))), "a call in the old tree was answered from the new one: {got:?}");
+        }
+
+        /// Once the session's root moves to another tree, the old tree's pipe name is free at once,
+        /// with no caller needed to wake the listener: a session started in the old tree listens.
+        #[test]
+        fn a_new_session_in_the_old_tree_listens_once_the_root_moves() {
+            const NAME: &str = "session::windows::tests::a_new_session_in_the_old_tree_listens_once_the_root_moves";
+            if std::env::var_os("SCRUTATE_TEST_MOVES").is_none() {
+                let out = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", NAME, "--test-threads=1"])
+                    .env("SCRUTATE_TEST_MOVES", "1")
+                    .env("SCRUTATE_SESSION_WAIT_MS", "10000")
+                    .output()
+                    .unwrap();
+                let said = String::from_utf8_lossy(&out.stdout);
+                assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+                return;
+            }
+            fn moved_away(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+                Ok(Printed { out: "the session that moved\n".into(), ..Default::default() })
+            }
+            fn stayed(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
+                Ok(Printed { out: "the old tree's own session\n".into(), ..Default::default() })
+            }
+            let base = std::env::temp_dir().join(format!("scrutate_pipe_freed_{}", std::process::id()));
+            for dir in ["v1", "v2"] {
+                std::fs::create_dir_all(base.join(dir).join(".git")).unwrap();
+                std::fs::write(base.join(dir).join("a.py"), "def f():\n    return 1\n").unwrap();
+            }
+            let cur = base.join("cur");
+            if let Err(e) = std::os::windows::fs::symlink_dir(base.join("v1"), &cur) {
+                assert!(std::env::var_os("GITHUB_ACTIONS").is_none(), "{e}");
+                eprintln!("skipped: no link: {e}");
+                return;
+            }
+            let s = Arc::new(Session::open(&cur, Every::given(Some(3600.0))).unwrap());
+            s.build().unwrap();
+            let _listening = listen(&s, moved_away).expect("the session listens");
+            std::fs::remove_dir(&cur).unwrap();
+            std::os::windows::fs::symlink_dir(base.join("v2"), &cur).unwrap();
+            assert!(s.reopen().unwrap(), "the root moved");
+            let v1 = std::fs::canonicalize(base.join("v1")).unwrap();
+            let old = Arc::new(Session::open(&v1, Every::given(Some(3600.0))).unwrap());
+            // the moved session's listener lets the name go on its own thread
+            let until = Instant::now() + Duration::from_secs(5);
+            let listening = loop {
+                match listen(&old, stayed) {
+                    Some(l) => break Some(l),
+                    None if Instant::now() < until => std::thread::sleep(Duration::from_millis(100)),
+                    None => break None,
+                }
+            };
+            assert!(listening.is_some(), "the old tree's pipe name is still held by the session that moved");
+            let request =
+                Request { op: Op::Symbol { name: "f".into(), limit: 1, exact: true }, json: false, max_bytes: 0, offset: 0, outside: None, why: false };
+            assert_eq!(asked(&v1, &request).map(|a| a.map(|(p, _)| p.out)), Ok(Some("the old tree's own session\n".to_string())));
         }
 
         // fails under Wine, which has no integrity levels: the copy exits 4
