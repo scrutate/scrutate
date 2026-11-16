@@ -1013,7 +1013,7 @@ impl<'a> Names<'a> {
                 if line[at + 4..].chars().next().is_some_and(word) {
                     continue;
                 }
-                let class = &line[line[..at].rfind(|c: char| !word(c)).map_or(0, |i| i + 1)..at];
+                let class = &line[line[..at].char_indices().rfind(|&(_, c)| !word(c)).map_or(0, |(i, c)| i + c.len_utf8())..at];
                 if class.starts_with(char::is_uppercase) {
                     classes.insert(class.to_string());
                 }
