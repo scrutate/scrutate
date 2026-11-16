@@ -702,9 +702,11 @@ reader: a SQLite connection with its statement cache, the segment maps and stati
 calls need them, from the open index without its triage (`Index::another`, about one SQLite
 open), up to the limit [CLI](CLI.md#serve-mcp) gives, and kept; the model set is shared
 (`Arc<ModelSet>`). An idle reader lets go of segment maps a write replaced: at once after a write
-of this process, and within 5 s (`RELEASE_EVERY`) of another process's, as the writes' own
-repository does when no write runs, so the deleted files' disk space is freed while the session
-waits for calls. Writes take the shared writer lock; a read beside a write sees the index as of
+of this process, and within 5 s (`RELEASE_EVERY`) of another process's, and the writes' own
+repository with them when no write runs, so the deleted files' disk space is freed while the
+session waits for calls. The 5 s check takes the segments the index names from an idle reader
+that holds a segment store; when none holds one, it releases nothing, the writes' repository
+included. Writes take the shared writer lock; a read beside a write sees the index as of
 its last commit (WAL, one transaction per update, the segment manifest swapped in that
 transaction). The scan before a read is a write, and a call that waited for another call's scan
 does not scan again. The scan waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this
@@ -760,9 +762,11 @@ printing options (`--json`, the byte limit and offset, a search's `--why`); the 
 the change set (every file when it says so), runs it and prints the answer with the command line's own function, and the command
 line writes those bytes and exits with that code. The command line first checks that the socket
 file is a socket this user owns, the peer is this user, and the greeting names the same executable
-(device, inode, size and time; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings
-and root; any difference, error, slow greeting or wait (a write running, every reader busy,
-another process holding the write lock) makes it do the work itself. A socket path too long for a
+(device, inode, size and times; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings
+and root; any difference, error, slow greeting or an answer slower than 60 s makes it do the work
+itself, and so does a session still making its first index with no file in it, which answers
+nothing. A write the session runs is waited for as a read waits for it (above), and a call waits
+for a free reader. A socket path too long for a
 socket address is reached from its directory; the command line goes back by a descriptor of the
 directory it left, and stops with an error if even that fails. The
 language server offers no socket, so `serve` is the one meeting point per root.

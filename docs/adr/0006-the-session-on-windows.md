@@ -43,8 +43,9 @@ path is also one path to test.
   and reverts. A client of another user, below the server's integrity level, restricted or an
   AppContainer one gets nothing, not even the greeting, and so does a client that opened the
   pipe for reading alone (a Low process may: the pipe's label forbids it only to write), which
-  cannot send the byte. A connection's request, all of it, comes within 2 s, and each write to
-  the other end waits at most 2 s. The client does the same with the server's process id before it
+  cannot send the byte. The server waits up to 2 s for that byte, then the request comes within
+  2 s of the greeting, so up to about 4 s in all, and each write to the other end waits at most
+  2 s. The client does the same with the server's process id before it
   reads the greeting, so a pipe of the same name made first by another account (pipe squatting)
   is passed over. The client also reads the pipe's label and drops a pipe below its own level
   (the label stays with the pipe, where a process id can name another process by then), and it reads the server's integrity level and drops a server below its
