@@ -414,6 +414,48 @@ fn of_two_go_modules_one_package_name_names_the_direct_requirement_then_the_one_
 }
 
 #[test]
+fn the_definitions_in_the_package_s_own_directory_come_first_then_the_name_in_its_typed_case() {
+    // sigs.k8s.io/yaml as it ships: its own Marshal at the root, vendored copies below it
+    let t = Tree::new("go_package_dir");
+    t.go_mod("require sigs.k8s.io/yaml v1.4.0");
+    let m = "gomod/sigs.k8s.io/yaml@v1.4.0";
+    t.store(&format!("{m}/goyaml.v2/encode.go"), "package yaml\n\nfunc (e *encoder) marshal(tag string) {\n}\n");
+    t.store(&format!("{m}/goyaml.v2/yaml.go"), "package yaml\n\nfunc Marshal(in interface{}) ([]byte, error) {\n\treturn nil, nil\n}\n");
+    t.store(&format!("{m}/goyaml.v3/yaml.go"), "package yaml\n\nfunc Marshal(in interface{}) ([]byte, error) {\n\treturn nil, nil\n}\n");
+    t.store(
+        &format!("{m}/yaml.go"),
+        "package yaml\n\n// Marshal marshals o into JSON, then the JSON into YAML.\nfunc Marshal(o interface{}) ([]byte, error) {\n\treturn nil, nil\n}\n",
+    );
+    let (code, out, err) = t.run(&["symbol", "--deps", "yaml.Marshal"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let at = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("{needle} missing: {out}"));
+    let root = at("yaml@v1.4.0/yaml.go:");
+    assert!(root < at("goyaml.v2/yaml.go") && root < at("goyaml.v3/yaml.go"), "{out}");
+    if let Some(method) = out.find("encode.go") {
+        assert!(at("goyaml.v2/yaml.go") < method && at("goyaml.v3/yaml.go") < method, "{out}");
+    }
+    let (code, out, err) = t.run(&["read", "--deps", "--symbol", "yaml.Marshal"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let root = out.find("yaml@v1.4.0/yaml.go").unwrap_or_else(|| panic!("{out}"));
+    assert!(out.find("goyaml.v2/yaml.go").is_none_or(|v2| root < v2) && out.find("goyaml.v3/yaml.go").is_none_or(|v3| root < v3), "{out}");
+    // a Python package's own directory before a subpackage below it
+    let t = Tree::new("python_package_dir");
+    t.uv_lock(&[("requests", "2.32.3")]);
+    t.wheel(
+        "requests",
+        "2.32.3",
+        &[
+            ("requests/__init__.py", "from requests.api import get\n"),
+            ("requests/_internal/util.py", "def get(d, k):\n    return d[k]\n"),
+            ("requests/api.py", "def get(url):\n    return url\n"),
+        ],
+    );
+    let (code, out, err) = t.run(&["symbol", "--deps", "requests.get"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.find("requests/api.py").is_some_and(|i| out.find("_internal/util.py").is_none_or(|j| i < j)), "{out}");
+}
+
+#[test]
 fn a_go_module_is_found_by_the_package_name_the_code_uses_without_a_v_suffix_or_go_prefix() {
     let t = Tree::new("go_names");
     t.go_mod("require (\n\tgopkg.in/yaml.v3 v3.0.1\n\tgithub.com/mattn/go-sqlite3 v1.14.22\n)");

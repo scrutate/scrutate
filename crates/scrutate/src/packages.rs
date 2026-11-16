@@ -953,10 +953,69 @@ fn lookup(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, li
     }
 }
 
+/// The directory, from the root of what is read, whose own files hold the definitions a name
+/// means before any other, and their extension: a Go package is the directory at its import path,
+/// a Python package's names are in its directory or its module file. None for Cargo and npm, whose
+/// modules are not directories (a crate root re-exports what its submodules define).
+fn package_dir(l: &Locked, start: &str, prefix: &str) -> Option<(String, &'static str)> {
+    match l.eco {
+        Eco::Go => Some((prefix.to_string(), ".go")),
+        Eco::Python if l.from == From::Store => Some((start.replace('.', "/"), ".py")),
+        Eco::Cargo | Eco::Npm | Eco::Python => None,
+    }
+}
+
+/// Whether `path` is a file directly in `dir` with extension `ext`, or the module file `dir.ext`.
+fn in_package(path: &str, dir: &str, ext: &str) -> bool {
+    let inside = if dir.is_empty() { Some(path) } else { path.strip_prefix(&format!("{dir}/")) };
+    inside.is_some_and(|f| !f.contains('/') && f.ends_with(ext)) || path == format!("{dir}{ext}")
+}
+
+/// `lookup`, with the definitions in the package's own directory first, and in each part a name
+/// as typed (`Marshal`) before one that matches only without its case (`marshal`). Symbols are
+/// looked up in that directory on their own first, so none of them is cut by the limit.
+fn ordered(run: &mut dyn FnMut(&Op) -> Result<Answer>, rest: &str, read: bool, limit: usize, exact: bool, dir: Option<(String, &str)>) -> Result<Answer> {
+    let Some((dir, ext)) = dir else { return lookup(run, rest, read, limit, exact) };
+    let want = rest.rsplit("::").next().unwrap_or(rest).rsplit('.').next().unwrap_or(rest);
+    let own = |p: &str| in_package(p, &dir, ext);
+    let mut own_hits = Vec::new();
+    if !read {
+        let globs = if dir.is_empty() { vec![format!("/*{ext}")] } else { vec![format!("/{dir}/*{ext}"), format!("/{dir}{ext}")] };
+        let filter = crate::filter::Filter { globs, ..Default::default() };
+        let scoped = |n: &str| Op::Symbol { name: n.to_string(), limit, exact }.scoped(filter.clone());
+        let mut got = run(&scoped(rest))?;
+        if got.is_empty() && want != rest {
+            got = run(&scoped(want))?;
+        }
+        if let Answer::Hits { hits, .. } = got {
+            own_hits = hits.into_iter().filter(|h| own(&h.path)).collect();
+        }
+    }
+    let mut a = lookup(run, rest, read, limit, exact)?;
+    match &mut a {
+        Answer::Hits { hits, stopped, .. } => {
+            let others: Vec<crate::search::Hit> = std::mem::take(hits).into_iter().filter(|h| !own_hits.iter().any(|o| o.id == h.id)).collect();
+            let mut all: Vec<crate::search::Hit> = std::mem::take(&mut own_hits).into_iter().chain(others).collect();
+            all.sort_by_key(|h| (!own(&h.path), h.name != want));
+            if all.len() > limit {
+                all.truncate(limit);
+                *stopped = Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT });
+            }
+            *hits = all;
+        }
+        // shortcut: a read takes no filter, so its definitions are put in order after the lookup;
+        // a name with more than READ_DEFINITIONS of them could lose the package's own
+        Answer::Definitions(defs, ..) => defs.sort_by_key(|d| (!own(&d.0.path), d.0.name != want)),
+        _ => {}
+    }
+    Ok(a)
+}
+
 /// The answer to `symbol --deps` (`read`: `read --symbol --deps`).
 pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) -> Result<Answer> {
     let root = std::fs::canonicalize(&s.ix.root).unwrap_or_else(|_| s.ix.root.clone());
     let (l, rest) = split(&root, name)?;
+    let start = name[..name.len() - rest.len()].trim_end_matches(['.', ':']);
     match &l.from {
         From::Other(how) => bail!("{} {} comes from {}, which --deps does not read", l.name, l.version, crate::fmt::echo(how)),
         From::Path(dir) => {
@@ -973,7 +1032,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
                 bail!("{} is {} in {}, outside the repository: refused", l.name, crate::fmt::echo(dir), l.lockfile);
             };
             let prefix = shown_path(&root, &full);
-            let mut a = lookup(&mut |op| crate::ops::run_in(s, op), rest, read, limit, exact)?;
+            let mut a = ordered(&mut |op| crate::ops::run_in(s, op), rest, read, limit, exact, package_dir(&l, start, &prefix))?;
             if !prefix.is_empty() {
                 let under = |p: &str| p.starts_with(&format!("{prefix}/"));
                 match &mut a {
@@ -995,7 +1054,7 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
                 repo.update(false)?;
                 std::fs::write(&indexed, "")?;
             }
-            let mut a = lookup(&mut |op| repo.run_as_is(op), rest, read, limit, exact)?;
+            let mut a = ordered(&mut |op| repo.run_as_is(op), rest, read, limit, exact, package_dir(&l, start, ""))?;
             repath(&mut a, |p| shown_path(&root, &inst.base.join(p)));
             let note = Note { name: l.name.clone(), version: l.version.clone(), lockfile: l.lockfile, path: shown_path(&root, &inst.dir), local: false };
             Ok(Answer::Package(Box::new(note), Box::new(a)))
