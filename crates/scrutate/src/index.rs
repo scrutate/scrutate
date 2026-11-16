@@ -266,12 +266,13 @@ fn quoted(kinds: &[&str]) -> String {
 
 /// The order of a name lookup, `typed` being the parameter that holds the last part of the name as
 /// typed: that exact name before its case-folded namesakes, then non-test files, types, functions,
-/// the rest, and a definition before its prototype.
+/// the rest, and a definition before its prototype; then by place, so the answer is the same
+/// however the index was built.
 fn symbol_order(typed: &str) -> String {
     format!(
         "ORDER BY (name IS NOT {typed}), is_test, \
          CASE WHEN kind IN ('class','struct','enum','trait','interface','type','impl') THEN 0 WHEN kind IN ('function','method') THEN 1 ELSE 2 END, \
-         (nbody = 0)"
+         (nbody = 0), path, start"
     )
 }
 
@@ -2962,7 +2963,7 @@ impl Index {
         Ok(self
             .db
             .query_row(
-                &format!("SELECT {CHUNK_COLS} FROM chunks WHERE path=?1 AND start<=?2 AND end>=?2 ORDER BY (kind='window'), (end-start) LIMIT 1"),
+                &format!("SELECT {CHUNK_COLS} FROM chunks WHERE path=?1 AND start<=?2 AND end>=?2 ORDER BY (kind='window'), (end-start), start, kind, qualname LIMIT 1"),
                 params![path, line],
                 ChunkRow::from_row,
             )
@@ -2993,6 +2994,20 @@ impl Index {
             }
         }
         Ok(by_id)
+    }
+
+    /// The path and first line of each of these chunks: what orders results that rank equal.
+    pub fn places(&self, ids: &[i64]) -> Result<HashMap<i64, (String, i64)>> {
+        let mut out = HashMap::with_capacity(ids.len());
+        for part in ids.chunks(500) {
+            let ph = vec!["?"; part.len()].join(",");
+            let mut st = self.db.prepare(&format!("SELECT id, path, start FROM chunks WHERE id IN ({ph})"))?;
+            for r in st.query_map(params_from_iter(part.iter()), |r| Ok((r.get::<_, i64>(0)?, (r.get(1)?, r.get(2)?))))? {
+                let (id, place) = r?;
+                out.insert(id, place);
+            }
+        }
+        Ok(out)
     }
 
     /// The text of the chunks of these ids, by id.
@@ -3068,16 +3083,19 @@ impl Index {
 
     /// `named_of_kinds` with the name in any ASCII case.
     pub fn named_of_kinds_any_case(&self, name: &str, kinds: &[&str]) -> Result<Vec<ChunkRow>> {
-        let mut st = self.db.prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind IN ({}) ORDER BY is_test", quoted(kinds)))?;
+        let mut st = self
+            .db
+            .prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind IN ({}) ORDER BY is_test, path, start", quoted(kinds)))?;
         let rows: Vec<ChunkRow> = st.query_map(params![name_key(name)], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows.into_iter().filter(|r| r.name.eq_ignore_ascii_case(name)).collect())
     }
 
     /// The definitions of these kinds named exactly `name`, those outside tests first.
     pub fn named_of_kinds(&self, name: &str, kinds: &[&str]) -> Result<Vec<ChunkRow>> {
-        let mut st = self
-            .db
-            .prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({}) ORDER BY is_test", quoted(kinds)))?;
+        let mut st = self.db.prepare_cached(&format!(
+            "SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({}) ORDER BY is_test, path, start",
+            quoted(kinds)
+        ))?;
         let rows = st.query_map(params![name_key(name), name], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
@@ -3102,14 +3120,18 @@ impl Index {
     /// Ids of the ranked chunks (no windows, constants or fields) whose name key is one of `keys`.
     pub fn ids_named(&self, keys: &[String], limit: usize) -> Result<Vec<i64>> {
         let ph = vec!["?"; keys.len()].join(",");
-        let mut st = self.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant','field') LIMIT {limit}"))?;
+        let mut st = self.db.prepare(&format!(
+            "SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant','field') ORDER BY path, start LIMIT {limit}"
+        ))?;
         let ids = st.query_map(params_from_iter(keys.iter()), |r| r.get::<_, i64>(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(ids)
     }
 
     /// Id and qualified name key of the ranked chunks whose name key is `key`, at most 200.
     pub fn qual_keys_named(&self, key: &str) -> Result<Vec<(i64, String)>> {
-        let mut st = self.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant','field') LIMIT 200")?;
+        let mut st = self
+            .db
+            .prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant','field') ORDER BY path, start LIMIT 200")?;
         let rows = st.query_map([key], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
@@ -3201,13 +3223,13 @@ impl Index {
 
     /// Name keys starting with `key`, shorter first (the key itself first).
     pub fn names_with_prefix(&self, key: &str, limit: usize, pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {
-        let sql = "SELECT name_key, name FROM names WHERE name_key >= ?1 AND name_key < ?2 ORDER BY length(name_key), name_key";
+        let sql = "SELECT name_key, name FROM names WHERE name_key >= ?1 AND name_key < ?2 ORDER BY length(name_key), name_key, name";
         self.names_until(sql, &[&key, &past(key)], limit, pick)
     }
 
     /// Name keys whose names' word initials start with `initials`, fewest words, then shorter, first.
     pub fn names_with_initials(&self, initials: &str, limit: usize, pick: impl FnMut(&str, &str) -> bool) -> Result<Vec<String>> {
-        let sql = "SELECT name_key, name FROM names WHERE initials >= ?1 AND initials < ?2 ORDER BY length(initials), length(name_key), name_key";
+        let sql = "SELECT name_key, name FROM names WHERE initials >= ?1 AND initials < ?2 ORDER BY length(initials), length(name_key), name_key, name";
         self.names_until(sql, &[&initials, &past(initials)], limit, pick)
     }
 
@@ -3218,7 +3240,7 @@ impl Index {
             return Ok(Vec::new());
         }
         let sql = "SELECT n.name_key, n.name FROM names_tri t JOIN names n ON n.rowid = t.rowid WHERE t.name_key LIKE ?1 \
-                   ORDER BY length(n.name_key), n.name_key";
+                   ORDER BY length(n.name_key), n.name_key, n.name";
         self.names_until(sql, &[&format!("%{key}%")], limit, pick)
     }
 
@@ -3374,7 +3396,7 @@ impl Index {
 
     /// The (path, module) of each recorded import whose module text holds `needle`.
     pub fn imports_holding(&self, needle: &str) -> Result<Vec<(String, String)>> {
-        let mut st = self.db.prepare_cached("SELECT DISTINCT path, module FROM imports WHERE instr(module, ?1) > 0 ORDER BY path")?;
+        let mut st = self.db.prepare_cached("SELECT DISTINCT path, module FROM imports WHERE instr(module, ?1) > 0 ORDER BY path, module")?;
         let rows = st.query_map([needle], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }

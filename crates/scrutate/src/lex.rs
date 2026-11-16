@@ -808,8 +808,21 @@ fn top_indices(sc: &[f32], limit: usize, keep: impl Fn(f32) -> bool) -> Vec<usiz
         idx.retain(|&i| sc[i] >= thresh);
     }
     idx.sort_by(|&a, &b| sc[b].partial_cmp(&sc[a]).unwrap().then(a.cmp(&b)));
-    idx.truncate(limit);
+    cut_keeping_ties(&mut idx, limit, |i| sc[i]);
     idx
+}
+
+/// The first `limit` of `order`, by score descending, and every one after them that ties the
+/// last: which of equal scores comes first is the caller's to decide, by what it knows of them,
+/// and the row or chunk id it would fall back to depends on how the index was built.
+fn cut_keeping_ties<T: Copy>(order: &mut Vec<T>, limit: usize, score: impl Fn(T) -> f32) {
+    if limit == 0 {
+        order.clear();
+    } else if order.len() > limit {
+        let last = score(order[limit - 1]);
+        let keep = limit + order[limit..].iter().take_while(|&&x| score(x) == last).count();
+        order.truncate(keep);
+    }
 }
 
 /// All segments of an index plus the global statistics needed to score across them.
@@ -1103,7 +1116,7 @@ impl LexStore {
         }
         let mut order: Vec<usize> = (0..out_ids.len()).collect();
         order.sort_by(|&a, &b| out_sc[b].partial_cmp(&out_sc[a]).unwrap().then(out_ids[a].cmp(&out_ids[b])));
-        order.truncate(limit);
+        cut_keeping_ties(&mut order, limit, |i| out_sc[i]);
         Ok((order.iter().map(|&i| out_ids[i]).collect(), order.iter().map(|&i| out_sc[i]).collect()))
     }
 
@@ -1165,6 +1178,11 @@ impl LexStore {
 
     /// `semantic_top` over the chunks `allow` holds, or every chunk.
     pub fn semantic_top_in(&self, qz: &[f32], limit: usize, nprobe: Option<usize>, allow: Option<&Allow>) -> Result<Vec<i64>> {
+        Ok(self.semantic_scored_in(qz, limit, nprobe, allow)?.0)
+    }
+
+    /// `semantic_top_in` with each chunk's score.
+    pub fn semantic_scored_in(&self, qz: &[f32], limit: usize, nprobe: Option<usize>, allow: Option<&Allow>) -> Result<(Vec<i64>, Vec<f32>)> {
         let nprobe = nprobe.unwrap_or(self.nprobe);
         let mut out_ids: Vec<i64> = Vec::new();
         let mut out_sc: Vec<f32> = Vec::new();
@@ -1192,8 +1210,8 @@ impl LexStore {
         }
         let mut order: Vec<usize> = (0..out_ids.len()).collect();
         order.sort_by(|&a, &b| out_sc[b].partial_cmp(&out_sc[a]).unwrap().then(out_ids[a].cmp(&out_ids[b])));
-        order.truncate(limit);
-        Ok(order.iter().map(|&i| out_ids[i]).collect())
+        cut_keeping_ties(&mut order, limit, |i| out_sc[i]);
+        Ok((order.iter().map(|&i| out_ids[i]).collect(), order.iter().map(|&i| out_sc[i]).collect()))
     }
 
     /// -> (segment rows, scores) of the best `limit` live rows in the `nprobe` closest clusters.
@@ -1262,6 +1280,7 @@ impl LexStore {
             return Ok(out);
         }
         let mut row = vec![0f32; q.len()];
+        let (mut floor, mut kept) = (f32::NEG_INFINITY, limit);
         for (si, s) in self.segs.iter().enumerate() {
             if s.vec().is_none() {
                 continue;
@@ -1281,18 +1300,22 @@ impl LexStore {
                 if sc.is_nan() {
                     return Err(damaged()); // a scale that is not a number
                 }
-                if out.len() < limit {
+                // every row tied with the last kept is kept too: the caller breaks those ties
+                if sc >= floor {
                     out.push((ids[r], sc));
-                    if out.len() == limit {
+                    // pruned when it has doubled since the last prune, so a run of ties costs
+                    // one sort per doubling, not one per row
+                    if out.len() >= limit && out.len() >= 2 * kept {
                         out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                        floor = out[limit - 1].1;
+                        out.retain(|x| x.1 >= floor);
+                        kept = out.len();
                     }
-                } else if sc > out[limit - 1].1 {
-                    out[limit - 1] = (ids[r], sc);
-                    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
                 }
             }
         }
         out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+        cut_keeping_ties(&mut out, limit, |x| x.1);
         Ok(out)
     }
 

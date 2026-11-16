@@ -405,6 +405,13 @@ incompatible index by itself, and that is never breaking.
   (`"TokenRefreshed2024"`).
 - `impact --help` describes `--json`, and `review --help` describes `--format`; both lines were
   blank.
+- One tree gives the same answers however its index was built (at once, in steps, with files
+  rewritten and restored, or in reverse): definitions of one name that rank equal, ranked search
+  results and `similar` neighbours of equal score are ordered by path and line, where they came
+  in the order their rows were written. `symbol a0 --limit 5` over 40 files defining `a0` alike
+  listed files 30 to 34 after an index built in reverse batches, and 00 to 04 after one built at
+  once; `find_symbol`, `read_code` with a symbol and no path, `callees`, the language server and
+  `edit_symbol`'s list of candidates followed it ([CLI](docs/CLI.md#conventions)).
 - `read --history`'s note for a git that failed says why (`git could not follow these lines: git
   log: ended by signal 11 (a crash) and gave no reason`), where it said only that git could not;
   and a git that dies while scrutate lists the filter drivers or reads the base copies, or a base

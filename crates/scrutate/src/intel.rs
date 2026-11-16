@@ -43,7 +43,16 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
     if b.iter().all(|x| *x == 0.0) {
         bail!("{} has no implementation vector (its body is too short to compare)", shown(&row.qualname));
     }
-    let near = s.ix.lex()?.scan_b(&b, k.saturating_mul(3), row.id)?;
+    let want = k.saturating_mul(3);
+    let mut near = s.ix.lex()?.scan_b(&b, want, row.id)?;
+    // scan_b keeps every tie at its cut: those tied at the cut are taken by place, up to `want`
+    if near.len() > want {
+        let last = near[want - 1].1;
+        let from = near.iter().position(|x| x.1 == last).unwrap_or(want);
+        let places = s.ix.places(&near[from..].iter().map(|x| x.0).collect::<Vec<_>>())?;
+        near[from..].sort_by(|a, b| places.get(&a.0).cmp(&places.get(&b.0)));
+        near.truncate(want);
+    }
     let my_tokens: HashSet<String> = tokenize2(&row.text, Some(BODY_CAP)).0.into_iter().collect();
     let mut out = Vec::new();
     for (id, cos) in near {
@@ -58,10 +67,10 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
         let mut h = Hit::from_row(&r, true);
         h.score = cos as f64;
         out.push((h, cos, inter / union));
-        if out.len() >= k {
-            break;
-        }
     }
+    // equal cosines by the token overlap, then by place
+    out.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.2.total_cmp(&a.2)).then_with(|| (&a.0.path, a.0.start).cmp(&(&b.0.path, b.0.start))));
+    out.truncate(k);
     Ok(out)
 }
 

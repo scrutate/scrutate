@@ -42,7 +42,8 @@
   (`sub/deep/a.txt` before `sub/deep-x/b.txt`, `foo/mod.rs` before `foo.rs`); a file two paths
   reach comes once under each. The default is completion order, for speed. `-c`, `-l` and
   `--symbols` always sort (without `--sort`, `-c` and `-l` compare whole paths as strings, all
-  paths together). Engine B output is deterministic (ties broken by id).
+  paths together). Engine B output is deterministic: what ranks equal is ordered by path, then
+  line, so a tree answers the same however its index was built.
 - **Machine-readable output**: `--json` on every command that prints results (`stats` always
   prints JSON). Engine A emits JSON Lines with `"schema": 1` and `"type"` ∈ {`match`, `context`,
   `count`, `file`, `binary`, `summary`, `symbol_group`}. Engine B commands emit one document,

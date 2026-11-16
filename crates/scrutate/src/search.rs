@@ -237,6 +237,15 @@ impl Source {
             Source::Semantic => Some(fi("sem_rank")),
         }
     }
+
+    /// How many candidates the source gives at most, ties at its cut set apart.
+    fn bound(self) -> Option<usize> {
+        match self {
+            Source::Exact => None,
+            Source::Lexical => Some(LEX_LIMIT),
+            Source::Semantic => Some(SEM_LIMIT),
+        }
+    }
 }
 
 /// The BM25 fields as `field_scores` returns them (all fields first), each with its two features.
@@ -414,10 +423,46 @@ impl Searcher {
         let model = if q.terms.is_empty() || !self.ix.vectors_fit() { None } else { models.semantic()? };
         let qz: Option<Vec<f32>> = model.and_then(|m| m.encode_query(&q.terms));
         let mut found: [Vec<i64>; 3] = Default::default();
+        let mut scored: [Vec<f32>; 3] = Default::default();
         for s in Source::ALL {
-            found[s as usize] = self.find(s, &q, &keys, qz.as_deref(), widen, allow)?;
+            (found[s as usize], scored[s as usize]) = self.find(s, &q, &keys, qz.as_deref(), widen, allow)?;
         }
         let want_lit = use_literal && !q.lits.is_empty();
+        // within equal scores a source's list is in id order, which follows how the index was
+        // written, and it holds every tie at its cut: put those runs in order of place, then cut
+        // the list at its bound, so the pool and the rank features do not depend on it
+        // the runs of equal scores that start inside the bound: the one at the cut is read whole,
+        // those past it are cut whole
+        let runs = |sc: &[f32], bound: usize| {
+            let mut out = Vec::new();
+            let mut at = 0;
+            while at < sc.len().min(bound) {
+                let n = sc[at..].iter().take_while(|&&v| v == sc[at]).count();
+                if n > 1 {
+                    out.push(at..at + n);
+                }
+                at += n;
+            }
+            out
+        };
+        let bound = |s: &Source| s.bound().unwrap_or(usize::MAX);
+        let mut tied: Vec<i64> = Vec::new();
+        for (s, (list, sc)) in Source::ALL.iter().zip(found.iter().zip(&scored)) {
+            if sc.len() == list.len() {
+                tied.extend(runs(sc, bound(s)).into_iter().flat_map(|r| list[r].to_vec()));
+            }
+        }
+        let places = self.ix.places(&tied)?;
+        for (s, (list, sc)) in Source::ALL.iter().zip(found.iter_mut().zip(&scored)) {
+            if sc.len() == list.len() {
+                for r in runs(sc, bound(s)) {
+                    list[r].sort_by(|a, b| places.get(a).cmp(&places.get(b)));
+                }
+            }
+            if let Some(bound) = s.bound() {
+                list.truncate(bound);
+            }
+        }
         let mut ids: Vec<i64> = Vec::new();
         let mut seen = HashSet::new();
         for &i in found.iter().flatten() {
@@ -534,12 +579,21 @@ impl Searcher {
     }
 
     /// The ids `source` finds for the query, best first.
-    fn find(&mut self, source: Source, q: &QueryInfo, keys: &[i64], qz: Option<&[f32]>, widen: usize, allow: Option<&crate::lex::Allow>) -> Result<Vec<i64>> {
+    /// A source's candidates, best first, with their scores where the source scores them.
+    fn find(
+        &mut self,
+        source: Source,
+        q: &QueryInfo,
+        keys: &[i64],
+        qz: Option<&[f32]>,
+        widen: usize,
+        allow: Option<&crate::lex::Allow>,
+    ) -> Result<(Vec<i64>, Vec<f32>)> {
         Ok(match (source, qz) {
-            (Source::Exact, _) => self.exact(q, EXACT_LIMIT * widen)?,
-            (Source::Lexical, _) => self.ix.lex()?.search_in(keys, LEX_LIMIT, allow)?.0,
-            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_top_in(z, SEM_LIMIT, None, allow)?,
-            (Source::Semantic, None) => Vec::new(),
+            (Source::Exact, _) => (self.exact(q, EXACT_LIMIT * widen)?, Vec::new()),
+            (Source::Lexical, _) => self.ix.lex()?.search_in(keys, LEX_LIMIT, allow)?,
+            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_scored_in(z, SEM_LIMIT, None, allow)?,
+            (Source::Semantic, None) => Default::default(),
         })
     }
 
@@ -580,7 +634,13 @@ impl Searcher {
         let ranked: Vec<f64> = (0..c.rows.len()).map(|r| scores[r] - if demoted[r] { VENDORED_MARGIN } else { 0.0 }).collect();
         let mut order: Vec<usize> = (0..c.rows.len()).collect();
         order.sort_by(|&a, &b| {
-            first[b].cmp(&first[a]).then(ranked[b].partial_cmp(&ranked[a]).unwrap_or(std::cmp::Ordering::Equal)).then(c.rows[a].id.cmp(&c.rows[b].id))
+            // equal scores by place, not by id: ids follow the order the index was written in
+            first[b]
+                .cmp(&first[a])
+                .then(ranked[b].partial_cmp(&ranked[a]).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| c.rows[a].path.cmp(&c.rows[b].path))
+                .then_with(|| c.rows[a].start.cmp(&c.rows[b].start))
+                .then(c.rows[a].id.cmp(&c.rows[b].id))
         });
         let mut picked: Vec<Hit> = Vec::new();
         let mut best_by_key: HashMap<(String, String, bool), usize> = HashMap::new();
@@ -755,7 +815,7 @@ impl Searcher {
             }
         }
         let mut ids: Vec<i64> = first_seen;
-        ids.sort_by(|a, b| fused[b].partial_cmp(&fused[a]).unwrap());
+        ids.sort_by(|a, b| fused[b].partial_cmp(&fused[a]).unwrap().then_with(|| (&meta[a].path, meta[a].start).cmp(&(&meta[b].path, meta[b].start))));
         ids.truncate(k);
         let mut out: Vec<Hit> = ids
             .iter()
