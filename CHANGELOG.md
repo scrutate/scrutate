@@ -74,7 +74,10 @@ incompatible index by itself, and that is never breaking.
 - `search`, `symbol` and `refs` keep the files a glob (`-g`) or a type (`-t`) names, the files
   parsed as a language (`--lang`) and the definitions of a kind (`--kind`), and the MCP tools
   `search_code`, `find_symbol` and `references` take the same as `globs`, `types`, `langs` and
-  `kinds`. A filtered search returns `-k` results whenever that many pass.
+  `kinds`. A filtered search returns `-k` results whenever that many pass among its candidates
+  widened up to 64 times their usual number; past that it says it stopped and why. `symbol`
+  filters inside the name lookup, so `--kind` finds a definition past the first 100,000 of its
+  name.
 - `impact`, its `--json` and the MCP `impact` tool list the change's findings: the duplicates it
   adds of code the repository has and the changed definitions no test reaches, which only
   `review` named before. `review` renders the same list, and its Markdown and GitLab reports are
@@ -131,7 +134,8 @@ incompatible index by itself, and that is never breaking.
   this repository a concise answer is 5% to 44% of the detailed one ([CLI](docs/CLI.md)). The
   Python `Repo.call` reads it too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short tool list with the same
-  tools, arguments and checks: 5,657 bytes against 17,055 (13,968 before `response_format`).
+  tools, arguments and checks: 6,730 bytes against 19,663 (the `tools/list` result as compact
+  JSON).
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes an MCP server entry that runs this
   binary into the agent's user file (or with `--project` the repository's), editing it in place;
   `--uninstall` restores it byte for byte, `--dry-run` writes nothing, `--instructions` adds a
@@ -213,6 +217,20 @@ incompatible index by itself, and that is never breaking.
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
+- `refs`, `callers` and `dead` hold a bounded set of parsed files: 256 MiB a request, and 256 MiB
+  kept across the requests of `serve`, `lsp` and `batch`. The index stores each file's import
+  bindings, so a C name looked up through included headers parses only the files whose trees it
+  reads. On the Linux tree `refs mutex_lock` takes 76.1 s and
+  652 MB, where it took 123.2 s and 6.2 GB, and `dead` on the whole tree holds about 4 GB, where it
+  needed 23.8 GB. The index's schema goes to 18, so an older index is rebuilt once.
+- An answer that a bounded read stopped short says why, in its own line and in `stopped_reason`
+  beside `stopped_at` (`--json`, the MCP tools), where it read "stopped at 0 results".
+- An SSH public key after its type (`ssh-ed25519 AAAA...`, as in `known_hosts` and
+  `authorized_keys`) is left as written. A PEM public key's or certificate's body is left as
+  written only when the END line of the same label follows in the same answer, and a DER body
+  only at exactly the length it states; any other body stays redacted as before.
+- `check` reports a definition without its duplicate keys, and duplicate keys, calls or imports
+  left behind by a chunk or file that is gone.
 - Outside a repository, the climb to an index in a directory above stops short of the system's
   temporary directory (and `/tmp` and `/var/tmp` on Unix), the home directory (also one kept in
   git) and a filesystem root: an index there answers only for that directory itself, and a
@@ -316,7 +334,7 @@ incompatible index by itself, and that is never breaking.
   ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - `bench/leaderboard.py` stops a row at 20 runs once every verdict holds at alpha 0.001
   (Haybittle-Peto boundary); replayed over every recorded run it changed no verdict. On by
-  default, off with `--no-stop-early`; R-14.10 now defines a #1 over at least 20 runs per tool
+  default, off with `--no-stop-early`; a #1 is now defined over at least 20 runs per tool
   ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - The release binaries for glibc Linux (x86_64 and aarch64) lay out the functions a small search
   runs side by side, as the macOS one does: a second link with rust-lld and the order file under
@@ -365,6 +383,21 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs --kind` (the MCP `references` with `kinds`) counts `--max-results` over the occurrences
+  of the kinds it keeps, where it counted every kind, dropped the others and could answer none.
+  When no definition of the name has a kept kind it answers at once and says so; otherwise it
+  resolves at most 10,000 occurrences (or `--max-results` when that is larger) and says when that
+  left it short.
+- A name written with its owner (`zz::Holder::push`, `Holder.push`) finds its definition however
+  many other definitions share its last part, where past 10,000 it answered "(no results)".
+- `read_code`, `read --symbol` and `edit_symbol` with a path find the name's definition in that
+  file however many other files define it, where past 21 they answered "no definition matches".
+- The password and generic secret rules leave a quoted value that reads as a name as written: a
+  path with a common extension and no part mixing upper case, lower case and digits
+  (`config/secret_settings.toml`), or capitalised words run together with up to four digits
+  (`"TokenRefreshed2024"`).
+- `impact --help` describes `--json`, and `review --help` describes `--format`; both lines were
+  blank.
 - `read --history`'s note for a git that failed says why (`git could not follow these lines: git
   log: ended by signal 11 (a crash) and gave no reason`), where it said only that git could not;
   and a git that dies while scrutate lists the filter drivers or reads the base copies, or a base
@@ -1057,8 +1090,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - With `-A`, `-B` or `-C`, a line `--` separates groups, as in ripgrep.
 - `-c` with `-U` counts as ripgrep does.
 - A pattern or option value that is not UTF-8 is an error (a path may be any bytes).
-- `ignore` 0.4.34 is vendored (`vendor/ignore`) with nine changes, listed in the workspace
-  `Cargo.toml`; an idle walker thread first waits 10 µs instead of 1 ms (a 598-file package:
+- `ignore` 0.4.34 is vendored (`vendor/ignore`, the `scrutate-ignore` crate) with the eleven
+  changes `vendor/ignore/README.md` lists; an idle walker thread first waits 10 µs instead of 1 ms (a 598-file package:
   10.7 ms to 8.1 ms).
 - `--max-results N` stops at exactly N matching lines; `-m N` is a per-file limit.
 - A search path that does not exist is a warning and exit code 2; the other paths are searched.
@@ -1488,8 +1521,9 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
   colour off for any non-empty value.
 - One definition of every index operation for the CLI, the MCP server, `batch` and the Python
   bindings (`ops.rs`); `batch` runs any operation by name.
-- For AI agents: no MCP tool changes a source file, and every tool but `reindex` is marked
-  read-only (`readOnlyHint`); `grep_code` groups matches by
+- For AI agents: no MCP tool changes a source file unless `serve --allow-edits` lists
+  `edit_symbol`, and every tool but `reindex` and `edit_symbol` is marked read-only
+  (`readOnlyHint`); `grep_code` groups matches by
   enclosing symbol; `references` resolves each use; an answer is at most 24,000 bytes by default
   (`max_bytes`) with the `offset` that continues it, as `--max-bytes` (`SCRUTATE_MAX_BYTES`) and
   `--offset` on the CLI; a first index build blocks a tool call for at most 20 seconds
