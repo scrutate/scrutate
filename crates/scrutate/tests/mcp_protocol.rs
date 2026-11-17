@@ -666,6 +666,8 @@ fn a_call_cancelled_after_its_first_progress_report_stops_and_sends_nothing_more
     }
 }
 
+// Windows does not let a directory whose files the server holds open be removed
+#[cfg(unix)]
 #[test]
 fn a_call_after_the_root_is_deleted_is_answered_and_the_server_keeps_answering() {
     struct Killed(Child);
