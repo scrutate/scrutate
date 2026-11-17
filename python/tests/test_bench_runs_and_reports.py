@@ -220,3 +220,47 @@ def test_publish_scripts_take_every_run():
     for f in ("run_macos.sh", "competitors/linux_bench.sh"):
         s = open(os.path.join(BENCH, f)).read()
         assert "--no-stop-early" in s, f
+
+
+def cut_to_20(r):
+    """A row as leaderboard.py's stop rule leaves it: 20 runs of every tool."""
+    r["runs"] = 20
+    for x in r["tools"].values():
+        for k in ("times", "cpu", "rss"):
+            if x.get(k):
+                x[k] = x[k][:20]
+        if x.get("times"):
+            x["n"] = 20
+
+
+def test_cpu_and_memory_verdicts_under_thirty_runs_are_measured_not_counted():
+    path = os.path.join(BENCH, "results", "macos-arm64", "superseded", "leaderboard-warm-9aa0.json")
+    with open(path) as f:
+        d = json.load(f)
+    bid, r = next(iter(d["benchmarks"].items()))
+    best = r["best_competitor"]
+    for t in ("scrutate", "scrutate -j1", best):
+        r["tools"].setdefault(t, {"status": "ok"})
+        r["tools"][t]["cpu"] = [0.1] * 30
+        r["tools"][t]["rss"] = [1e8] * 30
+    verdict = {"status": "PASS", "best_competitor": best, "median": 0.1, "ratio": 0.5, "ci95": [0.4, 0.6], "rank": 1, "of": 2}
+    r["metrics"] = {k: {"default": dict(verdict), "-j1": dict(verdict)} for k in ("cpu", "rss")}
+    cut_to_20(r)
+    d["benchmarks"] = {bid: r}
+    lines = ML.engine_a(d, "label")
+    cpu = next(line for line in lines if line.startswith("Status counts, CPU time:"))
+    assert "PASS" not in cpu and cpu.count("1 measured, under 30 runs per tool") == 2, cpu
+    row = next(line for line in lines if line.startswith(f"| {bid} |") and "rank 1 of 2" in line)
+    assert "**PASS**" not in row and row.count("measured (20 runs per tool, under the 30 a verdict needs)") == 4, row
+
+
+def test_the_readme_chart_says_measured_for_a_row_under_thirty_runs():
+    import make_readme_charts as RC
+    warm = json.load(open(RC.default("macos-arm64", "leaderboard-warm.json", "leaderboard-warm-9aa0.json")))
+    compare = json.load(open(RC.default("macos-arm64", "compare.json", "compare-9aa0.json")))
+    bid = RC.WALL_ROWS[0][0]
+    assert warm["benchmarks"][bid]["status"] == "PASS"
+    assert ", PASS" in RC.walltime(warm, compare)
+    cut_to_20(warm["benchmarks"][bid])
+    svg = RC.walltime(warm, compare)
+    assert ", measured: 20 runs per tool, under the 30 a verdict needs" in svg

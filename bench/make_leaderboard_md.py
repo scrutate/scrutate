@@ -143,15 +143,32 @@ def count_line(statuses):
     return line + (f"; {measured} measured, under {MIN_RUNS} runs per tool" if measured else "")
 
 
+def short_of(status, n):
+    """Why a verdict on `n` runs per tool is measured, not ranked: under MIN_RUNS; else None."""
+    if status in ("PASS", "FAIL", "PARTIAL", "BLOCKED") and n < MIN_RUNS:
+        return f"{n} runs per tool, under the {MIN_RUNS} a verdict needs"
+    return None
+
+
 def published(r):
     """An Engine A row as the page gives it: a verdict on fewer than MIN_RUNS runs of scrutate or of
     its best competitor is measured, not ranked (`was` keeps the verdict)."""
     best = r.get("best_competitor")
-    if r["status"] in ("PASS", "FAIL", "PARTIAL", "BLOCKED") and best:
-        n = min(r["tools"].get("scrutate", {}).get("n", 0), r["tools"].get(best, {}).get("n", 0))
-        if n < MIN_RUNS:
-            return {**r, "status": "measured", "was": r["status"], "measured": f"{n} runs per tool, under the {MIN_RUNS} a verdict needs"}
-    return r
+    why = best and short_of(r["status"], min(r["tools"].get("scrutate", {}).get("n", 0), r["tools"].get(best, {}).get("n", 0)))
+    return {**r, "status": "measured", "was": r["status"], "measured": why} if why else r
+
+
+# the tool each mode's CPU and memory verdicts time
+MODE_TOOL = {"default": "scrutate", "-j1": "scrutate -j1"}
+
+
+def published_metric(r, key, mode):
+    """`published` for one mode's CPU (`cpu`) or memory (`rss`) verdict: its own runs against the
+    competitor lowest on that metric."""
+    m = r["metrics"][key][mode]
+    best = m.get("best_competitor")
+    why = best and short_of(m["status"], min(len(r["tools"].get(MODE_TOOL[mode], {}).get(key) or []), len(r["tools"].get(best, {}).get(key) or [])))
+    return {**m, "status": "measured", "was": m["status"], "why": why} if why else m
 
 
 def metric_value(key, v):
@@ -292,7 +309,7 @@ def engine_a(data, label, note=(), raw=None):
     if any("metrics" in r for r in data["benchmarks"].values()):
         for key, name in METRICS.items():
             out.append(f"Status counts, {name}: " + "; ".join(
-                f"{mode} mode " + count_line([r["metrics"][key][mode]["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
+                f"{mode} mode " + count_line([published_metric(r, key, mode)["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
     # results from before bench/walkread.c have no floor to show
     walk = any("walkread" in r for r in data["benchmarks"].values())
     head = "| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files" + (" | walk and read" if walk else "") + " | rank | ratio vs best (95% CI) | status |"
@@ -360,7 +377,7 @@ def engine_a(data, label, note=(), raw=None):
         out.append("|---|---|---|---|---|---|---|")
         for bid, r in tested:
             m = r["metrics"]
-            cells = [metric_cell(key, m[key][mode], level(r)) for key in METRICS for mode in MODES]
+            cells = [metric_cell(key, published_metric(r, key, mode), level(r)) for key in METRICS for mode in MODES]
             for key in METRICS:
                 lead = m[key]["default"].get("best_competitor") or m[key]["-j1"].get("best_competitor")
                 med = r["tools"].get(lead, {}).get({"cpu": "cpu_median", "rss": "rss_median"}[key]) if lead else None
