@@ -1331,6 +1331,10 @@ incompatible index by itself, and that is never breaking.
   with `--max-columns-preview`, which prints part of a line and may cut a secret where no rule
   finds it. `npm-token` takes its prefix in any case, as gitleaks does
   ([Security](docs/SECURITY.md#secrets-in-answers)).
+- A watched session's reads keep their change set when the directory above the root changes a
+  lot (`/tmp` or the home directory, watched for its `.ignore` and `.rgignore`): each other entry
+  made or removed there counted as a change, so busy siblings filled the 10,000-event bound and
+  every read walked the tree ([Architecture](docs/ARCHITECTURE.md)).
 
 ## [0.1.0] - 2026-11-11
 
