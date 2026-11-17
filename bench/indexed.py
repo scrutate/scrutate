@@ -288,14 +288,14 @@ def main() -> int:
     # the index phase takes most of an hour: a binary missing later would throw it away
     if missing := missing_binaries(defs, names):
         raise SystemExit("missing tool binaries:\n  " + "\n  ".join(missing))
-    res = {"environment": lb.environment(), "corpus": a.corpus, "settings": vars(a) | {"queries": len(QUERIES)}, "tools": {n: {"version": defs[n]["version"]} for n in names}}
+    res = {"environment": lb.environment(a.corpus), "corpus": a.corpus, "load": [], "settings": vars(a) | {"queries": len(QUERIES)}, "tools": {n: {"version": defs[n]["version"]} for n in names}}
     save = lambda: json.dump(res, open(a.out, "w"), indent=1)
     # ---- indexing: full builds, size, peak memory
     times, rss = {n: [] for n in names}, {n: [] for n in names}
     for _ in range(a.index_runs):
         for n in names:
             defs[n]["clean"]()
-            lb.wait_idle(a.max_load, 1800)
+            res["load"].append(lb.wait_idle(a.max_load, 1800))
             w, m, code, _ = timed(defs[n]["index"], a.corpus)
             if code != 0:
                 raise SystemExit(f"{n} index failed ({code})")
@@ -375,7 +375,7 @@ def main() -> int:
         save()
         # ---- latency: round-robin over tools and queries
         for rep in range(a.runs):
-            lb.wait_idle(a.max_load, 1800)
+            res["load"].append(lb.wait_idle(a.max_load, 1800))
             for entry in res["queries"]:
                 for n in names:
                     t = entry["tools"][n]
@@ -414,7 +414,7 @@ def main() -> int:
         for _ in range(a.throughput_runs):
             for n in names:
                 cmds = [e["tools"][n]["argv"] for e in common_q]
-                lb.wait_idle(a.max_load, 1800)
+                res["load"].append(lb.wait_idle(a.max_load, 1800))
                 done, failed = [0] * a.concurrency, [0] * a.concurrency
                 stop = time.time() + a.seconds
 

@@ -226,6 +226,13 @@ incompatible index by itself, and that is never breaking.
   run them in containers. `--only` starts only the tools its workloads have, and a tool's start
   past `--start-timeout` (30 min) is that tool's error. CI runs `--smoke` on a small tree in
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- On Linux the benchmark results record the machine they ran on: kernel, virtualization, CPU
+  frequency governor and the disk under the corpora, and `bench/indexed.py` records the load
+  before each tool's runs as `bench/leaderboard.py` does. LEADERBOARD.md heads a section "bare
+  metal" when its results record no virtualization and lists those facts under it, and marks a
+  virtual-machine run filed as superseded beside a bare-metal run of its platform. BENCHMARKS.md
+  takes several results files, one section per machine
+  ([Releasing](docs/RELEASING.md#3-generated-documents)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,

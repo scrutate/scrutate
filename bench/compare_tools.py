@@ -30,7 +30,7 @@ import sys
 import tempfile
 import time
 
-from leaderboard import drop_scrutate_settings
+from leaderboard import stdout_of, drop_scrutate_settings, machine_facts
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
@@ -632,7 +632,7 @@ def bench_structural(tools: dict, corpora: dict, runs: int) -> list[dict]:
     return rows
 
 
-def environment(tools: dict) -> dict:
+def environment(tools: dict, data_dir: str = ".") -> dict:
     cpu = ""
     try:
         for line in open("/proc/cpuinfo"):
@@ -641,6 +641,10 @@ def environment(tools: dict) -> dict:
                 break
     except OSError:
         cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout.strip()
+    if not cpu and os.path.exists("/proc/cpuinfo"):
+        # an Arm CPU's /proc/cpuinfo has no model name; lscpu names it (Neoverse-V2)
+        cpu = next((l.split(":", 1)[1].strip() for l in stdout_of(["lscpu"]).splitlines()
+                    if l.startswith("Model name:")), "")
     return {
         "date": time.strftime("%Y-%m-%d %H:%M:%S %z"),
         "platform": platform.platform(),
@@ -649,6 +653,8 @@ def environment(tools: dict) -> dict:
         "mem_gb": round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9, 1),
         "tools": {k: {"version": v.get("version"), "path": v.get("exe"), "note": v.get("note")} for k, v in tools.items()},
         "scrutate_sha256": hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest(),
+        "machine": platform.machine(),
+        **machine_facts(data_dir),
     }
 
 
@@ -672,7 +678,7 @@ def main() -> int:
     if a.skip_index:
         phases.discard("index")
     res = json.load(open(out)) if a.only and os.path.exists(out) else {}
-    env = environment(tools)
+    env = environment(tools, next(iter(corpora.values())))
     # phases kept from the file would stand under this binary's hash
     if res and res.get("environment", {}).get("scrutate_sha256") != env["scrutate_sha256"]:
         raise SystemExit(f"{out} holds phases that another scrutate binary measured: move the file away, or run every phase")

@@ -136,7 +136,7 @@ def metric_cell(key, m, lvl=""):
 def hardware(env):
     """The CPU as recorded; a Linux guest of the Apple Virtualization framework reports no name."""
     cpu = env.get("cpu", "?")
-    if env.get("platform", "").startswith("Linux") and (not cpu or cpu.startswith("0x")):
+    if "virtualization" not in env and env.get("platform", "").startswith("Linux") and (not cpu or cpu.startswith("0x")):
         if env.get("cpus", 0) <= 5:
             # one virtual CPU per performance core of the host: none has to run on an efficiency core
             return f"{VM}, one virtual CPU per performance core"
@@ -147,6 +147,39 @@ def hardware(env):
 VM = "a Linux virtual machine on the Apple M3 Pro above"
 VM_NOTE = ("- The Linux virtual machine is Colima (Apple Virtualization); macOS schedules its virtual CPUs, so its runs vary "
            "more than the host's.")
+
+
+def kind(env):
+    """"bare metal" or "virtual machine" as the results record it; None where they cannot tell."""
+    if "virtualization" in env:
+        return {None: None, "none": "bare metal"}.get(env["virtualization"], "virtual machine")
+    return "virtual machine" if hardware(env).startswith(VM) else None
+
+
+def machine_line(env):
+    """The facts a reader checks a dedicated machine by; results from before they were recorded have none."""
+    if "virtualization" not in env:
+        return []
+    virt = f"virtualization `{env['virtualization']}` ({env['virtualization_source']})" if env["virtualization"] else "virtualization not detected"
+    gov = f"CPU frequency governor `{env['cpu_governor']}`" if env.get("cpu_governor") else "CPU frequency governor not exposed"
+    disk = env.get("disk")
+    medium = {True: "rotational", False: "solid state"}.get(disk and disk.get("rotational"), "medium not reported")
+    where = f"corpora on {disk['model'] or 'an unnamed disk'} ({disk['source']}, {disk['fstype']}, {medium})" if disk else "corpora disk not found"
+    return [f"- Machine: {virt}, kernel {env.get('kernel')}, {gov}, {where}."]
+
+
+def section_label(data, path):
+    """The platform, and the kind of machine where the results record it."""
+    env = data.get("environment", {})
+    return ", ".join(x for x in (platform_of(data, path), kind(env) if "virtualization" in env else None) if x)
+
+
+def superseded_note(data, path, bare):
+    """A virtual-machine run filed as superseded, shown beside bare-metal runs of its platform."""
+    plat = platform_of(data, path)
+    if "superseded" in os.path.normpath(path).split(os.sep) and kind(data.get("environment", {})) == "virtual machine" and plat in bare:
+        return [f"- Superseded: measured in a virtual machine on a shared laptop; the bare-metal {plat} sections on this page replace it."]
+    return []
 
 
 def platform_of(data, path):
@@ -165,14 +198,16 @@ def prepare(cmd: str) -> str:
     return f" (prepare: `{cmd}`)"
 
 
-def engine_a(data, label):
+def engine_a(data, label, note=()):
     env = data["environment"]
     out = []
     out.append(f"## Engine A and structural search: {label}\n")
+    out += note
     mem = env.get("memory_bytes", 0) / 2**30
     out.append(f"- Hardware: {hardware(env)} ({env.get('cpus')} logical CPUs"
                + (f"; {env.get('perf_cores')} performance + {env.get('efficiency_cores')} efficiency cores" if env.get("perf_cores") else "")
                + f"), {mem:.0f} GiB RAM; {env['platform']}")
+    out += machine_line(env)
     st = data["settings"]
     stop = st.get("stop")
     runs = (f"{st['runs']} timed runs per tool in {st.get('blocks', 1)} interleaved blocks" if not stop else
@@ -310,11 +345,15 @@ def throughput_runs(st: dict) -> int:
     return st.get("throughput_runs", 3)
 
 
-def indexed(data, label):
+def indexed(data, label, note=()):
     others = [t for t in data["tools"] if t != "scrutate"]
-    out = [f"## Engine B: indexed search against {' and '.join(others)}: {label}\n"]
+    out = [f"## Engine B: indexed search against {' and '.join(others)}: {label}\n", *note]
     env = data["environment"]
     out.append(f"- Hardware: {hardware(env)}, {env.get('cpus')} logical CPUs; {env['platform']}. Corpus: `{os.path.basename(data['corpus'])}`.")
+    out += machine_line(env)
+    if data.get("load"):
+        out.append(f"- 1-minute load average before each tool's runs: median {statistics.median(data['load']):.1f}, max {max(data['load']):.1f} on "
+                   f"{env.get('cpus')} logical CPUs.")
     st = data["settings"]
     out.append(f"- Method: {st['index_runs']} full index builds and {st['index_runs']} incremental updates (100 files edited) per tool; "
                f"{st['runs']} runs of each of {st['queries']} queries, round-robin across tools, each in a fresh process; "
@@ -380,9 +419,19 @@ def main() -> int:
              "at the hardware limit (both within 15% of the time to read the same files). \"Fastest\" claims apply only to PASS rows.", ""]
     if any(d["settings"].get("stop") for d in datas):
         lines.append(STOP_NOTE)
+    indexed_datas = [json.load(open(p)) for p in a.indexed]
+    bare = {platform_of(d, p) for p, d in list(zip(a.engine_a, datas)) + list(zip(a.indexed, indexed_datas)) if kind(d["environment"]) == "bare metal"}
+    if bare:
+        lines.append(
+            "- Every machine not marked bare metal was shared with other work, so no result from it is a publishable #1 claim (a "
+            "published #1 needs dedicated idle hardware: R-14.11 in docs/TRACEABILITY.md). A bare-metal section records how its "
+            "machine was found (virtualization, kernel, CPU frequency governor, disk) and the load before each tool's runs, for a "
+            "reader to judge that; a row whose load exceeded the CPU count shows it in the status column.")
+    else:
+        lines.append(
+            "- Every machine was shared with other work, so no result is a publishable #1 claim (a published #1 needs dedicated idle "
+            "hardware: R-14.11 in docs/TRACEABILITY.md); a row whose load exceeded the CPU count shows it in the status column.")
     lines += [
-        "- Every machine was shared with other work, so no result is a publishable #1 claim (a published #1 needs dedicated idle "
-        "hardware: R-14.11 in docs/TRACEABILITY.md); a row whose load exceeded the CPU count shows it in the status column.",
         "- The read-files ceiling (`bench/rawread.c`) is measured once per file set, right after the first benchmark that uses it, as the fastest of several "
         "thread counts: one per CPU and half that with a warm cache, up to 96 with a cold one (a disk takes more reads at once than "
         "there are cores). A row measured later under heavier load can read PARTIAL where a quieter run reads BLOCKED; PARTIAL is "
@@ -401,7 +450,6 @@ def main() -> int:
     if any(r.get("resident") is not None for d in datas for r in d["benchmarks"].values()):
         lines.append("- A warm-cache benchmark records how much of its corpus was in the page cache at its end (`bench/evict.c --resident`); "
                      "a row under 95% says so in its status column.")
-    indexed_datas = [json.load(open(p)) for p in a.indexed]
     if any(hardware(d["environment"]).startswith(VM) for d in datas + indexed_datas):
         lines.append(VM_NOTE)
     rows = [r for d in datas for r in d["benchmarks"].values()]
@@ -413,9 +461,9 @@ def main() -> int:
         lines.append(CPU_UNTESTED)
     lines.append("")
     for p, d in zip(a.engine_a, datas):
-        lines += engine_a(d, f"{platform_of(d, p)}, {d['settings']['cache']} cache")
+        lines += engine_a(d, f"{section_label(d, p)}, {d['settings']['cache']} cache", superseded_note(d, p, bare))
     for p, d in zip(a.indexed, indexed_datas):
-        lines += indexed(d, platform_of(d, p))
+        lines += indexed(d, section_label(d, p), superseded_note(d, p, bare))
     with open(a.out, "w") as f:
         f.write("\n".join(lines) + "\n")
     print(f"wrote {a.out}", file=sys.stderr)

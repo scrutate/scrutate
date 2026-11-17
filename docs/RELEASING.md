@@ -220,10 +220,12 @@ Then read the results:
 ## 3. Generated documents
 
 ```sh
-M=bench/results/macos-arm64 L=bench/results/linux-aarch64
+M=bench/results/macos-arm64 X=bench/results/linux-x86_64 L=bench/results/linux-aarch64
 python3 bench/make_leaderboard_md.py --engine-a $M/leaderboard-warm.json --engine-a $M/leaderboard-cold.json \
-  --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json --indexed $M/indexed.json --indexed $L/indexed.json
-python3 bench/make_benchmarks_md.py $M/compare.json
+  --engine-a $X/leaderboard-warm.json --engine-a $X/leaderboard-cold.json \
+  --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json \
+  --indexed $M/indexed.json --indexed $X/indexed.json --indexed $L/indexed.json
+python3 bench/make_benchmarks_md.py $M/compare.json $X/compare.json $L/compare.json   # one section per machine
 python3 bench/make_dashboard.py
 python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
@@ -237,7 +239,14 @@ python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then -
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
-The two make_*_md.py commands name the files step 2 writes. LEADERBOARD.md and BENCHMARKS.md
+The two make_*_md.py commands name the files step 2 writes. On Linux, `leaderboard.py`,
+`indexed.py` and `compare_tools.py` record the machine with the results: CPU model, logical CPUs,
+memory, kernel, virtualization (`systemd-detect-virt`, else `/sys/hypervisor/type`; not
+detected when neither says), the CPU frequency governor and the disk the corpora are on.
+`leaderboard.py` and `indexed.py` also record the 1-minute load average before each tool's runs.
+A section whose results record virtualization `none` is headed "bare metal" with those facts
+under it, and a virtual-machine run filed under `superseded/` beside a bare-metal run of the same
+platform says the bare-metal sections replace it. LEADERBOARD.md and BENCHMARKS.md
 record the result files they were written from (`<!-- inputs: ... -->`), and
 `gen_doc_assets.py --check` writes both pages again from those files and fails on any
 difference, so a number edited by hand, or a page not written again after a new run, fails. Until
