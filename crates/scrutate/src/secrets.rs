@@ -379,9 +379,13 @@ fn generic(secret: &str, whole: &str, before: &str) -> bool {
     let only = |set: &[u8]| secret.bytes().all(|b| b.is_ascii_alphanumeric() || set.contains(&b));
     let symbolic = !only(b"_.=-") && !only(b"+/=");
     let key = whole[..whole.rfind(secret).unwrap_or(0)].to_ascii_lowercase();
-    // a Rust macro call (`quote_spanned!`) and digits with format flags (`1234567890.-+`) are code
-    let code =
-        secret.strip_suffix('!').is_some_and(|s| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) || !secret.bytes().any(|b| b.is_ascii_alphabetic());
+    // a Rust macro call (`quote_spanned!`) and digits with format flags (`1234567890.-+`) are code,
+    // as are a chain of names through `?.` or `!.`, Razor's `@Model.Password` and a `~/` path; a
+    // plain dotted chain is not, since a passphrase has that shape
+    let marked = secret.starts_with(['@', '~']) || secret.contains("?.") || secret.contains("!.");
+    let code = secret.strip_suffix('!').is_some_and(|s| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        || !secret.bytes().any(|b| b.is_ascii_alphabetic())
+        || marked && CODE_OR_HOME.is_match(secret);
     (!symbolic || (["passw", "secret", "token"].iter().any(|k| key.contains(k)) && !secret.contains("://") && !code))
         && secret.chars().any(|c| !(c.is_ascii_alphabetic() || matches!(c, '_' | '.' | '-')))
         && !NOT_SECRET_NAMES.is_match(whole)
@@ -390,6 +394,10 @@ fn generic(secret: &str, whole: &str, before: &str) -> bool {
         && !IDENTIFIER.is_match(secret)
         && !names_a_thing(secret)
 }
+
+/// Names of letters joined by `.`, `?.` or `!.`, with Razor's `@` before them, or `~/` and a path:
+/// no digit or other symbol, so a password shaped so is still taken for one.
+static CODE_OR_HOME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:@?[A-Za-z_]+(?:[?!]?\.[A-Za-z_]+)+|~/[\w./-]+)$").unwrap());
 
 /// A quoted value that names a thing: a file path with an extension (`config/secret_settings.toml`)
 /// or words run together in camel case, a year or a count after them (`TokenRefreshed2024`).
@@ -1792,6 +1800,43 @@ mod tests {
             "const char* valid_tokens = \"1234567890.-+ #btcdeEfgGosuxX\";".to_string(),
         ] {
             assert!(redact(&line).1.is_empty(), "{line} -> {}", redact(&line).0);
+        }
+    }
+
+    /// Code and home paths after a password, secret or token are not redacted: a chain of names
+    /// with `?.` or `!.` in it, Razor's `@Model.Password`, `~/.aws/credentials`. A password that
+    /// starts with `~` or `@` or holds `!.`, and a passphrase of words joined by dots, are.
+    #[test]
+    fn code_and_home_paths_after_a_secret_name_are_not_redacted() {
+        for line in [
+            "password: this.form?.value?.password",
+            "token: ctx.auth!.accessToken",
+            "secret = cfg.secrets!.primary",
+            "password: @Model.Password",
+            "token: ~/.config/gh/hosts.yml",
+            "secret_file: ~/.aws/credentials",
+        ] {
+            assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
+        }
+        let (a, b, c) = (fake(121, ALNUM, 5), fake(122, ALNUM, 4), fake(123, ALNUM, 4));
+        for (name, value) in [
+            ("password: ", format!("~{a}@{b}!{c}")),
+            ("password: ", format!("~/{a}!{b}@{c}")),
+            ("password: ", format!("@{a}!{b}#{c}")),
+            ("token: ", format!("@Adm1n.{a}2024")),
+            ("secret = ", format!("{a}7!.{b}9?.{c}")),
+            ("client_secret: ", format!("@{a}{c}.{b}3!")),
+            ("DB_PASSWORD=", format!("~{a}@{b}!{c}")),
+            ("DB_PASSWORD=", "~/WeirdButReal/Pw".to_string()),
+            ("DB_PASSWORD=", "Correct.Horse.Battery.Staple".to_string()),
+            ("export SMTP_PASSWORD=", "Blue_Moon.Silver_Fox".to_string()),
+            ("password = \"", "Correct.Horse.Battery.Staple\"".to_string()),
+            ("const API_SECRET = \"", "Tango.Whiskey.Foxtrot.Zulu\";".to_string()),
+        ] {
+            let line = format!("{name}{value}");
+            let (out, marks) = redact(&line);
+            let shown = value.trim_end_matches([';', '"']);
+            assert!(!out.contains(shown) && !marks.is_empty(), "{line} -> {out}");
         }
     }
 

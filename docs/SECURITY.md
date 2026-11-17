@@ -550,8 +550,11 @@ space, `;`, an escaped line end, the line's end, or `&` before a URL's next quer
 body is redacted line by line between its armour, which is matched in any case (`Rsa Private
 Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
 a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
-writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone; hex values are
-kept as secrets.
+writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone, and after a
+password, secret or token name so are a chain of names through `?.` or `!.`
+(`this.form?.value?.password`), Razor's `@Model.Password` and a `~/` path (`~/.aws/credentials`):
+a value with a digit or another symbol, or words joined by dots alone (a passphrase), is still read
+as a secret; hex values are kept as secrets.
 
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
 it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,
