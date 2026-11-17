@@ -50,7 +50,7 @@ every push to main and every pull request, so a difference shows before the tag.
   on security beyond docs/SECURITY.md. Edit that file before the tag. Then
   `python3 tools/fold_changelog.py X.Y.Z YYYY-MM-DD`, with the tag's date, makes the version's
   section that description, dated, with one sentence linking the full list; moves the full list
-  (every Unreleased entry and the version's old section, verbatim) to `docs/changes/X.Y.Z.md`,
+  (every Unreleased entry and the version's old section, with relative links rewritten to resolve from `docs/changes/`) to `docs/changes/X.Y.Z.md`,
   which the archives pack; leaves `## [Unreleased]` as an empty heading; puts the link references
   for both headings at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
   `[X.Y.Z]: .../releases/tag/vX.Y.Z`); and writes the date into DELIVERY.md, SECURITY.md and
@@ -233,7 +233,7 @@ python3 bench/make_leaderboard_md.py --engine-a $M/leaderboard-warm.json --engin
   --engine-a $X/leaderboard-warm.json --engine-a $X/leaderboard-cold.json \
   --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json \
   --indexed $M/indexed.json --indexed $X/indexed.json --indexed $L/indexed.json
-python3 bench/make_benchmarks_md.py $M/compare.json $X/compare.json $L/compare.json   # one section per machine
+python3 bench/make_benchmarks_md.py $(ls $M/compare.json $X/compare.json $L/compare.json 2>/dev/null)   # one section per machine that has one
 python3 bench/make_dashboard.py
 python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
@@ -247,7 +247,13 @@ python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then -
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
-The two make_*_md.py commands name the files step 2 writes. On Linux, `leaderboard.py`,
+The make_leaderboard_md.py command names the files step 2 writes. A machine's `compare.json`
+exists only where `bench/compare_tools.py` ran: `bench/run_macos.sh` runs it on macOS, and the
+Linux scripts in `bench/competitors/` do not, so on Linux run it by hand with the same corpora
+(`python3 bench/compare_tools.py --corpus small=DIR --corpus big=DIR --corpus massive=DIR --runs 30
+--out bench/results/linux-<arch>/compare.json`). `make_benchmarks_md.py` stops with an error on a
+file that is not there, so the command passes only the ones that exist, and a machine without one
+has no section in docs/BENCHMARKS.md. On Linux, `leaderboard.py`,
 `indexed.py` and `compare_tools.py` record the machine with the results: CPU model, logical CPUs,
 memory, kernel, virtualization (`systemd-detect-virt`, else `/sys/hypervisor/type`; not
 detected when neither says), the CPU frequency governor and the disk the corpora are on.
