@@ -321,7 +321,12 @@ def engine_a(data, label, note=(), raw=None):
         idx = ms(xi.get("median")) if xi.get("status") == "ok" else xi.get("status", "")
         ratio = f"{r['ratio']:.3f} [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]{level(r)} vs {r['best_competitor']}" if "ratio" in r else r.get("why", "")
         cpus = data["environment"].get("cpus") or 1
-        flag = f" (load {r.get('max_load', 0):.0f})" if r.get("max_load", 0) > cpus else ""
+        lim = data["settings"].get("max_load")
+        # the bounded wait for an idle machine can end over the run's limit, far under the CPU count
+        if lim is not None and r.get("max_load", 0) > lim:
+            flag = f" (load {r['max_load']:.1f}, over the {lim:g} limit)"
+        else:
+            flag = f" (load {r.get('max_load', 0):.0f})" if r.get("max_load", 0) > cpus else ""
         first = r.get("first")
         if first:
             flag += f" (measured again; first: {first['status']}" + (f" {first['ratio']:.3f}" if first.get("ratio") else "") + ")"
@@ -506,11 +511,11 @@ def main() -> int:
             "- Every machine not marked bare metal was shared with other work, so no result from it is a publishable #1 claim (a "
             "published #1 needs dedicated idle hardware: R-14.11 in docs/TRACEABILITY.md). A bare-metal section records how its "
             "machine was found (virtualization, kernel, CPU frequency governor, disk) and the load before each tool's runs, for a "
-            "reader to judge that; a row whose load exceeded the CPU count shows it in the status column.")
+            "reader to judge that; a row whose load exceeded the CPU count or the run's own load limit shows it in the status column.")
     else:
         lines.append(
             "- Every machine was shared with other work, so no result is a publishable #1 claim (a published #1 needs dedicated idle "
-            "hardware: R-14.11 in docs/TRACEABILITY.md); a row whose load exceeded the CPU count shows it in the status column.")
+            "hardware: R-14.11 in docs/TRACEABILITY.md); a row whose load exceeded the CPU count or the run's own load limit shows it in the status column.")
     lines += [
         "- The read-files ceiling (`bench/rawread.c`) is measured once per file set, right after the first benchmark that uses it, as the fastest of several "
         "thread counts: one per CPU and half that with a warm cache, up to 96 with a cold one (a disk takes more reads at once than "

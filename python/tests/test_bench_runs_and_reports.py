@@ -160,6 +160,17 @@ def test_each_engine_a_row_has_scrutate_s_rank_each_tool_s_interval_and_its_raw_
     assert cells["scrutate"].startswith("10.0 [") and cells["ack"] == "500 (3)"
 
 
+def test_an_engine_a_row_timed_over_the_run_s_load_limit_says_so():
+    # the bounded wait for an idle machine can end with the load still over the run's max_load,
+    # far under the CPU count on a large machine (limit 2 on 96 CPUs)
+    for load, mark in [(5.2, " (load 5.2, over the 4 limit)"), (9.0, " (load 9.0, over the 4 limit)"), (3.0, "")]:
+        d = engine_a_data()
+        d["benchmarks"]["r/literal"]["max_load"] = load
+        row = next(l for l in ML.engine_a(d, "label") if l.startswith("| r/literal"))
+        status = row.rstrip(" |").rsplit("|", 1)[1]
+        assert status == " FAIL" + mark, (load, row)
+
+
 def test_an_engine_a_verdict_under_thirty_runs_is_measured_not_counted():
     # a committed row cut to 20 runs per tool, as leaderboard.py's stop rule can leave one
     path = os.path.join(BENCH, "results", "macos-arm64", "superseded", "leaderboard-warm-9aa0.json")
