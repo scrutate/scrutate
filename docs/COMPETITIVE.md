@@ -9,12 +9,13 @@
 
 <!-- End of head. -->
 
-What Scrutate 0.1.0 does better than the tools it was measured against, where it ties, and where
-it is behind. Performance statements point at docs/LEADERBOARD.md (generated from the raw results
-in `bench/results/`), capability statements at a test. Claims about other tools cover only what
-those runs observed and the tools' documented options. The machine is a developer laptop (Apple
-M3 Pro) shared with other work, and section 14 of the mission keeps "#1" claims for dedicated idle
-hardware, so the wins below are measured results, not publishable leadership claims.
+What Scrutate 0.1.0 does better than the tools it was measured against, where it ties, and where it
+is behind. Performance statements point at docs/LEADERBOARD.md (generated from the raw results in
+`bench/results/`), except the few in sections 2 and 3 that say they have no committed result file.
+Claims about other tools cover only what those runs observed
+and the tools' documented options. The leaderboard's machine is a developer laptop (Apple M3 Pro)
+shared with other work, and section 14 of the mission keeps "#1" claims for dedicated idle hardware,
+so the wins below are measured results, not publishable leadership claims.
 
 ## 1. Against grep-class tools (GNU grep, ripgrep, ugrep, git grep, ag, ack)
 
@@ -35,16 +36,15 @@ below 1) and in all 5 cold-cache ones. Its lead over the next tool:
 Other work on the laptop disturbed six of the 37 rows, so the harness measured each once more
 ([Leaderboard](LEADERBOARD.md) gives both measurements). Five had passed. The sixth,
 `smallfiles/simple regex`, had an interval reaching 1.02 the first time and 0.757 the second. One
-second measurement is worse: other applications had by then taken the memory the page cache needs
-for the LLVM tree (4.9 GB in 16 KB pages), every tool read part of it from disk, and
-`llvm/case-insensitive` is 8% ahead where it had been 16%.
+second measurement is worse: `llvm/case-insensitive` is 8% ahead where it had been 16%; the
+committed result does not record why.
 
 In a 5-CPU Linux VM on the same Mac (one virtual CPU per performance core), Engine A is
 significantly fastest on all 14 Linux-tree benchmarks: 7 to 16% ahead of ripgrep on 11, 40% ahead
 with 1.3 million matching lines (its output leaves in 64 KB writes, ripgrep's in one write per
 file) and 59% on the complex regex. On the structural query ast-grep takes 24 times as long when
-scrutate reads its capture cache (a cache hit), but on a first run scrutate is the slower one (1.41
-times ast-grep's time on a 4-vCPU Linux x86_64 server, section 2). With
+scrutate reads its capture cache (a cache hit), but on a first run scrutate was the slower one, in a
+run on a 4-vCPU Linux x86_64 server whose result file is not committed (section 2). With
 the page cache dropped before every run it takes 0.28 to 0.30 of the next tool's time on all four
 rows (git grep or ugrep, 1.2 to 1.4 s each), because it reads a cold tree on up to 64 threads
 where the others use one per core: 18 to 25% above the time to merely read the files.
@@ -53,12 +53,12 @@ where the others use one per core: 18 to 25% above the time to merely read the f
 file of the Linux tree and nothing else (the "read files" column, `bench/rawread.c`) is fastest on
 five threads, one per performance core: 518 ms. Scrutate searches the same files in 581 ms, 12%
 above that floor; the next tool takes 711 ms. That floor is handed the list of files; the
-leaderboard's "walk and read" column (`bench/walkread.c`) is a second one, which lists the tree
+harness also measures a second one, "walk and read" (`bench/walkread.c`), which lists the tree
 and reads every file in it, the least a search that has to find its files does. It reads no
 ignore rule, so it is a floor only where the tree holds no untracked or ignored file, and a row
-shows it only when it read as many files as the row searches. On LLVM it is 10% above the floor, on 200,000 small
-files within 1%. So Scrutate walks with one thread per performance core and adds threads when its
-reads show the files coming from disk: up to twice the cores on macOS, up to 64 on Linux
+shows it only when it read as many files as the row searches. The committed runs predate it, so
+the leaderboard has no such column yet. So Scrutate walks with one thread per performance core
+and adds threads when its reads show the files coming from disk: up to twice the cores on macOS, up to 64 on Linux
 ([Architecture](ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)).
 The other margins come from the matcher and the output path: one large file searched on every
 core, regexes anchored at line starts examined only there, and search threads that format their
@@ -89,16 +89,15 @@ in the Linux tree).
 
 Against ast-grep 0.51.1 on the same question (every call to `kmalloc` in the Linux tree, every
 `format!` in ripgrep), both answers checked against a tree-sitter reference. A cache hit, on the
-Apple M3 Pro: 943 ms against 13.4 s on the Linux tree (0.070x), 6.4 ms against 39.0 ms on ripgrep (0.163x); in the Linux VM, 662 ms
-against 16.3 s on the Linux tree. These runs read scrutate's capture cache (`.scrutate/tsquery/`),
-filled by earlier runs, so scrutate parsed no file while ast-grep parsed every file: they compare
-the cached tool with the uncached one. A first run, parse for parse (`tsquery --no-cache`), is the
-other way round: on a
-4-vCPU Linux x86_64 server (`bench/competitors/linux_bench.sh` at 3ff4eb5), scrutate took 56.9 s
-against ast-grep's 40.4 s on the Linux tree, 1.41 times as long (95% interval 1.405 to 1.447).
-For C, ast-grep needs
-`--selector call_expression` and a statement as the pattern: alone, `kmalloc($$$A)` parses as a
-type macro and matches nothing, which the first comparison mistook for ast-grep being wrong.
+Apple M3 Pro: 943 ms against 13.4 s on the Linux tree (0.070x), 6.4 ms against 39.0 ms on ripgrep
+(0.163x); in the Linux VM, 662 ms against 16.3 s on the Linux tree. These runs read scrutate's
+capture cache (`.scrutate/tsquery/`), filled by earlier runs, so scrutate parsed no file while
+ast-grep parsed every file: they compare the cached tool with the uncached one. A first run, parse
+for parse (`tsquery --no-cache`), was the other way round on a 4-vCPU Linux x86_64 server
+(`bench/competitors/linux_bench.sh` at 3ff4eb5): scrutate took longer than ast-grep on the Linux
+tree. That run's result file is not committed, so this page gives no figure for it. For C, ast-grep
+needs `--selector call_expression` and a statement as the pattern: alone, `kmalloc($$$A)` parses as
+a type macro and matches nothing, which the first comparison mistook for ast-grep being wrong.
 
 ## 3. Against Zoekt and livegrep (indexed search)
 
@@ -140,24 +139,17 @@ the index and a minimal gRPC client prints each answer), Scrutate is ahead on al
 livegrep keeps its index in a long-running server's memory and answers there, which makes its
 large queries fast; Scrutate and Zoekt start a process per query and map their index files.
 
-Kept running as servers, both rivals answer faster than Scrutate's process per query. On a 4-CPU
-Linux box (AMD EPYC-Milan, 16 GB) with the Linux tree and the 20 queries of `bench/yardstick.py`
-W3, livegrep's server answered 16 (HTTP 500 on two common literals, a phrase and a multiple-literal
-query) in 12.6 ms median. On those 16, zoekt-webserver took 13.2 ms and `scrutate grep --index` 17.9 ms;
-on all 20, zoekt-webserver took 36 ms and `scrutate grep --index` 24.3 ms. Scrutate's own server, the MCP
-`grep_code` tool, answered 4 of the 20 (two literals and two queries that match nothing) in 1,260 ms
-median, where on the same 4 `scrutate grep --index` took 7.6 ms, zoekt-webserver 1.4 ms and livegrep
-2.0 ms. The other 16 have more than the 5,000 lines `grep_code` returns, so they were not timed. In
-that run each `grep_code` call walked the whole tree before it searched. A server now keeps that
-look between calls (on macOS while its kqueue is in place: on a tree past the kqueue's share of
-descriptors each call still looks). Measured apart, on
-another machine (an AWS build box, 16 cores) and so not comparable with the rows above, it took the
-same 4 queries from 669.6 to 50.8 ms median: `bench/grep_code_pair.py`, the yardstick's own
-`scrutate-mcp` adapter, the build before the change and the build with it as two servers on one
-index of the Linux tree, asked in turn, 20 rounds. On a Mac (Apple M3 Pro, load 3 to 7), the same
-way on a 24,866-file part of that tree, which the kqueue can watch, the 7 of the 20 it answered went
-from 82.7 to 8.4 ms median; on the whole tree, past the kqueue's share of descriptors there (61,440
-per process), each call still looks (324 and 320 ms).
+Kept running as servers, both rivals answer faster than Scrutate's process per query: a run of
+`bench/yardstick.py` W3 (the Linux tree, 20 queries) on a 4-CPU Linux box (AMD EPYC-Milan, 16 GB)
+found so for livegrep's server and zoekt-webserver against `scrutate grep --index` and Scrutate's
+own server, the MCP `grep_code` tool, but its result file is not committed, so this page gives no
+figures for it. In that run each `grep_code` call walked the whole tree before it searched. A
+server now keeps that look between calls (on macOS while its kqueue is in place: on a tree past
+the kqueue's share of descriptors, half the process's limit less 1,024, each call still looks).
+`bench/grep_code_pair.py` measures that change (the build before it and the build with it as two
+servers on one index of the Linux tree, asked in turn, 20 rounds); its runs on an AWS build box
+and on the Apple M3 Pro, on a 24,866-file part of that tree, which the kqueue can watch, made
+those calls faster, but their result files are not committed either.
 
 ## 4. Against "nothing": the code-intelligence engine
 
@@ -166,7 +158,8 @@ No measured tool has a code-intelligence index, so this part has no competitor:
 - **Ranked search by meaning** with a learned ranker: MRR@10 0.635 for natural-language queries
   with a function answer on an undocumented held-out Python code base, against 0.463 for BM25
   over the same candidates; 0.916 to 1.000 for name and identifier queries; held-out Rust, Go,
-  Java, JavaScript and TypeScript repositories gain too (docs/QUALITY.md).
+  Java, JavaScript and TypeScript repositories gain too (docs/QUALITY.md, from the logs of run f3
+  of `bench/retrain_ranker.sh` on 2026-11-12, which are not committed).
 - **Symbols from 61 grammars** (74 with the optional grammars), each verified by a sample; call
   graph, imports and dependents, references grouped by symbol, outline, similar code, exact and
   near-duplicate detection, cross-repository search.
@@ -185,14 +178,15 @@ concurrent writers are tested; its dependencies are audited and listed in an SBO
 
 What the evidence does not support, and this page does not claim:
 
-- A published "#1": every number comes from one developer laptop shared with other work and a VM
-  on it, and section 14 of the mission asks for dedicated idle hardware
+- A published "#1": every leaderboard number comes from one developer laptop shared with other
+  work and a VM on it, and section 14 of the mission asks for dedicated idle hardware
   (docs/RELEASE_READINESS.md).
 - Results on Windows or Intel Macs, tested on GitHub's runners only, with no benchmark there
   (docs/INSTALL.md).
 - Linux results on real hardware: the cold-tree thread count and the read time that counts as a
   disk read were fitted in the VM (docs/ROADMAP.md).
-- A lead of half the time everywhere: on macOS a search of a large tree takes 0 to 12% longer than
-  merely reading its files, so the margin has little room left there.
+- A lead of half the time everywhere: on macOS a search of a large tree takes 1 to 22% longer than
+  merely reading its files (the second measurement of `llvm/case-insensitive` aside), so the margin
+  has little room left there.
 - An answer without the source tree: the text index stores no file contents; Zoekt's does.
 - Ranking quality beyond the six languages measured (docs/QUALITY.md).

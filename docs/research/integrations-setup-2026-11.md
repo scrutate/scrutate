@@ -2,6 +2,8 @@
 
 Research date: 2026-11-11. Every claim about a platform links to the page it came from, with the version or date the page states. Where a page states no date, the table says so. Project file references are `path:line` at the working tree of 2026-11-11 (branch `release/0.1.0`). Nothing was run except reading files, `gzip -c` on the model file and `command -v` checks; no editor was opened and nothing was installed.
 
+Status on 2026-11-17: the project side of this note is the tree of its research date. Since then `integrations/mcp/README.md` gives an entry per client and `scrutate setup <client>`; the Neovim plugin ships `lsp/scrutate.lua`; the JetBrains README adds the tools by hand with `$ProjectFileDir$`; the VS Code extension has `repository` and a `LICENSE`; the release builds an `abi3t` wheel for 3.15 and later and `pyproject.toml` has no `extension-module`; the model is `crates/scrutate/models/semantic.npz` (7.6 MB) and there is no `[patch]`; `packaging/README.md` names only the tap; `.pre-commit-hooks.yaml` exists with `language: unsupported`; the GitLab job has `merge_request_event` rules and writes a Code Quality report; the composite action has Windows paths and `integrations/github/README.md` shows how to use it; `tools/release_local.sh` writes the per-archive `.sha256` beside `SHA256SUMS`, and both the local and the CI archives hold `CHANGELOG.md`, `docs/` and `integrations/`; the winget manifests are 1.12.0.
+
 ## What this means for scrutate
 
 Ordered by how badly a user would be hit.

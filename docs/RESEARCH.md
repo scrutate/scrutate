@@ -18,8 +18,9 @@ better than the current code-word semantic model (`crates/scrutate/models/semant
 
 - Data and protocol as in [QUALITY.md](QUALITY.md). `bench/make_bench.py` (seed 1234) rebuilt the
   corpora and queries from the latest PyPI releases of the packages in `bench/groups.py`
-  (networkx 3.7, mcp 2.3.0, rich 15.0.0 for TEST). Query counts match QUALITY.md except `kw`
-  (1 585 instead of 1 604, from newer package versions).
+  (networkx 3.7, mcp 2.3.0, rich 15.0.0 for TEST). Query counts matched QUALITY.md as it was
+  before ranker v8 (`d882a7b0`, 2026-11-10) except `kw` (1 585 instead of 1 604, from newer
+  package versions); QUALITY.md's tables now come from a later run with other counts.
 - Models compared:
 
   | Model | Params | Dim | Licence (model card) | Weights on disk |
@@ -41,6 +42,9 @@ better than the current code-word semantic model (`crates/scrutate/models/semant
 - Intervals: 95 % paired bootstrap over queries (1 000 resamples, seed 0), from `evalcore.py`.
 - Bulk embedding for the quality runs used the Apple GPU (MPS) to keep CPU load low, with granite
   at its stored bf16 precision; the timings below are CPU only.
+- Every result and cost below was measured on 2026-11-09 on the machine named under Costs, with
+  `bench/eval_transformers.py`, `bench/train_ranker.py` and the probes named there; no output of
+  those runs is committed (nothing under `bench/results/` holds these figures).
 
 ## Results, variant A (every docstring removed)
 
@@ -90,11 +94,12 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
 | bge-small | 16.6 s | 68 s | 9.2 ms | 0.9 GB |
 | granite-small (fp32) | 20.3 s | not measured | 11.4 ms | 1.4 GB |
 
-- Indexing compute grows 46 to 107 times over the Python reference of the current model (the Rust
-  engine is faster still): a 100 000-chunk repository on 4 threads takes about 15 min (MiniLM) or
+- Indexing compute grows 46 to 107 times over the Python reference of the current model: a
+  100 000-chunk repository on 4 threads takes about 15 min (MiniLM) or
   28 min (bge) with PyTorch, more with candle, against seconds today.
 - Every query pays one more forward pass: 5 to 11 ms on CPU.
-- The binary is 84 MB today (release, macOS arm64). A transformer adds:
+- The binary is 82 MB today (the release build of `07b73e6d`, macOS arm64, 82,239,344 bytes).
+  A transformer adds:
   - runtime: candle-core + candle-nn + candle-transformers + tokenizers, about 4.3 MB stripped
     (a probe binary with the same profile, 4.6 MB, against 0.4 MB for an empty one); or ONNX
     Runtime, whose macOS arm64 library is 33 MB (version 1.31.1);
@@ -104,8 +109,8 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
   batch 64; smaller batches would cut memory at some cost in speed.
 - At the time the Python reference and the Rust engine agreed to the bit (`bench/parity.py`), a
   mirror since ended. The engine's features are still pinned bit for bit on every platform
-  (`tests/ranking_pins.rs`); transformer inference through another backend would not give the
-  same bits everywhere, so those pins would need a tolerance.
+  (`crates/scrutate/tests/ranking_pins.rs`); transformer inference through another backend would
+  not give the same bits everywhere, so those pins would need a tolerance.
 
 ## Recommendation
 
