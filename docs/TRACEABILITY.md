@@ -19,7 +19,7 @@ evidence and status. The mission's status words:
 - **FAIL**: not implemented, or verification failed.
 - **BLOCKED**: a real, documented technical limit of the environment or the problem.
 
-Evidence: generated `docs/TEST_RESULTS.md` (tests, audits; generated 2026-11-11, before the latest work) and `docs/LEADERBOARD.md`
+Evidence: generated `docs/TEST_RESULTS.md` (tests, audits; its first line gives when it was generated) and `docs/LEADERBOARD.md`
 (section 14, from `bench/results/`; the published runs are the `*-9aa0` and `*-261e` files filed under `superseded/`, an earlier build, rerun at the release), `docs/BENCHMARKS.md`, `docs/QUALITY.md`, `docs/SECURITY.md`,
 `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform logs). Tests are
 in `crates/scrutate/tests/*.rs`, `crates/scrutate/src/**/*.rs` and `python/tests/*.py`.
@@ -99,7 +99,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | R-5.4 | Minimal dependencies | 213 crates in the release binary (the `ctrlc` crate and its objc2 chain removed for about 60 lines of signal handling, `cli.rs` `mod interrupt`) | DEPENDENCIES.md | PASS |
 | R-5.5 | No dead code, duplicated logic, unnecessary allocations, unjustified abstractions | `-D warnings`, clippy clean; Engine A's per-file search shared by the walk and the indexed path | `cargo clippy --all-targets -D warnings` | PASS |
 | R-5.6 | Async only where beneficial | none used | design note | PASS |
-| R-5.7 | `cargo fmt`, `cargo clippy`, `cargo test`, dependency auditing | all gates | `ci.yml` (fmt, clippy, the tests on six runners, the advisories job) passing in run 43408907893, and `security.yml` (`cargo deny`), passing on `main` in run 44010520289; TEST_RESULTS.md (generated 2026-11-11) | PASS |
+| R-5.7 | `cargo fmt`, `cargo clippy`, `cargo test`, dependency auditing | all gates | `ci.yml` (fmt, clippy, the tests on six runners, the advisories job) passing in run 43408907893, and `security.yml` (`cargo deny`), passing on `main` in run 44010520289; TEST_RESULTS.md | PASS |
 
 ## 6. Enterprise and future-proofing
 
