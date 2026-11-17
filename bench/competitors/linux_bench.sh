@@ -11,6 +11,13 @@
 #     -v "$HOME/.cache/scrutate-bench/corpora":/corpora:ro -v "$HOME/.cache/scrutate-bench/livegrep":/livegrep:ro \
 #     -v scrutate-bench-linux:/bench -v "$PWD/bench/results":/results rust:1-slim-bookworm bash /src/bench/competitors/linux_bench.sh
 #
+# In a container the results can only say which container they ran in; to record the host as well
+# (what makes a section read "bare metal"), write its facts on the host first and hand them in:
+#   docker volume create scrutate-bench-linux
+#   sudo python3 bench/host_facts.py "$(docker volume inspect -f '{{.Mountpoint}}' scrutate-bench-linux)" > host-facts.json
+# and add to the docker run: -v "$PWD/host-facts.json":/host-facts.json:ro -e SCRUTATE_BENCH_HOST_FACTS=/host-facts.json
+# (keys: kernel, virtualization, virtualization_source, cpu_governor, disk, cpu; see bench/host_facts.py).
+#
 # The corpora are copied into the container's own disk (/bench) so reads do not go through the
 # host file-sharing layer; the cold-cache runs drop the guest page cache before every run.
 set -euo pipefail
@@ -50,12 +57,12 @@ if [ ! -x $B/bin/hyperfine ]; then
   tar -C $B/src -xzf $B/src/hf.tgz && cp $B/src/hyperfine-v2.0.0-$arch-unknown-linux-gnu/hyperfine $B/bin/
 fi
 if [ ! -x $B/bin/ast-grep ]; then
-  step "ast-grep 0.51.1 (release binary)"
+  step "ast-grep 0.51.3 (release binary)"
   case "$arch" in
-    x86_64) sum=42514f77ae0c8a25d7d32154d31d3e7e16f3ab894f8ce76ce417de234ee49157 ;;
-    aarch64) sum=db02fae2d8eace5fc40c55242068882452dd03eab38a1d950d5fd981cf112926 ;;
+    x86_64) sum=22803eb0c5bf83164fb7fd76d4721d355ecf0c8466ef47342c1ec7d80897ca47 ;;
+    aarch64) sum=5b44fd68e78744934b359b07badce347d4197ed50b341d50f1f99d056ecedb08 ;;
   esac
-  fetch_sum https://github.com/ast-grep/ast-grep/releases/download/0.51.1/app-$arch-unknown-linux-gnu.zip sg.zip "$sum"
+  fetch_sum https://github.com/ast-grep/ast-grep/releases/download/0.51.3/app-$arch-unknown-linux-gnu.zip sg.zip "$sum"
   unzip -o -q $B/src/sg.zip -d $B/src/sg && cp $B/src/sg/ast-grep $B/bin/
 fi
 if [ ! -x $B/bin/ugrep ]; then
@@ -67,6 +74,13 @@ if [ ! -x $B/bin/grep ]; then
   step "GNU grep 3.12 (source)"
   fetch_sum https://ftp.gnu.org/gnu/grep/grep-3.12.tar.xz grep.txz 2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9
   tar -C $B/src -xJf $B/src/grep.txz && (cd $B/src/grep-3.12 && ./configure -q --prefix=$B > /dev/null && make -s -j"$(nproc)" > /dev/null && cp src/grep $B/bin/)
+fi
+if [ ! -x $B/bin/git ]; then
+  # git grep is timed: Debian's git is older than the latest release, so it is built as GNU grep is
+  step "git 2.56.1 (source, with PCRE2 for git grep -P)"
+  fetch_sum https://www.kernel.org/pub/software/scm/git/git-2.56.1.tar.xz git.txz f0b0bf89264b9bd2e1c640363e7529643989da76281600473c50745cd34a607f
+  tar -C $B/src -xJf $B/src/git.txz && (cd $B/src/git-2.56.1 && make -s -j"$(nproc)" prefix=$B USE_LIBPCRE2=1 NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 \
+    NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 NO_OPENSSL=1 install > /dev/null)
 fi
 if [ ! -x $B/bin/ack ]; then
   step "ack 3.10.0 (standalone file from beyondgrep.com)"
@@ -80,28 +94,30 @@ if [ ! -x $B/go/bin/zoekt ]; then
   step "Go and Zoekt (go install, as its README says)"
   goarch=${arch/aarch64/arm64}
   case "$arch" in
-    x86_64) sum=9fa5ffeda4170de60f67f3aa0f824e426421ba724c21e133c1e35d6159ca1bec ;;
-    aarch64) sum=a68e86d4b72c2c2fecf7dfed667680b6c2a071221bbdb6913cf83ce3f80d9ff0 ;;
+    x86_64) sum=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840 ;;
+    aarch64) sum=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92 ;;
   esac
-  fetch_sum "https://go.dev/dl/go1.25.4.linux-${goarch/x86_64/amd64}.tar.gz" go.tgz "$sum"
+  fetch_sum "https://go.dev/dl/go1.27.4.linux-${goarch/x86_64/amd64}.tar.gz" go.tgz "$sum"
   tar -C $B -xzf $B/src/go.tgz
-  GOPATH=$B/go GOFLAGS=-mod=mod $B/go/bin/go install github.com/sourcegraph/zoekt/cmd/zoekt-index@a5a933bc043e github.com/sourcegraph/zoekt/cmd/zoekt@a5a933bc043e
+  GOPATH=$B/go GOFLAGS=-mod=mod $B/go/bin/go install github.com/sourcegraph/zoekt/cmd/zoekt-index@33ce1d04d373 github.com/sourcegraph/zoekt/cmd/zoekt@33ce1d04d373
   mv $B/go/bin/zoekt $B/go/bin/zoekt-index $B/bin/ 2>/dev/null || true
 fi
 ln -sf $B/bin/zoekt $B/bin/zoekt-index $B/go/bin/ 2>/dev/null || true
 if ! command -v uv > /dev/null; then
-  step "uv 0.13.8 (release binary; the structural benchmark's reference runs tree-sitter's Python bindings under it)"
+  step "uv 0.13.9 (release binary; the structural benchmark's reference runs tree-sitter's Python bindings under it)"
   case "$arch" in
-    x86_64) sum=5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91 ;;
-    aarch64) sum=74f2f5c6024d397481db228db8fc25eed420db192243f88438c118e7e013e585 ;;
+    x86_64) sum=a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5 ;;
+    aarch64) sum=0797542018e541a9288855df555c8077eed06f7a47d206362030480e8ecc9f3d ;;
   esac
-  fetch_sum https://github.com/astral-sh/uv/releases/download/0.13.8/uv-$arch-unknown-linux-gnu.tar.gz uv.tgz "$sum"
+  fetch_sum https://github.com/astral-sh/uv/releases/download/0.13.9/uv-$arch-unknown-linux-gnu.tar.gz uv.tgz "$sum"
   tar -C $B/src -xzf $B/src/uv.tgz && cp $B/src/uv-$arch-unknown-linux-gnu/uv $B/src/uv-$arch-unknown-linux-gnu/uvx $B/bin/
 fi
 
 step "scrutate (release build)"
+git config --global --add safe.directory '*'
 rm -rf $B/scrutate && mkdir -p $B/scrutate
 tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C $B/scrutate -xf -
+bash /src/bench/competitors/built_from.sh write /src $B/scrutate
 if [ -n "${SCRUTATE_PREBUILT:-}" ]; then
   # x86_64 on an arm64 host: gcc crashes on the grammar sources under emulation, so the binary is
   # cross-built first (tools/linux_x86_cross_verify.sh) and handed in
@@ -122,9 +138,9 @@ for c in linux linux-nodot ripgrep; do
   [ -d $B/corpora/$c ] || cp -a /corpora/$c $B/corpora/
 done
 cp /corpora/manifest.json $B/corpora/
-git config --global --add safe.directory '*'
 if [ -n "${SETUP_ONLY:-}" ]; then step "set up; no benchmark asked for"; exit 0; fi
 
+bash /src/bench/competitors/built_from.sh check /src $B/scrutate
 out=/results/linux-$arch
 mkdir -p $out
 cd $B/scrutate

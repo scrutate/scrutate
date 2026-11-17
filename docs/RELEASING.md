@@ -162,6 +162,10 @@ bench/results/linux-aarch64/superseded/README.md). Run `bench/competitors/linux_
 `bench/competitors/linux_indexed.sh`; the commands are in their headers. Colima shares only the
 home directory with containers. The first script checks each tool it downloads against a SHA-256
 in the script: a new tool version needs its new hash there, from the tool's own release page.
+It builds GNU grep and git from their latest release sources, since Debian's are older, and
+records the commit `/src` is at in `/bench/scrutate/BUILT_FROM`; both scripts refuse to run when
+`/src` has moved to another commit since (`bench/competitors/built_from.sh`). `linux_indexed.sh`
+takes its idle threshold from `INDEXED_MAX_LOAD` (default: the CPU count).
 The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux x86_64 runs on a
 dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,
 without `SCRUTATE_PREBUILT`), and can run at the same time as the macOS chain.
@@ -220,10 +224,12 @@ Then read the results:
 ## 3. Generated documents
 
 ```sh
-M=bench/results/macos-arm64 L=bench/results/linux-aarch64
+M=bench/results/macos-arm64 X=bench/results/linux-x86_64 L=bench/results/linux-aarch64
 python3 bench/make_leaderboard_md.py --engine-a $M/leaderboard-warm.json --engine-a $M/leaderboard-cold.json \
-  --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json --indexed $M/indexed.json --indexed $L/indexed.json
-python3 bench/make_benchmarks_md.py $M/compare.json
+  --engine-a $X/leaderboard-warm.json --engine-a $X/leaderboard-cold.json \
+  --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json \
+  --indexed $M/indexed.json --indexed $X/indexed.json --indexed $L/indexed.json
+python3 bench/make_benchmarks_md.py $M/compare.json $X/compare.json $L/compare.json   # one section per machine
 python3 bench/make_dashboard.py
 python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
@@ -237,7 +243,25 @@ python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then -
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
-The two make_*_md.py commands name the files step 2 writes. LEADERBOARD.md and BENCHMARKS.md
+The two make_*_md.py commands name the files step 2 writes. On Linux, `leaderboard.py`,
+`indexed.py` and `compare_tools.py` record the machine with the results: CPU model, logical CPUs,
+memory, kernel, virtualization (`systemd-detect-virt`, else `/sys/hypervisor/type`; not
+detected when neither says), the CPU frequency governor and the disk the corpora are on.
+`leaderboard.py` and `indexed.py` also record the 1-minute load average before each tool's runs.
+In a container (`systemd-detect-virt --container`, `/.dockerenv` or `/run/.containerenv`) they
+record the container's type and no virtualization, governor or disk of their own, since those
+would describe the container: run `sudo python3 bench/host_facts.py DIR > host-facts.json` on the
+host first, with DIR the directory that holds the corpora (for the `scrutate-bench-linux` volume,
+`docker volume inspect -f '{{.Mountpoint}}' scrutate-bench-linux`), and add
+`-v "$PWD/host-facts.json":/host-facts.json:ro -e SCRUTATE_BENCH_HOST_FACTS=/host-facts.json` to
+both `docker run` lines (the headers of `linux_bench.sh` and `linux_indexed.sh` have them). The
+file's keys are `kernel`, `virtualization`, `virtualization_source`, `cpu_governor`, `disk`
+(`source`, `fstype`, `model`, `rotational`) and `cpu`, and the results record the host's
+virtualization with the source `host: systemd-detect-virt`. A section whose results record
+virtualization `none` from the machine itself or from the host is headed "bare metal" with those
+facts under it; a container without the host's facts never is. A virtual-machine run filed under
+`superseded/` beside a bare-metal run of the same platform says the bare-metal sections replace
+it. LEADERBOARD.md and BENCHMARKS.md
 record the result files they were written from (`<!-- inputs: ... -->`), and
 `gen_doc_assets.py --check` writes both pages again from those files and fails on any
 difference, so a number edited by hand, or a page not written again after a new run, fails. Until

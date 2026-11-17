@@ -226,6 +226,21 @@ incompatible index by itself, and that is never breaking.
   run them in containers. `--only` starts only the tools its workloads have, and a tool's start
   past `--start-timeout` (30 min) is that tool's error. CI runs `--smoke` on a small tree in
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- On Linux the benchmark results record the machine they ran on: kernel, virtualization, CPU
+  frequency governor and the disk under the corpora, and `bench/indexed.py` records the load
+  before each tool's runs as `bench/leaderboard.py` does. In a container they name the container
+  and take the host's facts from a file `bench/host_facts.py` writes on the host
+  (`SCRUTATE_BENCH_HOST_FACTS`). LEADERBOARD.md heads a section "bare
+  metal" when its results record no virtualization and lists those facts under it, and marks a
+  virtual-machine run filed as superseded beside a bare-metal run of its platform. BENCHMARKS.md
+  takes several results files, one section per machine
+  ([Releasing](docs/RELEASING.md#3-generated-documents)).
+- The Linux benchmark harness installs the latest release of each competitor: ast-grep 0.51.3,
+  uv 0.13.9, Go 1.27.4 and Zoekt at `33ce1d04d373`, and git 2.56.1 built from source in place of
+  Debian's, which `bench/compare_tools.py` now finds first on PATH on Linux as the leaderboard does.
+  A run refuses a scrutate binary built from another commit than the harness it runs
+  (`bench/competitors/built_from.sh`), and `linux_indexed.sh` takes its idle threshold from
+  `INDEXED_MAX_LOAD`.
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,

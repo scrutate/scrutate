@@ -64,6 +64,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
 SCRUTATE_BASE = os.environ.get("SCRUTATE_BASE_BIN") or None
+# read at import, as the two above: main() drops every SCRUTATE_ variable before it runs a tool
+HOST_FACTS = os.environ.get("SCRUTATE_BENCH_HOST_FACTS") or None
 
 
 def drop_scrutate_settings():
@@ -873,7 +875,61 @@ print(json.dumps({"hits": sorted(hits), "files": n, "parse_errors": errors}))
     return {tuple(x) for x in d["hits"]}, d["files"], set(d["parse_errors"])
 
 
-def environment():
+def stdout_of(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def machine_facts(path, root="/", run=stdout_of, system=None, host_facts=HOST_FACTS):
+    """What a reader needs to accept a Linux machine as dedicated hardware: kernel, virtualization (None
+    when neither systemd-detect-virt nor /sys/hypervisor says), CPU frequency governor, and the disk
+    `path` is on. Nothing elsewhere: the pages head those sections as they always have.
+    In a container these describe the container, so `container` names it and virtualization stays
+    None unless `host_facts` (a file bench/host_facts.py wrote on the host) gives the host's."""
+    if (system or platform.system()) != "Linux":
+        return {}
+    facts = {"kernel": platform.release(), "virtualization": None, "virtualization_source": None, "cpu_governor": None, "disk": None,
+             "container": None}
+
+    def read(p):
+        try:
+            with open(os.path.join(root, p)) as f:
+                return f.read().strip() or None
+        except OSError:
+            return None
+    inside = run(["systemd-detect-virt", "--container"]).strip()
+    if inside and inside != "none":
+        facts["container"] = inside
+    elif os.path.exists(os.path.join(root, ".dockerenv")):
+        facts["container"] = "docker"
+    elif os.path.exists(os.path.join(root, "run/.containerenv")):
+        facts["container"] = "podman"
+    if facts["container"]:
+        if host_facts:
+            with open(host_facts) as f:
+                host = json.load(f)
+            facts.update({k: host.get(k) for k in ("kernel", "virtualization", "cpu_governor", "disk")})
+            facts["virtualization_source"] = f"host: {host['virtualization_source']}" if host.get("virtualization_source") else None
+        return facts
+    virt = run(["systemd-detect-virt"]).strip()
+    if virt:
+        facts.update(virtualization=virt, virtualization_source="systemd-detect-virt")
+    elif read("sys/hypervisor/type"):
+        facts.update(virtualization=read("sys/hypervisor/type"), virtualization_source="/sys/hypervisor/type")
+    facts["cpu_governor"] = read("sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+    mount = run(["findmnt", "-no", "SOURCE,FSTYPE", "--target", path]).split()
+    if len(mount) == 2:
+        # -s lists the partition, then the disk it is on: the disk's line carries the model
+        devs = [l.split() for l in run(["lsblk", "-slno", "NAME,MODEL,ROTA", mount[0]]).splitlines() if len(l.split()) >= 3]
+        dev = devs[-1] if devs else None
+        facts["disk"] = {"source": mount[0], "fstype": mount[1], "model": " ".join(dev[1:-1]) if dev else None,
+                         "rotational": dev[-1] == "1" if dev else None}
+    return facts
+
+
+def environment(data_dir="."):
     env = {"date": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "cpus": os.cpu_count()}
     if platform.system() == "Darwin":
         q = lambda k: subprocess.run(["sysctl", "-n", k], capture_output=True, text=True).stdout.strip()
@@ -883,6 +939,10 @@ def environment():
         lines = open("/proc/cpuinfo").read().splitlines()
         env["cpu"] = next((l.split(":", 1)[1].strip() for l in lines if l.startswith(("model name", "CPU part"))), "")
         env["memory_bytes"] = int(open("/proc/meminfo").read().split()[1]) * 1024
+        if not env["cpu"] or env["cpu"].startswith("0x"):
+            # an Arm CPU's /proc/cpuinfo gives only a part number; lscpu names it (Neoverse-V2)
+            env["cpu"] = next((l.split(":", 1)[1].strip() for l in stdout_of(["lscpu"]).splitlines() if l.startswith("Model name:")), env["cpu"])
+    env.update(machine_facts(data_dir))
     env["tools"] = {t: version(t) for t in BIN}
     env["scrutate_sha256"] = hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest()
     if SCRUTATE_BASE:
@@ -980,7 +1040,7 @@ def main() -> int:
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
-    env, was = environment(), data.get("environment", {})
+    env, was = environment(a.corpora), data.get("environment", {})
     same = all(env.get(k) == was.get(k) for k in ("scrutate_sha256", "scrutate_base_sha256"))
     if a.redo_unstable:
         # the same run, continued: its environment and settings stand, so the binaries must be the same
