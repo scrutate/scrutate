@@ -36,7 +36,8 @@
   `SCRUTATE_DIAGNOSTICS=json` for any command, one JSON record
   `{"type": "error", "schema": 1, "message": "..."}` (`"internal_error"` for a bug).
 - **Streams**: results on stdout, diagnostics and progress on stderr. Piped output is plain
-  `path:line:text`; colour only on a terminal, off with `--no-color` or a non-empty `NO_COLOR`.
+  `path:line:text`; colour only on a terminal, off with `--no-color` or `NO_COLOR` set, empty
+  too.
 - **Determinism**: `--sort` orders Engine A output as `rg --sort path` does: paths in
   command-line order, under each its files by path compared part by part, then by line
   (`sub/deep/a.txt` before `sub/deep-x/b.txt`, `foo/mod.rs` before `foo.rs`); a file two paths
@@ -250,7 +251,7 @@ Where tools differ in the details, scrutate does what ripgrep does:
 | Case | Behaviour |
 |---|---|
 | `-m N`, `--max-results N` | `-m N` stops a file at its Nth matching line; the trailing context after it prints, and a match inside that context shows as a match. `--max-results N` stops after N matching lines in total, with `-c` and `-l` too; with `--sort` they are the first N in path order, the same every run. The trailing context of the Nth prints too, as `-m N` prints its own: a match inside it shows as a match and does not count toward N |
-| NUL byte | A file named on the command line is searched as ripgrep searches it. Where ripgrep maps it into memory (Linux, Windows) it is one slice: a NUL in its first 64 KiB is seen before any line prints, past that the first matched or context line holding a NUL ends the line output, and a NUL ends no line (`-v -c` counts `bar\0baz` as one line). On macOS, where ripgrep does not map a file, it is read, and a NUL ends a line. A process that stays up (`serve`, `lsp`, a session) maps no file: it reads a named file whole up to 64 MiB, the same slice, and reads a larger one as on macOS. Either way counts and lists include the file, and line output ends with `binary file matches (found "\0" byte around offset N)` (with `--json`, a record `{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is searched as ripgrep reads it, up to the read that meets the NUL; ripgrep's first read of a file is its first 3 bytes, taken alone by its BOM check (encoding_rs_io's `BomPeeker`), so a match on a line that ends within them prints and one further on does not (`x\r\n...foo x...\0` prints line 1 only). Such a file is left out of `-c`, and `-l` lists it only when a match came before that read, so `-v -l`, `-v` and `-v -c` agree. Where such a file stops at a NUL past its first 64 KiB does not depend on the files searched before it: ripgrep's reads grow with a line longer than its 64 KiB buffer, and every later file on that thread then stops further on, so its answer changes with the walk order and the thread a file lands on (`rg -j1 PAT long/ binary/` against `rg -j1 PAT binary/`). scrutate gives every file the answer ripgrep gives it searched alone. When such a file's search stops at a NUL byte after a match, a last line says so: `path: WARNING: stopped searching binary file after match (found "\0" byte around offset N)` (a `binary` record with `--json`) |
+| NUL byte | A file named on the command line is searched as ripgrep searches it. Where ripgrep maps it into memory (Linux, Windows) it is one slice: a NUL in its first 64 KiB is seen before any line prints, past that the first matched or context line holding a NUL ends the line output, and a NUL ends no line (`-v -c` counts `bar\0baz` as one line). On macOS, where ripgrep does not map a file, it is read, and a NUL ends a line. A process that stays up (`serve`, `lsp`, a session) maps no file: it reads a named file whole up to 64 MiB, the same slice, and reads a larger one as on macOS. Either way counts and lists include the file, and line output ends with `binary file matches (found "\0" byte around offset N)` (with `--json`, a record `{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is searched as ripgrep reads it, up to the read that meets the NUL; ripgrep's first read of a file is its first 3 bytes, taken alone by its BOM check (encoding_rs_io's `BomPeeker`), so a match on a line that ends within them prints and one further on does not (`x\r\n...foo x...\0` prints line 1 only). Such a file is left out of `-c`, and `-l` lists it only when a match came before that read; with `-v`, the lines before that read print, while `-v -l` and `-v -c` leave the file out, as ripgrep does. Where such a file stops at a NUL past its first 64 KiB does not depend on the files searched before it: ripgrep's reads grow with a line longer than its 64 KiB buffer, and every later file on that thread then stops further on, so its answer changes with the walk order and the thread a file lands on (`rg -j1 PAT long/ binary/` against `rg -j1 PAT binary/`). scrutate gives every file the answer ripgrep gives it searched alone. When such a file's search stops at a NUL byte after a match, a last line says so: `path: WARNING: stopped searching binary file after match (found "\0" byte around offset N)` (a `binary` record with `--json`) |
 | `-c`, `-l` | one record per path given: a file two paths reach is counted or listed twice |
 | CRLF line | printed as it is, its `\r` before the `\n` (`1:foo\r`), streamed, sorted (`--sort`), cut (`--max-bytes`) or in colour alike; the text of a `--json` record or an MCP answer has no line end |
 | `-i`, `-S` | smart case folds only a pattern that has a literal and no uppercase letter, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. The later of `-i` and `-S` wins; `SCRUTATE_GREP_SMART_CASE` applies only when neither is given |
@@ -672,9 +673,11 @@ them, with `unresolved_count` counting every one the read saw (an unresolved use
 the definition asked for), and `--def` or a qualified name ends with `(N other occurrences resolve
 to other definitions, M are unresolved)`, `other_definitions` in JSON, over the occurrences read when the answer stopped
 early. The JSON also has `truncated` (whether `--max-results` cut it), and `stopped_reason` when
-the read stopped at its bound or no definition of the name has the kinds. A file whose search a NUL
-byte stopped after a match is named in a final `note:` line (`notes` in JSON, each with `path`
-and `note`): a use after that byte is not listed. Resolution reads the index's definitions and
+the read stopped at its bound or no definition of the name has the kinds. A file with a NUL byte
+is read as `grep` reads one the walk finds, up to the read that meets that byte (see "NUL byte"
+above): a use after that read is not listed, which in a small file can be every use, and a file
+whose search the byte stopped after a match is named in a final `note:` line (`notes` in JSON,
+each with `path` and `note`). Resolution reads the index's definitions and
 parses the files holding occurrences again, so it needs no index change. The MCP `references`
 tool gives the same answer (`textual` and `def` are arguments there, and the two together are
 refused, as on the command line).
@@ -689,8 +692,8 @@ compares the working tree with another commit; `--base main...` (three dots) wit
 of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`). Two dots
 (`main..feat`) is a range, not a revision: the error says so and points at the three. `--staged`
 takes the staged changes alone, against `HEAD` or `--base`, and no untracked file. The answer has
-three sections, and a fourth when the change has findings, each a line with its count and then one
-line per item:
+three sections, a fourth when the change has findings and a fifth, `notes`, when a file gets a note
+(below), each a line with its count and then one line per item:
 
 - `changed`: the innermost definition around each changed line, as
   `path:start-end  [kind] name  (status)`. `added`: the base lacks it (by kind and qualified name
@@ -841,7 +844,8 @@ renamed over the old. A file that does not parse is ignored and replaced at the 
 that cannot be written leaves the read as it was. Calls of one process wait for each other; two
 processes writing at the same moment can lose one count. `--json` gives the envelope with each
 `path`, its `match` (`exact`, `basename` or `path`), `edits` and `frecency`, and `stopped_at`
-when the limit cut it. No match is exit code 1 with nothing on standard output; an empty query
+when the limit cut it. No match is exit code 1 with nothing on standard output (with `--json`, the
+envelope with an empty `result`); an empty query
 is an error (exit 2). The command line does not send `files` to a running `serve`. The MCP tool
 `find_files` takes `query` and `limit` and gives the same answer.
 
@@ -1088,7 +1092,7 @@ servers on one root, the first offers the socket.
   shows it. A call's `max_bytes` and the server's default are both held between 1,000 and
   1,000,000, and a call's own value wins. `serve` refuses `--offset`: each tool call takes its
   own.
-- Every tool takes `response_format`: `detailed` (the default, the text described here) or
+- Every tool but `edit_symbol` takes `response_format`: `detailed` (the default, the text described here) or
   `concise`, which keeps every location and name and drops what a call can ask for again: code,
   snippets, kinds, scores, the containers of a name (`Answer.text` is `text`) and the notes that
   explain an item. Closing lines (how to continue, where an answer stopped) and errors stay. A
@@ -1502,7 +1506,8 @@ definitions = [
 
 - `name`: the language's id (letters, digits, `_` and `-`). Not a built-in language, a `--type`
   alias (`py`, `js`, `sh` ...), or a name another table already took.
-- `extensions`: one or more, without the dot, matched without regard to case. Refused: an
+- `extensions`: one or more, without the dot, matched without regard to case by the index
+  (`grep --type` takes a file whose extension is written as listed, as for a built-in type). Refused: an
   extension a built-in language owns, as one of its extensions or the end of a file name it
   claims (`txt` for `CMakeLists.txt`, `xml` for `pom.xml`), or that built-in languages share and
   tell apart by what the file holds (`m`, `h`, `pp`, `cls`), so that the parser, the resolver and
@@ -1706,7 +1711,7 @@ whole; another hook's is cut at 2,000 characters.
 
 It fails open (prints nothing and exits 0, so Grep runs as if there were no hook) on:
 
-- another tool or event, an argument it does not know, or `-o`;
+- another tool or event, an argument it does not know, or `-o` with `output_mode: "content"`;
 - a `glob` with a `/` other than a leading `**/` (ripgrep matches it from its own working
   directory), or with a `\` on Windows (a separator there);
 - a `type` whose files differ between ripgrep and scrutate's registry (it takes `asm`, `cmake`,
@@ -1744,8 +1749,9 @@ for `all sessions`; `--json` prints
 `{"counter": PATH, "sessions": [{"session", "calls", "grep_bytes", "sent_bytes", "saved_bytes"}], "total": {...}}`.
 The exit code is 1 when no call was counted. A small answer costs the header line more than Grep
 would have sent (a negative saving); the saving comes from long answers the byte bound cuts.
-The searches `hook run` answered are counted too (`"via": "bash"`, `grep_bytes` the program's
-whole output) and also shown apart: the line `of which shell searches (hook run): ...` and
+The searches `hook run` answered are counted too (`"via": "bash"`, `grep_bytes` the bytes of the
+program's output it read: the whole output, but only up to the cut for a search the byte bound
+cut, so such a search shows a negative saving) and also shown apart: the line `of which shell searches (hook run): ...` and
 `"shell"` in the JSON.
 
 `hook bash` is the hook of the shell tool: Claude Code's Bash and Codex's shell. It reads the
@@ -1784,8 +1790,8 @@ one or a future release's, means no rewrite. A word naming `rg --pre`, `--pre-gl
 `--index` and `--update` (they write the text index) is refused wherever it sits, as a value or
 after `--` too. Anything else exits 2 and runs nothing. A program is looked up
 in the directories of its `PATH` given as absolute paths and outside the current directory and its
-git work tree, never the current directory, a relative entry, a repository's own `bin` or
-scrutate's own directory, and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
+git work tree, never the current directory, a relative entry or a repository's own `bin`, and
+scrutate's own directory only when `PATH` names it (Windows would search it otherwise), and runs with `RIPGREP_CONFIG_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
 `LD_AUDIT` and every `DYLD_*` variable removed. An `rg` whose arguments `scrutate grep` takes (they
 parse, and every path they name is there) runs this binary's own `grep` instead, with every
 `SCRUTATE_*` variable removed and `SCRUTATE_CONFIG` set to the null device, so the output is the
