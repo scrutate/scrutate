@@ -105,8 +105,8 @@ def _functions(rec: dict) -> list[tuple]:
 
 
 def extract(cache: str, pkg_list: str | None) -> None:
-    """pkg_list: file with one package directory name per line (the shipped model's 140 packages are
-    listed in MODEL_CARD.md); without it, every local package that is not a DEV/TEST package."""
+    """pkg_list: file with one package directory name per line (the list of the shipped model's 140
+    packages is not kept in the repository); without it, every local package that is not a DEV/TEST package."""
     from groups import SEALED, TEST
 
     if pkg_list:

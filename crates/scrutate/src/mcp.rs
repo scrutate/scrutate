@@ -448,8 +448,9 @@ fn read_line(r: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -> std::io::Re
 }
 
 /// Serve until stdin closes. The first indexing runs in the background so a client is answered
-/// at once; tool calls that arrive meanwhile wait for it (`BUILD_WAIT`). Each call runs on a
-/// thread of its own, so the reader still sees a `notifications/cancelled` for it.
+/// at once; tool calls that arrive meanwhile wait for it (`BUILD_WAIT`). Up to `MAX_CALLS` in
+/// flight, each call runs on a thread of its own, so the reader still sees a
+/// `notifications/cancelled` for it; past that a call runs on the reading thread.
 ///
 /// `structured`: every tool declares an `outputSchema` and every result carries the answer as
 /// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in

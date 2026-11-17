@@ -3418,11 +3418,12 @@ fn dupes_under_the_sampling_floor_says_what_share_of_the_pairs_at_its_threshold_
 }
 
 #[test]
-fn the_no_color_help_says_an_empty_no_color_turns_color_off_too() {
+fn no_color_help_says_an_empty_no_color_turns_colour_off_too() {
+    // termcolor turns colour off whenever NO_COLOR is set, empty too
     for args in [&["--help"][..], &["grep", "--help"]] {
-        let (_, out, _) = run_in(&std::env::temp_dir(), args, &[]);
-        let said = out.lines().skip_while(|l| !l.contains("--no-color")).take(2).collect::<Vec<_>>().join(" ");
-        assert!(said.contains("empty too") && !said.contains("not empty"), "{args:?}: {said}");
+        let (code, out, _) = run_in(&std::env::temp_dir(), args, &[]);
+        assert_eq!(code, 0);
+        assert!(out.contains("NO_COLOR is set, empty too"), "{args:?}: {out}");
     }
 }
 
@@ -3513,4 +3514,11 @@ fn a_symbolic_link_to_the_index_directory_is_not_called_a_hard_link() {
     let (code, out, err) = r.run(&["grep", "alpha"]);
     assert!(code == 0 && out.contains("a.txt"), "{out}{err}");
     assert!(!err.contains("hard link"), "{err}");
+}
+
+#[test]
+fn setup_hook_help_names_the_hooks_each_agent_gets() {
+    let (code, out, _) = run_in(&std::env::temp_dir(), &["setup", "--help"], &[]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Claude Code: Grep and Bash; Codex: Bash"), "{out}");
 }
