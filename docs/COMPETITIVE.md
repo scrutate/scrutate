@@ -169,8 +169,8 @@ No measured tool has a code-intelligence index, so this part has no competitor:
 
 ## 5. The case for adopting it, at the strength the evidence allows
 
-Scrutate replaces a grep-class tool: it was the fastest measured on every benchmark of the suite
-on both platforms (section 1), most where its own design sets the time (one large file, heavy
+Scrutate replaces a grep-class tool: it was the fastest measured on every benchmark it ran
+on both platforms (section 1; the structural rows of section 2 compare its cache with a full parse), most where its own design sets the time (one large file, heavy
 output, a cold disk). It adds identifier and fuzzy search, results grouped by
 function, and an index that answers the same greps in a fraction of the time and stays current as
 files change. Its ranking quality is measured on held-out code, with a quality floor in CI and
