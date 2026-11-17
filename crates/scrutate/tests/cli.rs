@@ -3400,3 +3400,13 @@ fn dupes_under_the_sampling_floor_says_what_share_of_the_pairs_at_its_threshold_
         assert!(!out.contains("sampling"), "{args:?}: {out}");
     }
 }
+
+#[test]
+fn no_color_help_says_an_empty_no_color_turns_colour_off_too() {
+    // termcolor turns colour off whenever NO_COLOR is set, empty too
+    for args in [&["--help"][..], &["grep", "--help"]] {
+        let (code, out, _) = run_in(&std::env::temp_dir(), args, &[]);
+        assert_eq!(code, 0);
+        assert!(out.contains("NO_COLOR is set, empty too"), "{args:?}: {out}");
+    }
+}

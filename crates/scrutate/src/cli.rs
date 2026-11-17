@@ -104,7 +104,7 @@ pub struct Cli {
     /// repository root for the indexed engine (default: current directory)
     #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
     pub root: PathBuf,
-    /// never print color (also when NO_COLOR is set and not empty)
+    /// never print color (also when NO_COLOR is set, empty too)
     #[arg(long, global = true)]
     pub no_color: bool,
     /// size limit, in bytes, of an answer from the index; a cut answer says how many items are left
@@ -300,7 +300,7 @@ struct GrepCli {
     /// repository root for the indexed engine (default: current directory)
     #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
     root: PathBuf,
-    /// never print color (also when NO_COLOR is set and not empty)
+    /// never print color (also when NO_COLOR is set, empty too)
     #[arg(long, global = true)]
     no_color: bool,
     /// size limit, in bytes, of the answer, closing line included: whole lines in path order, then
