@@ -186,6 +186,15 @@ a run, and starts only the tools those workloads have. A tool gets `--start-time
 to build its index or start its server; past that it is that tool's error and the run goes on. The
 output records each rival's version and the machine. clangd needs a
 `compile_commands.json` in the corpus, and gopls a Go corpus (`corpora.py --only hugo`).
+W3 on the Linux tree takes `--queries bench/yardstick_queries/w3-linux.json`, one query per entry
+of `bench/indexed.py`'s QUERIES (`yardstick.py --write-w3 FILE` writes it again). A query whose
+answer cannot be checked (no `expect`, or an empty one that is not `exact`) is never timed.
+Before each query the run waits up to `--max-wait` seconds (1800) for the 1-minute load average
+to fall under `--max-load` (0.3 x CPUs) and records it. Each row gives p50, p95 and p99, and each
+rival its ratio and 95% bootstrap interval (10,000 resamples) against every scrutate form timed
+on the query (`vs`). `python3 bench/make_yardstick_md.py RESULT.json ...` writes those into the
+marked section of docs/COMPETITIVE.md, and `gen_doc_assets.py --check` fails when the section
+differs from the files it names.
 
 Then read the results:
 

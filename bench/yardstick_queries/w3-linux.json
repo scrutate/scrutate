@@ -1,0 +1,303 @@
+[
+ {
+  "id": "W3/00-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "PM_RESUME"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/01-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "kernel_thread"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/02-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "syzbot"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/03-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "EXPORT_SYMBOL_NS_GPL"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/04-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "rcu_read_lock_bh"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/05-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "__GFP_NOWARN"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/06-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "devm_kzalloc"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/07-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "sk_buff_head"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/08-common-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "printk"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/09-common-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "mutex_lock"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/10-common-literal",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "spin_lock_irqsave"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/11-phrase",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "return -EINVAL;"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/12-case-insensitive",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "pm_resume"
+   ],
+   "fixed": true,
+   "icase": true,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/13-case-insensitive",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "spinlock_t"
+   ],
+   "fixed": true,
+   "icase": true,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/14-regex",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "[A-Z]+_RESUME"
+   ],
+   "fixed": false,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/15-regex",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "devm_[a-z]+_alloc"
+   ],
+   "fixed": false,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/16-regex",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "(suspend|resume)_noirq"
+   ],
+   "fixed": false,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/17-multiple-literals",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "ERR_PTR",
+    "IS_ERR_OR_NULL"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/18-no-match",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "zqxjkvbw_never_present_symbol"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ },
+ {
+  "id": "W3/19-no-match",
+  "workload": "W3",
+  "grep": {
+   "pats": [
+    "qqq_absent_identifier_zzz"
+   ],
+   "fixed": true,
+   "icase": false,
+   "word": false,
+   "multiline": false,
+   "ident": null,
+   "unicode": false
+  }
+ }
+]

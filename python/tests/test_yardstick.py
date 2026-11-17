@@ -176,3 +176,50 @@ def test_every_rival_of_a_form_is_timed_against_one_named_scrutate_base():
     out = run(Fake("scrutate-mcp", RIGHT, 0.002), Fake("rival", RIGHT, 0.006), Fake("scrutate-lsp", RIGHT, 0.012), runs=3)
     rival = next(r for r in out["rows"] if r["tool"] == "rival")
     assert rival["base"] == "scrutate-mcp" and rival["ratio"] > 1
+
+
+def test_a_query_whose_answer_cannot_be_checked_is_never_timed():
+    for q in ({"id": "W4/none", "workload": "W4", "args": {"name": "Point"}},
+              {"id": "W4/empty", "workload": "W4", "args": {"name": "Point"}, "expect": []}):
+        out = Y.measure([Fake("scrutate-mcp", RIGHT), Fake("rival", RIGHT)], [q], runs=2, warmup=0, corpus="/c", work="/w")
+        assert all(r["status"].startswith("unchecked") and "times" not in r for r in out["rows"]), out["rows"]
+    # an exact empty answer is a check: "no match"
+    exact = {"id": "W4/nothing", "workload": "W4", "args": {"name": "Nope"}, "expect": [], "exact": True}
+    out = Y.measure([Fake("scrutate-mcp", set())], [exact], runs=2, warmup=0, corpus="/c", work="/w")
+    assert out["rows"][0]["status"] == "ok" and len(out["rows"][0]["times"]) == 2
+
+
+def test_each_query_waits_for_an_idle_machine_and_records_its_load(monkeypatch):
+    waits = []
+    monkeypatch.setattr(Y.lb, "wait_idle", lambda m, w: waits.append((m, w)) or 0.25)
+    q2 = {**QUERY, "id": "W4/point2"}
+    out = Y.measure([Fake("scrutate-mcp", RIGHT)], [QUERY, q2], runs=2, warmup=0, corpus="/c", work="/w", max_load=2.0, max_wait=60)
+    assert waits == [(2.0, 60), (2.0, 60)]
+    assert [r["load"] for r in out["rows"]] == [0.25, 0.25]
+
+
+def test_rows_give_p99_and_the_interval_uses_the_bootstrap_rule(monkeypatch):
+    seen = []
+    real = Y.lb.boot_ratio
+    monkeypatch.setattr(Y.lb, "boot_ratio", lambda a, b, **kw: seen.append(kw) or real(a, b, B=200))
+    out = run(Fake("scrutate-mcp", RIGHT, 0.001), Fake("rival", RIGHT, 0.002), runs=3)
+    assert all("p99_ms" in r for r in out["rows"])
+    # no B given: boot_ratio's own rule, 10,000 resamples at alpha 0.05
+    assert seen and all("B" not in kw for kw in seen)
+
+
+def test_a_rival_is_compared_with_every_scrutate_form():
+    out = run(Fake("scrutate", RIGHT, 0.001, form="process"), Fake("scrutate-mcp", RIGHT, 0.001), Fake("zoekt", RIGHT, 0.002), runs=3)
+    zoekt = next(r for r in out["rows"] if r["tool"] == "zoekt")
+    assert zoekt["base"] == "scrutate-mcp"
+    assert set(zoekt["vs"]) == {"scrutate", "scrutate-mcp"}
+    for v in zoekt["vs"].values():
+        assert v["ci_low"] <= v["ratio"] <= v["ci_high"] and v["n_base"] == 3 and v["n"] == 3
+
+
+def test_the_committed_w3_queries_are_indexed_queries():
+    import json
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "bench", "yardstick_queries", "w3-linux.json")
+    with open(path) as f:
+        assert json.load(f) == Y.w3_queries()
+    assert len(Y.w3_queries()) == 20 and Y.w3_queries()[0]["id"] == "W3/00-literal"
