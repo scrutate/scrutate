@@ -1180,6 +1180,10 @@ incompatible index by itself, and that is never breaking.
   under those labels, a cut one or one without its END too, is marked line by line, its short
   last line included, and a body line's trailing `+` no longer drops it to the ordinary rules
   ([Security](docs/SECURITY.md)).
+- A `serve` tool call after the repository root was deleted answers with an error the client can
+  read (`no such directory`), and so does every call after it, with or without `--watch`. The
+  reader whose index the failed rebuild had closed went back to the pool, and handing it back
+  panicked (`the index was not reopened after a rebuild`), so the call never answered.
 
 ## [0.1.0] - 2026-11-11
 

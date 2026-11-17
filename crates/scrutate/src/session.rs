@@ -606,16 +606,19 @@ impl Session {
         let Some(names) = pool.idle.iter().find(|r| r.ix.held_segments().is_some()).map(|r| r.ix.segments()) else { return };
         pool.idle.iter_mut().for_each(|r| r.ix.release_segments_other_than(&names));
         drop(pool);
-        if let Ok(mut seed) = self.seed.try_lock() {
+        if let Ok(mut seed) = self.seed.try_lock()
+            && seed.is_open()
+        {
             seed.ix.release_segments_other_than(&names);
         }
     }
 
-    /// A reader back to the pool, or None for one that was closed. What it just read is the
-    /// newest the others can know of: one that holds other segments lets them go.
+    /// A reader back to the pool, or None for one that was closed; one whose index a failed
+    /// rebuild closed is closed too. What it just read is the newest the others can know of: one
+    /// that holds other segments lets them go.
     fn give_back(&self, generation: u64, repo: Option<Repo>) {
         let mut pool = lock(&self.pool);
-        match repo.filter(|_| generation == pool.generation) {
+        match repo.filter(|r| generation == pool.generation && r.is_open()) {
             Some(r) => {
                 if let Some(names) = r.ix.held_segments() {
                     pool.idle.iter_mut().for_each(|i| i.ix.release_segments_other_than(names));

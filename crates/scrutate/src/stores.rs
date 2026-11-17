@@ -249,6 +249,12 @@ impl Repo {
         self.searcher.expect("the index was not reopened after a rebuild")
     }
 
+    /// Whether the index is open: a rebuild that failed (the root was deleted, say) leaves it
+    /// closed until the next operation opens it again, and `ix` panics until then.
+    pub fn is_open(&self) -> bool {
+        self.searcher.is_some()
+    }
+
     /// Whether the last refresh could not update the index, so answers come from it as it was.
     pub fn is_stale(&self) -> bool {
         self.stale
