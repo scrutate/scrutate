@@ -1057,10 +1057,12 @@ def with_head(doc, text):
 
 
 def hub():
+    alone = [d[2] for d in DOCS if d[0].startswith("+")]
     out = [HEAD_START] + banner_block(HUB, "docs", "Documentation", "Every document, grouped by what you came to do") + [
         "", "# Documentation", "",
-        "Each document links back here and to its neighbours in its group. A document written by a script "
-        "says so at the top: change the script, not the page.",
+        "Each document links back here and to its neighbours in its group, but for those listed here "
+        f"alone, which carry no head: {', '.join(alone[:-1])} and {alone[-1]}. A document written by a "
+        "script says so at the top: change the script, not the page.",
         "", HEAD_END, "", "<table>"]
     # One table, so the columns line up from group to group; each group opens with its band.
     for g, name, line in GROUPS:
