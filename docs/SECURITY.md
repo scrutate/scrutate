@@ -809,7 +809,10 @@ link to a file outside the package and a package directory that is a link out of
     `STARTUPINFOW` whose size it sets, both returned handles taken into `OwnedHandle`s once, and
     `GetExitCodeProcess` into a `u32`); three unit tests' `ConnectNamedPipe` for a
     server that greets and then reads nothing or reads slowly, and for the low-integrity process
-    that takes the pipe's name first, through the same `Pipe::io`;
+    that takes the pipe's name first, through the same `Pipe::io`; and in a Unix unit test of
+    sessions starting together, a `usleep` declared `extern "C"` and a `Command::pre_exec`
+    closure that only calls it, so the children other threads fork keep their copies of the
+    sessions' descriptors a while before exec;
   - `kq.rs` (macOS only): `kqueue`; `open` of a nul-terminated path with `O_EVTONLY |
     O_CLOEXEC`, each returned descriptor taken into an `OwnedFd` once; `kevent` with one change
     from a live `struct kevent` and no events asked back, or with no changes and a zeroed array of
@@ -872,7 +875,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/policy.rs` | 2 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 13 |
-  | `crates/scrutate/src/session.rs` | 59 |
+  | `crates/scrutate/src/session.rs` | 61 |
   | `crates/scrutate/src/shellhook.rs` | 6 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
