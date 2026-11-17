@@ -1026,7 +1026,8 @@ that holds a secret is redacted too. The Grep hook and `lsp` answer the same way
 Python bindings print what the files hold; `SCRUTATE_REDACT=on` redacts every CLI answer that
 prints file text, in text and `--json` (as values, the closing line on stderr), and a path that
 holds a secret in any answer, `files` included; counts stay as they are: `grep` with or without `--index` line by line with colour off (a
-`--json` record whose text was redacted loses its `spans`), `search` with `--also` too, `read`,
+`--json` record whose text was redacted loses its `spans`, and its `column` counts bytes of the
+redacted text, at the marker when the match is inside a secret), `search` with `--also` too, `read`,
 `symbol`, `refs`, `callers`, `callees`, `similar`, `dupes`, `impact`, `review` in its three
 formats, `tsquery` and the diff of `tsquery --rewrite` (which then no longer applies to a redacted
 line), `batch` and `views`. `SCRUTATE_REDACT=off` turns redaction off everywhere. No tool argument turns it off, so an agent cannot.

@@ -510,6 +510,41 @@ fn grep_index_is_redacted_under_redact_on() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A redacted `--json` match record's `column` counts bytes of its redacted `text`: a match after
+/// a secret moves by each marker's length less its secret's, and a match inside a secret points
+/// at its marker.
+#[test]
+fn a_redacted_json_record_s_column_counts_bytes_of_its_text() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_json_column_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let pass = ["Zq8#mK2v", "Lp9xWt4R"].concat();
+    let token = format!("ghp_{}", ["aB3dE5gH7jK9mN1pQ3", "sT5vW7yZ9bC1dE3fG5"].concat());
+    fs::write(root.join("a.txt"), format!("password = \"{pass}\" ; tail_marker\nGITHUB = \"{token}\" ; password = \"{pass}\" ; tail_marker\n")).unwrap();
+    let records = |pattern: &str| -> Vec<Value> {
+        let out =
+            Command::new(BIN).args(["grep", "--json", pattern, "a.txt"]).current_dir(&root).env("SCRUTATE_REDACT", "on").stdin(Stdio::null()).output().unwrap();
+        let text = String::from_utf8(out.stdout).unwrap();
+        text.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).filter(|v| v["type"] == "match").collect()
+    };
+    let tails = records("tail_marker");
+    assert_eq!(tails.len(), 2);
+    for v in &tails {
+        let (text, column) = (v["text"].as_str().unwrap(), v["column"].as_u64().unwrap() as usize);
+        assert!(text.contains("[redacted:") && v.get("spans").is_none(), "{v}");
+        assert!(text[column - 1..].starts_with("tail_marker"), "column {column} of {text:?}");
+    }
+    assert_eq!(tails[0]["column"], 36);
+    // a match inside the secret points at its marker
+    let inside = records("mK2vLp");
+    assert_eq!(inside.len(), 2);
+    for v in &inside {
+        let (text, column) = (v["text"].as_str().unwrap(), v["column"].as_u64().unwrap() as usize);
+        assert!(text[column - 1..].starts_with("[redacted:password]"), "column {column} of {text:?}");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// `SCRUTATE_REDACT=on` covers every CLI answer that prints a line of a file: each command that
 /// can print file text runs over a planted token, in text and JSON where it has both, and the token
 /// is in none of them. A command added later that prints file text fails here until it redacts.

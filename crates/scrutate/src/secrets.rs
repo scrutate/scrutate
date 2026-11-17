@@ -10,12 +10,30 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-/// One redaction: its kind and the byte span of its marker in the redacted text.
+/// One redaction: its kind, the byte span of its marker in the redacted text and of its secret in
+/// the text as it was.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mark {
     pub kind: &'static str,
     pub start: usize,
     pub end: usize,
+    pub secret: (usize, usize),
+}
+
+/// Where byte `at` of a text is once `marks` redacted it: moved by each marker before it, or the
+/// start of the marker of a secret that holds it.
+pub fn redacted_at(at: usize, marks: &[Mark]) -> usize {
+    let mut moved = at as isize;
+    for m in marks {
+        if at < m.secret.0 {
+            break;
+        }
+        if at < m.secret.1 {
+            return m.start;
+        }
+        moved += (m.end - m.start) as isize - (m.secret.1 - m.secret.0) as isize;
+    }
+    moved as usize
 }
 
 /// Whether answers are redacted: `SCRUTATE_REDACT` (`off` or `on`) decides, else `default`, which
@@ -1121,7 +1139,7 @@ impl Redactor {
             out.push_str("[redacted:");
             out.push_str(kind);
             out.push(']');
-            marks.push(Mark { kind, start, end: out.len() });
+            marks.push(Mark { kind, start, end: out.len(), secret: (a, b) });
             *self.counts.entry(kind).or_default() += 1;
             at = b;
         }

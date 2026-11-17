@@ -1220,6 +1220,9 @@ incompatible index by itself, and that is never breaking.
   lines printed, not their count; BENCHMARKS.md counts a row faster or slower only past 30 runs
   with its 95% interval clear of 1, and leaves tools with another answer out of its CPU, memory
   and cold-cache tables ([Leaderboard](docs/LEADERBOARD.md), [Benchmarks](docs/BENCHMARKS.md)).
+- A `grep --json` record whose text was redacted gives its `column` in bytes of the redacted
+  text: it kept the column of the line as the file has it, so a match after a secret pointed
+  inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
 
 ## [0.1.0] - 2026-11-11
 
