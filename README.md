@@ -141,9 +141,10 @@ Every number comes from scripts in `bench/` you can rerun.
 </p>
 
 [docs/LEADERBOARD.md](docs/LEADERBOARD.md) is generated from the raw results in `bench/results/`:
-30 runs per contender, 95% intervals. On the development Mac (Apple M3 Pro, shared with other
-work, so not a publishable #1 claim), Engine A is significantly fastest in all 37 warm-cache
-benchmarks and all 5 cold-cache ones. Its lead over the next tool:
+at least 30 runs of scrutate and of the fastest other tool, 95% intervals. On the development Mac
+(Apple M3 Pro, shared with other work, so not a publishable #1 claim), Engine A is significantly
+fastest in all 37 warm-cache benchmarks and all 5 cold-cache ones; 2 of the 37 are structural
+search (`tsquery`), not Engine A. Its lead over the next tool:
 
 - Linux kernel tree: 15 to 30% on 12 of 13 text searches, 45% on the one with 1.3 million matching
   lines.
@@ -167,9 +168,10 @@ sides, the text index builds 25 times faster, is a tenth of the size, answers in
 median time and serves 1.2 times the queries per second, leading all eight indexed metrics.
 
 In a 5-CPU Linux virtual machine on the same Mac, Engine A is significantly fastest on all 14
-Linux-tree benchmarks and all 4 cold-cache ones. Run the same way, a process per query
-(`scrutate grep --index`, Zoekt's CLI and a livegrep client asking its `codesearch` server), the text
-index leads Zoekt and livegrep on all 8 indexed metrics.
+Linux-tree benchmarks and all 4 cold-cache ones; one of the 14 is structural search, not
+Engine A. Run the same way, a process per query (`scrutate grep --index`, Zoekt's CLI and a
+livegrep client asking its `codesearch` server), the text index leads Zoekt and livegrep on all 8
+indexed metrics.
 
 Kept running as servers, livegrep and Zoekt answer faster than that process per query: 12.6 and
 13.2 ms median against 17.9 ms for `scrutate grep --index`, on a 4-CPU Linux box and the 16 Linux-tree
@@ -204,8 +206,8 @@ line of the agent's file:
 ```sh
 scrutate setup claude          # also codex, opencode, cursor, gemini
 scrutate setup cursor --project   # the repository's .cursor/mcp.json instead of the user's file
-scrutate setup claude --hook   # also answer Claude Code's Grep with scrutate's search
-scrutate setup claude --uninstall   # take back exactly what setup wrote, the hook included
+scrutate setup claude --hook   # also the hooks for Claude Code's Grep and its rg, grep and find
+scrutate setup claude --uninstall   # take back exactly what setup wrote, the hooks included
 ```
 
 `--dry-run` writes nothing. Only `--instructions` touches `CLAUDE.md`, `AGENTS.md` and
@@ -263,11 +265,11 @@ binaries too), Windows x86_64 and ARM64. macOS arm64 and Linux are built and tes
 macOS x86_64 and Windows x86_64 are cross-built here. On GitHub's runners (CI run 43408907893, commit
 `8f60af9`) every job passed: the Rust tests, and a wheel built, installed and tested for CPython 3.13
 and free-threaded 3.14, on all six platforms, and the editor integrations
-([docs/INSTALL.md](docs/INSTALL.md)). CI run 43382848665 (commit `08cd9fa`) was the first such run
+([docs/INSTALL.md](docs/INSTALL.md)). CI run 43013926055 (commit `9384c18`) was the first such run
 of the Rust tests.
 
 **Tests.** The last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-11)
-passed 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and MCP,
+passed 122 Rust tests (unit, per-language snapshot, robustness, property, end-to-end CLI and MCP,
 incremental parsing), the Python and bindings tests, fuzz regressions and a reproducible-build
 check; the ranking pins and quality floor came later, and CI runs both. Engine A agrees with
 ripgrep on 2,000 random corpora and patterns, run as shipped, with the parallel walk forced, and
@@ -276,7 +278,8 @@ with every file searched in ranges.
 **Engine B.** Its models train on rows it writes itself. A test pins its features and scores bit
 for bit, and CI fails when its ranking quality falls below a recorded floor. On held-out code in
 Python and five more languages the learned ranker beats its lexical layer for function and type
-answers on every query type but one, which ties ([docs/QUALITY.md](docs/QUALITY.md)).
+answers on every query type with 50 queries or more but one, which ties
+([docs/QUALITY.md](docs/QUALITY.md)).
 
 **Code checks.** `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no
 vulnerabilities; an SBOM is generated.
@@ -363,8 +366,8 @@ vendored walker in `vendor/ignore` (the crate `scrutate-ignore`) keeps its upstr
 `Unlicense OR MIT`.
 
 Every crate compiled into the binary has a licence compatible with both (MIT, Apache-2.0, BSD,
-ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0). Their licence and notice files are in
-`THIRD_PARTY_NOTICES.txt` (`tools/third_party_notices.py`), included in release archives, wheels
+BSL-1.0, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0). Their licence and notice files are
+in `THIRD_PARTY_NOTICES.txt` (`tools/third_party_notices.py`), included in release archives, wheels
 and the `.deb` and `.rpm` packages.
 
 Contributions are accepted under the [contributor licence agreement](CLA.md) and offered under

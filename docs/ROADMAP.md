@@ -26,7 +26,7 @@ gap it closes in docs/TRACEABILITY.md.
 | One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), its UTF-8 checked a piece at a time as it is written: 60.5 ms to 32 ms on a 100 MB line (ugrep 38.8 ms) |
 | Incremental re-search for editors (R-4.1) | `grep --index --update` (refresh the text index, then search only candidate files); `watch` and `serve --watch` keep the index fresh |
 | Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash: the Linux tree took about 25 s, the repeated query 1.6 s |
-| Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust and Go (60 of 60 hand-checked resolutions right), (`tests/resolve_java.rs`) |
+| Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust, Go, Java, PHP, C and C++ through `#include`, and C# (60 of 60 hand-checked resolutions right on networkx and ripgrep; `tests/resolve.rs`, `tests/resolve_java.rs`, `tests/resolve_php.rs`) |
 | Language server (R-6.15) | `scrutate lsp`; the VS Code extension starts it; JetBrains through LSP4IJ |
 | Sample for `ocaml_interface` (R-3.4) | all 74 grammars verified by samples (docs/LANGUAGES.md) |
 | int8 semantic vectors (R-4.3) | schema 13: index about a fifth smaller, ranking quality within 0.001 MRR (docs/QUALITY.md) |
@@ -81,7 +81,8 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   `scrutate review` on a pull request, and the GitLab template saves it as a Code Quality report),
   and weekly benchmark runs for the dashboard (R-4.5).
 - Now that `ci.yml` is green, one job or setting each (docs/research/github-ci-2026-11.md): wheels
-  to PyPI by trusted publishing, CodeQL default setup for Rust, OpenSSF Scorecard. For the integrations
+  to PyPI by trusted publishing (the jobs are in `release.yml` and wait for the `PYPI_PUBLISH`
+  variable), CodeQL default setup for Rust, OpenSSF Scorecard. For the integrations
   (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one import.
 
 ## Next

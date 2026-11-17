@@ -15,7 +15,8 @@ docs and reviews. Each term links to the section of [Architecture](docs/ARCHITEC
 
 **[Engine A](docs/ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)**:
 instant search with no index (`instant.rs`, `scrutate grep`): it walks the files and matches each
-one. Its one way in is `instant::search`, given a **query**, a **file set** and a cancel flag.
+one. Its one way in is `instant::search`, given a **query**, a **file set**, a cancel flag and
+where its **records** go.
 
 **Query**: what an Engine A search asks for (`instant::Query`): the **pattern** (`instant::Pattern`:
 text, mode, case, whole words, multi-line), inversion, the report (lines, counts or files),
@@ -26,7 +27,8 @@ context lines and limits.
 memory. How a type meets the ignore rules is in the [CLI reference](docs/CLI.md#engine-a-grep-alias-g).
 
 **Record**: one Engine A result of one kind (`instant::Record`): a match, a context line, a count,
-a file, or a note on a file (its search stopped at a NUL byte).
+a file, or a note on a file (its search stopped at a NUL byte, or a file given as a root, with a NUL
+byte, matched).
 
 **[Engine B](docs/ARCHITECTURE.md#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs)**:
 the index and everything answered from it (`index.rs`, `search.rs`, `intel.rs`, `resolve/`):
@@ -126,7 +128,7 @@ as read and as rewritten, and prints as a diff or writes each file.
 `$XDG_STATE_HOME/scrutate/frecency.json`, outside the repository.
 
 **Grouped grep**: an Engine A search whose matching lines are grouped by the symbol that encloses
-them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
+them (`intel::group_by_symbol`). The MCP `grep_code` tool, `grep --symbols` and textual
 references use it.
 
 **[Front end](docs/ARCHITECTURE.md#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py)**: a

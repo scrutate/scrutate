@@ -43,7 +43,7 @@ curl -sSfLO "https://github.com/scrutate/scrutate/releases/download/v$v/scrutate
 sha256sum -c "scrutate-$v-$t.sha256"        # checksum
 gh attestation verify "scrutate-$v-$t.tar.gz" --repo scrutate/scrutate \
   --signer-workflow scrutate/scrutate/.github/workflows/release.yml \
-  --source-ref "refs/tags/v$v"              # Sigstore provenance (optional)
+  --source-ref "refs/tags/v$v" --deny-self-hosted-runners   # Sigstore provenance (optional)
 tar xzf "scrutate-$v-$t.tar.gz"
 install -m 0755 "scrutate-$v-$t/scrutate" ~/.local/bin/scrutate
 scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate   # or zsh/fish/powershell
@@ -52,8 +52,9 @@ scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate 
 The attestation check passes only for a file that `release.yml` of `scrutate/scrutate` built
 from the tag `v$v` on a GitHub-hosted runner, and it names the commit. With `--owner scrutate`
 alone, a file built by any workflow of the organization would pass, a dry run's included. It says
-where and how the file was built, not that its code is safe. Every file on a release (archives,
-`.deb`, `.rpm`, wheels, the `.vsix`, `SHA256SUMS`) carries such an attestation, and `--predicate-type
+where and how the file was built, not that its code is safe. The archives, `.deb`, `.rpm`, wheels,
+the `.vsix` and `SHA256SUMS` on a release carry such an attestation (the per-archive `.sha256`
+files and the SBOM file do not; `SHA256SUMS` lists the SBOM), and `--predicate-type
 https://cyclonedx.org/bom` checks the SBOM attestation of an archive.
 
 The `-linux-gnu` archives need glibc 2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9 and later);
@@ -83,7 +84,8 @@ signature. The checksum and the attestation above are the integrity check.
   browser download gets and a `curl` download does not. On a blocked file run
   `xattr -d com.apple.quarantine scrutate`, or open System Settings, Privacy & Security and
   choose "Open Anyway". Homebrew sets the attribute on cask downloads only; `scrutate` is a
-  formula, built from source, so a Homebrew install meets no Gatekeeper prompt.
+  formula, poured from the tap's bottle or built from source, so a Homebrew install meets no
+  Gatekeeper prompt.
 - Windows: SmartScreen shows "Windows protected your PC" for a downloaded unsigned file, and the user
   must choose "Run anyway" (an enterprise policy can forbid it). With Smart App Control on
   (Windows 11), an unsigned executable with no reputation does not run at all, downloaded or not.
@@ -154,12 +156,17 @@ rm ~/.local/bin/scrutate ~/.local/share/bash-completion/completions/scrutate
 find ~/code -maxdepth 3 -name .scrutate -type d -prune -exec rm -rf {} +   # the caches, wherever you indexed
 rm -rf ~/.config/scrutate                                                  # optional configuration
 rm -rf ~/.local/state/scrutate                                             # read counts and the Grep hook's counter
+rm -rf ~/.cache/scrutate                                                   # dependency sources symbol --deps copied
 pip uninstall scrutate                                                     # the Python package, if installed
 ```
 Scrutate writes nothing else: no services, no registry keys. Outside the repositories you indexed
-it writes only your configuration, the agent files `scrutate setup` edits, and its state
+it writes only your configuration, the agent files `scrutate setup` edits, its state
 directory (`$XDG_STATE_HOME/scrutate/`, else `~/.local/state/scrutate/`, on Windows
-`%LOCALAPPDATA%\scrutate\`) with `frecency.json` and `hook-grep.jsonl`.
+`%LOCALAPPDATA%\scrutate\`, where `frecency.json` still goes under `$XDG_STATE_HOME` when that is
+set) with `frecency.json` and `hook-grep.jsonl`, and its cache of dependency sources for
+`symbol --deps`, `read --deps` and `scope: "deps"` (`$SCRUTATE_CACHE_DIR`, else
+`$XDG_CACHE_HOME/scrutate/`, on Windows `%LOCALAPPDATA%\scrutate\`, on macOS
+`~/Library/Caches/scrutate/`, else `~/.cache/scrutate/`).
 
 ## Package managers
 

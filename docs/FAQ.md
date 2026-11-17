@@ -71,8 +71,8 @@ tools and each client's config.
 ## Does it work in my editor?
 
 Yes. `scrutate lsp` is a language server on stdio with definitions, references and symbols from
-the index; VS Code and Neovim use it, and JetBrains IDEs run scrutate as external tools
-([integrations/](../integrations/)).
+the index; VS Code and Neovim use it, and JetBrains IDEs use it through the LSP4IJ plugin and run
+scrutate as external tools ([integrations/](../integrations/)).
 
 ## Which platforms does it run on?
 
