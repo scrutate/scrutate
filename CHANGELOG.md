@@ -1195,6 +1195,9 @@ incompatible index by itself, and that is never breaking.
   under those labels, a cut one or one without its END too, is marked line by line, its short
   last line included, and a body line's trailing `+` no longer drops it to the ordinary rules
   ([Security](docs/SECURITY.md)).
+- On Windows the dependency cache of `--deps` and `scope: "deps"` stays under `%LOCALAPPDATA%`
+  when `XDG_CACHE_HOME` is set: an `XDG_CACHE_HOME` from MSYS or Git Bash moved it to a place no
+  check covered ([Security](docs/SECURITY.md#dependency-source)).
 
 ## [0.1.0] - 2026-11-11
 

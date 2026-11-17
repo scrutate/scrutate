@@ -60,7 +60,8 @@ The read boundary, which every rule below keeps:
    they were there already, and a cache root that belongs to another user or that others may
    write to is refused (`SCRUTATE_CACHE_DIR` names another); on Windows the cache is under the
    user's own `%LOCALAPPDATA%`, which the system gives that user alone, unless
-   `SCRUTATE_CACHE_DIR` or `XDG_CACHE_HOME` names another, which is not checked there. A
+   `SCRUTATE_CACHE_DIR` names another, which is not checked there; `XDG_CACHE_HOME`, which MSYS
+   and Git Bash may set, is ignored there. A
    temporary directory a crash left behind is removed when the next new copy of that ecosystem
    is made, once it is a day old.
 5. Answers are redacted as the repository's are, on every front end.
