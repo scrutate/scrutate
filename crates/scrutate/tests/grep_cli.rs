@@ -442,6 +442,48 @@ fn a_failed_write_to_standard_output_is_an_error() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{err}");
     assert!(err.contains("os error 27"), "{err}");
+    // past the first 64 KiB the writes leave from a thread of their own: the same error, said once
+    let lines: String = (0..60_000).map(|i| format!("foo {i}\n")).collect();
+    d.write("b.txt", lines.as_bytes());
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("trap '' XFSZ; ulimit -f 400; exec '{BIN}' grep foo b.txt > out.txt"))
+        .current_dir(&d.0)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert_eq!(err.matches("os error 27").count(), 1, "{err}");
+    // ulimit -f counts 512- or 1024-byte blocks by shell
+    assert!(fs::metadata(d.0.join("out.txt")).unwrap().len() <= 400 * 1024);
+}
+
+#[test]
+fn a_large_output_keeps_each_file_s_lines_in_order_and_ends_quietly_when_the_reader_goes() {
+    let d = Dir::new("bigout");
+    // 40 files of 5,000 matching lines: over 4 MB of output, many 64 KiB chunks from 4 threads
+    for f in 0..40 {
+        let text: String = (1..=5000).map(|i| format!("foo {f} {i}\n")).collect();
+        d.write(&format!("t/f{f:02}.txt"), text.as_bytes());
+    }
+    let (code, out, _) = d.run(&["grep", "-j", "4", "foo", "t"]);
+    assert_eq!(code, 0);
+    let mut next = std::collections::HashMap::new();
+    for l in out.lines() {
+        let (path, rest) = l.split_once(':').unwrap();
+        let (n, _) = rest.split_once(':').unwrap();
+        let want = next.entry(path.to_string()).or_insert(1u64);
+        assert_eq!(n.parse::<u64>().unwrap(), *want, "{path}: lines in order");
+        *want += 1;
+    }
+    assert!(next.len() == 40 && next.values().all(|&n| n == 5001), "every line once");
+    // a reader that takes the first lines and goes: no error, exit 0, and soon
+    let t0 = std::time::Instant::now();
+    let out = Command::new("sh").arg("-c").arg(format!("'{BIN}' grep -j 4 foo t | head -n 3")).current_dir(&d.0).stdin(Stdio::null()).output().unwrap();
+    assert!(out.status.success() && out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 3);
+    assert!(t0.elapsed() < std::time::Duration::from_secs(10));
 }
 
 #[test]

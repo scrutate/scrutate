@@ -425,6 +425,12 @@ incompatible index by itself, and that is never breaking.
   search thread adds to each sit on a cache line of their own. On many-core x86 the threads had
   waited on each other for those lines when a search prints many lines. The counts printed do not
   change.
+- Plain `grep` output past its first 64 KiB is written by a thread of its own, fed full 64 KiB
+  buffers in the order they filled, so no search thread waits on a write. While one search thread
+  held the output for a write, the others slept behind it, and on Linux x86 the writes added to the
+  search's time (`return` in the Linux tree: 0.12 s to /dev/null, 0.23 s to a file). A smaller
+  output starts no thread; a write error still stops the search and is reported once
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are

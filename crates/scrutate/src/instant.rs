@@ -1539,17 +1539,21 @@ pub fn type_list() -> Vec<(String, Vec<String>)> {
 /// Output that follows other output within `HOLD_NS` waits in a buffer, so the lines of many files
 /// leave in one write: a write per matching file wakes the reader of a pipe every time (88,000
 /// writes for `return` in the Linux tree). Output after a quiet spell leaves at once.
+///
+/// Once a first 64 KiB fills, a thread of its own does the writes (`Chunker`), so a search thread
+/// never waits on a write system call: while one held the lock for a write, every thread that
+/// finished a file slept on the lock behind it, and the writes added to the search's time.
 pub struct PlainSink {
-    out: Mutex<std::io::BufWriter<Box<dyn Write + Send>>>,
+    out: Mutex<Chunker>,
     /// when output last left, in nanoseconds since `start`
     left: AtomicU64,
     /// the buffer holds output
     holding: AtomicBool,
     start: Instant,
     /// a write failed: the reader went away (`| head`), or `failed` says why
-    pub broken: AtomicBool,
+    pub broken: Arc<AtomicBool>,
     /// the first write error that is not a closed pipe (a full disk, a file size limit)
-    failed: Mutex<Option<std::io::Error>>,
+    failed: Arc<Mutex<Option<std::io::Error>>>,
     /// a file searched with context lines has written output (later files start with `--`)
     grouped: AtomicBool,
 }
@@ -1559,13 +1563,15 @@ const HOLD_NS: u64 = 1_000_000;
 
 impl PlainSink {
     pub fn new(out: Box<dyn Write + Send>) -> PlainSink {
+        let (broken, failed) = (Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(None)));
+        let to = To::Direct(out);
         PlainSink {
-            out: Mutex::new(std::io::BufWriter::with_capacity(1 << 16, out)),
+            out: Mutex::new(Chunker { buf: Vec::with_capacity(CHUNK), to, broken: Arc::clone(&broken), failed: Arc::clone(&failed) }),
             left: AtomicU64::new(0),
             holding: AtomicBool::new(false),
             start: Instant::now(),
-            broken: AtomicBool::new(false),
-            failed: Mutex::new(None),
+            broken,
+            failed,
             grouped: AtomicBool::new(false),
         }
     }
@@ -1579,15 +1585,17 @@ impl PlainSink {
     /// output go if it has waited long enough.
     fn with(&self, stop: &Stop, f: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) {
         if self.broken.load(Ordering::Relaxed) {
+            // the writing thread may have failed since: the search stops here
+            stop.set();
             return;
         }
         let res = match self.out.lock() {
             Ok(mut w) => f(&mut *w).and_then(|_| {
-                if let Some(now) = self.waited().filter(|_| !w.buffer().is_empty()) {
+                if let Some(now) = self.waited().filter(|_| !w.buf.is_empty()) {
                     self.left.store(now, Ordering::Relaxed);
                     w.flush()?;
                 }
-                self.holding.store(!w.buffer().is_empty(), Ordering::Relaxed);
+                self.holding.store(!w.buf.is_empty(), Ordering::Relaxed);
                 Ok(())
             }),
             Err(_) => Err(std::io::Error::other("output lock poisoned")),
@@ -1646,11 +1654,136 @@ impl PlainSink {
         self.failed.lock().unwrap_or_else(|p| p.into_inner()).take()
     }
 
+    /// Writes everything held and waits for the writing thread to finish: the end of the output.
     pub fn flush(&self) -> std::io::Result<()> {
         match self.out.lock() {
-            Ok(mut w) => w.flush(),
+            Ok(mut w) => w.finish(),
             Err(_) => Err(std::io::Error::other("output lock poisoned")),
         }
+    }
+}
+
+/// Bytes `PlainSink` holds before they leave as one write, and the most of them a writing thread
+/// may have waiting (more waits for it: the output is then slower than the search).
+const CHUNK: usize = 1 << 16;
+const CHUNKS_QUEUED: usize = 4;
+
+/// `PlainSink`'s buffer: whole chunks go to the writing thread, in the order they filled, since
+/// they are sent under the sink's lock. Until a first chunk fills there is no thread and a held
+/// buffer is written where it is, so a small search starts none.
+struct Chunker {
+    buf: Vec<u8>,
+    to: To,
+    broken: Arc<AtomicBool>,
+    failed: Arc<Mutex<Option<std::io::Error>>>,
+}
+
+enum To {
+    Direct(Box<dyn Write + Send>),
+    /// the full chunks go out on `tx`, emptied ones come back on `back`; the thread gives the
+    /// writer back when `tx` closes
+    Thread {
+        tx: mpsc::SyncSender<Vec<u8>>,
+        back: mpsc::Receiver<Vec<u8>>,
+        done: std::thread::JoinHandle<Box<dyn Write + Send>>,
+    },
+    /// the thread could not start, or it ended with an error
+    Gone,
+}
+
+impl Chunker {
+    /// Hands the buffer on: to the thread, which a full buffer starts, or to the writer itself.
+    fn ship(&mut self) -> std::io::Result<()> {
+        if self.buf.len() >= CHUNK && matches!(self.to, To::Direct(_)) {
+            self.start();
+        }
+        match &mut self.to {
+            To::Direct(w) => {
+                w.write_all(&self.buf)?;
+                self.buf.clear();
+                w.flush()
+            }
+            To::Thread { tx, back, .. } => {
+                let next = back.try_recv().unwrap_or_else(|_| Vec::with_capacity(CHUNK));
+                let full = std::mem::replace(&mut self.buf, next);
+                // closed: the thread stopped on an error it recorded
+                tx.send(full).map_err(|_| std::io::ErrorKind::BrokenPipe.into())
+            }
+            To::Gone => Err(std::io::ErrorKind::BrokenPipe.into()),
+        }
+    }
+
+    fn start(&mut self) {
+        let To::Direct(mut w) = std::mem::replace(&mut self.to, To::Gone) else { return };
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(CHUNKS_QUEUED);
+        let (give, back) = mpsc::sync_channel(CHUNKS_QUEUED);
+        let (broken, failed) = (Arc::clone(&self.broken), Arc::clone(&self.failed));
+        let (broken_here, failed_here) = (Arc::clone(&self.broken), Arc::clone(&self.failed));
+        let run = move || {
+            for mut chunk in rx {
+                if let Err(e) = w.write_all(&chunk).and_then(|_| w.flush()) {
+                    if e.kind() != std::io::ErrorKind::BrokenPipe {
+                        failed.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
+                    }
+                    broken.store(true, Ordering::Relaxed);
+                    break;
+                }
+                chunk.clear();
+                let _ = give.try_send(chunk);
+            }
+            w
+        };
+        match std::thread::Builder::new().name("scrutate-output".into()).spawn(run) {
+            Ok(done) => self.to = To::Thread { tx, back, done },
+            // the writer went with the closure: the output stops, and says why
+            Err(e) => {
+                failed_here.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
+                broken_here.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Everything held written, and the writer back from its thread; the first error recorded.
+    fn finish(&mut self) -> std::io::Result<()> {
+        let shipped = if self.buf.is_empty() { Ok(()) } else { self.ship() };
+        if let To::Thread { .. } = self.to
+            && let To::Thread { tx, done, .. } = std::mem::replace(&mut self.to, To::Gone)
+        {
+            drop(tx);
+            if let Ok(w) = done.join() {
+                self.to = To::Direct(w);
+            }
+        }
+        if let Some(e) = self.failed.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            return Err(e);
+        }
+        if self.broken.load(Ordering::Relaxed) {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        shipped
+    }
+}
+
+impl Write for Chunker {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        let n = b.len().min(CHUNK - self.buf.len());
+        self.buf.extend_from_slice(&b[..n]);
+        if self.buf.len() >= CHUNK {
+            self.ship()?;
+        }
+        Ok(n)
+    }
+
+    /// Lets what is held go now, as one write.
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.buf.is_empty() { Ok(()) } else { self.ship() }
+    }
+}
+
+impl Drop for Chunker {
+    /// As a `BufWriter` does, a sink dropped without `flush` still writes what it holds.
+    fn drop(&mut self) {
+        let _ = self.finish();
     }
 }
 
@@ -4974,6 +5107,89 @@ mod tests {
         all.extend_from_slice(b"last:1:text\nlong:1:x\xFFy\n");
         assert_eq!(written(), all);
         assert!(!sink.broken.load(Ordering::Relaxed) && !stop.is_set());
+    }
+
+    #[test]
+    fn output_past_a_chunk_leaves_through_one_writing_thread_in_the_order_it_was_handed_over() {
+        struct Slow(Arc<Mutex<Vec<u8>>>);
+        impl Write for Slow {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                std::thread::sleep(std::time::Duration::from_micros(200));
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let sink = PlainSink::new(Box::new(Slow(Arc::clone(&written))));
+        let stop = no_stop();
+        sink.write(b"first:1:x\n", false, &stop);
+        assert!(matches!(sink.out.lock().unwrap().to, To::Direct(_)), "a small output starts no thread");
+        let pad = "y".repeat(300);
+        std::thread::scope(|s| {
+            for t in 0..8 {
+                let (sink, stop, pad) = (&sink, &stop, &pad);
+                s.spawn(move || {
+                    for f in 0..200 {
+                        // a file's lines handed over in three pieces, as a big file's are
+                        for piece in 0..3 {
+                            sink.write(format!("t{t}/f{f}:{piece}:{pad}\n").as_bytes(), false, stop);
+                        }
+                    }
+                });
+            }
+        });
+        assert!(matches!(sink.out.lock().unwrap().to, To::Thread { .. }), "1.4 MB of output starts the thread");
+        sink.flush().unwrap();
+        let out = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!((lines.len(), lines[0]), (1 + 8 * 200 * 3, "first:1:x"));
+        for t in 0..8 {
+            let prefix = format!("t{t}/");
+            let mine: Vec<String> = lines.iter().filter(|l| l.starts_with(&prefix)).map(|l| l.rsplit_once(':').unwrap().0.to_string()).collect();
+            let handed: Vec<String> = (0..200).flat_map(|f| (0..3).map(move |p| format!("t{t}/f{f}:{p}"))).collect();
+            assert_eq!(mine, handed, "thread {t}'s lines in the order it handed them over");
+        }
+        assert!(!sink.broken.load(Ordering::Relaxed) && !stop.is_set());
+    }
+
+    #[test]
+    fn a_failed_write_on_the_writing_thread_stops_the_search_and_is_reported_once() {
+        struct Fails(usize, std::io::ErrorKind);
+        impl Write for Fails {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                if self.0 >= 200_000 {
+                    return Err(if self.1 == std::io::ErrorKind::BrokenPipe { self.1.into() } else { std::io::Error::from_raw_os_error(28) });
+                }
+                self.0 += b.len();
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        for kind in [std::io::ErrorKind::StorageFull, std::io::ErrorKind::BrokenPipe] {
+            let sink = PlainSink::new(Box::new(Fails(0, kind)));
+            let stop = no_stop();
+            let line = [vec![b'x'; 999], vec![b'\n']].concat();
+            let mut handed = 0;
+            while !stop.is_set() && handed < 100_000 {
+                sink.write(&line, false, &stop);
+                handed += 1;
+            }
+            assert!(stop.is_set() && sink.broken.load(Ordering::Relaxed), "{kind:?}: the search stops");
+            assert!(handed < 1000, "{kind:?}: stopped after {handed} lines, within the queued chunks");
+            match kind {
+                std::io::ErrorKind::BrokenPipe => assert!(sink.failure().is_none(), "a closed pipe is no error"),
+                _ => {
+                    assert_eq!(sink.failure().map(|e| e.raw_os_error()), Some(Some(28)));
+                    assert!(sink.failure().is_none(), "reported once");
+                }
+            }
+            assert_eq!(sink.flush().unwrap_err().kind(), std::io::ErrorKind::BrokenPipe, "{kind:?}");
+        }
     }
 
     proptest::proptest! {
