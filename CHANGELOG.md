@@ -1339,6 +1339,13 @@ incompatible index by itself, and that is never breaking.
   beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
   directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
   `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
+- A link planted in the state directory is no longer written through: `frecency.json`'s temporary
+  file had a name anyone could guess (the process id) and was opened through whatever was there,
+  and the Grep hook's counter was appended to through a link at its path. The temporary file now
+  has a random name and is created only where nothing is, the counter is opened without following
+  a link (`O_NOFOLLOW`; on Windows a link is refused), and a state directory another user owns is
+  not used while one others may write to is closed to them first, with one stderr line
+  ([Security](docs/SECURITY.md#threat-model)).
 
 ## [0.1.0] - 2026-11-11
 

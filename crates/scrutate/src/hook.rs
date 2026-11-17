@@ -659,11 +659,27 @@ pub(crate) fn count_bash(session: &str, full_bytes: usize, sent_bytes: usize, cu
 
 fn counted(mut rec: Value) -> Result<()> {
     let path = counter_path().context("no state directory")?;
-    std::fs::create_dir_all(path.parent().expect("a file in a directory"))?;
     let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     rec["time"] = json!(time);
-    let line = format!("{rec}\n");
-    std::fs::OpenOptions::new().create(true).append(true).open(&path)?.write_all(line.as_bytes())?;
+    append_counter(&path, &format!("{rec}\n"))
+}
+
+/// `line` appended to the counter at `path`, in a state directory `open_state_dir` accepts and never
+/// through a link at `path` (O_NOFOLLOW; on Windows a link there is refused).
+fn append_counter(path: &Path, line: &str) -> Result<()> {
+    crate::finder::open_state_dir(path.parent().expect("a file in a directory"))?;
+    let mut o = std::fs::OpenOptions::new();
+    o.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32).mode(0o600);
+    }
+    #[cfg(not(unix))]
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        anyhow::bail!("the counter {} is a link: not written", crate::paths::plain_path(path).display());
+    }
+    o.open(path)?.write_all(line.as_bytes())?;
     Ok(())
 }
 
@@ -704,6 +720,9 @@ pub fn stats(json_out: bool) -> Result<i32> {
     } else {
         "no state directory: set HOME or XDG_STATE_HOME"
     })?;
+    if let Some(why) = crate::finder::state_dir_refused(&path) {
+        anyhow::bail!(why);
+    }
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -762,6 +781,25 @@ pub fn stats(json_out: bool) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A link planted at the counter's path is not appended through: the counter is refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_counter_is_not_appended_through() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp").join(format!("counter_link_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("state")).unwrap();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"mine\n").unwrap();
+        let counter = dir.join("state").join("hook-grep.jsonl");
+        std::os::unix::fs::symlink(&victim, &counter).unwrap();
+        assert!(append_counter(&counter, "{}\n").is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"mine\n");
+        std::fs::remove_file(&counter).unwrap();
+        append_counter(&counter, "{\"a\":1}\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&counter).unwrap(), "{\"a\":1}\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_counter_and_the_frecency_file_share_one_state_directory_on_every_system() {

@@ -886,7 +886,8 @@ that shows the list and opens the chosen path says which it chose by asking for 
 counts live in `frecency.json` under `$XDG_STATE_HOME/scrutate/` (else
 `~/.local/state/scrutate/`; on Windows `%LOCALAPPDATA%\scrutate\`), keyed by repository root: at
 most 1,000 files over every repository, lowest counts dropped first, written whole to a new file
-renamed over the old. A file that does not parse is ignored and replaced at the next write; one
+renamed over the old. A state directory another user owns is not used, and one others may write
+to is closed to them first ([Security](SECURITY.md#threat-model)). A file that does not parse is ignored and replaced at the next write; one
 that cannot be written leaves the read as it was. Calls of one process wait for each other; two
 processes writing at the same moment can lose one count. `--json` gives the envelope with each
 `path`, its `match` (`exact`, `basename` or `path`), `edits` and `frecency`, and `stopped_at`
