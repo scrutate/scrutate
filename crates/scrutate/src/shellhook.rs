@@ -882,6 +882,13 @@ fn die_with_us(c: &mut Command) -> Option<(std::fs::File, std::fs::File)> {
     let mut lim = [0u64; 2];
     // SAFETY: getrlimit fills the two words of an rlimit
     let bound = if unsafe { getrlimit(RLIMIT_NOFILE, &mut lim) } == 0 { lim[0].min(1 << 20) as i32 } else { 1 << 16 };
+    // a million closes at a high limit kept the watcher from waiting for seconds: on macOS, the
+    // highest open descriptor bounds it, with room for the few the spawn opens after this
+    #[cfg(target_os = "macos")]
+    let bound = std::fs::read_dir("/dev/fd")
+        .ok()
+        .and_then(|d| d.filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok()).max())
+        .map_or(bound, |high| bound.min(high + 64));
     // fork inside pre_exec is safe only while hook run has one thread at the spawn: glibc's fork
     // takes the malloc and atfork locks, which a second thread could hold
     #[cfg(target_os = "linux")]
