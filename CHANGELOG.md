@@ -1313,6 +1313,10 @@ incompatible index by itself, and that is never breaking.
   the line. PHP `NEW self()`, `NEW static()` and `NEW parent()` are uses of the constructor in
   `refs`, as `new self()` was. In a custom language, no line inside a block comment defines,
   even one that does not start with the opener ([CLI](docs/CLI.md#custom-languages)).
+- On Windows with `XDG_STATE_HOME` set, the Grep hook's counter (`hook-grep.jsonl`) goes there,
+  beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
+  directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
+  `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
 
 ## [0.1.0] - 2026-11-11
 

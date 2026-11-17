@@ -634,13 +634,12 @@ fn bounded(page: &[&str], start: usize, end: usize, room: usize, noun: &str) -> 
 
 /// The file the counter appends to.
 pub fn counter_path() -> Option<PathBuf> {
-    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let dir = if cfg!(windows) {
-        var("LOCALAPPDATA")?.join("scrutate")
-    } else {
-        var("XDG_STATE_HOME").filter(|p| p.is_absolute()).unwrap_or(var("HOME")?.join(".local").join("state")).join("scrutate")
-    };
-    Some(dir.join("hook-grep.jsonl"))
+    counter_path_in(cfg!(windows), |k| std::env::var_os(k))
+}
+
+/// `counter_path` on Windows or not, with the environment `env`.
+pub(crate) fn counter_path_in(windows: bool, env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    crate::finder::state_dir_in(windows, env).map(|d| d.join("hook-grep.jsonl"))
 }
 
 /// One line per answered call: one write, so lines of hooks running at once do not mix.
@@ -700,7 +699,11 @@ impl Tally {
 
 /// `scrutate hook stats`: the counter per session, in the order the sessions began, and in all.
 pub fn stats(json_out: bool) -> Result<i32> {
-    let path = counter_path().context("no state directory: set HOME or XDG_STATE_HOME")?;
+    let path = counter_path().context(if cfg!(windows) {
+        "no state directory: set LOCALAPPDATA or XDG_STATE_HOME"
+    } else {
+        "no state directory: set HOME or XDG_STATE_HOME"
+    })?;
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -759,6 +762,31 @@ pub fn stats(json_out: bool) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_counter_and_the_frecency_file_share_one_state_directory_on_every_system() {
+        let abs = |p: &str| if cfg!(windows) { format!("C:{p}") } else { p.to_string() };
+        let (x, l, h) = (abs("/x"), abs("/l"), abs("/h"));
+        for windows in [true, false] {
+            for xdg in [Some(x.as_str()), None, Some("relative"), Some("")] {
+                let env = |k: &str| match k {
+                    "XDG_STATE_HOME" => xdg.map(Into::into),
+                    "LOCALAPPDATA" => Some(l.as_str().into()),
+                    "HOME" => Some(h.as_str().into()),
+                    _ => None,
+                };
+                let want = match xdg {
+                    Some(d) if d == x => PathBuf::from(&x),
+                    _ if windows => PathBuf::from(&l),
+                    _ => PathBuf::from(&h).join(".local").join("state"),
+                }
+                .join("scrutate");
+                let counter = counter_path_in(windows, env).unwrap();
+                let frecency = crate::finder::state_file_in(windows, env).unwrap();
+                assert_eq!((counter.parent(), frecency.parent()), (Some(want.as_path()), Some(want.as_path())), "windows {windows}, XDG_STATE_HOME {xdg:?}");
+            }
+        }
+    }
 
     #[test]
     fn grep_splits_its_glob_argument_at_spaces_and_commas() {
