@@ -652,6 +652,7 @@ fn redact_on_covers_every_cli_answer_that_prints_file_text() {
         vec!["symbol", "--deps", "tokcrate::tok", "--json"],
         vec!["read", "--deps", "--symbol", "tokcrate::tok"],
         vec!["read", "--deps", "--symbol", "tokcrate::tok", "--json"],
+        vec!["sexp", "conf.py"],
     ];
     // the dependency's answer is there, so its rows cannot pass by printing nothing
     let (out, err) = run(&["read", "--deps", "--symbol", "tokcrate::tok"]);
@@ -716,6 +717,27 @@ fn the_security_doc_lists_every_detector_and_its_source() {
     let section = &doc[doc.find("## Secrets in answers").unwrap()..];
     let rows = section.lines().skip(1).take_while(|l| !l.starts_with("## ")).filter(|l| l.starts_with("| `")).count();
     assert_eq!(rows, detectors.len(), "SECURITY.md's table has rows no detector has");
+}
+
+/// An error can name files too: a lookup that finds nothing lists the files the index leaves out,
+/// and a file's name can hold a secret. The MCP error text comes back redacted, as an answer does.
+#[test]
+fn an_error_naming_a_file_whose_name_holds_a_secret_comes_back_redacted() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("secrets_error_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let token = format!("AKIA{}", chars(&mut 4343, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 16));
+    let token = token.as_str();
+    fs::write(root.join("small.py"), "def present():\n    return 1\n").unwrap();
+    fs::write(root.join(format!("{token}.py")), "x = 1\n".repeat(200_000)).unwrap();
+    let root = canon(&root);
+    let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+    let settings = scrutate::mcp::Settings::new(None);
+    let c = scrutate::mcp::call_tool(&session, "read_code", &json!({"symbol": "absent_name"}), &settings, &Default::default());
+    assert!(c.is_error && c.text.contains("not in the index"), "{}", c.text);
+    assert!(!c.text.contains(token) && !c.structured.to_string().contains(token), "{}\n{}", c.text, c.structured);
+    assert!(c.text.contains("[redacted:aws-access-key-id]"), "{}", c.text);
+    let _ = fs::remove_dir_all(&root);
 }
 
 /// A key in a file over 1 MB is redacted as the whole file reads it: a page from its middle, its
@@ -2314,4 +2336,44 @@ fn an_argument_in_another_case_is_guarded_as_the_directory_it_is() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     let _ = fs::remove_dir_all(&base);
+}
+
+/// One redaction switch for every agent surface: by default, and with a value that is neither
+/// `off` nor `on` (`OFF`, `0`: the default stays, and stderr says so), the MCP server redacts what
+/// a tool returns; `SCRUTATE_REDACT=off` returns it as the file holds it.
+#[test]
+fn the_mcp_server_follows_the_redaction_switch() {
+    let key = format!("AKIA{}", chars(&mut 4444, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 16));
+    for (value, raw) in [(None, false), (Some("OFF"), false), (Some("0"), false), (Some("off"), true)] {
+        let name = format!("secrets_switch_{}_{}", value.unwrap_or("unset").to_lowercase(), std::process::id());
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("conf.py"), format!("aws_key = \"{key}\"\n")).unwrap();
+        assert!(Command::new(BIN).args(["index"]).current_dir(&root).env("SCRUTATE_SEMANTIC", "none").status().unwrap().success());
+        let mut cmd = Command::new(BIN);
+        cmd.arg("serve").current_dir(&root).env("SCRUTATE_SEMANTIC", "none").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        match value {
+            Some(v) => cmd.env("SCRUTATE_REDACT", v),
+            None => cmd.env_remove("SCRUTATE_REDACT"),
+        };
+        let mut child = cmd.spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        for msg in [
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}),
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "read_code", "arguments": {"path": "conf.py"}}}),
+        ] {
+            writeln!(stdin, "{msg}").unwrap();
+        }
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
+        let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let answer = stdout.lines().find(|l| l.contains("\"id\":2")).unwrap_or_else(|| panic!("{value:?}: no answer: {stdout}"));
+        assert!(answer.contains("aws_key"), "{value:?}: {answer}");
+        assert_eq!(answer.contains(&key), raw, "{value:?}: {answer}");
+        assert_eq!(answer.contains("[redacted:aws-access-key-id]"), !raw, "{value:?}: {answer}");
+        assert_eq!(stderr.contains("is neither off nor on"), matches!(value, Some("OFF") | Some("0")), "{value:?}: {stderr}");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

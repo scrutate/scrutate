@@ -1324,6 +1324,13 @@ incompatible index by itself, and that is never breaking.
   `f(String)`) a fingerprint each: they shared one, and GitLab, which takes fingerprints as
   unique, showed one of the two issues. A finding no other shares keeps its fingerprint
   ([CLI](docs/CLI.md)).
+- A file whose name holds a secret no longer reaches an agent through what names files beside an
+  answer: the MCP tools redact the note and `pending` list of files an update has not reached yet
+  and their error text, and `lsp` its errors and log messages, as they redact answers.
+  `SCRUTATE_REDACT=on` redacts the hidden `sexp` command's output too. `hook run` refuses an `rg`
+  with `--max-columns-preview`, which prints part of a line and may cut a secret where no rule
+  finds it. `npm-token` takes its prefix in any case, as gitleaks does
+  ([Security](docs/SECURITY.md#secrets-in-answers)).
 
 ## [0.1.0] - 2026-11-11
 

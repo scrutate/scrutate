@@ -815,7 +815,8 @@ fn without_colour(argv: &[String]) -> Vec<String> {
 }
 
 /// The flag of `argv` that has rg rewrite each line it prints (`--replace` puts text in place of
-/// the match, `--json` escapes it), so no redactor can see a secret in it whole.
+/// the match, `--json` escapes it) or print only part of one (`--max-columns-preview` cuts a long
+/// line at the column, through a secret too), so no redactor can see a secret in it whole.
 fn rewrites_lines(argv: &[String]) -> Option<&str> {
     if argv[0] != "rg" {
         return None;
@@ -825,7 +826,7 @@ fn rewrites_lines(argv: &[String]) -> Option<&str> {
         .zip(roles(&RG_FLAGS, &argv[1..]))
         .find(|(a, r)| {
             *r == Role::Flag
-                && (matches!(a.split_once('=').map_or(a.as_str(), |(n, _)| n), "--replace" | "--json")
+                && (matches!(a.split_once('=').map_or(a.as_str(), |(n, _)| n), "--replace" | "--json" | "--max-columns-preview")
                     || !a.starts_with("--") && a[1..].chars().find(|c| RG_FLAGS.valued.contains(*c)) == Some('r'))
         })
         .map(|(a, _)| a.as_str())
@@ -1222,9 +1223,13 @@ pub fn run_main(args: &[String]) -> i32 {
         }
     }
     if let Some(flag) = rewrites_lines(argv) {
-        eprintln!(
-            "scrutate hook run: rg's {flag} changes each line before scrutate can find a secret in it: not run (`scrutate grep --json` gives JSON with secrets redacted)"
-        );
+        if flag == "--max-columns-preview" {
+            eprintln!("scrutate hook run: rg's {flag} prints part of a line, which may cut a secret where scrutate cannot find it: not run (drop it)");
+        } else {
+            eprintln!(
+                "scrutate hook run: rg's {flag} changes each line before scrutate can find a secret in it: not run (`scrutate grep --json` gives JSON with secrets redacted)"
+            );
+        }
         return 2;
     }
     if let Some(flag) = reports_otherwise(argv) {

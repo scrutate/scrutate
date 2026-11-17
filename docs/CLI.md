@@ -1042,7 +1042,9 @@ name, URL scheme or PEM armour left in place, and the page ends with `(N secrets
 SCRUTATE_REDACT=off shows them)`; the structured form carries `"redacted": {KIND: count}`.
 Both forms are redacted, `detailed` and `concise`, before the budget pages them, so a page edge
 never cuts a secret in two, and a structural search capture as its whole line reads it. A path
-that holds a secret is redacted too. The Grep hook and `lsp` answer the same way. The CLI and the
+that holds a secret is redacted too, also in the note on files an update has not reached yet
+(`pending`) and in an error. The Grep hook and `lsp` answer the same way, `lsp` in its errors and
+log messages too. The CLI and the
 Python bindings print what the files hold; `SCRUTATE_REDACT=on` redacts every CLI answer that
 prints file text, in text and `--json` (as values, the closing line on stderr), and a path that
 holds a secret in any answer, `files` included; counts stay as they are: `grep` with or without `--index` line by line with colour off (a
@@ -1884,7 +1886,8 @@ search skips the directory the walk skipped. Colour is always off: the search's 
 (an `rg` that `scrutate grep` answers writes to a pipe, which gets no colour), since escape codes
 around a match would cut a secret in two. An `rg` with `--replace` (`-r`) or `--json` exits 2 and runs
 nothing: both rewrite each line before scrutate can find a secret in it (`scrutate grep --json`
-gives JSON with secrets redacted). An `rg` with `--stats` exits 2 and runs nothing too: rg prints
+gives JSON with secrets redacted). So does an `rg` with `--max-columns-preview`, which prints part
+of a long line and may cut a secret at the column. An `rg` with `--stats` exits 2 and runs nothing too: rg prints
 its statistics on standard output, and `scrutate grep`, which answers an `rg`, prints its own
 summary on stderr (`scrutate grep --stats`). A search for the
 text `.scrutate`, the pattern and not a path, runs. A line

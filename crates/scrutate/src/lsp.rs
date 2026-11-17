@@ -28,7 +28,16 @@ fn send(msg: &Value) {
 }
 
 fn log(kind: u8, message: &str) {
-    send(&json!({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"type": kind, "message": message}}));
+    send(&json!({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"type": kind, "message": redacted(message.to_string())}}));
+}
+
+/// `text` with its secrets redacted unless SCRUTATE_REDACT=off: a log line or an error can name a
+/// file whose name holds one, and an editor's agent reads both as it reads an answer.
+fn redacted(mut text: String) -> String {
+    if crate::secrets::on(true) {
+        crate::secrets::Redactor::default().redact_in_place(&mut text);
+    }
+    text
 }
 
 /// One message body, or None at end of input.
@@ -1120,7 +1129,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
                 }
                 json!({"jsonrpc": "2.0", "id": id, "result": result})
             }
-            Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
+            Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": redacted(message)}}),
         });
         crate::memory::give_back_memory(began);
     }

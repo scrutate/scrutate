@@ -537,8 +537,10 @@ fn the_corpus_of_real_search_shapes_is_rewritten_with_no_mismatch() {
 }
 
 /// `hook run` refuses, running nothing, an `rg` whose lines it could not answer as rg prints
-/// them: one that rewrites each line (`--json`, `--replace`, `-r`) and one whose statistics
-/// `scrutate grep` gives in another form (`--stats`); each exits 2 with a line that says why.
+/// them: one that rewrites each line (`--json`, `--replace`, `-r`), one that prints part of a
+/// long line (`--max-columns-preview`, where a secret cut at the column is no longer one) and one
+/// whose statistics `scrutate grep` gives in another form (`--stats`); each exits 2 with a line
+/// that says why.
 #[test]
 fn hook_run_refuses_an_rg_it_cannot_answer_as_rg_does() {
     let r = Repo::new("refused_rg");
@@ -547,6 +549,8 @@ fn hook_run_refuses_an_rg_it_cannot_answer_as_rg_does() {
         ("rg --json hello", "changes each line"),
         ("rg --replace=x hello", "changes each line"),
         ("rg -rx hello", "changes each line"),
+        ("rg --max-columns 20 --max-columns-preview hello", "part of a line"),
+        ("rg -M20 --max-columns-preview hello .", "part of a line"),
         ("rg --stats hello", "prints statistics"),
         ("rg -n --stats hello .", "prints statistics"),
     ] {
