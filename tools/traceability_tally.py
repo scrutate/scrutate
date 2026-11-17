@@ -11,8 +11,8 @@ for line in s.splitlines():
     if not line.startswith("| ") or line.startswith("| ID") or line.startswith("| Gate") or line.startswith("|---"):
         continue
     cells = [c.strip() for c in line.strip().strip("|").split("|")]
-    # section 8 and the release-gate table carry the status in the second cell
-    for cell in (cells[-1], cells[1] if len(cells) > 1 else ""):
+    # the release-gate table carries the status in the second cell, section 8 in the third
+    for cell in (cells[-1], *cells[1:3]):
         found = [k for k in ("FAIL", "BLOCKED", "PARTIAL", "PASS") if re.search(rf"\b{k}\b", cell)]
         if found:
             counts[found[0]] += 1

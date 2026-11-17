@@ -272,7 +272,8 @@ Three tiers, so every file yields something (docs/LANGUAGES.md): tree-sitter gra
 **data-driven rule registry** (per language: which node kinds are definitions, how the name is
 found, what a call is, how imports look), a keyword heuristic tier, and overlapping line windows.
 Each definition becomes a *chunk* with fields name / qualified name / signature / documentation /
-body / path, plus call edges and imports. A new language is a registry entry and a sample file.
+body / path, plus call edges and imports. A new language is a registry entry and a sample file. Compilers and language servers stay out of
+this path ([ADR 0014](adr/0014-language-servers-and-compilers-are-not-default-resolution.md)).
 
 A file with a syntax error still yields definitions. tree-sitter recovers around the error and
 leaves an ERROR or MISSING node where it gave up, and the registry reads the definitions in the

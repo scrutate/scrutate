@@ -91,6 +91,16 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 Measurements in this section that name no committed result file or CI run were taken on the
 development Mac and are not recorded in the repository.
 
+- Python tooling to Rust (R-13.1): one `xtask` crate in the workspace, not a default member and never
+  shipped, run as `cargo xtask NAME`, replacing the 30 maintenance scripts in `tools/` and
+  `packaging/validate_manifests.py`. After 0.1.0, since the release scripts are the path the
+  first `release.yml` run proves. In order: delete `name_research.py` (its output,
+  docs/name_research.json, is committed); the CI checks (`check_doc_shift`, `unsafe_count`,
+  `gate_parity`, `gitleaks_config`, `fuzz_lock`, `jump_tables`), their Python tests as the
+  specification; `order_file`; the release scripts (`check_version`, `release_notes`,
+  `fold_changelog`, `sbom`, `third_party_notices`), each against golden files of the Python
+  output; last the docs generators (`gen_assets`, `gen_doc_assets`, `gen_dependencies_md`,
+  `gen_test_results`, `traceability_tally`, `generated_page`), byte for byte.
 - Small trees and start-up, what is left (the measured state is in
   [Architecture](ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)).
   A one-file directory search runs fewer instructions than GNU grep (17 M against its 20.8 M) in the
