@@ -435,7 +435,7 @@ fn real_value(secret: &str, _: &str, _: &str) -> bool {
 fn generic(secret: &str, whole: &str, before: &str) -> bool {
     let only = |set: &[u8]| secret.bytes().all(|b| b.is_ascii_alphanumeric() || set.contains(&b));
     let symbolic = !only(b"_.=-") && !only(b"+/=");
-    let key = whole[..whole.rfind(secret).unwrap_or(0)].to_ascii_lowercase();
+    let name = &whole[..whole.rfind(secret).unwrap_or(0)];
     // a Rust macro call (`quote_spanned!`) and digits with format flags (`1234567890.-+`) are code,
     // as are a chain of names through `?.` or `!.`, Razor's `@Model.Password` and a `~/` path; a
     // plain dotted chain is not, since a passphrase has that shape
@@ -443,13 +443,57 @@ fn generic(secret: &str, whole: &str, before: &str) -> bool {
     let code = secret.strip_suffix('!').is_some_and(|s| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
         || !secret.bytes().any(|b| b.is_ascii_alphabetic())
         || marked && CODE_OR_HOME.is_match(secret);
-    (!symbolic || (["passw", "secret", "token"].iter().any(|k| key.contains(k)) && !secret.contains("://") && !code))
+    (!symbolic || (names_a_secret(name) && !secret.contains("://") && !code))
         && secret.chars().any(|c| !(c.is_ascii_alphabetic() || matches!(c, '_' | '.' | '-')))
         && !NOT_SECRET_NAMES.is_match(whole)
         && real_value(secret, whole, before)
         && !NUMBER.is_match(secret)
         && !IDENTIFIER.is_match(secret)
         && !names_a_thing(secret)
+}
+
+/// The keywords after which generic-secret takes a value with a symbol; `passw` alone stands for
+/// any other word it starts.
+static SECRET_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)passw(?:or)?[dt]|passw|secret|token").unwrap());
+
+/// Parts after a keyword that say the name is about the secret, not the secret itself.
+const NOT_SECRET_PARTS: &str = "label header hint type name field file path dir cache url uri endpoint prompt policy length len count format pattern regex rule ttl expiry expires timeout mode kind id";
+
+/// Letters that, run on from a keyword, make a different word: `tokenizer`, `secretary`, `passwordless`.
+const WORD_ENDINGS: &str = "izer izers ize ized izes izing ization ary aries ariat ion ions ive less";
+
+/// `name` holds a password, secret or token keyword that names a secret: any does, except one
+/// that runs on into a different word (`tokenizer`, `passwordless`) or is followed by a part such
+/// as `label` or `cache` (`password_label`, `token.cache.dir`, `passwordHint`, `tokentype`).
+/// Fails closed: an unknown part is a secret (`secretkey`, `tokenvalue`).
+fn names_a_secret(name: &str) -> bool {
+    let b = name.as_bytes();
+    SECRET_WORD.find_iter(name).any(|m| {
+        let mut e = m.end();
+        // a plural: `tokens`, `PASSWORDS`
+        if b.get(e).is_some_and(|c| c.eq_ignore_ascii_case(&b's')) && !b.get(e + 1).is_some_and(u8::is_ascii_alphabetic) {
+            e += 1;
+        }
+        let part = |from: usize| {
+            let run = b[from..].iter().take_while(|c| c.is_ascii_alphanumeric()).count();
+            // a camel-case part ends where the next capital starts
+            let run = b[from + 1..from + run].iter().position(u8::is_ascii_uppercase).map_or(run, |i| i + 1);
+            name[from..from + run].to_ascii_lowercase()
+        };
+        let not_secret = |p: String| NOT_SECRET_PARTS.split(' ').any(|w| w == p);
+        match b.get(e) {
+            Some(b'_' | b'.' | b'-') => !not_secret(part(e + 1)),
+            // camel case: a capital after a lower-case keyword starts the next part
+            Some(c) if c.is_ascii_uppercase() && b[e - 1].is_ascii_lowercase() => !not_secret(part(e)),
+            // letters run on: a secret unless they make another word (`tokenizer`, `secretary`)
+            // or are a part such as `type` (`tokentype`); `secretkey` and `tokenvalue` are secrets
+            Some(c) if c.is_ascii_alphabetic() => {
+                let p = part(e);
+                !(WORD_ENDINGS.split(' ').any(|w| w == p) || not_secret(p))
+            }
+            _ => true,
+        }
+    })
 }
 
 /// Names of letters joined by `.`, `?.` or `!.`, with Razor's `@` before them, or `~/` and a path:
@@ -1979,6 +2023,54 @@ mod tests {
             "const char* valid_tokens = \"1234567890.-+ #btcdeEfgGosuxX\";".to_string(),
         ] {
             assert!(redact(&line).1.is_empty(), "{line} -> {}", redact(&line).0);
+        }
+    }
+
+    /// A symbolic value after a name that says it is no secret is not redacted: the keyword run on
+    /// into another word (`tokenizer`, `secretary`) or followed by a part such as `label`, `header`
+    /// or `cache`. Any other name that holds the keyword keeps it: a suffix (`password_prod`,
+    /// `token_eu`), a number, another part, run on or in camel case (`secretkey`, `tokenValue`).
+    #[test]
+    fn a_symbolic_value_after_a_name_that_is_no_secret_is_shown() {
+        for line in [
+            "tokenizer: bert-base@v2.1",
+            "token.cache.dir=~/.cache/tokens",
+            "secret_header = X-Secret-Header@v1",
+            "password_label = Enter@your@password",
+            "passwordHint: Enter@your@pet",
+            "passwordhint: Enter@your@pet",
+            "tokentype: Bearer@v2",
+            "passwordless: magic@link",
+            "secretary: Jane@front-desk",
+        ] {
+            assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
+        }
+        let symbolic = format!("{}@{}!{}#{}", fake(131, ALNUM, 4), fake(132, ALNUM, 4), fake(133, ALNUM, 3), fake(134, ALNUM, 2));
+        for name in [
+            "password_prod: ",
+            "password2: ",
+            "client_secret_v2: ",
+            "DB_PASSWORD_PROD=",
+            "password_backup: ",
+            "token_eu: ",
+            "secret_value: ",
+            "smtp_password_primary: ",
+            "password_confirmation: ",
+            "admin_password_hash_salt: ",
+            "tokenValue: ",
+            "secrets: ",
+            "secretkey: ",
+            "jwt.secretkey=",
+            "tokenvalue: ",
+            "accesstokenvalue: ",
+            "apitokensecretvalue: ",
+            "tokenstring = ",
+            "secretvalue: ",
+        ] {
+            let line = format!("{name}{symbolic}");
+            let (out, marks) = redact(&line);
+            let tail = symbolic.rsplit('#').next().unwrap();
+            assert!(!out.contains(&symbolic) && !out.ends_with(&format!("#{tail}")) && !marks.is_empty(), "{line} -> {out}");
         }
     }
 

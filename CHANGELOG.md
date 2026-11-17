@@ -1155,6 +1155,12 @@ incompatible index by itself, and that is never breaking.
   line calls: each could remove the socket the other had just bound, and a start that found the
   other still starting gave up at once, so none offered it when the other could not; it now waits
   up to a second for the other and checks again.
+- Redaction shows a value with `@`, `~` or `!` after a name that holds `password`, `secret` or
+  `token` but is no secret: `tokenizer: bert-base@v2.1`, `token.cache.dir=~/.cache/tokens`,
+  `secret_header = X-Secret-Header@v1` and `password_label = Enter@your@password` were redacted.
+  The keyword run on into a different word (`tokenizer`, `secretary`), or followed by a part such
+  as `label`, `header`, `hint`, `cache` or `path`, spares the value; every other name with the
+  keyword (`password_prod`, `token_eu`, `secret_value`, `secretkey`, `tokenvalue`) still hides it.
 
 ## [0.1.0] - 2026-11-11
 
