@@ -249,6 +249,9 @@ incompatible index by itself, and that is never breaking.
   `bench/make_yardstick_md.py` writes a marked section of docs/COMPETITIVE.md from the result
   files it names, which `tools/gen_doc_assets.py --check` checks
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- An OpenSSF Scorecard workflow (`.github/workflows/scorecard.yml`, ossf/scorecard-action 2.5.0
+  pinned by commit) runs on every push to main and once a week, and publishes its score and its
+  findings to code scanning ([Security](docs/SECURITY.md)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,

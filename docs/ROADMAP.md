@@ -56,6 +56,7 @@ gap they close in docs/TRACEABILITY.md.
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
 | Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
 | Function order on glibc Linux (R-4.6) | release builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` link twice, the second time with lld's `--symbol-ordering-file` from `crates/scrutate/startup.order` under the build's own names (`tools/order_file.py --elf`); docs/RELEASING.md section 2 |
+| OpenSSF Scorecard | `.github/workflows/scorecard.yml` (ossf/scorecard-action 2.5.0, pinned by commit) runs on every push to main and once a week, publishing its score to api.scorecard.dev and its findings to code scanning; its first run is the next push to main |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the first release
@@ -83,7 +84,8 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   and weekly benchmark runs for the dashboard (R-4.5).
 - Now that `ci.yml` is green, one job or setting each (docs/research/github-ci-2026-11.md): wheels
   to PyPI by trusted publishing (the jobs are in `release.yml` and wait for the `PYPI_PUBLISH`
-  variable), CodeQL default setup for Rust, OpenSSF Scorecard. For the integrations
+  variable), and CodeQL default setup for Rust, a repository setting the owner turns on (no file).
+  For the integrations
   (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one import.
 
 ## Next

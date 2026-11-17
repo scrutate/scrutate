@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The checks of .github/workflows/ci.yml, security.yml and benchmarks.yml that a Linux box can run,
 # for the commit checked out here. tools/gate_map.json names, for every step of those workflows
-# (`run:` and `uses:`), and of release.yml, fuzz-weekly.yml and jetbrains.yml, the step below that
+# (`run:` and `uses:`), and of release.yml, fuzz-weekly.yml, jetbrains.yml and scorecard.yml, the step below that
 # covers it or why only CI runs it; tools/gate_parity.py (the gate-parity step) fails when a
 # workflow step is missing from the map, so the two cannot drift.
 #   bash tools/ci_gate.sh [--quick|--bench]
