@@ -3659,7 +3659,7 @@ impl Index {
             // through a link that stays inside, or in another case, the file would get a second row
             let real = std::fs::canonicalize(self.root.join(p)).ok();
             let Some(p) = real.and_then(|r| r.strip_prefix(&self.root).ok().map(|r| crate::instant::slashed(r.to_string_lossy()))) else { continue };
-            if !crate::parse::is_indexable(&p) || p.split('/').any(|n| crate::files::skipped(&skipped, n)) || self.has_file(&p) || out.contains(&p) {
+            if !crate::parse::is_indexable(&p) || crate::files::in_skipped(&skipped, &p) || self.has_file(&p) || out.contains(&p) {
                 continue;
             }
             if !file_inside(&self.root, &p).is_some_and(|m| m.len() <= MAX_FILE_BYTES) {
