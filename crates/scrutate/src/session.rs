@@ -1057,9 +1057,23 @@ mod unix {
         }
     }
 
+    /// False while another holder keeps `dir` locked past `limit`. A child forked by any thread
+    /// holds a copy of a session's lock until it execs, after that session has returned.
+    fn lock_within(dir: &std::fs::File, limit: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            match dir.try_lock() {
+                Err(std::fs::TryLockError::WouldBlock) if started.elapsed() < limit => std::thread::sleep(std::time::Duration::from_millis(1)),
+                Err(std::fs::TryLockError::WouldBlock) => return false,
+                _ => return true,
+            }
+        }
+    }
+
     /// Offer `session` to command line calls of the same user, until the process exits. None when
-    /// it cannot (the socket path is too long, another session of this root is running, the
-    /// index directory holds something else there): command line calls then do their own work.
+    /// it cannot (the socket path is too long, another session of this root is running or still
+    /// starting after a second, the index directory holds something else there): command line
+    /// calls then do their own work.
     /// `answer` prints an answer as the command line does.
     pub fn listen(session: &Arc<Session>, answer: fn(Answer, &Request, &Path) -> Result<Printed>) -> Option<Listening> {
         let root = session.root();
@@ -1071,7 +1085,7 @@ mod unix {
         // held to the bind: sessions starting together would each remove the socket another just bound
         let dir = path.parent().and_then(|d| std::fs::File::open(d).ok());
         if let Some(d) = &dir
-            && let Err(std::fs::TryLockError::WouldBlock) = d.try_lock()
+            && !lock_within(d, std::time::Duration::from_secs(1))
         {
             debug("another session of this root is starting");
             return None;
@@ -3794,11 +3808,54 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sessions_starting_together_over_a_stale_socket_leave_one_listening() {
+        start_together("plain", false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sessions_starting_together_beside_forked_children_leave_one_listening() {
+        start_together("forks", true);
+    }
+
+    #[cfg(unix)]
+    /// 30 rounds of 8 sessions starting at once over a stale socket. `forks`: two threads fork
+    /// children that wait before exec, holding copies of every descriptor (a lock among them).
+    fn start_together(name: &str, forks: bool) {
+        use std::os::unix::process::CommandExt;
         fn never(_: Answer, _: &Request, _: &Path) -> Result<Printed> {
             Ok(Printed::default())
         }
+        unsafe extern "C" {
+            fn usleep(us: u32) -> i32;
+        }
+        // stops the forks on every way out, a failed round included
+        struct Stop(Arc<AtomicBool>);
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let _stop = Stop(Arc::clone(&stop));
+        let forkers: Vec<_> = (0..if forks { 2 } else { 0 })
+            .map(|_| {
+                let stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let mut c = std::process::Command::new("/usr/bin/true");
+                        unsafe {
+                            c.pre_exec(|| {
+                                usleep(200);
+                                Ok(())
+                            });
+                        }
+                        let _ = c.status();
+                    }
+                })
+            })
+            .collect();
         // a short path: the stale socket is bound here directly, under the length a socket allows
-        let dir = Path::new("/tmp").join(format!("scrutate_start_together_{}", std::process::id()));
+        let dir = Path::new("/tmp").join(format!("scrutate_start_together_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let root = std::fs::canonicalize(&dir).unwrap();
@@ -3808,6 +3865,12 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         for round in 0..30 {
             drop(std::os::unix::net::UnixListener::bind(&path).unwrap()); // its file stays: stale
+            // a forked child's copy of the listener accepts until that child execs
+            let refused = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while std::os::unix::net::UnixStream::connect(&path).is_ok() {
+                assert!(std::time::Instant::now() < refused, "round {round}: the dropped listener still accepts");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             let start = Arc::new(std::sync::Barrier::new(sessions.len()));
             let threads: Vec<_> = sessions
                 .iter()
@@ -3824,6 +3887,8 @@ mod tests {
             drop(listening);
             let _ = std::fs::remove_file(&path);
         }
+        drop(_stop);
+        forkers.into_iter().for_each(|f| f.join().unwrap());
         drop(sessions);
         let _ = std::fs::remove_dir_all(&root);
     }

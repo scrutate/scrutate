@@ -1146,6 +1146,10 @@ incompatible index by itself, and that is never breaking.
   at a high open-file limit (1048576) it ran on for seconds, as the watcher closed every
   descriptor number up to the limit before it waited; it now closes only those up to the highest
   one open.
+- Two `serve` processes of one root starting together leave one offering its socket to command
+  line calls: each could remove the socket the other had just bound, and a start that found the
+  other still starting gave up at once, so none offered it when the other could not; it now waits
+  up to a second for the other and checks again.
 
 ## [0.1.0] - 2026-11-11
 
