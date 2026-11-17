@@ -1775,18 +1775,27 @@ fn a_root_config_that_links_to_a_file_inside_the_root_is_read_up_to_its_size_cap
     assert!(excluded("g_fn") && !excluded("s_fn"));
     let (_, out, _) = run_in(&r.root, &["config"], &[]);
     assert!(out.contains("index exclude_dirs, from ") && out.contains(": gen"), "{out}");
+    // one out of it is not read: the command stops, naming it
     fs::remove_file(&toml).unwrap();
     std::os::unix::fs::symlink(outside.root.join("real.toml"), &toml).unwrap();
-    assert!(!excluded("g_fn") && !excluded("s_fn"));
-    let (_, out, _) = run_in(&r.root, &["config"], &[]);
-    assert!(!out.contains("index exclude_dirs"), "{out}");
+    let stopped = || {
+        let (code, out, err) = run_in(&r.root, &["symbol", "s_fn"], &[]);
+        code == 2 && out.is_empty() && err.starts_with("scrutate: error: ") && err.contains(".scrutate.toml: not read")
+    };
+    assert!(stopped());
+    let (_, out, err) = run_in(&r.root, &["config"], &[]);
+    assert!(!out.contains("index exclude_dirs") && !out.contains("exclude_dirs = [\"src\"]") && err.contains("not read"), "{out}{err}");
     // the cap is that of every file the index reads: 1,000,000 bytes
     fs::remove_file(&toml).unwrap();
     for (size, read) in [(1_000_000, true), (1_000_001, false)] {
         let mut text = b"[index]\nexclude_dirs = [\"gen\"]\n".to_vec();
         text.resize(size, b'\n');
         r.write(".scrutate.toml", &text);
-        assert_eq!(excluded("g_fn"), read, "{size} bytes");
+        if read {
+            assert!(excluded("g_fn") && !excluded("s_fn"), "{size} bytes");
+        } else {
+            assert!(stopped(), "{size} bytes");
+        }
     }
 }
 
@@ -1827,8 +1836,15 @@ fn no_first_index_of_the_home_directory_without_asking() {
         assert_eq!(code, 2, "{args:?}: {out}{err}");
         assert_eq!(err.lines().count(), 1, "{args:?}: {err}");
         assert!(err.contains("--root") && err.contains("scrutate index"), "{args:?}: {err}");
+        assert!(err.starts_with("scrutate: error: "), "{args:?}: {err}");
         assert!(!h.root.join(".scrutate").exists(), "{args:?} built an index");
     };
+    // an error record where the command or the environment asks for JSON
+    for (args, json) in [(&["symbol", "--json", "stray_fn"][..], None), (&["symbol", "stray_fn"], Some(("SCRUTATE_DIAGNOSTICS", "json")))] {
+        let (code, out, err) = run_in(&h.root, args, &[&env[..], json.as_slice()].concat());
+        let v: serde_json::Value = serde_json::from_str(err.trim()).unwrap_or_else(|e| panic!("{args:?}: {e}: {out}{err}"));
+        assert!(code == 2 && v["type"] == "error" && v["message"].as_str().is_some_and(|m| m.contains("--root")), "{args:?}: {v}");
+    }
     for args in [
         &["symbol", "stray_fn"][..],
         &["search", "stray"],
@@ -3399,4 +3415,102 @@ fn dupes_under_the_sampling_floor_says_what_share_of_the_pairs_at_its_threshold_
         let (_, out, _) = r.run(args);
         assert!(!out.contains("sampling"), "{args:?}: {out}");
     }
+}
+
+#[test]
+fn the_no_color_help_says_an_empty_no_color_turns_color_off_too() {
+    for args in [&["--help"][..], &["grep", "--help"]] {
+        let (_, out, _) = run_in(&std::env::temp_dir(), args, &[]);
+        let said = out.lines().skip_while(|l| !l.contains("--no-color")).take(2).collect::<Vec<_>>().join(" ");
+        assert!(said.contains("empty too") && !said.contains("not empty"), "{args:?}: {said}");
+    }
+}
+
+#[test]
+fn grep_takes_ripgreps_long_names_for_context_and_whole_words() {
+    let r = Repo::new("rg_long");
+    r.write("a.txt", b"one\nalpha\ntwo\nalphabet\nthree\n");
+    let short = r.run(&["grep", "-A", "1", "-B", "1", "-w", "alpha", "a.txt"]);
+    let long = r.run(&["grep", "--after-context", "1", "--before-context", "1", "--word-regexp", "alpha", "a.txt"]);
+    assert_eq!(short.0, 0, "{short:?}");
+    assert_eq!(long, short);
+    assert!(short.1.contains("one") && short.1.contains("two") && !short.1.contains("alphabet"), "{short:?}");
+}
+
+#[test]
+fn tsquery_counts_its_stop_line_in_max_bytes_and_says_it_on_the_last_page_only() {
+    let r = Repo::new("tsq_budget");
+    let body: String = (0..20).map(|i| format!("def fn_{i}():\n    return {i}\n\n")).collect();
+    r.write("m.py", body.as_bytes());
+    let q = "(function_definition name: (identifier) @n)";
+    let (code, out, err) = r.run(&["tsquery", "python", q, "m.py", "--limit", "5", "--max-bytes", "150"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.len() <= 150, "{} bytes: {out}", out.len());
+    assert!(out.contains("not shown") && !out.contains("stopped at"), "{out}");
+    let (_, last, _) = r.run(&["tsquery", "python", q, "m.py", "--limit", "5", "--max-bytes", "10000", "--offset", "4"]);
+    assert!(last.contains("fn_4") && last.contains("stopped at 5 matches"), "{last}");
+    let (_, whole, _) = r.run(&["tsquery", "python", q, "m.py", "--limit", "5"]);
+    assert!(whole.lines().last().is_some_and(|l| l.contains("stopped at 5 matches")), "{whole}");
+}
+
+#[test]
+fn an_invalid_pattern_error_quotes_at_most_200_characters_of_it() {
+    let r = Repo::new("long_pattern");
+    r.write("a.txt", b"q\n");
+    let pattern = format!("({}", "q".repeat(500));
+    // the first line quotes it; the regex parser's lines after it point at the fault
+    for args in
+        [&["grep", pattern.as_str(), "a.txt"][..], &["grep", "--index", "--update", pattern.as_str()], &["grep", "--fuzzy-regex", pattern.as_str(), "a.txt"]]
+    {
+        let (code, _, err) = r.run(args);
+        let first = err.lines().next().unwrap_or_default();
+        assert_eq!(code, 2, "{:?}: {err}", &args[..2]);
+        assert!(first.contains("invalid pattern \"(qqq") && first.contains("(cut: 501 characters in all)\""), "{:?}: {first}", &args[..2]);
+        assert!(!first.contains(&"q".repeat(250)), "{:?}: {first}", &args[..2]);
+    }
+    // an MCP tool's error is that line alone
+    r.write("q.jsonl", format!("{}\n", serde_json::json!({"op": "grep_code", "pattern": pattern})).as_bytes());
+    let (_, out, _) = r.run(&["batch", "q.jsonl"]);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    let e = v["error"].as_str().unwrap();
+    assert!(e.contains("(cut: 501 characters in all)") && !e.contains(&"q".repeat(250)), "{e}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_repositorys_configuration_file_is_read_only_inside_its_bounds() {
+    let r = Repo::new("cfg_bounds");
+    r.write("a.txt", b"alpha\n");
+    let outside = Repo::plain("cfg_bounds_outside");
+    outside.write("x.toml", b"[grep]\nhidden = true\n");
+    std::os::unix::fs::symlink(outside.root.join("x.toml"), r.root.join(".scrutate.toml")).unwrap();
+    let (code, _, err) = r.run(&["grep", "alpha", "a.txt"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.starts_with("scrutate: error: ") && err.contains(".scrutate.toml"), "{err}");
+    // a link that stays inside the root is read
+    fs::remove_file(r.root.join(".scrutate.toml")).unwrap();
+    r.write("conf/x.toml", b"[grep]\nhidden = true\n");
+    std::os::unix::fs::symlink("conf/x.toml", r.root.join(".scrutate.toml")).unwrap();
+    let (code, out, err) = r.run(&["grep", "alpha", "a.txt"]);
+    assert!(code == 0 && out.contains("alpha"), "{out}{err}");
+    // over 1 MB
+    fs::remove_file(r.root.join(".scrutate.toml")).unwrap();
+    let mut big = b"[grep]\nhidden = true\n".to_vec();
+    big.extend(std::iter::repeat_n(b'#', 1_100_000));
+    r.write(".scrutate.toml", &big);
+    let (code, _, err) = r.run(&["grep", "alpha", "a.txt"]);
+    assert!(code == 2 && err.starts_with("scrutate: error: ") && err.contains(".scrutate.toml"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_to_the_index_directory_is_not_called_a_hard_link() {
+    let r = Repo::new("link_to_index");
+    r.write("a.txt", b"alpha\n");
+    let (code, _, err) = r.run(&["index"]);
+    assert_eq!(code, 0, "{err}");
+    std::os::unix::fs::symlink(".scrutate", r.root.join("lnk")).unwrap();
+    let (code, out, err) = r.run(&["grep", "alpha"]);
+    assert!(code == 0 && out.contains("a.txt"), "{out}{err}");
+    assert!(!err.contains("hard link"), "{err}");
 }

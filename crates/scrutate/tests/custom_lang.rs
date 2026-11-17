@@ -213,13 +213,13 @@ fn a_repository_s_table_cannot_name_a_file_or_reach_outside_the_repository() {
     one_error(&t, &include, 10, "include");
     let path_key = TABLE.replace("name = \"mylang\"", &format!("name = \"mylang\"\npath = {:?}", outside.display().to_string()));
     one_error(&t, &path_key, 3, "path");
-    // a link out of the repository is not read as the repository's table
+    // a link out of the repository is not read: the command stops, naming it
     fs::remove_file(t.root.join(".scrutate.toml")).unwrap();
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&outside, t.root.join(".scrutate.toml")).unwrap();
         let (code, out, err) = t.run(&["languages"]);
-        assert_eq!(code, 0, "{err}");
-        assert!(!out.contains("mylang"), "{out}");
+        assert_eq!(code, 2, "{err}");
+        assert!(!out.contains("mylang") && err.contains(".scrutate.toml: not read"), "{out}{err}");
     }
 }

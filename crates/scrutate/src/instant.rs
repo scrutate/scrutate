@@ -1478,7 +1478,7 @@ pub fn build_matcher(p: &Pattern) -> Result<AnyMatcher> {
                 .size_limit(p.regex_size_limit)
                 .dfa_size_limit(p.dfa_size_limit)
                 .line_terminator(if p.multiline { None } else { Some(b'\n') });
-            let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", p.text))?;
+            let m = b.build(&pat).with_context(|| format!("invalid pattern \"{}\"", crate::fmt::echo(&p.text)))?;
             let suffix_ok = !p.word && p.mode != Mode::Literal;
             let mut m = if suffix_ok { LineRegex::new(m, &pat, insensitive) } else { LineRegex::plain(m) };
             if insensitive && m.line_terminator().is_some() {
