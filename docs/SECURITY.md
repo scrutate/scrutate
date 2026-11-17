@@ -549,11 +549,12 @@ mixes upper case, lower case and digits, as an address (`git@github.com:`, `vaul
 does not; a `,` before
 a `name=` or `name:` ends it, and a ternary (`isAuth?user.token:null`), an `@name.field`, a
 method chain that ends in `!` or `?` and an image digest (`repo@sha256:`) are code, left as
-written. A name whose keyword runs on into a longer word (`tokenizer`,
-`passwordless`) or is followed by a part that says it is about the secret (`label`, `header`,
-`hint`, `type`, `name`, `file`, `path`, `dir`, `cache`, `url`, `timeout` and a few more:
-`password_label`, `token.cache.dir`, `passwordHint`) takes no such value; any other name holding
-the keyword does (`password_prod`, `password2`, `token_eu`, `secret_value`, `tokenValue`).
+written. A name whose keyword runs on into a different word (`tokenizer`,
+`secretary`, `passwordless`) or is followed by a part that says it is about the secret (`label`,
+`header`, `hint`, `type`, `name`, `file`, `path`, `dir`, `cache`, `url`, `timeout` and a few
+more: `password_label`, `token.cache.dir`, `passwordHint`, `tokentype`) takes no such value; any
+other name holding the keyword does (`password_prod`, `password2`, `token_eu`, `secret_value`,
+`tokenValue`, `secretkey`, `tokenstring`).
 `aws-secret-access-key`, `password` and `generic-secret` also take a typed
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
 string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> = "..."`), a value

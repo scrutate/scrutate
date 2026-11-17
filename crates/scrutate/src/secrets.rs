@@ -459,10 +459,13 @@ static SECRET_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)passw(?:
 /// Parts after a keyword that say the name is about the secret, not the secret itself.
 const NOT_SECRET_PARTS: &str = "label header hint type name field file path dir cache url uri endpoint prompt policy length len count format pattern regex rule ttl expiry expires timeout mode kind id";
 
+/// Letters that, run on from a keyword, make a different word: `tokenizer`, `secretary`, `passwordless`.
+const WORD_ENDINGS: &str = "izer izers ize ized izes izing ization ary aries ariat ion ions ive less";
+
 /// `name` holds a password, secret or token keyword that names a secret: any does, except one
-/// inside a longer word (`tokenizer`, `passwordless`) or followed by a part such as `label` or
-/// `cache` (`password_label`, `token.cache.dir`, `passwordHint`). Fails closed: an unknown part is
-/// a secret.
+/// that runs on into a different word (`tokenizer`, `passwordless`) or is followed by a part such
+/// as `label` or `cache` (`password_label`, `token.cache.dir`, `passwordHint`, `tokentype`).
+/// Fails closed: an unknown part is a secret (`secretkey`, `tokenvalue`).
 fn names_a_secret(name: &str) -> bool {
     let b = name.as_bytes();
     SECRET_WORD.find_iter(name).any(|m| {
@@ -482,7 +485,12 @@ fn names_a_secret(name: &str) -> bool {
             Some(b'_' | b'.' | b'-') => !not_secret(part(e + 1)),
             // camel case: a capital after a lower-case keyword starts the next part
             Some(c) if c.is_ascii_uppercase() && b[e - 1].is_ascii_lowercase() => !not_secret(part(e)),
-            Some(c) if c.is_ascii_alphabetic() => m.as_str().eq_ignore_ascii_case("passw"),
+            // letters run on: a secret unless they make another word (`tokenizer`, `secretary`)
+            // or are a part such as `type` (`tokentype`); `secretkey` and `tokenvalue` are secrets
+            Some(c) if c.is_ascii_alphabetic() => {
+                let p = part(e);
+                !(WORD_ENDINGS.split(' ').any(|w| w == p) || not_secret(p))
+            }
             _ => true,
         }
     })
@@ -2018,10 +2026,10 @@ mod tests {
         }
     }
 
-    /// A symbolic value after a name that says it is no secret is not redacted: the keyword inside
-    /// a longer word (`tokenizer`) or followed by a part such as `label`, `header` or `cache`. Any
-    /// other name that holds the keyword keeps it: a suffix (`password_prod`, `token_eu`), a
-    /// number, another part, a camel-case one (`tokenValue`).
+    /// A symbolic value after a name that says it is no secret is not redacted: the keyword run on
+    /// into another word (`tokenizer`, `secretary`) or followed by a part such as `label`, `header`
+    /// or `cache`. Any other name that holds the keyword keeps it: a suffix (`password_prod`,
+    /// `token_eu`), a number, another part, run on or in camel case (`secretkey`, `tokenValue`).
     #[test]
     fn a_symbolic_value_after_a_name_that_is_no_secret_is_shown() {
         for line in [
@@ -2030,6 +2038,10 @@ mod tests {
             "secret_header = X-Secret-Header@v1",
             "password_label = Enter@your@password",
             "passwordHint: Enter@your@pet",
+            "passwordhint: Enter@your@pet",
+            "tokentype: Bearer@v2",
+            "passwordless: magic@link",
+            "secretary: Jane@front-desk",
         ] {
             assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
         }
@@ -2047,6 +2059,13 @@ mod tests {
             "admin_password_hash_salt: ",
             "tokenValue: ",
             "secrets: ",
+            "secretkey: ",
+            "jwt.secretkey=",
+            "tokenvalue: ",
+            "accesstokenvalue: ",
+            "apitokensecretvalue: ",
+            "tokenstring = ",
+            "secretvalue: ",
         ] {
             let line = format!("{name}{symbolic}");
             let (out, marks) = redact(&line);
