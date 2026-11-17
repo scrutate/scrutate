@@ -57,9 +57,10 @@ The read boundary, which every rule below keeps:
 4. The cache is the user's alone. On Unix its `deps` directories are mode 0700, made so when
    they were there already, and a cache root that belongs to another user or that others may
    write to is refused (`SCRUTATE_CACHE_DIR` names another); on Windows the cache is under the
-   user's own `%LOCALAPPDATA%`, which the system gives that user alone. A temporary directory a
-   crash left behind is removed when the next new copy of that ecosystem is made, once it is a
-   day old.
+   user's own `%LOCALAPPDATA%`, which the system gives that user alone, unless
+   `SCRUTATE_CACHE_DIR` or `XDG_CACHE_HOME` names another, which is not checked there. A
+   temporary directory a crash left behind is removed when the next new copy of that ecosystem
+   is made, once it is a day old.
 5. Answers are redacted as the repository's are, on every front end.
 
 ## Consequences

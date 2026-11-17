@@ -91,8 +91,8 @@ adds:
   share pause between directories (`pause` in the vendored walker) until it rises; a list's extra
   threads end and restart as it rises. A paused thread sleeps a thirty-second of its paused time,
   at most 1 ms: the walk cannot end before it wakes, and a 1 ms sleep cost a 13 ms search over a
-  millisecond. A lone search makes three system calls for this; one directory without
-  subdirectories, or a list of 256 files or fewer, makes none. A process leaves the count while a
+  millisecond. A lone search makes three system calls for this; a directory without
+  subdirectories holding 256 files or fewer, or a list of 256 files or fewer, makes none. A process leaves the count while a
   pipe or terminal write may block and while stopped from its terminal: the SIGTSTP handler
   (installed only while counted and only if nothing else handles the signal) takes it out, stops it
   with the default action, and puts it back on continue. On Linux the cores are the limit and
@@ -148,7 +148,8 @@ adds:
 - **Start-up** (`lazy_bind.rs`, `cli.rs`): process start dominates a search of a few hundred
   files. dyld binds every imported symbol before `main`, about 3.3 µs each for libSystem symbols
   (a C program importing 121 more starts 0.4 ms later); the executable imported 210 and a search
-  calls about 75. On macOS arm64 the other 133 are private stubs that look the function up with
+  calls about 75. On macOS arm64 the others are private stubs (159 of them, the `lazy!` list in
+  `lazy_bind.rs`) that look the function up with
   `dlsym` on first call and jump to it, keeping every argument register and the stack; `fork`
   binds them all first, so a child never looks one up. clap built every subcommand's definitions
   before parsing; `scrutate grep` builds only its own.
@@ -162,7 +163,7 @@ adds:
   Page reclaims were mostly the executable's own code. `scrutate grep` parses plain argument shapes
   by hand and hands the rest to clap (a property test holds both to one answer; a configuration
   file, or a variable clap reads for grep, goes to clap), `-F` with one literal is a substring
-  search with no regex engine, 14 more system functions bind on first use, and on macOS the linker
+  search with no regex engine, system functions bind on first use (the stubs above), and on macOS the linker
   drops the unused libiconv and lays out side by side the functions a small search runs, from
   `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release links under
   lldb with a breakpoint on every function of the link map (standard library ones included) and
@@ -195,9 +196,11 @@ adds:
   | the Linux tree, open and read only | 1.95 s on one thread, 0.56 s on five, 0.71 s on six, 0.95 s on eleven |
 - **Reading a file**: the first read asks for 64 KB and one byte. A short read is the whole file,
   searched in the thread's buffer with no size call (else a `statx` per file: 96,000 on the Linux
-  tree). A larger file, or a NUL byte or byte-order mark in the first read, goes to the stream
-  reader, up to 1 MB with a searcher made for it, so the thread's own searcher keeps its buffer
-  size (which decides where a NUL byte after the first fill stops output). Reading those whole
+  tree). A short read with a NUL byte stays in that buffer, with the thread's own searcher: searched
+  as a slice when that answers as ripgrep's reader does (no line before the NUL), else through the
+  reader over the bytes held. A larger file, or one that starts with a byte-order mark, goes to the
+  stream reader, a larger one up to 1 MB with a searcher made for it, so the thread's own searcher
+  keeps its buffer size (which decides where a NUL byte after the first fill stops output). Reading those whole
   made every thread keep a buffer as large as the largest it met: 12.6 MB peak resident on py-big
   with five threads against 8.2 MB streamed (ripgrep: 8.5 MB), for 0.2% to 1.5% fewer
   instructions on macOS and 1% to 3% less CPU on the Linux tree in a Linux VM. Linux pseudo
@@ -363,7 +366,7 @@ NFC with final sigma folded.
   (metadata + zlib-compressed text), `refs` (call edges), `imports`, `dupkeys` (each code
   definition's duplicate keys, written with its chunk row: below), `artifacts` (the artifact
   store, below), `meta` (schema version, model signature, segment manifest, data version, and
-  `chunks_at`, the chunk count of the commit that wrote that data version). The tables are private
+  `chunks_at`, the data version with the chunk counts of the commit that wrote it: below). The tables are private
   to `index.rs` (the database handle is not public): other modules ask `Index` a question (whether a
   path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
   line, the chunks of a name, a name's definitions in lookup order, a name's callers and a chunk's
@@ -717,7 +720,7 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 | `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) for the walk of every file |
 | `open_watched(root, Every)`, `watch(apply)` | `open` with reads told the change set by a watch (`watch::Notes`), which `watch` starts once nothing else needs the process to itself; with `apply` (`serve --watch`) each burst also updates the stores. The MCP server, the language server and the Python bindings open this way, by the root as given: the watch runs on that path, and when it names another tree (a link pointed elsewhere) the session opens its stores and the watch's notes there, its root follows, readers out on the old tree are not given back, a watch that does not apply (the language server, the Python bindings) runs the new tree's first build, and `serve`'s socket in the old tree is removed (on Windows its listener is woken and lets the old tree's pipe name go) |
 | `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()`, `build_count()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through; the files it has read and has to read |
-| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
+| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at once while a watch gives the change set (unless a `--refresh-interval` you gave holds it back, as above) and at most once per interval without one, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
 | `read(cancel, refresh, f)`, `read_pending(cancel, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again; `read_pending` scans first and gives the `Pending` set |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
 | `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing while a first build runs with nothing committed, when the session followed its root's link to another tree, or when the call fails |
@@ -807,7 +810,8 @@ printing options (`--json`, the byte limit and offset, a search's `--why`); the 
 the change set (every file when it says so), runs it and prints the answer with the command line's own function, and the command
 line writes those bytes and exits with that code. The command line first checks that the socket
 file is a socket this user owns, the peer is this user, and the greeting names the same executable
-(device, inode, size and times; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings
+(device, inode, size and times; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings (but `SCRUTATE_ROOT`, the
+session switches, `SCRUTATE_MAX_BYTES` and `SCRUTATE_REFRESH_INTERVAL`, which change no answer)
 and root; any difference, error, slow greeting or an answer slower than 60 s makes it do the work
 itself, and so does a session still making its first index with no file in it, which answers
 nothing. A write the session runs is waited for as a read waits for it (above), and a call waits
@@ -957,7 +961,7 @@ as git reads it, never from an included file or the global one; or, built with `
 are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
 process, its configuration and programs included; any other name is refused before git runs. On Windows
-each path Git hands git, its directory and these values, goes in its plain form (`git::plain`),
+each path Git hands git, its directory and these values, goes in its plain form (`paths::plain_path`),
 since git does not read a verbatim one (`\\?\C:\x`, what `canonicalize` gives). Each hunk's new lines map onto the index's definitions
 of the file as it is now (the working tree), or for git's copy (`--staged`, `review`) onto a parse of
 it, each definition named where the index holds it and a line outside them by that parse's window,
@@ -1087,13 +1091,13 @@ server's nineteen tools (twenty with `serve --allow-edits`), `batch` and the Pyt
 `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their own), and render answers; none has
 a default or output format of its own (they had drifted: three different limits for `callers`,
 references textual in one and resolved in another). The JSON form leaves in one envelope
-(`Answer::envelope`: `schema`, `result`, `stopped_at`, and a `dupes` answer's `crowded` and `sampling`), which `--json`, a `batch` record and the
+(`Answer::envelope`: `schema`, `result`, `stopped_at` and `stopped_reason`, `not_indexed`, a structural search's `skipped`, and a `dupes` answer's `crowded` and `sampling`), which `--json`, a `batch` record and the
 MCP structured result print (the MCP result adds `complete`, and on a page `offset`,
 `next_offset` and `total`). A tool's JSON arguments are parsed in one place (`Op::from_tool`), used by the MCP server,
 `batch`, the CLI's `read` and the bindings' `Repo.call`. The language server asks the same
 operations for references, document symbols and the definitions of a name, and answers in LSP's
-shapes; resolving the name under the cursor (`Names::at`) and the workspace symbol search
-(`Index::symbols_containing`) are its own. An Engine A search is an operation argument too:
+shapes; resolving the name under the cursor (`Names::at`) is its own, and the workspace symbol search
+ranks as `symbol` does (`symmatch::ranked`). An Engine A search is an operation argument too:
 `Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and an `ops::Scope` (a path
 under the root, globs), so `grep_code` reaches every matching mode.
 
@@ -1192,7 +1196,7 @@ and runs clippy on the native build without `pcre2`, on every push.
 
 ## Models (`crates/scrutate/models/`, `models.rs`)
 `semantic.npz` (7.6 MB: code-word vocabulary tables and projections, the two word tables as int8
-codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (87 KB)
+codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (86 KB)
 are embedded in the binary with `include_bytes!`; the semantic model's stored int8 tables are read
 where they lie (in the binary, or in the bytes of the `SCRUTATE_SEMANTIC` file, read whole once and
 never mapped, so replacing that file under a running `serve` cannot end it with SIGBUS), not
@@ -1236,8 +1240,11 @@ model's tables. Ranking is watched by the pinned features above and by the quali
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
   that a CLI, an MCP server and Python call directly. `impact` and `read --history` run the `git` program (`git.rs`) found on
-  `PATH`, which reads the repository; nothing in the repository names a program to run. The one
-  file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A
+  `PATH`, which reads the repository; nothing in the repository names a program to run. Outside
+  `.scrutate/` the program writes the frecency state of `files` and the Grep hook's counter (in
+  `scrutate/` of the user state directory: `XDG_STATE_HOME`, `~/.local/state` or `%LOCALAPPDATA%`), the dependency source copies of `--deps` in the
+  user cache (`SCRUTATE_CACHE_DIR`, else `XDG_CACHE_HOME` or the platform's), and the agent
+  configuration files `setup` is asked to write. A
   command line call may use a session a running `serve` offers on a local socket, and never
   starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.

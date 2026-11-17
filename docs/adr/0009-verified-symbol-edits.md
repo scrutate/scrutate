@@ -72,7 +72,8 @@ command line calls use cannot carry one to a running server (one without the fla
 - The answer names the definition's new lines and the file's new hash. The index sees the
   edit at the next call, as it sees any write to the tree.
 
-`edit_symbol` is the one tool without `readOnlyHint`. Its hints are `destructiveHint: true` (it
+`edit_symbol` is the one tool that writes source; it and `reindex` (which rewrites the index, a
+cache) are the tools without `readOnlyHint`. Its hints are `destructiveHint: true` (it
 replaces text) and `idempotentHint: true` (the same call again is refused: the hash moved).
 
 ## Consequences

@@ -26,7 +26,9 @@ One contract for every front end:
 
 - An update stays one transaction. A reader sees the index before or after it, never half of it
   (WAL, the segment manifest swapped in the same transaction).
-- A read never waits for a lock another process holds.
+- A read never waits for a lock another process holds, except while another process makes the
+  first index and nothing is committed: then it tries again for up to 20 s
+  (`session::BUILD_WAIT`).
 - The scan before a read waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this
   process. A write that covers the read's change set and ends within that time is waited for, and
   the read then applies what is left of its own change set.
