@@ -457,8 +457,8 @@ prints. A path that holds a secret (a file named with a token) is redacted like 
 other text, so that path cannot be opened from the answer.
 
 The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,
-each regex run only on text holding one of its keywords (an Aho-Corasick pass), with gitleaks'
-entropy thresholds; JSON's `\/` is read as `/`:
+each regex run only on text holding one of its keywords (an Aho-Corasick pass; `key-material` has
+none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is read as `/`:
 
 | Kind | Rule it comes from |
 |---|---|
@@ -518,17 +518,18 @@ change between them three times or more), or is a UUID or 32 or more hex digits,
 number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
 `user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
 `changeme`). `env-secret`
-takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
-`KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`), except a
+takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `PASSWD`, `PWD`,
+`TOKEN`, `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`, `AUTH_KEY` (each `_` optional) or `CREDENTIAL`
+(`CACHE_KEY` is none), or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`), except a
 render or build stage's setting: a `_PASS` name with a render pass's word among its parts
 (`RENDER`, `SHADOW`, `GBUFFER` and their kin) and a value of graphics or setting words alone
 (`shadowmap`, `deferred`, `msaa`, `high`, `enabled` and a few dozen more), each with at most a
 1 to 2 digit version (`RENDER_PASS=shadowmap2`), or with a build stage's word (`LINT`, `BUILD`,
 `COMPILE`, `CODEGEN`, `OPT`) and a value of setting words alone (`strict`, `mode`, `enabled`,
-`debug`, `release` and a few more) and short versions (`LINT_PASS=strict_mode`). Either name may
-be a login's (`RENDER` is a hosting platform, `CI_BUILD_PASS` a CI credential), so a value with
-any other word stays redacted; `password` a quoted value of a name holding `password`, `secret` or
-`token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
+`debug`, `release` and a few more) and short versions (`LINT_PASS=strict_mode`); a name with
+both takes the build stage's test. Either name may be a login's (`RENDER` is a hosting platform,
+`CI_BUILD_PASS` a CI credential), so a value with any other word stays redacted; `password` a
+quoted value of a name holding `password`, `passwd`, `pwd`, `secret` or `token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
 `password`, `passwd`, `pwd`, `secret`, `secretKey`, `token` or `apiKey` (Maven's `<password>`,
 `<ns:accessToken>`), up to a quote or its closing tag, and all of it to a closing tag on its
 line, quotes and spaces included, unless it reads as a sentence (a space, no digit, no symbol
@@ -581,10 +582,11 @@ body is redacted line by line between its armour, which is matched in any case (
 Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
 a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
 writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone, and after a
-password, secret or token name so are a chain of names through `?.` or `!.`
-(`this.form?.value?.password`), Razor's `@Model.Password` and a `~/` path (`~/.aws/credentials`):
-a value with a digit or another symbol, or words joined by dots alone (a passphrase), is still read
-as a secret; hex values are kept as secrets.
+password, secret or token name `generic-secret` also leaves a chain of names of letters through
+`?.` or `!.` (`this.form?.value?.password`) or after `@` (Razor's `@Model.Password`), and `~/`
+followed by letters, digits, `_`, `.`, `-` and `/` alone (`~/.aws/credentials`,
+`~/keys2/prod9.pem`): a chain with a digit or another symbol in it, or words joined by dots alone
+(a passphrase), is still read as a secret; hex values are kept as secrets.
 
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
 it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,
