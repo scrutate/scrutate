@@ -10,12 +10,13 @@
 <!-- End of head. -->
 
 The words this codebase uses for its own concepts, one meaning each, used the same way in code,
-docs and reviews. Each term links to the section of [Architecture](docs/ARCHITECTURE.md) or the
-[CLI reference](docs/CLI.md) that has the detail.
+docs and reviews. Most terms link to the section of [Architecture](docs/ARCHITECTURE.md) or the
+[CLI reference](docs/CLI.md) that has the detail, a few to an ADR or to QUALITY.md.
 
 **[Engine A](docs/ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)**:
 instant search with no index (`instant.rs`, `scrutate grep`): it walks the files and matches each
-one. Its one way in is `instant::search`, given a **query**, a **file set** and a cancel flag.
+one. Its one way in is `instant::search`, given a **query**, a **file set**, a cancel flag and
+where its **records** go.
 
 **Query**: what an Engine A search asks for (`instant::Query`): the **pattern** (`instant::Pattern`:
 text, mode, case, whole words, multi-line), inversion, the report (lines, counts or files),
@@ -26,7 +27,8 @@ context lines and limits.
 memory. How a type meets the ignore rules is in the [CLI reference](docs/CLI.md#engine-a-grep-alias-g).
 
 **Record**: one Engine A result of one kind (`instant::Record`): a match, a context line, a count,
-a file, or a note on a file (its search stopped at a NUL byte).
+a file, or a note on a file (its search stopped at a NUL byte, or a file given as a root, with a NUL
+byte, matched).
 
 **[Engine B](docs/ARCHITECTURE.md#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs)**:
 the index and everything answered from it (`index.rs`, `search.rs`, `intel.rs`, `resolve/`):
@@ -123,10 +125,11 @@ as read and as rewritten, and prints as a diff or writes each file.
 
 **[Frecency](docs/CLI.md#files)**: how often and how lately a file was read; `scrutate files`
 (`finder.rs`, the MCP `find_files`) ranks equal matches by it. Kept in
-`$XDG_STATE_HOME/scrutate/frecency.json`, outside the repository.
+`$XDG_STATE_HOME/scrutate/frecency.json`, else `~/.local/state/scrutate/frecency.json` (on
+Windows `%LOCALAPPDATA%\scrutate\frecency.json`), outside the repository.
 
 **Grouped grep**: an Engine A search whose matching lines are grouped by the symbol that encloses
-them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
+them (`intel::group_by_symbol`). The MCP `grep_code` tool, `grep --symbols` and textual
 references use it.
 
 **[Front end](docs/ARCHITECTURE.md#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py)**: a
@@ -143,7 +146,8 @@ limits, and whether to refresh the index first (`Op::reads_index`). Its grep car
 
 **Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON form.
 With `serve --structured` the MCP server also sends the JSON form as the **structured** result,
-whole when it fits the budget and else cut to the items of the text page (`Answer::structured`).
+whole on the first page when it and the text fit one and a half times the budget, and else cut to
+the items of the text page (`Answer::structured`).
 
 **Envelope**: the one JSON shape an answer leaves in (`Answer::envelope`): `schema`
 (`ops::ANSWER_SCHEMA`), `result` and `stopped_at`. The CLI's `--json` of an index command, a
@@ -172,7 +176,7 @@ current around it.
 (`session::Session`), with parallel reads, each on its own **reader** (a `Repo` from
 `Repo::another`), and writes one at a time. The MCP server, the language server, the Python
 bindings and `watch` are its adapters. A command line call may use the session a running `serve`
-offers on `.scrutate/session.sock`.
+offers on `.scrutate/session.sock` (on Windows, a named pipe).
 
 **[Change set](docs/ARCHITECTURE.md#sessions-sessionrs)**: the Repository files that changed
 since a **token** (`stores::Changes`), as the freshness module (`fresh::Freshness`) answers it:
@@ -189,8 +193,9 @@ end says so with the answer; the next read applies them.
 `.scrutate/` and the one module that keeps them current (`stores.rs`). A caller names a **change
 set** (`stores::Changes`, see Change set) and what it does (`stores::Writer`), never a store.
 
-**[Model set](docs/ARCHITECTURE.md#models-cratesscrutatemodels-modelsrs)**: the vector model, the ranker and the
-feature list the ranker reads (`models::ModelSet`), each loaded on first use.
+**[Model set](docs/ARCHITECTURE.md#models-cratesscrutatemodels-modelsrs)**: the vector model and the ranker
+(`models::ModelSet`), each loaded on first use; the feature list the ranker reads is fixed in the
+binary (`models::FEATURES`).
 
 **[Candidate source](docs/ARCHITECTURE.md#retrieval-and-ranking-searchrs-semanticrs-rankrs)**: one
 way a ranked search finds candidates (`search::Source`): exact names, lexical (BM25) or semantic
@@ -207,24 +212,28 @@ checked by `cargo test` (`tests/ranking_pins.rs`).
 **Translation**: what a pattern asks every matcher of it to find (`Pattern::translate`). Engine A's
 matcher and the text index's trigram condition are both built from it.
 
-**Run**: one Engine A search in progress (`instant::Run`), shared by every file search of it.
+**Run**: one thread's view of an Engine A search in progress (`instant::Run`): its own matcher and
+its end of the results channel, beside what every thread of the search shares (`instant::Common`).
 
 **Thread rules**: how many threads an Engine A search runs (`instant::policy`). They decide over
-readings of the machine (`Machine`), given by the operating system (`System`) or a test. One
-scheduler (`instant::schedule`) asks them for every walk and file list.
+readings of the machine (`Machine`), given by the operating system (`System`) or a test. The
+schedulers (`instant::schedule`, and `instant::schedule_in_order` for a list searched in path
+order) ask them for every walk and file list.
 
 **[Byte source](docs/ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)**:
 what one Engine A file search reads (`source.rs`): a file on disk, standard input, an archive
 member or text held in memory. The read rules are written once on top.
 
 **Repository files**: which files belong to the repository for each index (`files.rs`), including
-the files a repository search covers (`files::repository_files`) and **membership**, the test of
-one changed path that the watcher asks. A **look** (`files::look`) is one walk of the tree and one
+the files a repository search covers (`files::repository_files`) and **membership** (`files::Membership`),
+the test of whether the code index's walk lists one path, which `Index::unindexed` and `impact`
+ask. A **look** (`files::look`) is one walk of the tree and one
 `stat` per file ([Architecture](docs/ARCHITECTURE.md#keeping-the-stores-current-storesrs)).
 
 **[Setup](docs/CLI.md#setup-and-the-grep-hook)**: what `scrutate setup <agent>` writes
 (`setup.rs`): one MCP server entry named `scrutate` in an agent's configuration and, on request,
-the Grep hook and an instruction block, each added and removed as text.
+the hooks (Grep and Bash for Claude Code, Bash for Codex) and an instruction block, each added
+and removed as text.
 
 **[Grep hook](docs/CLI.md#setup-and-the-grep-hook)**: Claude Code's `PreToolUse` hook for its Grep
 tool (`hook.rs`, `scrutate hook grep`). It answers a Grep call with Engine A's matches, or lets

@@ -43,8 +43,8 @@ independent engines behind one CLI ([questions and answers](docs/FAQ.md)).
 **Engine A, universal instant search.** No index, no parsers, no background process. Literal,
 regex (linear-time, size-limited), identifier (all casings), fuzzy, multiline, whole-word and
 inverted matching over every readable file, with `.gitignore` rules, a parallel walk, streaming,
-cancellation, and colour or JSON Lines. Built on ripgrep's own `grep-*` and `ignore` crates, and
-differentially tested against ripgrep.
+cancellation, and colour or JSON Lines. Built on ripgrep's own `grep-*` crates and a modified copy of
+its `ignore` crate, and differentially tested against ripgrep.
 
 **Engine B, code intelligence.** A persistent, incremental index (SQLite and memory-mapped
 segments): tree-sitter symbols from 61 grammars (74 with `--features extra-langs`), keyword
@@ -141,9 +141,10 @@ Every number comes from scripts in `bench/` you can rerun.
 </p>
 
 [docs/LEADERBOARD.md](docs/LEADERBOARD.md) is generated from the raw results in `bench/results/`:
-30 runs per contender, 95% intervals. On the development Mac (Apple M3 Pro, shared with other
-work, so not a publishable #1 claim), Engine A is significantly fastest in all 37 warm-cache
-benchmarks and all 5 cold-cache ones. Its lead over the next tool:
+at least 30 runs of scrutate and of the fastest other tool, 95% intervals. On the development Mac
+(Apple M3 Pro, shared with other work, so not a publishable #1 claim), Engine A is significantly
+fastest in all 37 warm-cache benchmarks and all 5 cold-cache ones; 2 of the 37 are structural
+search (`tsquery`), not Engine A. Its lead over the next tool:
 
 - Linux kernel tree: 15 to 30% on 12 of 13 text searches, 45% on the one with 1.3 million matching
   lines.
@@ -167,9 +168,10 @@ sides, the text index builds 25 times faster, is a tenth of the size, answers in
 median time and serves 1.2 times the queries per second, leading all eight indexed metrics.
 
 In a 5-CPU Linux virtual machine on the same Mac, Engine A is significantly fastest on all 14
-Linux-tree benchmarks and all 4 cold-cache ones. Run the same way, a process per query
-(`scrutate grep --index`, Zoekt's CLI and a livegrep client asking its `codesearch` server), the text
-index leads Zoekt and livegrep on all 8 indexed metrics.
+Linux-tree benchmarks and all 4 cold-cache ones; one of the 14 is structural search, not
+Engine A. Run the same way, a process per query (`scrutate grep --index`, Zoekt's CLI and a
+livegrep client asking its `codesearch` server), the text index leads Zoekt and livegrep on all 8
+indexed metrics.
 
 Kept running as servers, livegrep and Zoekt answer faster than that process per query: 12.6 and
 13.2 ms median against 17.9 ms for `scrutate grep --index`, on a 4-CPU Linux box and the 16 Linux-tree
@@ -177,7 +179,8 @@ queries all three answered. In the same run Scrutate's own MCP server answered 4
 1,260 ms median against 7.6 ms for `scrutate grep --index` on those 4; the other 16 pass the 5,000 lines
 its `grep_code` returns. That run predates the server keeping its look of the tree between calls
 (on macOS while its kqueue is in place, so not on a tree with more files and directories than half
-of `kern.maxfilesperproc` less 1,024, about 29,700 where it is 61,440),
+of the descriptor limit (the hard limit or `kern.maxfilesperproc`, whichever is lower) less 1,024,
+about 29,700 where it is 61,440),
 which took those 4 from 669.6 to 50.8 ms on another machine, and on a Mac 7 queries on a 24,866-file
 part of the same tree from 82.7 to 8.4 ms, numbers not comparable with these ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
 
@@ -198,18 +201,19 @@ scrutate --root /path/to/repo serve --watch
 
 ### Set up your agent
 
-`scrutate setup` adds one entry that runs this binary by its absolute path, and keeps every other
-line of the agent's file:
+`scrutate setup` adds one entry that runs this binary by its absolute path. Every other byte of
+the agent's file stays (a JSON file gains only the comma before the new entry); Claude Code's user file goes through `claude mcp add-json`
+when `claude` is on `PATH`, and Claude Code writes that file itself:
 
 ```sh
 scrutate setup claude          # also codex, opencode, cursor, gemini
 scrutate setup cursor --project   # the repository's .cursor/mcp.json instead of the user's file
-scrutate setup claude --hook   # also answer Claude Code's Grep with scrutate's search
-scrutate setup claude --uninstall   # take back exactly what setup wrote, the hook included
+scrutate setup claude --hook   # also the hooks for Claude Code's Grep and its rg, grep and find
+scrutate setup claude --uninstall   # take back exactly what setup wrote, the hooks included
 ```
 
-`--dry-run` writes nothing. Only `--instructions` touches `CLAUDE.md`, `AGENTS.md` and
-`GEMINI.md`. `scrutate hook stats` shows the bytes the hook sent against Grep's. Details:
+`--dry-run` writes nothing. Only `--instructions`, and `--uninstall` taking its block out, touch
+`CLAUDE.md`, `AGENTS.md` and `GEMINI.md`. `scrutate hook stats` shows the bytes the hook sent against Grep's. Details:
 [docs/CLI.md](docs/CLI.md#setup-and-the-grep-hook).
 
 `scrutate lsp` is a Language Server Protocol server on stdio: definitions, references and symbols
@@ -261,22 +265,24 @@ The first release, **not** declared production-ready:
 **Platforms.** All six are supported: macOS arm64 and x86_64, Linux aarch64 and x86_64 (static musl
 binaries too), Windows x86_64 and ARM64. macOS arm64 and Linux are built and tested here, and
 macOS x86_64 and Windows x86_64 are cross-built here. On GitHub's runners (CI run 43408907893, commit
-`8f60af9`) every job passed: the Rust tests, and a wheel built, installed and tested for CPython 3.13
+`8f60af9`) every job that ran passed (the one for pull requests alone was skipped): the Rust tests, and a wheel built, installed and tested for CPython 3.13
 and free-threaded 3.14, on all six platforms, and the editor integrations
-([docs/INSTALL.md](docs/INSTALL.md)). CI run 43382848665 (commit `08cd9fa`) was the first such run
+([docs/INSTALL.md](docs/INSTALL.md)). CI run 43013926055 (commit `9384c18`) was the first such run
 of the Rust tests.
 
 **Tests.** The last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-11)
-passed 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and MCP,
+passed 122 Rust tests (unit, per-language snapshot, robustness, property, end-to-end CLI and MCP,
 incremental parsing), the Python and bindings tests, fuzz regressions and a reproducible-build
 check; the ranking pins and quality floor came later, and CI runs both. Engine A agrees with
-ripgrep on 2,000 random corpora and patterns, run as shipped, with the parallel walk forced, and
-with every file searched in ranges.
+ripgrep on 2,000 random corpora and patterns, each run as shipped and again in one forced mode:
+the one-thread walk, the parallel walk, a hand-over between them, or a file over 64 KiB searched
+in pieces.
 
 **Engine B.** Its models train on rows it writes itself. A test pins its features and scores bit
 for bit, and CI fails when its ranking quality falls below a recorded floor. On held-out code in
 Python and five more languages the learned ranker beats its lexical layer for function and type
-answers on every query type but one, which ties ([docs/QUALITY.md](docs/QUALITY.md)).
+answers on every query type with 50 queries or more but one, which ties
+([docs/QUALITY.md](docs/QUALITY.md)).
 
 **Code checks.** `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no
 vulnerabilities; an SBOM is generated.
@@ -363,8 +369,8 @@ vendored walker in `vendor/ignore` (the crate `scrutate-ignore`) keeps its upstr
 `Unlicense OR MIT`.
 
 Every crate compiled into the binary has a licence compatible with both (MIT, Apache-2.0, BSD,
-ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0). Their licence and notice files are in
-`THIRD_PARTY_NOTICES.txt` (`tools/third_party_notices.py`), included in release archives, wheels
+BSL-1.0, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0). Their licence and notice files are
+in `THIRD_PARTY_NOTICES.txt` (`tools/third_party_notices.py`), included in release archives, wheels
 and the `.deb` and `.rpm` packages.
 
 Contributions are accepted under the [contributor licence agreement](CLA.md) and offered under

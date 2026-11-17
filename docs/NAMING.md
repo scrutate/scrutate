@@ -26,8 +26,12 @@ Wiktionary's entry for *scrutor*, which lists English *scrutate* among its desce
 
 ## Method
 
-Thirty candidates came from two rounds (real words about search or insight, coined blends, Rust-
-and grep-themed names). Each was checked on **2026-11-08** with `tools/name_research.py` against:
+Thirty candidates came from real words about search or insight, coined blends, and Rust- and
+grep-themed names. Each was checked on **2026-11-08**: `tools/name_research.py` queried the
+registries and GitHub, and the Homebrew and web checks were made by hand for the finalist only.
+Facts below that are not in `docs/name_research.json` (Homebrew, web, WHOIS and trademark
+searches, the re-check of 2026-11-09, notes on other products) come from those searches by hand
+and are recorded only in this file.
 
 | Source | How | Result recorded |
 |---|---|---|
@@ -35,7 +39,7 @@ and grep-themed names). Each was checked on **2026-11-08** with `tools/name_rese
 | PyPI | `GET /pypi/<name>/json` | taken / free |
 | npm | `GET registry.npmjs.org/<name>` | taken / free |
 | GitHub repositories | search API, `<name> in:name`, 30 most-starred inspected | number of name matches; most-starred repository named exactly the candidate |
-| GitHub user/organisation | `GET /users/<name>` | **not verifiable** here (the token is repository-scoped; the endpoint returned 403 for every candidate) |
+| GitHub user/organisation | `GET /users/<name>` | **not verifiable** here (the call failed for every candidate; its status is not recorded) |
 | Homebrew | `formulae.brew.sh/api/formula/<name>.json` (finalist only) | no formula |
 | Web search | finalist only | software products or companies with the same or a confusable name |
 

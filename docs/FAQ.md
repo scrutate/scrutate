@@ -38,7 +38,9 @@ what each file imports ([Competitive position](COMPETITIVE.md)).
 
 In the recorded runs, yes. On the development Mac, Engine A was significantly faster than every
 grep-class tool measured, ripgrep included, in every warm-cache and cold-cache benchmark, and in a
-Linux virtual machine on the same Mac on every Linux-tree benchmark. That Mac is a laptop shared
+Linux virtual machine on the same Mac on every Linux-tree benchmark; 2 of the 37 warm-cache
+benchmarks and one of the 14 Linux-tree ones are structural search (`tsquery`, against ast-grep),
+not Engine A. That Mac is a laptop shared
 with other work, so this is no publishable #1 claim. [Leaderboard](LEADERBOARD.md) has every
 number with its 95% interval.
 
@@ -71,8 +73,8 @@ tools and each client's config.
 ## Does it work in my editor?
 
 Yes. `scrutate lsp` is a language server on stdio with definitions, references and symbols from
-the index; VS Code and Neovim use it, and JetBrains IDEs run scrutate as external tools
-([integrations/](../integrations/)).
+the index; VS Code and Neovim use it, and JetBrains IDEs use it through the LSP4IJ plugin and run
+scrutate as external tools ([integrations/](../integrations/)).
 
 ## Which platforms does it run on?
 

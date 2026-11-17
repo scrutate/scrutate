@@ -26,9 +26,9 @@ The logs each row names are in `bench/results/platforms/`.
 |---|---|---|---|---|
 | macOS arm64 (Apple Silicon; macOS 13 or newer, tested on macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
 | Linux aarch64 (glibc and static musl) | built and tested in a clean `rust:1-slim-bookworm` container (no Python on the image); the static musl binary prints byte-identical output | `cp39-abi3` on CPython 3.10, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | `linux-aarch64/verify.log`, `musl-identical.txt`, `wheels.json` |
-| Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container under emulation on the Apple Silicon host (behaviour, not x86 speed). For the release commit gcc crashed under emulation, so the binary and every test binary were cross-built on arm64 and all 118 Linux tests run in an amd64 container (the other four of the 122 are for macOS on Apple silicon) | same as aarch64 (full run on an earlier commit) | **supported** | `linux-x86_64/cross-verify.log` (release commit); `verify.log`, `musl-identical.txt`, `wheels.json` (earlier full run) |
+| Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container under emulation on the Apple Silicon host (behaviour, not x86 speed). gcc crashed under emulation in the 2026-11-09 run (`verify.log`), so for the 2026-11-11 run the binary and every test binary were cross-built on arm64 and all 118 Linux tests run in an amd64 container (the other four of the 122 are for macOS on Apple silicon) | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on GitHub's `ubuntu-latest` runner (CI run 43408907893); in the container run of 2026-11-09 only `cp314t` passed, and `cp39-abi3` on 3.10, 3.12 and 3.13 each failed one bindings test | **supported** | `linux-x86_64/cross-verify.log` (2026-11-11); `verify.log`, `musl-identical.txt`, `wheels.json` (2026-11-09); CI run 43408907893 |
 | macOS x86_64 | GitHub's `macos-15-intel` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893); cross-built here, where the test binaries compile and link (no Rosetta 2 on the build machine) | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `macos-x86_64/verify.log`; CI runs 43013926055 and 43408907893 |
-| Windows x86_64 | GitHub's `windows-latest` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893; five tests of files removed while open or of file names Windows forbids run on Unix only); cross-built here with MinGW-w64 | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `windows-x86_64-cross/build.log`; CI runs 43013926055 and 43408907893 |
+| Windows x86_64 | GitHub's `windows-latest` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893; tests of Unix file-system behaviour (links, permissions, FIFOs, file names Windows forbids, files removed while open) and of signals run on Unix only); cross-built here with MinGW-w64 | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `windows-x86_64-cross/build.log`; CI runs 43013926055 and 43408907893 |
 | Windows ARM64 | GitHub's `windows-11-arm` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893); not built here | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | CI runs 43013926055 and 43408907893 |
 
 ## From a release archive
@@ -43,7 +43,7 @@ curl -sSfLO "https://github.com/scrutate/scrutate/releases/download/v$v/scrutate
 sha256sum -c "scrutate-$v-$t.sha256"        # checksum
 gh attestation verify "scrutate-$v-$t.tar.gz" --repo scrutate/scrutate \
   --signer-workflow scrutate/scrutate/.github/workflows/release.yml \
-  --source-ref "refs/tags/v$v"              # Sigstore provenance (optional)
+  --source-ref "refs/tags/v$v" --deny-self-hosted-runners   # Sigstore provenance (optional)
 tar xzf "scrutate-$v-$t.tar.gz"
 install -m 0755 "scrutate-$v-$t/scrutate" ~/.local/bin/scrutate
 scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate   # or zsh/fish/powershell
@@ -52,8 +52,9 @@ scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate 
 The attestation check passes only for a file that `release.yml` of `scrutate/scrutate` built
 from the tag `v$v` on a GitHub-hosted runner, and it names the commit. With `--owner scrutate`
 alone, a file built by any workflow of the organization would pass, a dry run's included. It says
-where and how the file was built, not that its code is safe. Every file on a release (archives,
-`.deb`, `.rpm`, wheels, the `.vsix`, `SHA256SUMS`) carries such an attestation, and `--predicate-type
+where and how the file was built, not that its code is safe. The archives, `.deb`, `.rpm`, wheels,
+the `.vsix` and `SHA256SUMS` on a release carry such an attestation (the per-archive `.sha256`
+files and the SBOM file do not; `SHA256SUMS` lists the SBOM), and `--predicate-type
 https://cyclonedx.org/bom` checks the SBOM attestation of an archive.
 
 The `-linux-gnu` archives need glibc 2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9 and later);
@@ -83,7 +84,8 @@ signature. The checksum and the attestation above are the integrity check.
   browser download gets and a `curl` download does not. On a blocked file run
   `xattr -d com.apple.quarantine scrutate`, or open System Settings, Privacy & Security and
   choose "Open Anyway". Homebrew sets the attribute on cask downloads only; `scrutate` is a
-  formula, built from source, so a Homebrew install meets no Gatekeeper prompt.
+  formula, poured from the tap's bottle or built from source, so a Homebrew install meets no
+  Gatekeeper prompt.
 - Windows: SmartScreen shows "Windows protected your PC" for a downloaded unsigned file, and the user
   must choose "Run anyway" (an enterprise policy can forbid it). With Smart App Control on
   (Windows 11), an unsigned executable with no reputation does not run at all, downloaded or not.
@@ -101,7 +103,7 @@ VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more). `.gitatt
 text files out with LF line ends everywhere, so a Windows build's compiled-in data
 (`crates/scrutate/data`) matches every other build.
 
-With GCC 15 or newer, parsing is about 1.8 times slower unless the grammars are compiled with
+With GCC 15 or newer, parsing is slower unless the grammars are compiled with
 `-fjump-tables`: their generated `parser.c` asks for `-O0`, and GCC 15 drops jump tables at
 `-O0` (tree-sitter #5971). tree-sitter #5984 makes the generator write
 `#pragma GCC optimize ("O0", "jump-tables")`, but of the grammars scrutate uses only tree-sitter-md
@@ -113,8 +115,8 @@ x86_64 and aarch64 Linux by setting `CFLAGS_x86_64_unknown_linux_gnu` and
 `CFLAGS_x86_64_unknown_linux_gnu` (or the aarch64 one) takes its place, so add `-fjump-tables` to
 that one if you set it. A build outside the repository (`cargo install`) does not read that file:
 give it `CFLAGS=-fjump-tables`. The
-x86_64 number is measured (Linux's C sources, GCC 15.2: 22 s against 12 s); aarch64 is from
-tree-sitter #5971's report, not measured here. `python3 tools/jump_tables.py target/release` says
+x86_64 slowdown was measured on Linux's C sources with GCC 15, but no log of it is committed;
+aarch64 is from tree-sitter #5971's report, not measured here. `python3 tools/jump_tables.py target/release` says
 whether the built C grammar has its jump tables.
 
 ## Python package
@@ -135,7 +137,7 @@ and Ctrl-C: [Python bindings](../crates/scrutate-py/README.md).
 
 `scrutate setup <claude|codex|opencode|cursor|gemini>` writes that agent's MCP server entry,
 running this binary by its absolute path; `--project` writes the repository's file instead,
-`--hook` adds Claude Code's Grep hook, and `--uninstall` takes back all setup added. Every option
+`--hook` adds the Grep and Bash hooks for Claude Code (the Bash hook alone for Codex), and `--uninstall` takes back all setup added. Every option
 and each agent's file: [Command line](CLI.md#setup-and-the-grep-hook).
 
 ## Updating
@@ -154,12 +156,17 @@ rm ~/.local/bin/scrutate ~/.local/share/bash-completion/completions/scrutate
 find ~/code -maxdepth 3 -name .scrutate -type d -prune -exec rm -rf {} +   # the caches, wherever you indexed
 rm -rf ~/.config/scrutate                                                  # optional configuration
 rm -rf ~/.local/state/scrutate                                             # read counts and the Grep hook's counter
+rm -rf ~/.cache/scrutate ~/Library/Caches/scrutate                         # dependency sources --deps copied (Linux, macOS)
 pip uninstall scrutate                                                     # the Python package, if installed
 ```
 Scrutate writes nothing else: no services, no registry keys. Outside the repositories you indexed
-it writes only your configuration, the agent files `scrutate setup` edits, and its state
+it writes only your configuration, the agent files `scrutate setup` edits, its state
 directory (`$XDG_STATE_HOME/scrutate/`, else `~/.local/state/scrutate/`, on Windows
-`%LOCALAPPDATA%\scrutate\`) with `frecency.json` and `hook-grep.jsonl`.
+`%LOCALAPPDATA%\scrutate\`, where `frecency.json` still goes under `$XDG_STATE_HOME` when that is
+set) with `frecency.json` and `hook-grep.jsonl`, and its cache of dependency sources for
+`symbol --deps`, `read --deps` and `scope: "deps"` (`$SCRUTATE_CACHE_DIR`, else
+`$XDG_CACHE_HOME/scrutate/`, on Windows `%LOCALAPPDATA%\scrutate\`, on macOS
+`~/Library/Caches/scrutate/`, else `~/.cache/scrutate/`).
 
 ## Package managers
 
