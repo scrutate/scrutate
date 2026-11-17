@@ -352,7 +352,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             1,
             3.0,
             &["passw", "pwd", "secret", "token", "apikey", "api_key", "api-key"],
-            quoted,
+            xml_value,
         ),
         // and such an element's whole text to its closing tag, a quote or a space in it
         rule(
@@ -525,6 +525,17 @@ fn env_value(secret: &str, whole: &str, before: &str) -> bool {
     real_value(secret, whole, before) && !NOT_SECRET_NAMES.is_match(whole) && secret.chars().any(|c| !c.is_ascii_alphabetic())
 }
 
+/// An XML credential: `quoted`'s test, and no variable a deploy fills in.
+fn xml_value(secret: &str, whole: &str, before: &str) -> bool {
+    quoted(secret, whole, before) && !DEPLOY_PLACEHOLDER.is_match(secret)
+}
+
+/// A variable a deploy fills in, closed and of names alone: Octopus `#{db.password}`, token
+/// replacement `@@DB_PASSWORD@@`, `[ClientSecret]`, Razor's `@Model.Password`.
+static DEPLOY_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:#\{[\w.:-]+\}|@@[\w.-]+@@|\[[A-Za-z_][A-Za-z_.:-]*\]|@(?:Model|ViewBag|ViewData|Html|Configuration)(?:\.[A-Za-z_]+)+)$").unwrap()
+});
+
 /// A quoted secret: no placeholder, URL, number or one-case name, and a digit or a symbol in it.
 fn quoted(secret: &str, whole: &str, before: &str) -> bool {
     secret.len() <= 150
@@ -535,11 +546,11 @@ fn quoted(secret: &str, whole: &str, before: &str) -> bool {
         && !IDENTIFIER.is_match(secret)
 }
 
-/// `quoted` of an element's whole text, but not a sentence (`Forgot your password?`, `Copy to
+/// `xml_value` of an element's whole text, but not a sentence (`Forgot your password?`, `Copy to
 /// clipboard`: a space, no digit and no symbol but punctuation) or an escaped `&lt;...&gt;`.
 fn element_text(secret: &str, whole: &str, before: &str) -> bool {
     let prose = secret.contains(' ') && secret.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?;:'\"()-".contains(c));
-    !prose && !secret.trim_start().starts_with("&lt;") && quoted(secret, whole, before)
+    !prose && !secret.trim_start().starts_with("&lt;") && xml_value(secret, whole, before)
 }
 
 /// Base64 that is no checksum a lockfile writes (`h1:` in go.sum, `sha512-` in package-lock),
@@ -1859,8 +1870,29 @@ mod tests {
             "<app-reset-password>Reset password now</app-reset-password>",
             "<label-password>Your password</label-password>",
             "<password>&lt;your password&gt;</password>",
+            // deploy-time placeholders: Octopus, token replacement, a bracketed name, Razor
+            "<password>#{db.password}</password>",
+            "<password>@@DB_PASSWORD@@</password>",
+            "<add key=\"ApiKey\" value=\"#{ApiKey}\" />",
+            "<add key=\"ClientSecret\" value=\"[ClientSecret]\" />",
+            "<password>@Model.Password</password>",
         ] {
             assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
+        }
+        // a password that starts or ends like a placeholder is still one, as is a passphrase of
+        // words after `@`
+        let (a, b) = (fake(131, ALNUM, 6), fake(132, ALNUM, 5));
+        for value in [
+            format!("#{{{a}!{b}"),
+            format!("@@{a}7@{b}"),
+            format!("[{a}2024]{b}!"),
+            format!("@{a}.{b}9!"),
+            format!("[{a}#{b}]"),
+            "@Correct.Horse.Battery.Staple".to_string(),
+        ] {
+            let line = format!("<password>{value}</password>");
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(&value) && !marks.is_empty(), "{line} -> {out}");
         }
     }
 
