@@ -3646,6 +3646,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// The watch of a rule directory above the root (`/tmp` holds `.ignore`'s place) sees its other
+    /// entries come and go: those change nothing in the tree and never fill the change set.
+    #[test]
+    fn churn_beside_the_root_leaves_a_read_its_change_set() {
+        let (root, s) = watched("beside", 10, Every::given(Some(3600.0)));
+        let beside = root.parent().unwrap().join(format!("scrutate_session_beside_other_{}", std::process::id()));
+        for i in 0..20_000 {
+            let kind = if i % 2 == 0 { notify::event::CreateKind::Folder } else { notify::event::CreateKind::File };
+            s.notes().unwrap().note(&Ok(notify::Event::new(notify::EventKind::Create(kind)).add_path(beside.join(i.to_string()))));
+        }
+        std::fs::write(root.join("src/d3/m3.py"), "def beside_churn():\n    return 3\n").unwrap();
+        let (st, a) = s.run_scanned(&Op::Symbol { name: "beside_churn".into(), limit: 1, exact: true }).unwrap();
+        assert_eq!(st.files_looked, 1, "the change set, not a walk: {st:?}");
+        assert!(a.is_ok_and(|a| !a.is_empty()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn lost_events_make_the_next_read_walk_and_its_answer_holds_the_change() {
         let (root, s) = watched("lost", 10, Every::given(Some(3600.0)));

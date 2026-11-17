@@ -817,7 +817,9 @@ Anything those rules cannot vouch for is every file: lost events or a watcher er
 config file in a directory the walks enter, a directory that came or went, a directory left without a watch, a rule file outside
 every watch that changed, the watches set (the first time, and on Linux again when they gain a
 directory or a directory came or went since, since a file written while they were set may have
-no event), more than 10,000 events since the last read,
+no event), more than 10,000 events since the last read (of the tree, its rule files and its
+directories: another entry of a rule directory above the root, `/tmp` or the home directory, is
+not one),
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
 floor the user gave and the change sets are a proof (`Freshness::order_proves`; on macOS only
 while the kqueue is in place). A walk the floor holds back still applies the files the events
