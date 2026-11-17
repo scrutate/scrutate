@@ -43,7 +43,7 @@ pub enum Mode {
     Literal,
     /// `refreshToken` matches refresh_token / RefreshToken / REFRESH-TOKEN
     Identifier,
-    /// literal within `max_edits` insertions, deletions or substitutions (pattern up to 64 bytes)
+    /// literal within `max_edits` insertions, deletions or substitutions (pattern up to `FUZZY_MAX` characters)
     Fuzzy {
         max_edits: u8,
     },
