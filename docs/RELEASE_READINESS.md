@@ -68,7 +68,7 @@ Status words as in docs/TRACEABILITY.md.
 | R-12.17 | Signed releases and published packages | PARTIAL | one run of the release workflow's Sigstore steps (a dry run first), then the owner's PyPI, Marketplace and Open VSX setup, the tap and bucket repositories and the winget pull request |
 | R-6.15, R-12.16 | The GitLab and Bitbucket templates run on gitlab.com and bitbucket.org (CI runs them in local emulators) | PARTIAL | a pipeline run of each template on gitlab.com and on bitbucket.org |
 | R-8.10 | Deliver 0.1.0 | PARTIAL | the `v0.1.0` tag, a run of `release.yml` and the published release (docs/RELEASING.md) |
-| R-13.1 | Python only in the roles section 13 permits: 31 docs, release and CI scripts (`tools/`, `packaging/validate_manifests.py`) are outside them | PARTIAL | a Rust `xtask` crate that replaces them, ported after 0.1.0 in the order docs/ROADMAP.md gives |
+| R-13.1 | Python only in the roles section 13 permits: 21 docs, release and CI scripts (20 in `tools/` and `packaging/validate_manifests.py`) and their 11 tests are outside them | PARTIAL | a Rust `xtask` crate that replaces them, ported after 0.1.0 in the order docs/ROADMAP.md gives |
 | R-14.9 | Equivalent work: the published structural rows compare scrutate's capture cache with ast-grep's full parse | PARTIAL | a committed run with `tsquery --no-cache`, which the harness uses since `e91166e0` |
 
 ## Defects found and fixed while preparing this release

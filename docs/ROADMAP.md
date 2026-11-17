@@ -92,9 +92,10 @@ Measurements in this section that name no committed result file or CI run were t
 development Mac and are not recorded in the repository.
 
 - Python tooling to Rust (R-13.1): one `xtask` crate in the workspace, not a default member and never
-  shipped, run as `cargo xtask NAME`, replacing the 30 maintenance scripts in `tools/` and
-  `packaging/validate_manifests.py`. After 0.1.0, since the release scripts are the path the
-  first `release.yml` run proves. In order: delete `name_research.py` (its output,
+  shipped, run as `cargo xtask NAME`, replacing the 20 maintenance scripts in `tools/` and
+  `packaging/validate_manifests.py` (their 11 tests in `python/tests/` become the xtask's
+  specification). After 0.1.0, since the release scripts are the path the first `release.yml`
+  run proves. In order: delete `name_research.py` (its output,
   docs/name_research.json, is committed); the CI checks (`check_doc_shift`, `unsafe_count`,
   `gate_parity`, `gitleaks_config`, `fuzz_lock`, `jump_tables`), their Python tests as the
   specification; `order_file`; the release scripts (`check_version`, `release_notes`,
