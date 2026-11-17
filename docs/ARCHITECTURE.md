@@ -380,10 +380,13 @@ NFC with final sigma folded.
   path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
   line, the chunks of a name, a name's definitions in lookup order, a name's callers and a chunk's
   callees, call counts, a file's imports and every import, the counts `check` and `stats` print).
-  Each question keeps the order its callers read. The questions on the search path use
-  `prepare_cached`, so their statements are cached on the connection; others, such as `chunk`,
-  `chunk_at`, `imports`, `call_edges`, `constants` and the counts `check` and `stats` print, are
-  prepared at each call. A test damages the
+  Each question keeps the order its callers read. A name's lookups (`symbol`, `named`,
+  `definitions`, `defines`, `named_of_kinds`, `symbols_named` and their kin), a file's (`outline`,
+  `symbols_in`, `window_at`, `imports_of`, `has_file`), `callers_of`, `callees_of` and the
+  writes of an update use `prepare_cached`, so their statements are cached on the connection;
+  `chunk`, `chunk_at`, the questions over a list of ids (`chunks`, `places`, `texts`), `bodies`,
+  `chunk_ids_in`, `symbols_of_kinds`, `ids_named`, `definers`, `imports`, `call_edges`,
+  `call_counts`, `constants` and the counts `check` and `stats` print are prepared at each call. A test damages the
   index through `Index::damage_for_tests` or with its own connection to `index.db`.
 - **Names** (`names`, `names_tri`): one row per spelling of a definition name, keyed by name key
   and name (`setup` and `setUp` share a key and are two rows), with its word initials and a count,
