@@ -525,7 +525,10 @@ takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKE
 `<ns:accessToken>`), up to a quote or its closing tag, and all of it to a closing tag on its
 line, quotes and spaces included, unless it reads as a sentence (a space, no digit, no symbol
 but punctuation: `Forgot your password?`) or an escaped `&lt;...&gt;`; and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
-with `password`'s test of the value, so an empty element and a placeholder (`${env.X}`) stay;
+with `password`'s test of the value, so an empty element and a placeholder (`${env.X}`) stay, as
+do the closed deploy-time forms of names alone (`#{db.password}`, `@@DB_PASSWORD@@`,
+`[ClientSecret]`, and Razor's `@Model.`, `@ViewBag.`, `@ViewData.`, `@Html.` or `@Configuration.`
+before a name);
 `key-material` a line of base64 alone as wide as a key's body and near
 random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside, and public
 material: an SSH key after its type, as `known_hosts` writes it, and the body of a public key, a
