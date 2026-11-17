@@ -1,7 +1,8 @@
 # Packaging
 
 Package definitions for Scrutate 0.1.0. None is published: no release is tagged yet, so the
-release URLs below do not exist. Every test's log is in `bench/results/platforms/packages/`.
+release URLs below do not exist. The test logs are in `bench/results/platforms/packages/`; the
+crates.io figures below have none.
 
 | Path | What it is |
 |---|---|
@@ -22,8 +23,9 @@ All on 2026-11-09, Apple Silicon host, Docker through colima.
 through a throwaway tap with the `url` swapped for `file://` and the real `sha256`.
 
 - macOS (`homebrew-macos.log`): not possible here. `brew install --build-from-source` stops before
-  building: Xcode 26.6 is installed and Homebrew requires Xcode 27 on macOS 27. Nothing was
-  installed or upgraded; the downloaded bottles were deleted and the tap removed.
+  building: Xcode 26.6 is installed and Homebrew requires Xcode 27 on macOS 27. Nothing of
+  scrutate was installed (`brew test` installed 11 gems into Homebrew's own vendor bundle); the
+  downloaded bottles were deleted and the tap removed.
 - Linux (`homebrew-linux.log`): `homebrew/brew` arm64 container after `brew update`, Homebrew
   7.0.13. `brew install --build-from-source` built it with `cargo install` in 2 min 53 s,
   `scrutate --version` printed `scrutate 0.1.0`, the bash, zsh and fish completions were installed,
@@ -32,22 +34,25 @@ through a throwaway tap with the `url` swapped for `file://` and the real `sha25
 The formula logic is the same on both; the macOS run still needs a machine with a current Xcode
 (or with Xcode removed and only the Command Line Tools).
 
-**Scoop and winget** (`manifests-validate.log`): all four files parse and pass the published
-schema (Scoop `schema.json`, winget 1.12.0). Not installed: the release zips do not exist yet and
-no Windows machine was available.
+**Scoop and winget** (`manifests-validate.log`): all four files parse and passed the published
+schema (Scoop `schema.json`, winget 1.9.0, the version the manifests had then). The manifests and
+`validate_manifests.py` now name winget 1.12.0; no run against 1.12.0 is logged. Not installed:
+the release zips do not exist yet and no Windows machine was available.
 
 **Debian and RPM.** `linux/build-packages.sh` in `rust:1-slim-bookworm` (log `build.log`) built
 `scrutate_0.1.0-1_arm64.deb` (18.8 MB, `Depends: libc6 (>= 2.34)`) and
 `scrutate-0.1.0-1.aarch64.rpm` (20.2 MB) into `dist/`. `linux/test-packages.sh` then passed in a
 clean `debian:bookworm-slim` (`test-deb-debian-bookworm.log`) and a clean `fedora` 45
-(`test-rpm-fedora.log`): install, `scrutate --version`, `scrutate grep` with the exact expected line,
-uninstall, binary gone. The RPM is unsigned and Fedora 45 refuses unsigned packages by default, so
+(`test-rpm-fedora.log`): install, `scrutate --version`, `scrutate grep` with the exact expected line
+the script then had (`hello.py:1:def greet():`), uninstall, binary gone. The script now expects
+`/tmp/t/hello.py:1:def greet():`; it has not been run since that change. The RPM is unsigned and Fedora 45 refuses unsigned packages by default, so
 the test uses `rpm -i --nosignature`. x86_64 packages were not built.
 
 **crates.io**: `cargo publish --dry-run -p scrutate-ignore -p scrutate` packages and verifies both
-crates, the second against the first through Cargo's temporary local registry. `scrutate-ignore`
-(`vendor/ignore`, a modified copy of `ignore`) is 22 files, 83 KiB compressed; `scrutate` is 66
-files, 7.5 MiB compressed, of which the int8 semantic model is most (crates.io refuses over 10 MB).
+crates, the second against the first through Cargo's temporary local registry; no log of that run
+is kept. `scrutate-ignore` (`vendor/ignore`, a modified copy of `ignore`) is 22 files, 83 KiB
+compressed; `scrutate` is 79 files (counted from its `include` list) and an estimated 7.8 MiB
+compressed, of which the int8 semantic model is most (crates.io refuses over 10 MB).
 The `scrutate` package holds `src/`, `data/`, `models/`, `build.rs`, `startup.order`, the README and
 the two licence files; its tests and their sample trees stay in the repository, so Cargo says it
 ignores each test target. The earlier log `cargo-package.log` is from before the models moved into

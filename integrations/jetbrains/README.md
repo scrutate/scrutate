@@ -50,8 +50,8 @@ Go to Symbol and the Structure view from the Scrutate index.
    `*.py`, `*.rs`, `*.go`, `*.ts`, each with a language id (`python`, `rust`, ...). The server
    ignores the id; any value works.
 5. Click **OK** and open a project file. The server takes the project directory from the IDE
-   (`rootUri`); the first start builds `.scrutate/` and says so in the *Language Servers* tool
-   window log.
+   (`workspaceFolders`, else `rootUri`); the first start builds `.scrutate/` and says so in the
+   *Language Servers* tool window log.
 
 The server answers definitions, references, workspace symbols and document symbols. It offers no
 completion, hover or diagnostics, so the IDE keeps its own. Saving a file updates the index in the
@@ -59,13 +59,13 @@ background.
 
 ### The automated run
 
-The `jetbrains` workflow (`.github/workflows/jetbrains.yml`) runs the test in `test/` on every
-change under `integrations/jetbrains/` or to the language server (`crates/scrutate/src/lsp.rs`), and by
-hand. It starts IntelliJ IDEA 2026.3 headless,
+The `jetbrains` workflow (`.github/workflows/jetbrains.yml`) runs the test in `test/` on a push to
+main and on each pull request that changes `integrations/jetbrains/`, the language server
+(`crates/scrutate/src/lsp.rs`) or the workflow itself, and by hand. It starts IntelliJ IDEA 2026.3 headless,
 as the IntelliJ Platform's tests do, with LSP4IJ 0.21.0 from the Marketplace, and:
 
-1. opens the fixture repository below as a project whose only content root it is, so LSP4IJ
-   sends it as `rootUri`;
+1. opens the fixture repository below as a project whose only content root it is, and waits until
+   LSP4IJ's roots are that directory;
 2. registers the server with the values steps 3 and 4 save (name `Scrutate`, command
    `<binary> lsp`, the mapping `*.py` / `python`), through the call the dialog's **OK** makes;
 3. opens `src/app.py`, puts the caret on `make_point` in line 5 and asks for the targets of
