@@ -1146,6 +1146,11 @@ incompatible index by itself, and that is never breaking.
   at a high open-file limit (1048576) it ran on for seconds, as the watcher closed every
   descriptor number up to the limit before it waited; it now closes only those up to the highest
   one open.
+- An unquoted password, secret or token with a symbol that holds a `:` or `,` is redacted
+  whole: `password: ...@...:yZk3` came out unchanged. A `,` before a `name=` or `name:` still ends
+  it, and code (a ternary, `@user.field`, a method chain ending in `!`, an image digest) and an
+  address (`git@github.com:acme/secrets.git`, `vault@prod:8200`) are left as written.
+  docs/SECURITY.md says what ends a value and what is not covered.
 
 ## [0.1.0] - 2026-11-11
 

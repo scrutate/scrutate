@@ -60,6 +60,10 @@ fn any(_: &str, _: &str, _: &str) -> bool {
 /// before a URL's next query parameter.
 const CODE_END: &str = r#"(?:[`'"\s;&]|\\[nr]|$)"#;
 
+/// A `:` or `,` with more of a value after it: `value_end` takes the rest. One that ends a value
+/// (`password: x!, user: y`, `f(x!):`) is not told from code that lists or calls, so it is not one.
+const VALUE_END: &str = r#"(?u:[:,][^\s"'`;&:,])"#;
+
 /// What ends an unquoted value after a `&` or `;`: another parameter, its name `=` (a connection
 /// string's `Initial Catalog=` holds spaces), behind HTML's `&amp;` or `&#38;` too; another `&`
 /// (`&&`); a cookie's attribute; or a word and a space, another command (`;echo done`).
@@ -67,15 +71,26 @@ static PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?:(?:amp;|#38;)?[A-Za-z_][\w.-]*(?: [A-Za-z_][\w.-]*)*=|&|(?:HttpOnly|Secure|Partitioned)(?:[;\s]|$)|[A-Za-z_][\w.-]*\s+\S)").unwrap()
 });
 
-/// Where an unquoted value that a rule ended at `end` ends: a `&` or `;` there ends it only before
-/// what `PARAMETER` reads as the next item, a space or the line's end; else the value goes on to
-/// the next space or quote, so none of it is left shown.
+/// A key after a `,`: its name and `=` or `:` (`,user=deploy`, `,status: :ok`).
+static KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][\w.-]*\s*[=:]").unwrap());
+
+/// Where an unquoted value that a rule ended at `end` ends: a closing bracket ends it; a `&`, `;`,
+/// `:`, `,` or opening bracket ends it only before a space or the line's end, after `&` or `;`
+/// what `PARAMETER` reads as the next item, after `,` a `KEY`; else the value goes on past it, so
+/// none of it is left shown.
 fn value_end(text: &str, mut end: usize) -> usize {
-    while let Some(after) = text[end..].strip_prefix(['&', ';']) {
-        if after.is_empty() || after.starts_with(char::is_whitespace) || PARAMETER.is_match(after) {
+    const ON: &[char] = &['&', ';', ':', ',', '(', '[', '{', '<'];
+    while let Some(sep) = text[end..].chars().next().filter(|c| ON.contains(c)) {
+        let after = &text[end + 1..];
+        let next_item = match sep {
+            '&' | ';' => PARAMETER.is_match(after),
+            ',' => KEY.is_match(after),
+            _ => false,
+        };
+        if after.is_empty() || after.starts_with(char::is_whitespace) || next_item {
             break;
         }
-        end += 1 + after.find(|c: char| c.is_whitespace() || "`'\"&;".contains(c)).unwrap_or(after.len());
+        end += 1 + after.find(|c: char| c.is_whitespace() || "`'\")]}>".contains(c) || ON.contains(&c)).unwrap_or(after.len());
     }
     end
 }
@@ -378,6 +393,18 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["access", "api", "auth", "key", "credential", "creds", "passwd", "password", "secret", "token"],
             generic,
         ),
+        // the same, for a value with a symbol that holds a `:` or `,`
+        rule(
+            "generic-secret",
+            "gitleaks generic-api-key (without its stopwords)",
+            &format!(
+                r#"(?i-u)[\w.-]{{0,50}}?(?:access|auth|(?-i:[Aa]pi|API)|credential|creds|key|passw(?:or)?d|secret|token)(?:[ \t\w.-]{{0,20}})[\s'"]{{0,3}}(?:{TYPED}|=|>|:{{1,3}}=|\|\||:|=>|\?=|,){WRAPPED}(?:[`'"\s=]|r#{{0,2}}"){{0,5}}((?u:[^\s"'`;&()\[\]{{}}<>,:\\]{{10,150}})){VALUE_END}"#
+            ),
+            2,
+            3.5,
+            &["access", "api", "auth", "key", "credential", "creds", "passwd", "password", "secret", "token"],
+            generic_with_symbol,
+        ),
     ]
 });
 
@@ -428,6 +455,23 @@ fn generic(secret: &str, whole: &str, before: &str) -> bool {
 /// Names of letters joined by `.`, `?.` or `!.`, with Razor's `@` before them, or `~/` and a path:
 /// no digit or other symbol, so a password shaped so is still taken for one.
 static CODE_OR_HOME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:@?[A-Za-z_]+(?:[?!]?\.[A-Za-z_]+)+|~/[\w./-]+)$").unwrap());
+
+/// Code a `:` or `,` follows: a Ruby instance variable's field (`@user.auth_token2`), a method
+/// chain that ends in `!` or `?` (`Rails.application.credentials.dig!`), an image's digest
+/// (`repo@sha256`).
+static CODE_BEFORE_A_SEPARATOR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:@[A-Za-z_]\w*\.\w|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+[!?]$)|@sha(?:256|384|512)$").unwrap());
+
+/// `generic` of a value with a symbol gitleaks' set leaves out, that is no code: no ternary (a
+/// `?` before the `:` that follows it, `isAuth?user.token:null`) and no `CODE_BEFORE_A_SEPARATOR`.
+fn generic_with_symbol(secret: &str, whole: &str, before: &str) -> bool {
+    let at = whole.rfind(secret).map_or(whole.len(), |i| i + secret.len());
+    let ternary = secret.contains('?') && whole[at..].starts_with(':');
+    secret.bytes().any(|b| !(b.is_ascii_alphanumeric() || b"_.=+/-".contains(&b)))
+        && !ternary
+        && !CODE_BEFORE_A_SEPARATOR.is_match(secret)
+        && generic(secret, whole, before)
+}
 
 /// A quoted value that names a thing: a file path with an extension (`config/secret_settings.toml`)
 /// or words run together in camel case, a year or a count after them (`TokenRefreshed2024`).
@@ -878,14 +922,19 @@ impl Redactor {
                 if c.name("ann").is_some_and(|a| a.len() > TYPED_MAX) {
                     continue;
                 }
-                // a mark already written is no secret: the assembled page is read a second time
+                let end = if r.pattern.ends_with(CODE_END) || r.pattern.ends_with(VALUE_END) { value_end(seen, g.end()) } else { g.end() };
+                // a mark already written is no secret: the assembled page is read a second time. The
+                // value a `:` or `,` cuts (`Xq7r@T2vW9:yZk3`) may pass the entropy test whole, when
+                // its part mixes both cases and digits as a password does and an address does not
+                let random = |v: &str| r.entropy <= 0.0 || entropy(v) > r.entropy;
+                let has = |f: fn(&u8) -> bool| g.as_str().bytes().any(|b| f(&b));
+                let cut = r.pattern.ends_with(VALUE_END) && has(u8::is_ascii_uppercase) && has(u8::is_ascii_lowercase) && has(u8::is_ascii_digit);
                 if g.as_str().contains("[redacted:")
-                    || (r.entropy > 0.0 && entropy(g.as_str()) <= r.entropy)
+                    || !(random(g.as_str()) || cut && random(&seen[g.start()..end]))
                     || !(r.keep)(g.as_str(), &c[0], &seen[..g.start()])
                 {
                     continue;
                 }
-                let end = if r.pattern.ends_with(CODE_END) { value_end(seen, g.end()) } else { g.end() };
                 spans.push((g.start(), end, r.kind));
             }
         }
@@ -1784,6 +1833,40 @@ mod tests {
         ] {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && !marks.is_empty() && out.ends_with(tail), "{line} -> {out}");
+        }
+    }
+
+    /// An unquoted value with a symbol that holds a `:` or `,` is redacted whole, as
+    /// docs/SECURITY.md says; one more parameter after a `,` still ends it.
+    #[test]
+    fn an_unquoted_value_holding_a_colon_or_a_comma_is_redacted_whole() {
+        let b = fake(132, ALNUM, 4);
+        let symbolic = format!("{}@{}!{}", fake(133, ALNUM, 4), fake(134, ALNUM, 5), fake(135, ALNUM, 2));
+        let shown = |s: &str| s.replace("{}", "[redacted:generic-secret]");
+        for (line, want) in [
+            (format!("password: {symbolic}:{b}"), shown("password: {}")),
+            (format!("password: {symbolic},{b}"), shown("password: {}")),
+            (format!("password: {symbolic}:{b} # db"), shown("password: {} # db")),
+            (format!("password={symbolic},user=deploy"), shown("password={},user=deploy")),
+            // the part before the `:` alone is too short to pass the entropy test; the whole value is not
+            (format!("password: {}:yZk3", "Xq7r@T2vW9"), shown("password: {}")),
+            (format!("password: {},yZk3", "Xq7r@T2vW9"), shown("password: {}")),
+        ] {
+            assert_eq!(redact(&line).0, want, "{line}");
+        }
+        // code: a ternary, a Ruby instance variable's field, a method chain, an image digest
+        for line in [
+            "var a={token:isAuth?user.token:null,b:1}",
+            "render json: {token: @user.auth_token2,status: :ok}",
+            "secret: Rails.application.credentials.dig!,x",
+            "token_image: ghcr.io/org/repo@sha256:abc123def",
+            // an address before a `:` or `,`, its part too short for the entropy test, is no secret
+            "secrets_repo: git@github.com:acme/secrets.git",
+            "token_owners: alice@example.com,bob@example.com",
+            "secret_store: vault@prod:8200",
+            "next_token: @current_request&.next_token",
+        ] {
+            assert_eq!(redact(line).0, line);
         }
     }
 
