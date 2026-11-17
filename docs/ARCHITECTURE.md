@@ -464,7 +464,9 @@ NFC with final sigma folded.
     3 ms a file), so a one-file update behind a read takes about 30 ms (28 to 38 ms p50 on an
     M-series Mac); `sync_all` where the file system refuses it), and renamed before the database names them, so
     a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
-    by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
+    by a writer stopped before its commit, and is removed); a deleted chunk is only gone from the
+    `chunks` table: each segment's liveness is rebuilt in memory from the live ids
+    (`LexStore::prepare`), and compaction writes only the live rows;
   - one read snapshot per operation (`ops::run`, each language server request): its reads see
     one commit, and a commit meanwhile shows in the next operation; after an update the log is
     cut to nothing once the readers on older commits finish, waited for about a second, else
@@ -1022,13 +1024,14 @@ lines. So a textual use the resolver cannot tie keeps a definition out of dead, 
 The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`):
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
-`tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
-(version, language, query text, searched paths from the root) mapping a 128-bit BLAKE2b content
-hash to the captures, without paths, so files whose content was seen before are read and hashed
-but not parsed. A file cut off by `--limit` is never stored, so a cached list is always complete
-and the global limit gives the same prefix. Files are written to a temporary name and renamed; an
-unreadable one counts as empty. Eviction is by query file, least recently used first, above
-128 MB in total.
+`tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per (version,
+language, query text, searched paths from the root) mapping a key to the captures, without paths.
+The key is a 128-bit BLAKE2b hash of the content hash the code index records (SHA-1) and the
+lowercased file name, so a file whose content was seen before is not parsed, and on a hit one whose
+stat the code index holds as current is not read either. A file cut off by `--limit` is never
+stored, so a cached list is always complete and the global limit gives the same prefix. Files are
+written to a temporary name and renamed; an unreadable one counts as empty. Eviction is by query
+file, least recently used first, above 128 MB in total.
 
 Every file scrutate writes under `.scrutate/` that can hold a file's text reads as binary: it has
 a NUL byte in its first kilobyte (the `tsquery` cache and the answer store from the length after

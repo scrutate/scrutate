@@ -72,7 +72,7 @@ path is also one path to test.
   and a timed wait, the command line's write of its request bounded by `REQUEST` too (a pipe
   holds 64 KB, and a server stopped or stuck after its greeting takes no more), 64 KB at a time,
   so the bound is on progress, as a socket's send timeout is; the same limit of 16 calls served at once. The build in the identity is the
-  executable's path, size and times on Windows, where Unix uses device and inode as well.
+  executable's path, size and times on Windows; on Unix its device and inode take the path's place.
 - **The switches stay.** `SCRUTATE_NO_SESSION=1` and `SCRUTATE_SESSION_DEBUG=1` work as on Unix.
 
 ## Consequences

@@ -82,8 +82,9 @@ replaces text) and `idempotentHint: true` (the same call again is refused: the h
   security model gains one writer, under the same rules as `tsquery --rewrite --write`
   ([Security](../SECURITY.md#verified-symbol-edits)).
 - An edit costs two calls: a dry run for the diff and the hash, then the apply.
-- A definition's comment block and decorators belong to its range as the index has it, so
-  `new_text` replaces them too; the dry run's diff shows it.
+- A definition's decorators and attributes belong to its range as the index has it, so
+  `new_text` replaces them too; the doc comment above it is outside that range and is replaced
+  only when `new_text` opens with one (the table in edit.rs). The dry run's diff shows both.
 - Renaming a definition is out of scope: the same name must be where it was. A rename touches
   its callers, which is another tool.
 
