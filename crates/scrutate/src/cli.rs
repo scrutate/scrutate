@@ -1918,24 +1918,24 @@ pub fn run() -> Result<i32> {
         Cmd::Sexp { file } => {
             let source = std::fs::read_to_string(&file)?;
             let rel = file.to_string_lossy().into_owned();
-            match crate::parse::spec_for(&rel, &source) {
-                Some(spec) => {
-                    outln!("grammar: {}", spec.id);
-                    outln!("{}", crate::parse::sexp(spec, &source));
-                }
-                None => outln!("no grammar for {rel} (heuristic symbols)"),
-            }
+            let mut out = match crate::parse::spec_for(&rel, &source) {
+                Some(spec) => format!("grammar: {}\n{}\n", spec.id, crate::parse::sexp(spec, &source)),
+                None => format!("no grammar for {rel} (heuristic symbols)\n"),
+            };
             for c in crate::parse::parse_source(&rel, &source) {
-                outln!(
-                    "CHUNK {:<9} {:<30} L{}-{} doc={:?} calls={:?}",
+                out.push_str(&format!(
+                    "CHUNK {:<9} {:<30} L{}-{} doc={:?} calls={:?}\n",
                     c.kind,
                     c.qualname,
                     c.start,
                     c.end,
                     c.doc.lines().next().unwrap_or(""),
                     c.calls.iter().take(6).collect::<Vec<_>>()
-                );
+                ));
             }
+            // node text and doc lines are file text: SCRUTATE_REDACT=on redacts them as any answer
+            CliRedact::new(&cli.root).text(&mut out);
+            write!(std::io::stdout().lock(), "{out}")?;
             Ok(0)
         }
         Cmd::Batch { file, features, timing } => batch_command(&cli.root, &file, features, timing),

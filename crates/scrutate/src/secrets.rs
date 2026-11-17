@@ -219,7 +219,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["sk-ant-"],
             any,
         ),
-        rule("npm-token", "gitleaks npm-access-token", r"\b(npm_[A-Za-z0-9]{36})\b", 1, 0.0, &["npm_"], any),
+        rule("npm-token", "gitleaks npm-access-token", r"\b((?i:npm_)[A-Za-z0-9]{36})\b", 1, 0.0, &["npm_"], any),
         rule("pypi-token", "gitleaks pypi-upload-token (any index's prefix)", r"\b(pypi-[A-Za-z0-9_-]{85,1000})", 1, 3.0, &["pypi-"], any),
         rule(
             "jwt",
@@ -1901,6 +1901,21 @@ mod tests {
         }
         let gosum = "golang.org/x/net v0.1.0 h1:tL+3tIxTq9jVFpN5MbnSqGTgUx3V/3mIC+r9hXu5rXo=";
         assert_eq!(redact(gosum).0, gosum);
+    }
+
+    /// Where a rule's threshold differs from gitleaks' it marks more, never less: an AWS key id of
+    /// low entropy (gitleaks wants 3) and an npm token whose prefix is upper case (gitleaks takes
+    /// it in any case) are both redacted.
+    #[test]
+    fn a_rule_that_differs_from_gitleaks_marks_more() {
+        let aws = format!("AKIA{}", "A".repeat(16));
+        assert_eq!(redact(&format!("key = {aws}")).1.iter().map(|m| m.kind).collect::<Vec<_>>(), ["aws-access-key-id"], "{aws}");
+        for prefix in ["npm_", "NPM_", "Npm_"] {
+            let token = format!("{prefix}{}", fake(51, ALNUM, 36));
+            let line = format!("//registry.npmjs.org/:_authToken={token}");
+            let (out, marks) = redact(&line);
+            assert!(marks.iter().any(|m| m.kind == "npm-token") && !out.contains(&token), "{line}: {out}");
+        }
     }
 
     /// A value longer than any rule's usual width goes whole, not its first 200 characters.
