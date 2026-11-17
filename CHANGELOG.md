@@ -1151,6 +1151,10 @@ incompatible index by itself, and that is never breaking.
   it, and code (a ternary, `@user.field`, a method chain ending in `!`, an image digest) and an
   address (`git@github.com:acme/secrets.git`, `vault@prod:8200`) are left as written.
   docs/SECURITY.md says what ends a value and what is not covered.
+- Two `serve` processes of one root starting together leave one offering its socket to command
+  line calls: each could remove the socket the other had just bound, and a start that found the
+  other still starting gave up at once, so none offered it when the other could not; it now waits
+  up to a second for the other and checks again.
 
 ## [0.1.0] - 2026-11-11
 
