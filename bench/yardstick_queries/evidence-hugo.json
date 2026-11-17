@@ -1,0 +1,1340 @@
+[
+ {
+  "id": "W5/refs pageState.wrapError",
+  "grep_hits": 21,
+  "uses": [
+   {
+    "path": "hugolib/page__meta.go",
+    "line": 168,
+    "counts": false,
+    "reason": "receiver m *pageMetaSource"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 603,
+    "counts": true,
+    "reason": "cp := c.pco; cp.po.p is *pageState (pageOutput.p)"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 623,
+    "counts": true,
+    "reason": "cp.po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 930,
+    "counts": true,
+    "reason": "pco := c.pco; pco.po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 976,
+    "counts": true,
+    "reason": "pco.po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 1025,
+    "counts": true,
+    "reason": "pco.po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 74,
+    "counts": false,
+    "reason": "method spec in pageContext interface, not a use"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 776,
+    "counts": false,
+    "reason": "definition of pageMetaSource.wrapError (other type)"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 778,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 789,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 790,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 791,
+    "counts": false,
+    "reason": "ps.m is *pageMeta; resolves to promoted pageMetaSource.wrapError (2 args)"
+   },
+   {
+    "path": "hugolib/page__per_output.go",
+    "line": 127,
+    "counts": true,
+    "reason": "receiver pco *pageContentOutput; po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page__per_output.go",
+    "line": 136,
+    "counts": true,
+    "reason": "pco.po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page__per_output.go",
+    "line": 197,
+    "counts": true,
+    "reason": "pco.po.p is *pageState"
+   },
+   {
+    "path": "hugolib/page__menus.go",
+    "line": 86,
+    "counts": true,
+    "reason": "pageMenus.p is *pageState"
+   },
+   {
+    "path": "hugolib/shortcode.go",
+    "line": 386,
+    "counts": true,
+    "reason": "p := po.p, po *pageOutput, so *pageState"
+   },
+   {
+    "path": "hugolib/shortcode.go",
+    "line": 392,
+    "counts": true,
+    "reason": "p is *pageState"
+   },
+   {
+    "path": "hugolib/site.go",
+    "line": 1486,
+    "counts": true,
+    "reason": "callback param p *pageState"
+   },
+   {
+    "path": "hugolib/page__new.go",
+    "line": 36,
+    "counts": false,
+    "reason": "m *pageMeta embeds *pageMetaSource; 2-arg wrapError"
+   },
+   {
+    "path": "hugolib/page__new.go",
+    "line": 50,
+    "counts": false,
+    "reason": "m *pageMeta embeds *pageMetaSource; 2-arg wrapError"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers pageMetaSource.wrapError",
+  "grep_hits": 21,
+  "uses": [
+   {
+    "path": "hugolib/page__meta.go",
+    "line": 168,
+    "counts": true,
+    "reason": "receiver m *pageMetaSource"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 603,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 623,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 930,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 976,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__content.go",
+    "line": 1025,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 74,
+    "counts": false,
+    "reason": "pageContext interface method spec"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 776,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 778,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 789,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 790,
+    "counts": false,
+    "reason": "definition of pageState.wrapError"
+   },
+   {
+    "path": "hugolib/page.go",
+    "line": 791,
+    "counts": true,
+    "reason": "ps.m is *pageMeta (pageCommon.m) which embeds *pageMetaSource: promoted"
+   },
+   {
+    "path": "hugolib/page__per_output.go",
+    "line": 127,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__per_output.go",
+    "line": 136,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__per_output.go",
+    "line": 197,
+    "counts": false,
+    "reason": "x.po.p is *pageState: pageState.wrapError (1 arg) shadows promotion"
+   },
+   {
+    "path": "hugolib/page__menus.go",
+    "line": 86,
+    "counts": false,
+    "reason": "p.p is *pageState: pageState.wrapError"
+   },
+   {
+    "path": "hugolib/shortcode.go",
+    "line": 386,
+    "counts": false,
+    "reason": "p is *pageState: pageState.wrapError"
+   },
+   {
+    "path": "hugolib/shortcode.go",
+    "line": 392,
+    "counts": false,
+    "reason": "p is *pageState: pageState.wrapError"
+   },
+   {
+    "path": "hugolib/site.go",
+    "line": 1486,
+    "counts": false,
+    "reason": "p *pageState: pageState.wrapError"
+   },
+   {
+    "path": "hugolib/page__new.go",
+    "line": 36,
+    "counts": true,
+    "reason": "m *pageMeta embeds *pageMetaSource: promoted"
+   },
+   {
+    "path": "hugolib/page__new.go",
+    "line": 50,
+    "counts": true,
+    "reason": "m *pageMeta embeds *pageMetaSource: promoted"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs WhatChanged.Drain",
+  "grep_hits": 18,
+  "uses": [
+   {
+    "path": "cache/dynacache/dynacache.go",
+    "line": 144,
+    "counts": false,
+    "reason": "evictedIdentities is *collections.StackThreadSafe"
+   },
+   {
+    "path": "internal/warpc/genavif/avif.c",
+    "line": 329,
+    "counts": false,
+    "reason": "C comment"
+   },
+   {
+    "path": "internal/warpc/genwebp/webp.c",
+    "line": 581,
+    "counts": false,
+    "reason": "C comment"
+   },
+   {
+    "path": "hugolib/hugo_sites.go",
+    "line": 434,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/content_map_page.go",
+    "line": 905,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/content_map_page.go",
+    "line": 976,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/site.go",
+    "line": 1176,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "hugolib/hugo_sites_build.go",
+    "line": 305,
+    "counts": true,
+    "reason": "bcfg *BuildCfg; BuildCfg.WhatChanged is *WhatChanged"
+   },
+   {
+    "path": "hugolib/hugo_sites_build.go",
+    "line": 357,
+    "counts": true,
+    "reason": "bcfg.WhatChanged is *WhatChanged"
+   },
+   {
+    "path": "hugolib/hugo_sites_build.go",
+    "line": 374,
+    "counts": true,
+    "reason": "bcfg.WhatChanged is *WhatChanged"
+   },
+   {
+    "path": "hugolib/hugo_sites_build.go",
+    "line": 852,
+    "counts": true,
+    "reason": "config *BuildCfg; .WhatChanged is *WhatChanged"
+   },
+   {
+    "path": "hugolib/hugo_sites_build.go",
+    "line": 1199,
+    "counts": true,
+    "reason": "changed := &WhatChanged{...} at line 1173"
+   },
+   {
+    "path": "common/hmaps/cache.go",
+    "line": 96,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "common/hmaps/cache.go",
+    "line": 169,
+    "counts": false,
+    "reason": "definition of hmaps.Cache.Drain"
+   },
+   {
+    "path": "common/collections/stack.go",
+    "line": 72,
+    "counts": false,
+    "reason": "definition of StackThreadSafe.Drain"
+   },
+   {
+    "path": "common/collections/stack.go",
+    "line": 131,
+    "counts": false,
+    "reason": "definition of Stack.Drain"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 57,
+    "counts": false,
+    "reason": "s := NewStackThreadSafe[string](): StackThreadSafe.Drain"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 76,
+    "counts": false,
+    "reason": "s := NewStackThreadSafe[int](): StackThreadSafe.Drain"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs SourceFilesystem.ReverseLookup",
+  "grep_hits": 11,
+  "uses": [
+   {
+    "path": "hugolib/pagecollections.go",
+    "line": 234,
+    "counts": true,
+    "reason": "s.BaseFs.Content is *SourceFilesystem"
+   },
+   {
+    "path": "hugolib/filesystems/basefs.go",
+    "line": 332,
+    "counts": false,
+    "reason": "rfs ranges over RootFss []*hugofs.RootMappingFs"
+   },
+   {
+    "path": "hugolib/filesystems/basefs.go",
+    "line": 355,
+    "counts": true,
+    "reason": "receiver d *SourceFilesystem"
+   },
+   {
+    "path": "hugolib/filesystems/basefs.go",
+    "line": 366,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/filesystems/basefs.go",
+    "line": 367,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "hugolib/filesystems/basefs.go",
+    "line": 431,
+    "counts": true,
+    "reason": "receiver d *SourceFilesystem"
+   },
+   {
+    "path": "hugolib/filesystems/basefs_test.go",
+    "line": 483,
+    "counts": true,
+    "reason": "b.H.BaseFs.Content is *SourceFilesystem"
+   },
+   {
+    "path": "hugolib/filesystems/basefs_test.go",
+    "line": 522,
+    "counts": true,
+    "reason": "assetsFs := b.H.Assets, promoted via Deps>PathSpec>BaseFs>SourceFilesystems.Assets *SourceFilesystem"
+   },
+   {
+    "path": "hugolib/filesystems/basefs_test.go",
+    "line": 525,
+    "counts": true,
+    "reason": "assetsFs is *SourceFilesystem"
+   },
+   {
+    "path": "hugofs/rootmapping_fs.go",
+    "line": 345,
+    "counts": false,
+    "reason": "interface method spec (1-arg)"
+   },
+   {
+    "path": "hugofs/rootmapping_fs.go",
+    "line": 350,
+    "counts": false,
+    "reason": "definition of RootMappingFs.ReverseLookup"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs isBuiltOrTouched.isBuilt",
+  "grep_hits": 17,
+  "uses": [
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 733,
+    "counts": true,
+    "reason": "v ranges over scriptGroups map[string]*scriptGroup; scriptGroup embeds isBuiltOrTouched"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 814,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 827,
+    "counts": false,
+    "reason": "isBuiltOrTouchedProvider interface method spec"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1128,
+    "counts": true,
+    "reason": "g *scriptGroup embeds isBuiltOrTouched: promoted"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1134,
+    "counts": false,
+    "reason": "g.instancesOptions is optionsMap: optionsMap.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1138,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1146,
+    "counts": false,
+    "reason": "g.runnersOptions is optionsMap: optionsMap.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1150,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1158,
+    "counts": false,
+    "reason": "g.scriptsOptions is optionsMap: optionsMap.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1162,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1184,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1193,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1202,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1360,
+    "counts": false,
+    "reason": "definition of optionsMap.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1362,
+    "counts": false,
+    "reason": "v is optionsGetSetter interface value; implementer *opts has its own isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1370,
+    "counts": false,
+    "reason": "definition of opts.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1371,
+    "counts": true,
+    "reason": "o.h is *optsHolder[C], which embeds isBuiltOrTouched: promoted"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs optionsMap.isBuilt",
+  "grep_hits": 17,
+  "uses": [
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 733,
+    "counts": false,
+    "reason": "v is *scriptGroup: promoted isBuiltOrTouched.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 814,
+    "counts": false,
+    "reason": "definition of isBuiltOrTouched.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 827,
+    "counts": false,
+    "reason": "interface method spec"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1128,
+    "counts": false,
+    "reason": "g *scriptGroup: promoted isBuiltOrTouched.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1134,
+    "counts": true,
+    "reason": "g.instancesOptions is optionsMap[instanceID, paramsOptions]"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1138,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1146,
+    "counts": true,
+    "reason": "g.runnersOptions is optionsMap[scriptID, scriptOptions]"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1150,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1158,
+    "counts": true,
+    "reason": "g.scriptsOptions is optionsMap[scriptID, scriptOptions]"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1162,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1184,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1193,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1202,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1360,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1362,
+    "counts": false,
+    "reason": "v is optionsGetSetter element value, not the map"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1370,
+    "counts": false,
+    "reason": "definition of opts.isBuilt"
+   },
+   {
+    "path": "internal/js/esbuild/batch.go",
+    "line": 1371,
+    "counts": false,
+    "reason": "o.h *optsHolder: promoted isBuiltOrTouched.isBuilt"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs toFileError",
+  "grep_hits": 8,
+  "uses": [
+   {
+    "path": "resources/resource_transformers/cssjs/postcss.go",
+    "line": 247,
+    "counts": false,
+    "reason": "imp is *importResolver: method importResolver.toFileError"
+   },
+   {
+    "path": "resources/resource_transformers/cssjs/tailwindcss.go",
+    "line": 170,
+    "counts": false,
+    "reason": "imp is *importResolver: method importResolver.toFileError"
+   },
+   {
+    "path": "resources/resource_transformers/cssjs/inline_imports.go",
+    "line": 252,
+    "counts": false,
+    "reason": "definition of importResolver.toFileError"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 295,
+    "counts": true,
+    "reason": "unqualified call in package metadecoders"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 301,
+    "counts": true,
+    "reason": "unqualified call in package metadecoders"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 307,
+    "counts": true,
+    "reason": "unqualified call in package metadecoders"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 333,
+    "counts": true,
+    "reason": "unqualified call in package metadecoders"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 425,
+    "counts": false,
+    "reason": "definition of D"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers importResolver.toFileError",
+  "grep_hits": 8,
+  "uses": [
+   {
+    "path": "resources/resource_transformers/cssjs/postcss.go",
+    "line": 247,
+    "counts": true,
+    "reason": "imp := newImportResolver(...) returns *importResolver"
+   },
+   {
+    "path": "resources/resource_transformers/cssjs/tailwindcss.go",
+    "line": 170,
+    "counts": true,
+    "reason": "imp := newImportResolver(...) returns *importResolver"
+   },
+   {
+    "path": "resources/resource_transformers/cssjs/inline_imports.go",
+    "line": 252,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 295,
+    "counts": false,
+    "reason": "package func metadecoders.toFileError"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 301,
+    "counts": false,
+    "reason": "package func metadecoders.toFileError"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 307,
+    "counts": false,
+    "reason": "package func metadecoders.toFileError"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 333,
+    "counts": false,
+    "reason": "package func metadecoders.toFileError"
+   },
+   {
+    "path": "parser/metadecoders/decoder.go",
+    "line": 425,
+    "counts": false,
+    "reason": "definition of metadecoders.toFileError"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers Template.Delims",
+  "grep_hits": 12,
+  "uses": [
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/example_test.go",
+    "line": 138,
+    "counts": false,
+    "reason": "template alias is the htmltemplate package"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    "line": 861,
+    "counts": false,
+    "reason": "unqualified New in package htmltemplate returns htmltemplate *Template"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    "line": 949,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    "line": 1002,
+    "counts": false,
+    "reason": "unqualified New in package htmltemplate returns htmltemplate *Template"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/template.go",
+    "line": 347,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/template.go",
+    "line": 352,
+    "counts": false,
+    "reason": "definition of htmltemplate Template.Delims"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/template.go",
+    "line": 353,
+    "counts": true,
+    "reason": "t.text is *template.Template where template aliases texttemplate"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "line": 949,
+    "counts": true,
+    "reason": "unqualified New in package texttemplate returns *Template"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "line": 1063,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "line": 1116,
+    "counts": true,
+    "reason": "unqualified New in package texttemplate returns *Template"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/template.go",
+    "line": 157,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/template.go",
+    "line": 162,
+    "counts": false,
+    "reason": "definition of D"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs Template.Delims",
+  "grep_hits": 12,
+  "uses": [
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/example_test.go",
+    "line": 138,
+    "counts": true,
+    "reason": "import alias template = hugo htmltemplate; template.New returns *Template"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    "line": 861,
+    "counts": true,
+    "reason": "unqualified New in package htmltemplate; this file aliases texttemplate as template but New is not qualified"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    "line": 949,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    "line": 1002,
+    "counts": true,
+    "reason": "unqualified New in package htmltemplate"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/template.go",
+    "line": 347,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/template.go",
+    "line": 352,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "tpl/internal/go_templates/htmltemplate/template.go",
+    "line": 353,
+    "counts": false,
+    "reason": "t.text is texttemplate *Template"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "line": 949,
+    "counts": false,
+    "reason": "texttemplate New: texttemplate Template.Delims"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "line": 1063,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "line": 1116,
+    "counts": false,
+    "reason": "texttemplate New: texttemplate Template.Delims"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/template.go",
+    "line": 157,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "tpl/internal/go_templates/texttemplate/template.go",
+    "line": 162,
+    "counts": false,
+    "reason": "definition of texttemplate Template.Delims"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs StackThreadSafe.Push",
+  "grep_hits": 24,
+  "uses": [
+   {
+    "path": "cache/dynacache/dynacache.go",
+    "line": 79,
+    "counts": true,
+    "reason": "evictedIdentities := collections.NewStackThreadSafe[KeyIdentity]()"
+   },
+   {
+    "path": "tpl/templates/templates.go",
+    "line": 106,
+    "counts": false,
+    "reason": "PartialDecoratorIDStack is ContextDispatcher[*collections.Stack[*StringBool]]: Stack.Push"
+   },
+   {
+    "path": "docs/content/en/contribute/documentation/index.md",
+    "line": 680,
+    "counts": false,
+    "reason": "docs/non-code file"
+   },
+   {
+    "path": "docs/content/en/contribute/development.md",
+    "line": 126,
+    "counts": false,
+    "reason": "docs/non-code file"
+   },
+   {
+    "path": "docs/content/en/host-and-deploy/deployment-methods.md",
+    "line": 11,
+    "counts": false,
+    "reason": "docs/non-code file"
+   },
+   {
+    "path": "docs/content/en/host-and-deploy/deployment-methods.md",
+    "line": 13,
+    "counts": false,
+    "reason": "docs/non-code file"
+   },
+   {
+    "path": "hugolib/content_map_page_assembler.go",
+    "line": 556,
+    "counts": true,
+    "reason": "WalkContext.HooksPost() returns *collections.StackThreadSafe[func() error]"
+   },
+   {
+    "path": "hugolib/content_map_page_assembler.go",
+    "line": 622,
+    "counts": true,
+    "reason": "WalkContext.HooksPost() returns *collections.StackThreadSafe[func() error]"
+   },
+   {
+    "path": "hugolib/content_map_page_assembler.go",
+    "line": 839,
+    "counts": true,
+    "reason": "WalkContext.HooksPost() returns *collections.StackThreadSafe[func() error]"
+   },
+   {
+    "path": "hugolib/content_map_page_assembler.go",
+    "line": 963,
+    "counts": true,
+    "reason": "WalkContext.HooksPost() returns *collections.StackThreadSafe[func() error]"
+   },
+   {
+    "path": "common/collections/stack.go",
+    "line": 35,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "common/collections/stack.go",
+    "line": 103,
+    "counts": false,
+    "reason": "definition of Stack.Push"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 26,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() (line 22)"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 27,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() (line 22)"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 28,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() (line 22)"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 54,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[string]() (line 14)"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 55,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[string]() (line 14)"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 68,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() in TestStackDrainMatching"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 69,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() in TestStackDrainMatching"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 70,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() in TestStackDrainMatching"
+   },
+   {
+    "path": "common/collections/stack_test.go",
+    "line": 71,
+    "counts": true,
+    "reason": "s := NewStackThreadSafe[int]() in TestStackDrainMatching"
+   },
+   {
+    "path": "markup/goldmark/convert_test.go",
+    "line": 128,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "markup/goldmark/convert_test.go",
+    "line": 199,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "CONTRIBUTING.md",
+    "line": 166,
+    "counts": false,
+    "reason": "docs/non-code file"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers Pages.MergeByLanguage",
+  "grep_hits": 15,
+  "uses": [
+   {
+    "path": "resources/page/pages_language_merge.go",
+    "line": 23,
+    "counts": false,
+    "reason": "pagesLanguageMerger interface method spec"
+   },
+   {
+    "path": "resources/page/pages_language_merge.go",
+    "line": 28,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "resources/page/pages_language_merge.go",
+    "line": 30,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "resources/page/pages_language_merge.go",
+    "line": 46,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "resources/page/pages_language_merge.go",
+    "line": 51,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "resources/page/pages_language_merge.go",
+    "line": 62,
+    "counts": true,
+    "reason": "p1 Pages receiver"
+   },
+   {
+    "path": "resources/resource/resourcetypes.go",
+    "line": 154,
+    "counts": false,
+    "reason": "ResourcesLanguageMerger interface method spec"
+   },
+   {
+    "path": "resources/resource/resources.go",
+    "line": 238,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "resources/resource/resources.go",
+    "line": 239,
+    "counts": false,
+    "reason": "definition of Resources.MergeByLanguage"
+   },
+   {
+    "path": "resources/resource/resources.go",
+    "line": 258,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "resources/resource/resources.go",
+    "line": 266,
+    "counts": false,
+    "reason": "r Resources receiver: Resources.MergeByLanguage"
+   },
+   {
+    "path": "hugolib/pages_language_merge_test.go",
+    "line": 46,
+    "counts": true,
+    "reason": "nnSite is *Site; Site.RegularPages() returns page.Pages"
+   },
+   {
+    "path": "hugolib/pages_language_merge_test.go",
+    "line": 58,
+    "counts": true,
+    "reason": "frSite.RegularPages() returns page.Pages"
+   },
+   {
+    "path": "hugolib/pages_language_merge_test.go",
+    "line": 82,
+    "counts": false,
+    "reason": "asserted to resource.ResourcesLanguageMerger; value is resource.Resources"
+   },
+   {
+    "path": "hugolib/pages_language_merge_test.go",
+    "line": 210,
+    "counts": true,
+    "reason": "nnSite.RegularPages() returns page.Pages"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs SimpleThreadSafeTree.LongestPrefix",
+  "grep_hits": 26,
+  "uses": [
+   {
+    "path": "hugolib/doctree/nodeshifttree.go",
+    "line": 267,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/doctree/nodeshifttree.go",
+    "line": 269,
+    "counts": false,
+    "reason": "definition of NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/doctree/nodeshifttree.go",
+    "line": 271,
+    "counts": false,
+    "reason": "r.tree is *radix.Tree"
+   },
+   {
+    "path": "hugolib/doctree/nodeshifttree.go",
+    "line": 292,
+    "counts": false,
+    "reason": "r.tree is *radix.Tree"
+   },
+   {
+    "path": "hugolib/doctree/nodeshifttree.go",
+    "line": 302,
+    "counts": false,
+    "reason": "r.tree is *radix.Tree"
+   },
+   {
+    "path": "hugolib/doctree/treeshifttree.go",
+    "line": 88,
+    "counts": false,
+    "reason": "definition of TreeShiftTreeSlice.LongestPrefix"
+   },
+   {
+    "path": "hugolib/doctree/treeshifttree.go",
+    "line": 89,
+    "counts": true,
+    "reason": "t.tree() returns *SimpleThreadSafeTree[T]"
+   },
+   {
+    "path": "hugolib/doctree/nodeshiftree_test.go",
+    "line": 57,
+    "counts": false,
+    "reason": "3-arg call: NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/doctree/nodeshiftree_test.go",
+    "line": 96,
+    "counts": true,
+    "reason": "ctx.Data() returns *SimpleThreadSafeTree[any]"
+   },
+   {
+    "path": "hugolib/doctree/nodeshiftree_test.go",
+    "line": 211,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "hugolib/doctree/simpletree_test.go",
+    "line": 46,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "hugolib/doctree/simpletree_test.go",
+    "line": 50,
+    "counts": true,
+    "reason": "t is TreeThreadSafe[int] from newTestTree, which always returns NewSimpleThreadSafeTree[int]()"
+   },
+   {
+    "path": "hugolib/doctree/simpletree.go",
+    "line": 41,
+    "counts": false,
+    "reason": "TreeCommon interface method spec"
+   },
+   {
+    "path": "hugolib/doctree/simpletree.go",
+    "line": 61,
+    "counts": false,
+    "reason": "definition of SimpleTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/doctree/simpletree.go",
+    "line": 62,
+    "counts": false,
+    "reason": "tree.tree is *radix.Tree (external)"
+   },
+   {
+    "path": "hugolib/doctree/simpletree.go",
+    "line": 143,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "hugolib/doctree/simpletree.go",
+    "line": 147,
+    "counts": false,
+    "reason": "tree.tree is *radix.Tree (external)"
+   },
+   {
+    "path": "hugolib/content_map_page.go",
+    "line": 822,
+    "counts": false,
+    "reason": "pageWalker.Tree: 3-arg NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/content_map_page_assembler.go",
+    "line": 211,
+    "counts": true,
+    "reason": "data := wctx.Data() returns *SimpleThreadSafeTree[any]"
+   },
+   {
+    "path": "hugolib/content_map_page_assembler.go",
+    "line": 1022,
+    "counts": false,
+    "reason": "pw.Tree: 3-arg NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/page__tree.go",
+    "line": 74,
+    "counts": false,
+    "reason": "treePages: 3-arg NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/page__tree.go",
+    "line": 92,
+    "counts": false,
+    "reason": "treePages: 3-arg NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugolib/page__tree.go",
+    "line": 136,
+    "counts": false,
+    "reason": "treePages: 3-arg NodeShiftTree.LongestPrefix"
+   },
+   {
+    "path": "hugofs/rootmapping_fs.go",
+    "line": 423,
+    "counts": false,
+    "reason": "fs.rootMapToReal is *radix.Tree"
+   },
+   {
+    "path": "hugofs/rootmapping_fs.go",
+    "line": 450,
+    "counts": false,
+    "reason": "fs.realMapToRoot is *radix.Tree"
+   },
+   {
+    "path": "helpers/path.go",
+    "line": 131,
+    "counts": false,
+    "reason": "tree := radix.New (external)"
+   }
+  ]
+ }
+]

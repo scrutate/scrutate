@@ -1,0 +1,3506 @@
+[
+ {
+  "id": "W5/refs GraphMatcher.isomorphisms_iter",
+  "grep_hits": 17,
+  "uses": [
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 24,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 27,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 898,
+    "counts": false,
+    "reason": "self is ISMAGS in ISMAGS.is_isomorphic"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 936,
+    "counts": false,
+    "reason": "ISMAGS.isomorphisms_iter definition, other class"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorphvf2.py",
+    "line": 295,
+    "counts": true,
+    "reason": "self in GraphMatcher.is_isomorphic; no subclass overrides isomorphisms_iter"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorphvf2.py",
+    "line": 300,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 49,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 57,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 62,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 72,
+    "counts": false,
+    "reason": "receiver is iso.ISMAGS(...)"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 107,
+    "counts": true,
+    "reason": "gm is GraphMatcher or DiGraphMatcher; neither subclass overrides, both resolve to D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 526,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 67,
+    "counts": true,
+    "reason": "gm is a GraphMatcher/DiGraphMatcher instance; method inherited from D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 379,
+    "counts": true,
+    "reason": "gm is a GraphMatcher/DiGraphMatcher instance; method inherited from D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 385,
+    "counts": true,
+    "reason": "gm is a GraphMatcher/DiGraphMatcher instance; method inherited from D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 403,
+    "counts": true,
+    "reason": "gm is a GraphMatcher/DiGraphMatcher instance; method inherited from D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 418,
+    "counts": true,
+    "reason": "gm is a GraphMatcher/DiGraphMatcher instance; method inherited from D"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers ISMAGS.is_isomorphic",
+  "grep_hits": 298,
+  "uses": [
+   {
+    "path": "examples/algorithms/plot_subgraphs.py",
+    "line": 156,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/__init__.py",
+    "line": 122,
+    "counts": false,
+    "reason": "import of the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_generators.py",
+    "line": 27,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_generators.py",
+    "line": 31,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_generators.py",
+    "line": 33,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_generators.py",
+    "line": 36,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_generators.py",
+    "line": 39,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_generators.py",
+    "line": 42,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_matrix.py",
+    "line": 69,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 42,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 105,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/ismags.py",
+    "line": 886,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 14,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 147,
+    "counts": false,
+    "reason": "another is_isomorphic definition (vf2 GraphMatcher, isomorph.py function or test-local helper)"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 195,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 197,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 209,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 219,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 228,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorph.py",
+    "line": 253,
+    "counts": false,
+    "reason": "gm is GraphMatcher/DiGraphMatcher (vf2)"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorphvf2.py",
+    "line": 9,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorphvf2.py",
+    "line": 41,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorphvf2.py",
+    "line": 56,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/isomorphvf2.py",
+    "line": 292,
+    "counts": false,
+    "reason": "another is_isomorphic definition (vf2 GraphMatcher, isomorph.py function or test-local helper)"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 48,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 56,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 68,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 100,
+    "counts": false,
+    "reason": "gm is iso.GraphMatcher or iso.DiGraphMatcher (vf2)"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_common.py",
+    "line": 526,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 198,
+    "counts": true,
+    "reason": "receiver assigned from iso.ISMAGS(...) in the same function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 199,
+    "counts": true,
+    "reason": "receiver assigned from iso.ISMAGS(...) in the same function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 374,
+    "counts": true,
+    "reason": "receiver assigned from iso.ISMAGS(...) in the same function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 381,
+    "counts": true,
+    "reason": "receiver assigned from iso.ISMAGS(...) in the same function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 382,
+    "counts": true,
+    "reason": "receiver assigned from iso.ISMAGS(...) in the same function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 398,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 478,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 479,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 480,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 497,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 498,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 499,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 500,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 501,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 502,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 681,
+    "counts": false,
+    "reason": "another is_isomorphic definition (vf2 GraphMatcher, isomorph.py function or test-local helper)"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 682,
+    "counts": true,
+    "reason": "called on the iso.ISMAGS(...) constructor result"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 792,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 798,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 799,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 800,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 801,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 805,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 813,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 816,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 829,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 832,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 839,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 847,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 862,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 893,
+    "counts": false,
+    "reason": "call to the module-level test helper is_isomorphic at line 681"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 908,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 910,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 912,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "line": 916,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 22,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 82,
+    "counts": false,
+    "reason": "iso.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 83,
+    "counts": false,
+    "reason": "iso.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 84,
+    "counts": false,
+    "reason": "iso.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 85,
+    "counts": false,
+    "reason": "iso.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 89,
+    "counts": false,
+    "reason": "iso.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 61,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 78,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 88,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 138,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 147,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 159,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 189,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 242,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 305,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 398,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 416,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 437,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 458,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 465,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 524,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 23,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 54,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 64,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 66,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 68,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 72,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 92,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 95,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 99,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 102,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 106,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 109,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 115,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 123,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 167,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 171,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 175,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 179,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 183,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_vf2userfunc.py",
+    "line": 188,
+    "counts": false,
+    "reason": "receiver is a vf2 GraphMatcher/DiGraphMatcher"
+   },
+   {
+    "path": "networkx/algorithms/minors/contraction.py",
+    "line": 209,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/minors/contraction.py",
+    "line": 243,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/minors/contraction.py",
+    "line": 256,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/minors/contraction.py",
+    "line": 258,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/minors/contraction.py",
+    "line": 494,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/minors/contraction.py",
+    "line": 720,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 26,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 45,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 65,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 110,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 305,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 338,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 428,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/minors/tests/test_contraction.py",
+    "line": 498,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/product.py",
+    "line": 395,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/operators/product.py",
+    "line": 399,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 21,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 24,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 26,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 28,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 30,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 32,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 34,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 36,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 38,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 40,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 42,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 77,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 81,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 85,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 139,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 142,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 144,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 146,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 148,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 150,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 152,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 154,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 156,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 158,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 160,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 187,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 191,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 223,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 226,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 228,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 230,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 232,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 234,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 236,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 238,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 240,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 242,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 244,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 299,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 302,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 304,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 306,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 308,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 310,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 312,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 314,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 316,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 318,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_product.py",
+    "line": 320,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_unary.py",
+    "line": 20,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_unary.py",
+    "line": 22,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_unary.py",
+    "line": 25,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_unary.py",
+    "line": 27,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/operators/tests/test_unary.py",
+    "line": 30,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/similarity.py",
+    "line": 175,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/summarization.py",
+    "line": 163,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_clique.py",
+    "line": 168,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_dag.py",
+    "line": 758,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_dag.py",
+    "line": 771,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_dag.py",
+    "line": 807,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_dag.py",
+    "line": 818,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_euler.py",
+    "line": 283,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_planarity.py",
+    "line": 402,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_planarity.py",
+    "line": 405,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_summarization.py",
+    "line": 229,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_summarization.py",
+    "line": 250,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_summarization.py",
+    "line": 277,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_triads.py",
+    "line": 60,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_triads.py",
+    "line": 132,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/operations.py",
+    "line": 67,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_coding.py",
+    "line": 107,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_decomposition.py",
+    "line": 20,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_decomposition.py",
+    "line": 31,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_decomposition.py",
+    "line": 48,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_decomposition.py",
+    "line": 59,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_decomposition.py",
+    "line": 79,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_operations.py",
+    "line": 37,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_operations.py",
+    "line": 41,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 431,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 439,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 441,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 449,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 458,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 461,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 464,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 467,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 469,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/test_digraph_historical.py",
+    "line": 96,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/test_multigraph.py",
+    "line": 223,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/classes/tests/test_multigraph.py",
+    "line": 226,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/classic.py",
+    "line": 117,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/generators/nonisomorphic_trees.py",
+    "line": 54,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 110,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/generators/tests/test_community.py",
+    "line": 103,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_community.py",
+    "line": 115,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_community.py",
+    "line": 119,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_degree_seq.py",
+    "line": 45,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_degree_seq.py",
+    "line": 94,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_degree_seq.py",
+    "line": 102,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_directed.py",
+    "line": 76,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_directed.py",
+    "line": 77,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_directed.py",
+    "line": 78,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_directed.py",
+    "line": 79,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_ego.py",
+    "line": 14,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_ego.py",
+    "line": 19,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_geometric.py",
+    "line": 242,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_geometric.py",
+    "line": 246,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_geometric.py",
+    "line": 250,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_harary_graph.py",
+    "line": 6,
+    "counts": false,
+    "reason": "import of the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_harary_graph.py",
+    "line": 22,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_harary_graph.py",
+    "line": 42,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_harary_graph.py",
+    "line": 92,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_harary_graph.py",
+    "line": 99,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_harary_graph.py",
+    "line": 108,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_lattice.py",
+    "line": 99,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_lattice.py",
+    "line": 101,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_lattice.py",
+    "line": 132,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_lattice.py",
+    "line": 140,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_lattice.py",
+    "line": 235,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 12,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 17,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 22,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 128,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 138,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 144,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 150,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 159,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 164,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 169,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 175,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 249,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 255,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 261,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 267,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 273,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 279,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 285,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_line.py",
+    "line": 291,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_mycielski.py",
+    "line": 12,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_mycielski.py",
+    "line": 22,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_mycielski.py",
+    "line": 24,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_mycielski.py",
+    "line": 26,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_mycielski.py",
+    "line": 28,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_nonisomorphic_trees.py",
+    "line": 56,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_nonisomorphic_trees.py",
+    "line": 60,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_small.py",
+    "line": 57,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_small.py",
+    "line": 71,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_small.py",
+    "line": 132,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_small.py",
+    "line": 153,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_spectral_graph_forge.py",
+    "line": 7,
+    "counts": false,
+    "reason": "import of the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_spectral_graph_forge.py",
+    "line": 25,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_spectral_graph_forge.py",
+    "line": 30,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_spectral_graph_forge.py",
+    "line": 35,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_spectral_graph_forge.py",
+    "line": 43,
+    "counts": false,
+    "reason": "call to the imported isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_stochastic.py",
+    "line": 16,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_time_series.py",
+    "line": 32,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_time_series.py",
+    "line": 43,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/generators/tests/test_time_series.py",
+    "line": 54,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_cytoscape.py",
+    "line": 13,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_cytoscape.py",
+    "line": 55,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_cytoscape.py",
+    "line": 71,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_node_link.py",
+    "line": 18,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_node_link.py",
+    "line": 49,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_node_link.py",
+    "line": 88,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_node_link.py",
+    "line": 106,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/readwrite/json_graph/tests/test_tree.py",
+    "line": 16,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 36,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 39,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 42,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 46,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 50,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 54,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 58,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 62,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_convert_scipy.py",
+    "line": 96,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_relabel.py",
+    "line": 192,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   },
+   {
+    "path": "networkx/tests/test_relabel.py",
+    "line": 195,
+    "counts": false,
+    "reason": "nx.is_isomorphic, the isomorph.py function"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs degree_centrality",
+  "grep_hits": 29,
+  "uses": [
+   {
+    "path": "examples/algorithms/plot_krackhardt_centrality.py",
+    "line": 20,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/centrality.py",
+    "line": 3,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/centrality.py",
+    "line": 7,
+    "counts": false,
+    "reason": "bipartite.degree_centrality definition, other module"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/centrality.py",
+    "line": 30,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/centrality.py",
+    "line": 141,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/centrality.py",
+    "line": 220,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_centrality.py",
+    "line": 19,
+    "counts": false,
+    "reason": "bipartite.degree_centrality, not re-exported into nx"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_centrality.py",
+    "line": 22,
+    "counts": false,
+    "reason": "bipartite.degree_centrality, not re-exported into nx"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_centrality.py",
+    "line": 25,
+    "counts": false,
+    "reason": "bipartite.degree_centrality, not re-exported into nx"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_centrality.py",
+    "line": 76,
+    "counts": false,
+    "reason": "bipartite.degree_centrality, not re-exported into nx"
+   },
+   {
+    "path": "networkx/algorithms/centrality/closeness.py",
+    "line": 87,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/closeness.py",
+    "line": 240,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/degree_alg.py",
+    "line": 6,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/degree_alg.py",
+    "line": 10,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/algorithms/centrality/degree_alg.py",
+    "line": 30,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/degree_alg.py",
+    "line": 38,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/degree_alg.py",
+    "line": 98,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/degree_alg.py",
+    "line": 148,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/group.py",
+    "line": 715,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/group.py",
+    "line": 770,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/group.py",
+    "line": 817,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/harmonic.py",
+    "line": 54,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    "line": 51,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    "line": 57,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    "line": 63,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    "line": 80,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    "line": 137,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    "line": 142,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_group.py",
+    "line": 375,
+    "counts": true,
+    "reason": "nx.degree_centrality re-exported via centrality/__init__ star import"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers min_edge_cover",
+  "grep_hits": 22,
+  "uses": [
+   {
+    "path": "networkx/algorithms/bipartite/covering.py",
+    "line": 5,
+    "counts": false,
+    "reason": "import alias line, not a call"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/covering.py",
+    "line": 8,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/covering.py",
+    "line": 14,
+    "counts": false,
+    "reason": "bipartite.min_edge_cover definition, other module"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_covering.py",
+    "line": 6,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_covering.py",
+    "line": 10,
+    "counts": false,
+    "reason": "bipartite.min_edge_cover, other function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_covering.py",
+    "line": 15,
+    "counts": false,
+    "reason": "bipartite.min_edge_cover, other function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_covering.py",
+    "line": 22,
+    "counts": false,
+    "reason": "bipartite.min_edge_cover, other function"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_covering.py",
+    "line": 31,
+    "counts": false,
+    "reason": "bipartite.min_edge_cover, other function"
+   },
+   {
+    "path": "networkx/algorithms/covering.py",
+    "line": 9,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/covering.py",
+    "line": 15,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/algorithms/covering.py",
+    "line": 56,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 7,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 11,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 16,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 25,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 29,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 33,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 44,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 50,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 56,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_covering.py",
+    "line": 62,
+    "counts": true,
+    "reason": "nx.min_edge_cover re-exported via algorithms/__init__ star import"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/covering.py",
+    "line": 57,
+    "counts": true,
+    "reason": "alias _min_edge_cover imported from networkx.algorithms.covering, called in bipartite.min_edge_cover"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs approximate_current_flow_betweenness_centrality",
+  "grep_hits": 25,
+  "uses": [
+   {
+    "path": "networkx/algorithms/centrality/current_flow_betweenness.py",
+    "line": 18,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/current_flow_betweenness.py",
+    "line": 26,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/algorithms/centrality/current_flow_betweenness.py",
+    "line": 214,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/current_flow_betweenness_subset.py",
+    "line": 64,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 4,
+    "counts": true,
+    "reason": "imports D from nx re-export under alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 140,
+    "counts": true,
+    "reason": "nx re-export of D (call or passed as value)"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 252,
+    "counts": true,
+    "reason": "nx re-export of D (call or passed as value)"
+   },
+   {
+    "path": "networkx/tests/test_all_random_functions.py",
+    "line": 93,
+    "counts": true,
+    "reason": "nx re-export of D (call or passed as value)"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 86,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 95,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 105,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 114,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 120,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 130,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 144,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 145,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 158,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 164,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 166,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 175,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 180,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 185,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 186,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 195,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    "line": 202,
+    "counts": true,
+    "reason": "call through the import alias approximate_cfbc"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs _raise_on_directed",
+  "grep_hits": 14,
+  "uses": [
+   {
+    "path": "networkx/generators/small.py",
+    "line": 45,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 147,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 181,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 226,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 304,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 493,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 524,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 554,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 601,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 681,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 744,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 875,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 959,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   },
+   {
+    "path": "networkx/generators/small.py",
+    "line": 1048,
+    "counts": true,
+    "reason": "used as a decorator on a small-graph generator"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs graphviz_layout",
+  "grep_hits": 22,
+  "uses": [
+   {
+    "path": "doc/conf.py",
+    "line": 38,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "examples/algorithms/plot_lca.py",
+    "line": 39,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/drawing/plot_spring_layout.py",
+    "line": 27,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "examples/drawing/plot_spring_layout.py",
+    "line": 67,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_atlas.py",
+    "line": 45,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_circular_tree.py",
+    "line": 13,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_decomposition.py",
+    "line": 25,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_decomposition.py",
+    "line": 38,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_giant_component.py",
+    "line": 37,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_lanl_routes.py",
+    "line": 10,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "examples/graphviz_layout/plot_lanl_routes.py",
+    "line": 53,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   },
+   {
+    "path": "networkx/drawing/nx_agraph.py",
+    "line": 30,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_agraph.py",
+    "line": 234,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/drawing/nx_agraph.py",
+    "line": 255,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_agraph.py",
+    "line": 256,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_agraph.py",
+    "line": 290,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_agraph.py",
+    "line": 291,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_pydot.py",
+    "line": 31,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_pydot.py",
+    "line": 250,
+    "counts": false,
+    "reason": "nx_pydot.graphviz_layout definition, other module"
+   },
+   {
+    "path": "networkx/drawing/nx_pydot.py",
+    "line": 273,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/nx_pydot.py",
+    "line": 274,
+    "counts": false,
+    "reason": "docstring, doctest or comment text, not code"
+   },
+   {
+    "path": "networkx/drawing/tests/test_agraph.py",
+    "line": 192,
+    "counts": true,
+    "reason": "nx.nx_agraph module attribute, the nx_agraph function"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs _bidirectional_shortest_path",
+  "grep_hits": 18,
+  "uses": [
+   {
+    "path": "networkx/algorithms/approximation/connectivity.py",
+    "line": 102,
+    "counts": false,
+    "reason": "calls the module-local approximation/connectivity.py function"
+   },
+   {
+    "path": "networkx/algorithms/approximation/connectivity.py",
+    "line": 297,
+    "counts": false,
+    "reason": "same-named private function in approximation/connectivity.py"
+   },
+   {
+    "path": "networkx/algorithms/simple_paths.py",
+    "line": 522,
+    "counts": true,
+    "reason": "module-local D assigned as a value"
+   },
+   {
+    "path": "networkx/algorithms/simple_paths.py",
+    "line": 595,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 9,
+    "counts": true,
+    "reason": "imported from networkx.algorithms.simple_paths"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 649,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 651,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 657,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 659,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 661,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 663,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 671,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 675,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 681,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 687,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 701,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 704,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_simple_paths.py",
+    "line": 711,
+    "counts": true,
+    "reason": "the name imported from simple_paths (called or passed to pytest.raises)"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs DiGraph.has_successor",
+  "grep_hits": 5,
+  "uses": [
+   {
+    "path": "networkx/classes/digraph.py",
+    "line": 897,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/classes/tests/test_digraph.py",
+    "line": 14,
+    "counts": true,
+    "reason": "G is a DiGraph-family test graph; only definition of has_successor"
+   },
+   {
+    "path": "networkx/classes/tests/test_digraph.py",
+    "line": 15,
+    "counts": true,
+    "reason": "G is a DiGraph-family test graph; only definition of has_successor"
+   },
+   {
+    "path": "networkx/classes/tests/test_multidigraph.py",
+    "line": 171,
+    "counts": true,
+    "reason": "G is a MultiDiGraph; has_successor inherited from DiGraph"
+   },
+   {
+    "path": "networkx/classes/tests/test_multidigraph.py",
+    "line": 172,
+    "counts": true,
+    "reason": "G is a MultiDiGraph; has_successor inherited from DiGraph"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers HistoricalTests.setup_class",
+  "grep_hits": 124,
+  "uses": [
+   {
+    "path": "networkx/algorithms/approximation/tests/test_connectivity.py",
+    "line": 135,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/approximation/tests/test_kcomponents.py",
+    "line": 274,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/approximation/tests/test_steinertree.py",
+    "line": 19,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/approximation/tests/test_traveling_salesman.py",
+    "line": 47,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/approximation/tests/test_treewidth.py",
+    "line": 47,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/approximation/tests/test_treewidth.py",
+    "line": 177,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/assortativity/tests/base_test.py",
+    "line": 6,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/assortativity/tests/base_test.py",
+    "line": 64,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_centrality.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_edgelist.py",
+    "line": 16,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_link_analysis.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_matching.py",
+    "line": 217,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/bipartite/tests/test_project.py",
+    "line": 161,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_eigenvector_centrality.py",
+    "line": 56,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_harmonic_centrality.py",
+    "line": 13,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_katz_centrality.py",
+    "line": 116,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_katz_centrality.py",
+    "line": 245,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_katz_centrality.py",
+    "line": 311,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_katz_centrality.py",
+    "line": 315,
+    "counts": false,
+    "reason": "super() resolves to TestKatzCentralityDirected.setup_class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_katz_centrality.py",
+    "line": 334,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/centrality/tests/test_load_centrality.py",
+    "line": 8,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/components/tests/test_attracting.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/components/tests/test_connected.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/components/tests/test_strongly_connected.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/components/tests/test_weakly_connected.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/connectivity/tests/test_connectivity.py",
+    "line": 353,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphism.py",
+    "line": 54,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    "line": 170,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/link_analysis/tests/test_hits.py",
+    "line": 22,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/link_analysis/tests/test_pagerank.py",
+    "line": 23,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/shortest_paths/tests/test_astar.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/shortest_paths/tests/test_dense.py",
+    "line": 16,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/shortest_paths/tests/test_generic.py",
+    "line": 23,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/shortest_paths/tests/test_generic.py",
+    "line": 499,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/shortest_paths/tests/test_unweighted.py",
+    "line": 23,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_bridges.py",
+    "line": 115,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_chordal.py",
+    "line": 39,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cluster.py",
+    "line": 240,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cluster.py",
+    "line": 313,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cluster.py",
+    "line": 400,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cluster.py",
+    "line": 598,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cluster.py",
+    "line": 633,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_core.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cycles.py",
+    "line": 28,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cycles.py",
+    "line": 727,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_cycles.py",
+    "line": 869,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_dag.py",
+    "line": 139,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_distance_measures.py",
+    "line": 405,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_distance_measures.py",
+    "line": 510,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_distance_measures.py",
+    "line": 686,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_graphical.py",
+    "line": 43,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 21,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 66,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 108,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 155,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 213,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 254,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 369,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_link_prediction.py",
+    "line": 484,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_lowest_common_ancestors.py",
+    "line": 20,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_lowest_common_ancestors.py",
+    "line": 149,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_lowest_common_ancestors.py",
+    "line": 184,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_lowest_common_ancestors.py",
+    "line": 360,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tests/test_similarity.py",
+    "line": 73,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/traversal/tests/test_bfs.py",
+    "line": 10,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/traversal/tests/test_bfs.py",
+    "line": 137,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/traversal/tests/test_dfs.py",
+    "line": 6,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/traversal/tests/test_dfs.py",
+    "line": 170,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/traversal/tests/test_edgebfs.py",
+    "line": 9,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/traversal/tests/test_edgedfs.py",
+    "line": 20,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_mst.py",
+    "line": 823,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/algorithms/tree/tests/test_recognition.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/historical_tests.py",
+    "line": 12,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "networkx/classes/tests/test_digraph_historical.py",
+    "line": 12,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_digraph_historical.py",
+    "line": 13,
+    "counts": true,
+    "reason": "explicit HistoricalTests.setup_class() from a subclass override"
+   },
+   {
+    "path": "networkx/classes/tests/test_function.py",
+    "line": 439,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_graph_historical.py",
+    "line": 10,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_graph_historical.py",
+    "line": 11,
+    "counts": true,
+    "reason": "explicit HistoricalTests.setup_class() from a subclass override"
+   },
+   {
+    "path": "networkx/classes/tests/test_graphviews.py",
+    "line": 176,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 14,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 77,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 202,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 247,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 258,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 270,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 391,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 437,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 466,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 498,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 530,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 560,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 709,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 736,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 763,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 948,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 981,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_reportviews.py",
+    "line": 1018,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_subgraphviews.py",
+    "line": 14,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_subgraphviews.py",
+    "line": 142,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_subgraphviews.py",
+    "line": 214,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/classes/tests/test_subgraphviews.py",
+    "line": 275,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/drawing/tests/test_layout.py",
+    "line": 13,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/generators/tests/test_atlas.py",
+    "line": 32,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/generators/tests/test_internet_as_graphs.py",
+    "line": 14,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/linalg/tests/test_bethehessian.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/linalg/tests/test_graphmatrix.py",
+    "line": 70,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/linalg/tests/test_laplacian.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/linalg/tests/test_laplacian.py",
+    "line": 188,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/linalg/tests/test_modularity.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/linalg/tests/test_spectrum.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_adjlist.py",
+    "line": 107,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_adjlist.py",
+    "line": 231,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_edgelist.py",
+    "line": 177,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_gexf.py",
+    "line": 84,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_gml.py",
+    "line": 16,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_graphml.py",
+    "line": 12,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_graphml.py",
+    "line": 1097,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_graphml.py",
+    "line": 1098,
+    "counts": false,
+    "reason": "BaseGraphML.setup_class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_graphml.py",
+    "line": 1470,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_graphml.py",
+    "line": 1471,
+    "counts": false,
+    "reason": "TestWriteGraphML.setup_class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_p2g.py",
+    "line": 43,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/readwrite/tests/test_pajek.py",
+    "line": 11,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/utils/tests/test_decorators.py",
+    "line": 209,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   },
+   {
+    "path": "networkx/utils/tests/test_misc.py",
+    "line": 80,
+    "counts": false,
+    "reason": "setup_class of another test class"
+   }
+  ]
+ }
+]

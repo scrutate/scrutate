@@ -223,3 +223,22 @@ def test_the_committed_w3_queries_are_indexed_queries():
     with open(path) as f:
         assert json.load(f) == Y.w3_queries()
     assert len(Y.w3_queries()) == 20 and Y.w3_queries()[0]["id"] == "W3/00-literal"
+
+
+def test_a_caller_the_resolver_could_not_decide_is_no_answer():
+    from rivals import scrutate
+    result = [{"path": "a.py", "name": "make"}, {"path": "a.py", "name": "go", "undecided": True}]
+    assert scrutate.hits(result) == {("a.py", "make")}
+
+
+def test_the_w5_query_files_are_callers_and_refs_queries_with_evidence():
+    import json
+    d = os.path.join(os.path.dirname(__file__), "..", "..", "bench", "yardstick_queries")
+    for corpus in ("ripgrep", "networkx", "hugo"):
+        with open(os.path.join(d, f"w45-{corpus}.json")) as f:
+            qs = json.load(f)
+        with open(os.path.join(d, f"evidence-{corpus}.json")) as f:
+            evidence = {e["id"] for e in json.load(f)}
+        w5 = [q for q in qs if q["workload"] == "W5"]
+        assert w5 and all(q["kind"] in ("refs", "callers") and q["expect"] for q in w5), corpus
+        assert {q["id"] for q in w5} <= evidence, corpus

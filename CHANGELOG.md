@@ -1307,6 +1307,13 @@ incompatible index by itself, and that is never breaking.
   in `a/use.go`, or `a.Exported()` from another package, tied to a namesake in `a/a_test.go`, the
   first file of the directory by name, so `refs`, `callers`, `impact` and `dead` missed the real
   callers ([CLI](docs/CLI.md#refs)).
+- `callers --json` and the MCP `callers` result mark each caller the resolver could not decide
+  `"undecided": true`, as `impact` does; the JSON dropped the count the text form prints, so a
+  reader took guesses for answers. In Rust, `self.name` read as a field is no use of a method
+  `name` (Rust names a method only to call it), and `(*self).m()` in an impl for a reference,
+  `Box`, `Rc` or `Arc` stays undecided: both were tied to the method of the enclosing impl
+  (ripgrep's `WalkBuilder.follow_links`, `Matcher.shortest_match_at`, `Sink.binary_data`)
+  ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 

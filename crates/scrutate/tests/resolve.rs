@@ -507,6 +507,53 @@ fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
 }
 
 #[test]
+fn callers_json_marks_the_callers_the_resolver_could_not_decide() {
+    let r = Repo::new(
+        "callers_undecided",
+        &[(
+            "m.py",
+            "class A:\n    def run(self):\n        return 1\n\n\nclass B:\n    def run(self):\n        return 2\n\n\ndef go(x):\n    return x.run()\n\n\ndef make():\n    return A().run()\n",
+        )],
+    );
+    let v = r.json(&["callers", "A.run", "--json"]);
+    let flags: Vec<(&str, bool)> = v.as_array().unwrap().iter().map(|h| (h["name"].as_str().unwrap(), h["undecided"] == true)).collect();
+    assert_eq!(flags, [("make", false), ("go", true)], "{v}");
+}
+
+#[test]
+fn rust_a_field_read_is_no_use_of_a_method_of_that_name() {
+    let r = Repo::new(
+        "rs_field_not_method",
+        &[
+            ("Cargo.toml", "[package]\nname = \"fm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            (
+                "src/lib.rs",
+                "pub struct B {\n    follow: bool,\n}\nimpl B {\n    pub fn follow(&mut self, yes: bool) -> &mut B {\n        self.follow = yes;\n        self\n    }\n    pub fn get(&self) -> bool {\n        self.follow\n    }\n}\npub fn use_it(b: &mut B) {\n    b.follow(true);\n}\n",
+            ),
+        ],
+    );
+    // `self.follow` is the field (a method is never named without a call in Rust); `b.follow(true)` calls the method
+    assert_eq!(r.refs_of("follow", "src/lib.rs:5"), ["src/lib.rs:14", "src/lib.rs:5"]);
+}
+
+#[test]
+fn rust_a_deref_of_self_in_a_blanket_impl_is_not_the_enclosing_impl() {
+    let r = Repo::new(
+        "rs_deref_self",
+        &[
+            ("Cargo.toml", "[package]\nname = \"ds\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            (
+                "src/lib.rs",
+                "pub trait M {\n    fn find(&self) -> usize;\n}\nimpl<'a, T: M> M for &'a T {\n    fn find(&self) -> usize {\n        (*self).find()\n    }\n}\nimpl<T: M + ?Sized> M for Box<T> {\n    fn find(&self) -> usize {\n        (**self).find()\n    }\n}\npub struct R;\nimpl M for R {\n    fn find(&self) -> usize {\n        1\n    }\n}\n",
+            ),
+        ],
+    );
+    // `(*self)` and `(**self)` reach the wrapped value: never the impl the call is written in
+    assert_eq!(r.refs_of("find", "src/lib.rs:5"), ["src/lib.rs:5"]);
+    assert_eq!(r.refs_of("find", "src/lib.rs:10"), ["src/lib.rs:10"]);
+}
+
+#[test]
 fn c_names_resolve_through_includes_to_the_definition_a_declaration_stands_for() {
     let main = "#include \"util/util.h\"\n#include <stdio.h>\n\nstatic int add_twice(int x) {\n    int add = x;\n    return add + add;\n}\n\nint main(void) {\n    printf(\"%d\", add(1, 2));\n    return add_twice(FAST);\n}\n";
     let r = Repo::new(

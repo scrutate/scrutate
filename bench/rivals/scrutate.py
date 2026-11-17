@@ -41,7 +41,8 @@ def bare(name: str) -> str:
 
 
 def hits(result) -> set:
-    return {(h["path"], bare(h["name"])) for h in result}
+    # a caller the resolver could not decide is a guess, not an answer
+    return {(h["path"], bare(h["name"])) for h in result if not h.get("undecided")}
 
 
 def refs(result) -> set:
