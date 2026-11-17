@@ -519,7 +519,15 @@ number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the ba
 `user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
 `changeme`). `env-secret`
 takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
-`KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`); `password` a quoted value of a name holding `password`, `secret` or
+`KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`), except a
+render or build stage's setting: a `_PASS` name with a render pass's word among its parts
+(`RENDER`, `SHADOW`, `GBUFFER` and their kin) and a value of graphics or setting words alone
+(`shadowmap`, `deferred`, `msaa`, `high`, `enabled` and a few dozen more), each with at most a
+1 to 2 digit version (`RENDER_PASS=shadowmap2`), or with a build stage's word (`LINT`, `BUILD`,
+`COMPILE`, `CODEGEN`, `OPT`) and a value of setting words alone (`strict`, `mode`, `enabled`,
+`debug`, `release` and a few more) and short versions (`LINT_PASS=strict_mode`). Either name may
+be a login's (`RENDER` is a hosting platform, `CI_BUILD_PASS` a CI credential), so a value with
+any other word stays redacted; `password` a quoted value of a name holding `password`, `secret` or
 `token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
 `password`, `passwd`, `pwd`, `secret`, `secretKey`, `token` or `apiKey` (Maven's `<password>`,
 `<ns:accessToken>`), up to a quote or its closing tag, and all of it to a closing tag on its

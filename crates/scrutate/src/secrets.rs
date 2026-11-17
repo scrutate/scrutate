@@ -344,7 +344,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             2,
             3.0,
             &["secret", "pass", "pwd", "token", "key", "credential"],
-            env_value,
+            env_secret_value,
         ),
         // a quoted value of a password, secret or token: it may hold any symbol (`"Xq7r@T2v!W9#yZ"`)
         rule(
@@ -611,6 +611,65 @@ fn placeholder_credentials(whole: &str, secret: &str) -> bool {
 /// A `.env` value that is no placeholder and is not a name or a word alone.
 fn env_value(secret: &str, whole: &str, before: &str) -> bool {
     real_value(secret, whole, before) && !NOT_SECRET_NAMES.is_match(whole) && secret.chars().any(|c| !c.is_ascii_alphabetic())
+}
+
+/// A `.env` secret: `env_value`'s test, and no render or build stage's setting.
+fn env_secret_value(secret: &str, whole: &str, before: &str) -> bool {
+    env_value(secret, whole, before) && !stage_setting(secret, whole)
+}
+
+/// A render or build stage's setting (`RENDER_PASS=shadowmap2`, `LINT_PASS=strict_mode`): a name
+/// ending in `_PASS` with a stage's word among its parts, and a value made of that stage's setting
+/// words alone. Both names can also be a login's (`RENDER` is a hosting platform, `CI_BUILD_PASS`
+/// a CI credential), so a value with any other part keeps its redaction, as does any other name
+/// ending in `PASS` (`DB_PASS`, `TEST_PASS`).
+fn stage_setting(secret: &str, whole: &str) -> bool {
+    const RENDER: &[&str] = &["RENDER", "SHADOW", "SHADER", "LIGHT", "LIGHTING", "DEPTH", "BLUR", "BLOOM", "GBUFFER", "OPAQUE", "TRANSPARENT"];
+    const BUILD: &[&str] = &["LINT", "BUILD", "COMPILE", "CODEGEN", "OPT"];
+    const SETTING_WORDS: &[&str] =
+        &["strict", "mode", "enabled", "disabled", "on", "off", "true", "false", "fast", "full", "debug", "release", "none", "all", "default", "warn", "error"];
+    const RENDER_WORDS: &[&str] = &[
+        "shadow",
+        "shadowmap",
+        "deferred",
+        "forward",
+        "prepass",
+        "low",
+        "medium",
+        "high",
+        "ultra",
+        "hdr",
+        "ldr",
+        "msaa",
+        "fxaa",
+        "taa",
+        "ssao",
+        "bloom",
+        "depth",
+        "opaque",
+        "transparent",
+        "gbuffer",
+        "lighting",
+        "cascaded",
+        "linear",
+        "gamma",
+    ];
+    let name = whole.split('=').next().unwrap_or("").trim_start_matches("export").trim();
+    let Some(stem) = name.strip_suffix("_PASS") else { return false };
+    let has = |words: &[&str]| stem.split('_').any(|part| words.contains(&part));
+    let version = |w: &str| {
+        let n = w.strip_prefix('v').unwrap_or(w);
+        (1..=2).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())
+    };
+    if has(BUILD) {
+        return secret.split(['_', '-', '.']).all(|w| SETTING_WORDS.contains(&w) || version(w));
+    }
+    // a render word may carry its version glued on (`shadowmap2`)
+    let render_word = |w: &str| {
+        let word = w.trim_end_matches(|c: char| c.is_ascii_digit());
+        (w.len() - word.len() <= 2) && (RENDER_WORDS.contains(&word) || SETTING_WORDS.contains(&word))
+    };
+    has(RENDER) && secret.split(['_', '-', '.']).all(|w| render_word(w) || version(w))
 }
 
 /// An XML credential: `quoted`'s test, and no variable a deploy fills in.
@@ -2140,6 +2199,53 @@ mod tests {
             let (out, marks) = redact(&line);
             let shown = value.trim_end_matches([';', '"']);
             assert!(!out.contains(shown) && !marks.is_empty(), "{line} -> {out}");
+        }
+    }
+
+    /// A render stage named `..._PASS` with a lower-case word setting is no password, nor is a build
+    /// stage's setting made of setting words; the same values under a credential's name, a weak
+    /// password under a build stage's name, and a generated value under any stage's, still are.
+    #[test]
+    fn a_render_or_build_pass_setting_is_not_redacted() {
+        for line in [
+            "RENDER_PASS=shadowmap2",
+            "SHADOW_PASS=enabled-v2",
+            "export LINT_PASS=strict_mode",
+            "GBUFFER_LIGHT_PASS=deferred_v3",
+            "BUILD_PASS=release-fast",
+            "OPT_PASS=full_debug",
+        ] {
+            assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
+        }
+        let generated = fake(141, ALNUM, 16);
+        // built here: written whole, each would be a secret-shaped line of this file
+        let named = [
+            ("DB_PASS", "shadowmap2"),
+            ("SMTP_PASS", "enabled-v2"),
+            ("MYSQL_ROOT_PASS", "strict_mode"),
+            ("PASS", "shadowmap2"),
+            ("TEST_PASS", "hunter2024x"),
+            ("POSTGRES_PASS", "shadowmap2"),
+            // a weak human password under a build tool's name
+            ("COMPILE_PASS", "bluefalcon7"),
+            ("OPT_PASS", "silvermoon12"),
+            ("LINT_PASS", "quantum-leap9"),
+            ("CI_BUILD_PASS", "thunderbolt5"),
+            ("CODEGEN_PASS", "strict-falcon"),
+            // and under a render pass's name (`RENDER` is also a hosting platform's)
+            ("RENDER_PASS", "bluefalcon7"),
+            ("SHADOW_PASS", "silvermoon12"),
+            ("LIGHT_PASS", "thunderbolt5"),
+            ("RENDER_PASS", "sunshine-v2"),
+        ];
+        for line in named.iter().map(|(n, v)| format!("{n}={v}")).chain([
+            format!("RENDER_PASS={generated}"),
+            format!("BUILD_PASS={}", generated.to_ascii_lowercase()),
+            format!("SHADOW_PASS={}_{}", fake(142, "abcdefghijklmnopqrstuvwxyz", 9), fake(143, "abcdefghijklmnopqrstuvwxyz", 9)),
+        ]) {
+            let value = &line[line.find('=').unwrap() + 1..];
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(value) && !marks.is_empty(), "{line} -> {out}");
         }
     }
 

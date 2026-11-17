@@ -440,6 +440,11 @@ incompatible index by itself, and that is never breaking.
   readable: Octopus `#{db.password}`, token replacement `@@DB_PASSWORD@@`, a bracketed
   `[ClientSecret]` and Razor's `@Model.Password`. Only those closed forms of names alone are
   spared, and only in XML.
+- A render or build stage's setting named `..._PASS` is shown as written (`RENDER_PASS=shadowmap2`,
+  `SHADOW_PASS=enabled-v2`, `LINT_PASS=strict_mode`): the name must hold a render pass's or a
+  build stage's word, and the value be made of that stage's setting words alone, with short
+  versions. `DB_PASS`, `TEST_PASS`, and a weak password or a generated value under a stage's name
+  (`RENDER` is also a hosting platform, `CI_BUILD_PASS` a CI credential) are still redacted.
 - `--deps PACKAGE.NAME` lists the package's own `NAME` before a method of that name, in Go and Python (`assert.Equal` is testify's function, `assert.Assertions.Equal` its method), and a bare Go package name many packages share is refused naming the first three import paths and how many more, where client-go's 59 packages named `fake` made one line of 3,604 bytes.
 - `--deps` finds a Go package in a module's subdirectory, by its import path (`go.uber.org/mock/gomock.NewController`) or by its name (`gomock.NewController`), where both said "no package of go.mod names" and only the module's own names answered: testify's `assert`, `golang.org/x/sync/errgroup` and most Go imports are such packages. Two packages of one name answer the one the repository imports, or are refused naming both import paths.
 - A source file the code index leaves out (over 1 MB, or not text or could not be parsed) is said
