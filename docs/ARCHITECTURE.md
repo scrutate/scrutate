@@ -833,8 +833,8 @@ Definitions and references, callers/callees, outline, imports mapped to files by
 over token 3-grams, nested chunks excluded; `intel::duplicates` reads the keys the index keeps in
 `dupkeys` in one pass and the text only of a definition in a group or in a bucket of 2 to 64, so
 it finds the groups that reading every text finds (`intel::dupes_in`, the tests' oracle), less the
-near pairs that share no bucket of 64 bodies or fewer; the definitions of a bigger bucket are
-listed as not compared),
+near pairs that share no bucket of 64 bodies or fewer; a bigger bucket is reported as not
+compared, with its count of bodies and the first place of each, of which the text names five),
 and **structural search** (`tsquery`: tree-sitter
 query language over all files of a language, parallel, no index needed).
 
@@ -873,9 +873,10 @@ Java field is a definition of the index (kind `field`); a field and a method of 
 apart because the walker's member lookup skips fields and the Java rules ask for a field only
 where a value is read. A step a rule set leaves out is the walker's own. The walker picks a file's
 rule set with one `match` on its language, in a macro, so a language added to the `Lang` enum
-without a rule set does not compile; elsewhere it tests a language only where a shared step meets
-a node one grammar alone has (a Go container type, a TypeScript tuple, Python's `...`, a
-JavaScript class expression, a Python class body, which languages alias an import). The node kind tables near
+without a rule set does not compile; elsewhere it tests a language where a shared step meets a
+node of one or two grammars (a Go container type, Rust's and TypeScript's `array_type`, a
+TypeScript tuple, Python's `...`, a JavaScript class expression, a Python class body, which
+languages alias an import) or where identifier characters differ (`is_ident`). The node kind tables near
 the top of the walker (functions, local binders, patterns) list the kinds of the grammars that use
 the walker's scopes together, C, C++ and C# binders among them; PHP does not read them. A file's language comes from `langs::detect` alone: by its name, and by its text where an
 extension is shared (`.h`, `.m`, `.pp`, `.cls`); the parser, the resolver and `names.rs` all ask
@@ -1121,7 +1122,7 @@ time that look found) and read every other file of the look directly: new, chang
 out by the text index's walk (`stores::grep_files`). The walk runs instead when there is no text index,
 when the pattern's trigrams narrow nothing, when a glob brings files in, when `references` is given
 a type or language filter, when a name is not UTF-8,
-or when the path is a file or a directory the look did not enter. No grep builds a text index. A
+or when the path is a file or a directory the look did not enter. Neither builds a text index. A
 look costs about what a walk costs without the search (on 12,001 small files, 90 ms of CPU for the
 tool against 405 ms for `grep` over the tree).
 
