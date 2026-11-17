@@ -131,7 +131,8 @@ scrutate lsp                                    # language server for editors (V
 
 ## Benchmarks
 
-Every number comes from scripts in `bench/` you can rerun.
+Every measurement below comes from a result file under `bench/results/`, written by scripts in
+`bench/` you can rerun; a comparison whose run left no committed result file is named without figures.
 
 <p align="center">
   <picture>
@@ -152,8 +153,9 @@ search (`tsquery`), not Engine A. Its lead over the next tool:
   to 24%. A 740 MB file: 43 to 58%. Cold cache: 23 to 28%.
 
 Structural search is 6 and 14 times faster than ast-grep with scrutate's capture cache filled (a
-cache hit: it parses no file while ast-grep parses every one). On a first run ast-grep is faster:
-scrutate took 1.41 times its time on the Linux tree on a 4-vCPU Linux x86_64 server
+cache hit: it parses no file while ast-grep parses every one). Parse for parse (`tsquery --no-cache`),
+the one run so far, on a 4-vCPU Linux x86_64 server, had ast-grep ahead on the Linux tree; its result
+file is not committed, so the figures wait for a recorded run
 ([Competitive](docs/COMPETITIVE.md#2-against-ast-grep-structural-search)).
 
 <p align="center">
@@ -179,16 +181,14 @@ leads Zoekt and livegrep on both indexed metrics ranked so far, index size and q
 its timed metrics are measured, not ranked, for the same reason (both rivals rebuild where the
 index updates).
 
-Kept running as servers, livegrep and Zoekt answer faster than that process per query: 12.6 and
-13.2 ms median against 17.9 ms for `scrutate grep --index`, on a 4-CPU Linux box and the 16 Linux-tree
-queries all three answered. In the same run Scrutate's own MCP server answered 4 of the 20, in
-1,260 ms median against 7.6 ms for `scrutate grep --index` on those 4; the other 16 pass the 5,000 lines
-its `grep_code` returns. That run predates the server keeping its look of the tree between calls
+Kept running as servers, livegrep and Zoekt answer faster than that process per query and than
+Scrutate's own MCP server (`grep_code`), in a `bench/yardstick.py` W3 run on a 4-CPU Linux box whose
+result file is not committed, so the figures wait for a recorded run. That run predates the server keeping its look of the tree between calls
 (on macOS while its kqueue is in place, so not on a tree with more files and directories than half
 of the descriptor limit (the hard limit or `kern.maxfilesperproc`, whichever is lower) less 1,024,
 about 29,700 where it is 61,440),
-which took those 4 from 669.6 to 50.8 ms on another machine, and on a Mac 7 queries on a 24,866-file
-part of the same tree from 82.7 to 8.4 ms, numbers not comparable with these ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
+which made those calls faster in `bench/grep_code_pair.py` runs on another machine and on a Mac (a 24,866-file
+part of the same tree), whose result files are not committed either ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
 
 More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md), [docs/dashboard.html](docs/dashboard.html),
 [docs/COMPETITIVE.md](docs/COMPETITIVE.md) and [docs/QUALITY.md](docs/QUALITY.md) (see
@@ -265,7 +265,7 @@ print(repo.search("parse a date string", k=5))
 
 ## Status: 0.1.0
 
-The first release, **not** declared production-ready:
+The version being prepared as the first release (no `v0.1.0` tag or GitHub release yet), **not** declared production-ready:
 [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) says what is and is not verified.
 
 **Platforms.** All six are supported: macOS arm64 and x86_64, Linux aarch64 and x86_64 (static musl
@@ -276,11 +276,11 @@ and free-threaded 3.14, on all six platforms, and the editor integrations
 ([docs/INSTALL.md](docs/INSTALL.md)). CI run 43013926055 (commit `9384c18`) was the first such run
 of the Rust tests.
 
-**Tests.** The last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-11)
-passed 122 Rust tests (unit, per-language snapshot, robustness, property, end-to-end CLI and MCP,
-incremental parsing), the Python and bindings tests, fuzz regressions and a reproducible-build
-check; the ranking pins and quality floor came later, and CI runs both. Engine A agrees with
-ripgrep on 2,000 random corpora and patterns, each run as shipped and again in one forced mode:
+**Tests.** The last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-17)
+passed 1,436 Rust tests (unit, per-language snapshot, robustness, property, end-to-end CLI and MCP,
+incremental parsing), the Python and bindings tests, the ranking quality floor, fuzz regressions and a reproducible-build
+check; CI runs the ranking pins and the floor too. Engine A agrees with
+ripgrep on every random corpus and pattern of its differential test (200 in that run), each run as shipped and again in one forced mode:
 the one-thread walk, the parallel walk, a hand-over between them, or a file over 64 KiB searched
 in pieces.
 

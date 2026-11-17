@@ -28,8 +28,8 @@ release, or, until the first release is published, the newest `main` commit that
 
 ## How is it different from ripgrep?
 
-Engine A is built on ripgrep's `grep-*` and `ignore` crates and agrees with ripgrep on 2,000
-random corpora and patterns. It adds one spelling for every casing of an identifier (`--ident`),
+Engine A is built on ripgrep's `grep-*` and `ignore` crates and agrees with ripgrep on every
+random corpus and pattern of its differential test (200 in the last recorded run, docs/TEST_RESULTS.md). It adds one spelling for every casing of an identifier (`--ident`),
 matches within N edits (`--fuzzy`, `--fuzzy-regex`) and a trigram text index (`grep --index`).
 Engine B has no ripgrep counterpart: it knows where each function is defined, what calls it and
 what each file imports ([Competitive position](COMPETITIVE.md)).
@@ -95,7 +95,7 @@ Yes. The bindings stream Engine A's matches with the GIL released and open the i
 
 ## Is it production-ready?
 
-Not yet declared. 0.1.0 is the first release; [Release readiness](RELEASE_READINESS.md) lists
+Not yet declared. 0.1.0 will be the first release; [Release readiness](RELEASE_READINESS.md) lists
 what is and is not verified.
 
 ## Is it free to use?
