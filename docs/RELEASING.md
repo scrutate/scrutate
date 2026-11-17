@@ -107,7 +107,7 @@ row in that directory's `README.md` and an entry in `HISTORY` in `bench/make_das
 macOS, about 3.5 hours plus the wait for the binary to settle (at most an hour):
 
 ```sh
-cargo build --release -p scrutate --locked && bash bench/run_macos.sh
+bash bench/run_macos.sh   # refuses changes no commit holds, then builds the binary from HEAD
 ```
 
 - Before the build, on Apple silicon: `python3 tools/order_file.py --check` reports the share of
@@ -145,9 +145,10 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   95% claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20
   runs and changed no verdict; a look after one block flipped 5, since one block has no interleaving
   (that replay's output is not committed). R-14.10 in docs/TRACEABILITY.md defines a #1 over at
-  least 20 runs per tool, 30 when a verdict does not hold at the first look, with the run count
-  recorded per row. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
-  needs every block of both binaries.
+  least 30 runs per tool, with the run count recorded per row: LEADERBOARD.md shows a row that
+  stopped at 20 as measured, not ranked, so the stop rule serves CI's gate. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
+  needs every block of both binaries, and the publish scripts (`bench/run_macos.sh`,
+  `bench/competitors/linux_bench.sh`) pass `--no-stop-early`, so a published row takes all 30 runs.
 - Cold runs evict only the corpus files' pages on macOS (`bench/evict.c`, `msync` with
   `MS_INVALIDATE`, no root); Linux drops the whole page cache with `drop_caches`.
 - No `cargo test` or `cargo build` until the chain ends: both can replace the binary.

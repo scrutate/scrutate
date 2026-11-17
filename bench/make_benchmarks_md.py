@@ -96,6 +96,25 @@ def section(d, results):
       f"structural search, {runs * 3} for startup{conc}; warm cache unless noted; median wall time of the whole process "
       "(start to exit); CPU time from each child's `wait4` rusage, peak RSS from one more run under `/usr/bin/time -l` "
       "on macOS or from VmHWM sampled on Linux.")
+    rows = d["text_search"]
+    if any("outliers" in r for r in rows):
+        w("- Timing: `bench/compare_tools.py`'s own loop (`os.wait4`, not hyperfine), one untimed warm-up run per tool "
+          "before the timed runs; a run whose modified z-score from its row's median is above 3.5 is counted as an outlier "
+          "(flagged, never dropped).")
+        per = {}
+        for r in rows:
+            if "outliers" in r:
+                k, n = per.get(r["tool"], (0, 0))
+                per[r["tool"]] = (k + r["outliers"], n + len(r["wall_ms"]))
+        if any(k for k, _ in per.values()):
+            w("- Outlier runs in the text-search rows, per tool: " + "; ".join(f"{LABEL.get(t, t)} {k} of {n}" for t, (k, n) in per.items()) + ".")
+    else:
+        w("- Timing: `bench/compare_tools.py`'s own loop (`os.wait4`, not hyperfine). This run predates its warm-up run and "
+          "outlier count: the answer-checking run before the timed runs was its only untimed run.")
+    stale = (d.get("version_check") or {}).get("stale")
+    if stale:
+        w(f"- Not the latest stable release (`bench/competitors/latest.json`, checked {d['version_check']['checked']}): "
+          + "; ".join(f"{s['tool']} `{s['recorded']}`, latest stable `{s['latest']}`" for s in stale) + ".")
     w("- Tools (absolute paths; shell aliases bypassed):")
     for k, v in env["tools"].items():
         if v.get("version"):
@@ -122,7 +141,6 @@ def section(d, results):
       "`bench/corpora.py` does not build these three, and no checksum pins them.\n")
 
     # ---------------------------------------------------------------- text search tables
-    rows = d["text_search"]
     corpora = list(dict.fromkeys(r["corpus"] for r in rows))
     queries = list(dict.fromkeys(r["query"] for r in rows))
     tools = [t for t in TOOL_ORDER if any(r["tool"] == t and r.get("status") == "ok" for r in rows)]
@@ -280,8 +298,8 @@ def section(d, results):
         w(f"- Not available on this machine, so absent rather than estimated: {', '.join(missing)}.")
     w(f"- {env['cores']} logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; grep, ack and ag search one file at a time.")
     w("- The corpora are Python only: byte-level search cost does not depend on the language, but structural search and indexing figures do.")
-    old = " (its published rows took 30, from a run before that rule)" if "superseded" in os.path.normpath(results).split(os.sep) else ""
-    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (at least 20 runs per tool, 30 unless every verdict holds at the first look" + old + "; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
+    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (30 runs per tool: "
+      "its published runs take every run; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
     return out
 
 

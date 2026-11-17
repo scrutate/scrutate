@@ -420,6 +420,18 @@ incompatible index by itself, and that is never breaking.
   name`, and `missing to` for `call_path`), `missing path or symbol` names what each takes, and
   `path outside repo` says to give a path relative to the root. `batch` reports the same text
   ([CLI](docs/CLI.md#serve-mcp)).
+- The benchmark harness publishes a verdict only on 30 runs per tool. `bench/indexed.py` takes
+  30 query runs and 30 throughput runs by default, and a comparison under 30 (its 5 index builds,
+  or a committed result's 20 query runs) is shown as measured, not ranked, so docs/LEADERBOARD.md
+  and README.md now rank the indexed results on index size and query memory only; an Engine A row
+  whose scrutate or best competitor has fewer than 30 runs reads measured as well. The publish
+  scripts take every run (`--no-stop-early`), and `bench/run_macos.sh` refuses a tree with changes
+  no commit holds and builds the binary from it. `indexed.py` records the corpus's tree checksum,
+  `indexed.py` and `compare_tools.py` make one untimed warm-up run per tool and count outliers,
+  and every harness checks each competitor against the latest stable release pinned in
+  `bench/competitors/latest.json`, warning on an older one. Each LEADERBOARD.md row now gives
+  every tool's 95% interval, scrutate's rank and a link to its raw result file
+  ([Leaderboard](docs/LEADERBOARD.md)).
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are

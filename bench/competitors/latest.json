@@ -1,0 +1,16 @@
+{
+ "checked": "2026-11-17",
+ "note": "The latest stable release of each competitor, as linux_bench.sh installs it; bench/competitors/latest.py compares each run's recorded versions with it. Update both together.",
+ "tools": {
+  "ripgrep": {"latest": "15.2.0", "repo": "BurntSushi/ripgrep"},
+  "ugrep": {"latest": "7.8.5", "repo": "Genivia/ugrep"},
+  "GNU grep": {"latest": "3.12"},
+  "git grep": {"latest": "2.56.1"},
+  "ag": {"latest": "2.2.0", "repo": "ggreer/the_silver_searcher"},
+  "ack": {"latest": "3.10.0"},
+  "ast-grep": {"latest": "0.51.3", "repo": "ast-grep/ast-grep"},
+  "zoekt": {"latest": null},
+  "livegrep": {"latest": null}
+ },
+ "aliases": {"rg": "ripgrep", "grep": "GNU grep", "git": "git grep"}
+}
