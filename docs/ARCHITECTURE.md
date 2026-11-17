@@ -1287,7 +1287,7 @@ model's tables. Ranking is watched by the pinned features above and by the quali
   run. Outside
   `.scrutate/` the program writes the frecency state of `files` and the Grep hook's counter (in
   `scrutate/` of the user state directory: `XDG_STATE_HOME`, `~/.local/state` or `%LOCALAPPDATA%`), the dependency source copies of `--deps` in the
-  user cache (`SCRUTATE_CACHE_DIR`, else `XDG_CACHE_HOME` or the platform's), and the agent
+  user cache (`SCRUTATE_CACHE_DIR`, else `%LOCALAPPDATA%` on Windows, `XDG_CACHE_HOME` or the platform's), and the agent
   configuration files `setup` is asked to write. A
   command line call may use a session a running `serve` offers on a local socket, and never
   starts one.

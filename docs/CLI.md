@@ -937,8 +937,8 @@ past its 20 definitions says to name one by its location, as `--deps` takes no p
 inside the repository, and is an error when it is outside; one that names a drive, a share or a root (a `\`, a `:`, a leading `/`)
 is refused by its text, with nothing looked at. A git or URL source is an error. A package is read once: its files are
 copied to `deps/ECO/NAME@VERSION/src` in the user cache (`SCRUTATE_CACHE_DIR`, else
-`$XDG_CACHE_HOME/scrutate`, `~/Library/Caches/scrutate` on macOS, `%LOCALAPPDATA%\scrutate` on
-Windows, `~/.cache/scrutate` elsewhere; on Unix its `deps` directories are mode 0700, and a cache
+`%LOCALAPPDATA%\scrutate` on Windows, `$XDG_CACHE_HOME/scrutate`, `~/Library/Caches/scrutate` on
+macOS, `~/.cache/scrutate` elsewhere; on Unix its `deps` directories are mode 0700, and a cache
 root that belongs to another user or that others may write to is refused; a temporary directory
 a crash left is removed at the next new copy once it is a day old), into a temporary directory
 renamed into place, and indexed there once, without vectors: later calls read that index as it

@@ -331,16 +331,16 @@ pub fn cache_dir(given: Option<&Path>) -> Result<PathBuf> {
     if let Some(d) = given {
         return Ok(d.to_path_buf());
     }
-    if let Some(d) = env_dir("XDG_CACHE_HOME") {
+    user_cache(cfg!(windows), cfg!(target_os = "macos"), env_dir, home())
+}
+
+fn user_cache(windows: bool, macos: bool, var: impl Fn(&str) -> Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf> {
+    // Not XDG_CACHE_HOME on Windows: MSYS and Git Bash set it, and no ownership check runs there.
+    if let Some(d) = var(if windows { "LOCALAPPDATA" } else { "XDG_CACHE_HOME" }) {
         return Ok(d.join("scrutate"));
     }
-    if cfg!(windows)
-        && let Some(d) = env_dir("LOCALAPPDATA")
-    {
-        return Ok(d.join("scrutate"));
-    }
-    let home = home().ok_or_else(|| anyhow!("no user cache directory: set SCRUTATE_CACHE_DIR"))?;
-    Ok(if cfg!(target_os = "macos") { home.join("Library/Caches/scrutate") } else { home.join(".cache/scrutate") })
+    let home = home.ok_or_else(|| anyhow!("no user cache directory: set SCRUTATE_CACHE_DIR"))?;
+    Ok(if macos { home.join("Library/Caches/scrutate") } else { home.join(".cache/scrutate") })
 }
 
 /// A Python distribution `.venv` holds.
@@ -916,7 +916,8 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
 /// The cache's `deps` directory, made the user's alone: the cache root must belong to the user and
 /// be writable by no one else, or another user could swap a copy for one of their own; a
 /// directory of the cache that is open to others is closed (Unix: mode 0700). On Windows the
-/// cache is under the user's own profile, whose access the system gives that user alone.
+/// cache is under the user's own `%LOCALAPPDATA%` (never `XDG_CACHE_HOME`), whose access the system
+/// gives that user alone; a `SCRUTATE_CACHE_DIR` there is not checked.
 fn deps_dir(given: Option<&Path>) -> Result<PathBuf> {
     let root = cache_dir(given)?;
     let deps = root.join("deps");
@@ -1349,6 +1350,18 @@ pub fn run(s: &mut Searcher, name: &str, read: bool, limit: usize, exact: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_windows_the_dependency_cache_ignores_xdg_cache_home() {
+        let var = |k: &str| match k {
+            "XDG_CACHE_HOME" => Some(PathBuf::from("/msys/cache")),
+            "LOCALAPPDATA" => Some(PathBuf::from("/local")),
+            _ => None,
+        };
+        assert_eq!(user_cache(true, false, var, None).unwrap(), Path::new("/local/scrutate"));
+        assert_eq!(user_cache(false, false, var, None).unwrap(), Path::new("/msys/cache/scrutate"));
+        assert!(user_cache(true, false, |k: &str| var(k).filter(|_| k != "LOCALAPPDATA"), None).is_err());
+    }
 
     #[test]
     fn a_store_path_outside_the_root_is_shown_without_the_verbatim_prefix_and_with_slashes_on_windows() {
