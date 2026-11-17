@@ -1320,6 +1320,10 @@ incompatible index by itself, and that is never breaking.
   gitleaks source does not have ([Security](docs/SECURITY.md)).
 - docs/SECURITY.md and README name the private reporting channel: the repository's Security tab,
   "Report a vulnerability".
+- `review --format gitlab` gives overloads that share a qualified name (Java's `f(int)` and
+  `f(String)`) a fingerprint each: they shared one, and GitLab, which takes fingerprints as
+  unique, showed one of the two issues. A finding no other shares keeps its fingerprint
+  ([CLI](docs/CLI.md)).
 
 ## [0.1.0] - 2026-11-11
 

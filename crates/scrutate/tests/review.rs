@@ -553,3 +553,33 @@ fn a_two_dot_range_is_pointed_at_three_dots() {
         assert!(err.contains(&format!("{head} is a range, not a revision: name one commit")) && !err.contains("three dots"), "{head}: {err}");
     }
 }
+
+#[test]
+fn overloads_get_fingerprints_of_their_own_that_stay_when_their_lines_move() {
+    let t = Tree::new("overloads");
+    t.git(&["init", "-q"]);
+    t.write("src/A.java", "class A {\n    int g() { return 1; }\n}\n");
+    let base_sha = t.commit("base");
+    let overloads = "    void f(int x) { System.out.println(x); }\n\n    void f(String s) { System.out.println(s); }\n\n    void h() { }\n";
+    t.write("src/A.java", &format!("class A {{\n    int g() {{ return 1; }}\n\n{overloads}}}\n"));
+    t.commit("head");
+    let issues = |out: &str| -> Vec<(String, String)> {
+        let v: Value = serde_json::from_str(out).unwrap();
+        let mut found: Vec<(String, String)> =
+            v.as_array().unwrap().iter().map(|i| (i["description"].as_str().unwrap().to_string(), i["fingerprint"].as_str().unwrap().to_string())).collect();
+        found.sort();
+        found
+    };
+    let out = t.review(&["--base", &base_sha, "--format", "gitlab"]);
+    let first = issues(&out);
+    let f: Vec<&String> = first.iter().filter(|(d, _)| d.starts_with("A.f ")).map(|(_, fp)| fp).collect();
+    assert_eq!(f.len(), 2, "{out}");
+    assert_ne!(f[0], f[1], "two overloads, one fingerprint: {out}");
+    // a finding no other shares keeps the fingerprint of its check and identity alone
+    let h = first.iter().find(|(d, _)| d.starts_with("A.h ")).map(|(_, fp)| fp.clone()).unwrap_or_else(|| panic!("{out}"));
+    assert_eq!(h, scrutate::index::content_hash(b"scrutate-untested-change\0src/A.java\0A.h"));
+    // lines above them added: every fingerprint stays
+    t.write("src/A.java", &format!("class A {{\n    int g() {{ return 1; }}\n\n    // moved down\n\n{overloads}}}\n"));
+    t.commit("moved");
+    assert_eq!(issues(&t.review(&["--base", &base_sha, "--format", "gitlab"])), first);
+}

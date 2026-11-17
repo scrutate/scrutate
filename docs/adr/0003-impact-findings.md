@@ -34,6 +34,8 @@ The rules a renderer and a later kind keep:
 
 - Kinds are only added. A kind is never renamed, and its identity rule never changes: GitLab
   matches an issue across pushes by its fingerprint, the hash of the check and the identity.
+  Findings that share both (overloads) add their order by line among themselves, so no two share
+  a fingerprint; a finding no other shares keeps the hash of the check and the identity alone.
 - One severity scale. A renderer for another format maps it; SARIF takes `info` as `note`,
   `minor` and `major` as `warning`, `critical` and `blocker` as `error`.
 - A new kind is one `What` variant with its kind, severity, sentence, identity and related
