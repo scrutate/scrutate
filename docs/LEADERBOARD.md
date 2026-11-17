@@ -1053,7 +1053,7 @@ scrutate --index scrutate grep --index -F -e zqxjkvbw_never_present_symbol
 | latency p95 (vs zoekt) | 0.355 | 0.062 to 0.769 | PASS |
 | latency p99 (vs zoekt) | 0.126 | 0.125 to 0.129 | PASS |
 | full indexing time (vs zoekt) | 0.040 | 0.036 to 0.049 | PASS |
-| incremental update time (vs zoekt) | 0.001 | 0.001 to 0.001 | PASS |
+| incremental update time (vs zoekt) | 0.001 | 0.001 to 0.001 | n/a: every rival's update is a full rebuild |
 | index size (vs zoekt) | 0.104 | (deterministic) | PASS |
 | concurrent throughput (vs zoekt) | 1.197 | 1.176 to 1.205 | PASS |
 | query memory (vs zoekt) | 0.044 | (deterministic) | PASS |
@@ -1083,7 +1083,7 @@ scrutate --index scrutate grep --index -F -e zqxjkvbw_never_present_symbol
 | latency p95 (vs zoekt) | 0.213 | 0.044 to 0.295 | PASS |
 | latency p99 (vs livegrep) | 0.168 | 0.148 to 0.205 | PASS |
 | full indexing time (vs livegrep) | 0.174 | 0.155 to 0.301 | PASS |
-| incremental update time (vs livegrep) | 0.005 | 0.004 to 0.009 | PASS |
+| incremental update time (vs livegrep) | 0.005 | 0.004 to 0.009 | n/a: every rival's update is a full rebuild |
 | index size (vs zoekt) | 0.101 | (deterministic) | PASS |
 | concurrent throughput (vs livegrep) | 3.862 | 3.611 to 4.348 | PASS |
 | query memory (vs zoekt) | 0.046 | (deterministic) | PASS |

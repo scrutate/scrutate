@@ -13,7 +13,11 @@ Every query's answer is first checked against the Python reference of bench/lead
 same files; a tool that answers differently, or exits with a code other than 0 or 1, is
 disqualified for that query. A tool's server is used once its first query answers (within 10 min).
 Only scrutate's own failed queries fail its concurrent throughput row; a rival whose queries failed
-is left out of that comparison and named. Every measurement takes the tools in turn (A B, A B, ...), so load
+is left out of that comparison and named. A query scrutate answered differently fails every latency
+and throughput row (they compare only the queries every tool got right), and the update row is n/a
+when every rival's update is a full rebuild (settle(), which make_leaderboard_md.py applies too).
+The corpus must be the tree its manifest.json pins, and the files the update phase edits are put
+back however the run ends. Every measurement takes the tools in turn (A B, A B, ...), so load
 drift on the machine does not turn into a difference between them; each comparison row says how
 many runs per tool it rests on.
 
@@ -41,6 +45,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import corpora  # noqa: E402
 import leaderboard as lb  # noqa: E402
 
 QUERIES = [
@@ -119,6 +124,33 @@ def tool_defs(a):
     }
 
 
+def check_corpus(corpus):
+    """Stop unless `corpus` is the tree its manifest.json (beside it) pins: an earlier run killed in
+    its update phase, or any other edit, would be measured under the pinned checksum."""
+    root, name = os.path.split(os.path.abspath(corpus))
+    mpath = os.path.join(root, "manifest.json")
+    manifest = json.load(open(mpath)) if os.path.exists(mpath) else {}
+    if corpora.verify(root, manifest, [name]):
+        raise SystemExit(f"{corpus} is not the tree {mpath} pins: fetch it again with bench/corpora.py --root {root} --only {name}")
+
+
+def edit_and_restore(corpus, picked, body):
+    """Give the `picked` files of `corpus` their own inodes, run `body`, and put every file back as it
+    was whatever happens in it."""
+    backup = {f: open(os.path.join(corpus, f), "rb").read() for f in picked}
+    try:
+        for f, data in backup.items():
+            # the corpus is hard-linked to the Linux tree: give the edited files their own inodes
+            p = os.path.join(corpus, f)
+            os.remove(p)
+            open(p, "wb").write(data)
+        return body(backup)
+    finally:
+        for f, data in backup.items():
+            with open(os.path.join(corpus, f), "wb") as fh:
+                fh.write(data)
+
+
 def missing_binaries(defs, names) -> list[str]:
     """Each tool binary `names` need that is not an executable file, with what builds it."""
     return [f"{n}: {b} ({how} builds it)" for n in names for b, how in defs[n]["bins"] if not (os.path.isfile(b) and os.access(b, os.X_OK))]
@@ -174,11 +206,29 @@ def timed(cmd, cwd):
     return wall, rss, os.waitstatus_to_exitcode(status), out
 
 
+GNU_TIME = "/usr/bin/time"
+
+
+def timed_build(cmd, cwd):
+    """Like timed(), but on Linux the peak RSS comes from GNU time (see query_rss), so an index build
+    that needs less memory than this harness is not reported at the harness's size."""
+    if platform.system() != "Linux" or not os.path.exists(GNU_TIME):
+        return timed(cmd, cwd)
+    with tempfile.NamedTemporaryFile(suffix=".rss", delete=False) as f:
+        path = f.name
+    try:
+        w, m, code, out = timed([GNU_TIME, "-f", "%M", "-o", path] + cmd, cwd)
+        kb = open(path).read().split()
+    finally:
+        os.unlink(path)
+    return w, int(kb[-1]) * 1024 if kb and kb[-1].isdigit() else m, code, out
+
+
 def query_rss(cmd, cwd, measured):
     """Peak RSS of one run of `cmd`. On Linux a child's ru_maxrss also counts the forked copy of this
     harness from before exec, so there the figure comes from GNU time, which forks the command from
     a small process; elsewhere `measured` (from wait4) is already the command's own."""
-    gnu_time = "/usr/bin/time"
+    gnu_time = GNU_TIME
     if platform.system() != "Linux" or not os.path.exists(gnu_time):
         return measured
     with tempfile.NamedTemporaryFile(suffix=".rss", delete=False) as f:
@@ -219,6 +269,26 @@ def throughput_verdict(tools, names, runs):
     out = {"best": best, "ratio": r, "ci95": [lo, hi], "runs": runs, "status": status(lo, hi, lower_is_better=False)}
     if left_out:
         out["left_out"] = left_out
+    return out
+
+
+def settle(comparison, tools):
+    """The comparison rows as published, recomputed from the result alone so an earlier file reads
+    the same: when scrutate answered any query differently from the reference, every latency and
+    throughput row is FAIL (they compare only the queries every tool got right, as leaderboard.py
+    fails a row on a wrong answer); when every rival's update is a full rebuild, the incremental
+    update row is n/a (it would compare an update with a rebuild)."""
+    out = {k: dict(v) for k, v in comparison.items()}
+    wrong = tools.get("scrutate", {}).get("latency", {}).get("wrong_queries") or []
+    if wrong:
+        why = f"scrutate answered {len(wrong)} of the queries differently from the reference"
+        for k, v in out.items():
+            if k.startswith("latency ") or k == "concurrent throughput":
+                v.update({"status": "FAIL", "why": why})
+    rivals = [n for n in tools if n != "scrutate"]
+    row = out.get("incremental update time")
+    if row and rivals and all(not tools[n].get("update", {}).get("mode", "").startswith("incremental") for n in rivals):
+        row.update({"status": "n/a", "why": "every rival's update is a full rebuild"})
     return out
 
 
@@ -281,6 +351,7 @@ def main() -> int:
     ap.add_argument("--max-load", type=float, default=(os.cpu_count() or 4) * 0.3)
     ap.add_argument("--livegrep-bin", default=os.path.expanduser("~/.cache/scrutate-bench/livegrep"))
     a = ap.parse_args()
+    check_corpus(a.corpus)
     os.makedirs(a.work, exist_ok=True)
     files = livegrep_config(a.corpus, a.work)
     names = a.tools.split(",")
@@ -296,7 +367,7 @@ def main() -> int:
         for n in names:
             defs[n]["clean"]()
             res["load"].append(lb.wait_idle(a.max_load, 1800))
-            w, m, code, _ = timed(defs[n]["index"], a.corpus)
+            w, m, code, _ = timed_build(defs[n]["index"], a.corpus)
             if code != 0:
                 raise SystemExit(f"{n} index failed ({code})")
             times[n].append(w)
@@ -310,28 +381,26 @@ def main() -> int:
     # ---- incremental update: 100 files edited, then restored
     rng = random.Random(7)
     picked = rng.sample([f for f in files if f.endswith((".c", ".h"))], 100)
-    backup = {f: open(os.path.join(a.corpus, f), "rb").read() for f in picked}
-    for f, data in backup.items():
-        # the corpus is hard-linked to the Linux tree: give the edited files their own inodes
-        p = os.path.join(a.corpus, f)
-        os.remove(p)
-        open(p, "wb").write(data)
     ups = {n: [] for n in names}
-    for i in range(a.index_runs):
-        # each tool sees the same edit on a tree its index last saw restored
-        for n in names:
-            cmd = defs[n]["update"] or defs[n]["index"]
-            for f in picked:
-                with open(os.path.join(a.corpus, f), "ab") as fh:
-                    fh.write(f"\n/* benchmark edit {i} */\n".encode())
-            w, _, code, _ = timed(cmd, a.corpus)
-            if code != 0:
-                raise SystemExit(f"{n} update failed ({code})")
-            ups[n].append(w)
-            for f, data in backup.items():
-                open(os.path.join(a.corpus, f), "wb").write(data)
-            if timed(cmd, a.corpus)[2] != 0:
-                raise SystemExit(f"{n} update after the restore failed")
+
+    def updates(backup):
+        for i in range(a.index_runs):
+            # each tool sees the same edit on a tree its index last saw restored
+            for n in names:
+                cmd = defs[n]["update"] or defs[n]["index"]
+                for f in picked:
+                    with open(os.path.join(a.corpus, f), "ab") as fh:
+                        fh.write(f"\n/* benchmark edit {i} */\n".encode())
+                w, _, code, _ = timed(cmd, a.corpus)
+                if code != 0:
+                    raise SystemExit(f"{n} update failed ({code})")
+                ups[n].append(w)
+                for f, data in backup.items():
+                    open(os.path.join(a.corpus, f), "wb").write(data)
+                if timed(cmd, a.corpus)[2] != 0:
+                    raise SystemExit(f"{n} update after the restore failed")
+
+    edit_and_restore(a.corpus, picked, updates)
     for n in names:
         res["tools"][n]["update"] = {"times": ups[n], "median": statistics.median(ups[n]), "files_changed": len(picked),
                                      "mode": "incremental" if defs[n]["update"] else "full rebuild (no incremental mode for a directory)"}
@@ -468,9 +537,9 @@ def main() -> int:
         best = min(comps, key=lambda n: res["tools"][n]["latency"]["rss_median"])
         r = s["latency"]["rss_median"] / res["tools"][best]["latency"]["rss_median"]
         out["query memory"] = {"best": best, "ratio": r, "status": "PASS" if r < 0.95 else "FAIL" if r > 1.05 else "PARTIAL"}
-        res["comparison"] = out
+        res["comparison"] = settle(out, res["tools"])
         save()
-        for k, v in out.items():
+        for k, v in res["comparison"].items():
             print(f"[indexed] {k}: {v}", file=sys.stderr)
     return 0
 

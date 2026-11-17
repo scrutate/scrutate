@@ -1208,12 +1208,13 @@ def section(md, heading):
 
 
 def pass_counts(lines):
-    """(PASS, all) of a LEADERBOARD.md section: its wall-time status counts, or its comparison rows."""
+    """(PASS, all) of a LEADERBOARD.md section: its wall-time status counts, or its comparison rows
+    (an n/a row, which compares nothing, counted in neither)."""
     for line in lines:
         m = re.match(r"Status counts, wall time: .*?\*\*PASS\*\* (\d+) \(of (\d+)\)", line)
         if m:
             return int(m.group(1)), int(m.group(2))
-    rows = [line for line in lines if re.match(r"^\| .* \(vs .*\) \|", line)]
+    rows = [line for line in lines if re.match(r"^\| .* \(vs .*\) \|", line) and not re.search(r"\| n/a(: [^|]*)? \|$", line.rstrip())]
     return sum(line.rstrip().endswith("| PASS |") for line in rows), len(rows)
 
 

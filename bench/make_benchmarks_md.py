@@ -15,6 +15,10 @@ import statistics
 import sys
 
 from make_leaderboard_md import kind, machine_line, platform_of
+from indexed import boot
+
+# a row counts as faster or slower only past this many runs per tool and with its 95% interval clear of 1
+MIN_RUNS = 30
 
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
@@ -123,8 +127,9 @@ def section(d, results):
     queries = list(dict.fromkeys(r["query"] for r in rows))
     tools = [t for t in TOOL_ORDER if any(r["tool"] == t and r.get("status") == "ok" for r in rows)]
     w("## Engine A: text search (median wall time, ms, warm cache)\n")
-    w("Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express the query; `≠` = the tool returned another "
-      "number of matching lines than ripgrep (than scrutate where ripgrep cannot run the query; not comparable); the last column is the match count.\n")
+    other = ("other matching lines (by path and line number)" if d.get("agreement") == "lines" else "another number of matching lines")
+    w("Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express the query; `≠` = the tool returned " + other + " "
+      "than ripgrep (than scrutate where ripgrep cannot run the query; not comparable); the last column is the match count.\n")
     for c in corpora:
         w(f"### {c}\n")
         w("| Query | " + " | ".join(LABEL[t] for t in tools) + " | matches |")
@@ -154,29 +159,38 @@ def section(d, results):
         w("")
     # summary: wins and geometric mean ratio vs each tool
     w("### Summary across all comparable rows\n")
-    w("| Tool | rows compared with scrutate | scrutate faster | scrutate slower | geometric mean of (tool time / scrutate time) |")
-    w("|---|---|---|---|---|")
+    w(f"A row counts as faster or slower only when both tools ran at least {MIN_RUNS} times and the 95% bootstrap interval of "
+      "median(tool) / median(scrutate) lies wholly above or below 1; any other row is undecided. The geometric mean is of the medians.\n")
+    w("| Tool | rows compared with scrutate | scrutate faster | scrutate slower | undecided (interval contains 1, or under "
+      f"{MIN_RUNS} runs) | geometric mean of (tool time / scrutate time) |")
+    w("|---|---|---|---|---|---|")
     for t in tools:
         if t == "scrutate":
             continue
-        ratios = []
+        ratios, faster, slower = [], 0, 0
         for c in corpora:
             for q in queries:
                 a_ = next((x for x in rows if x["corpus"] == c and x["query"] == q and x["tool"] == "scrutate" and x.get("status") == "ok" and x.get("agrees", True)), None)
                 b_ = next((x for x in rows if x["corpus"] == c and x["query"] == q and x["tool"] == t and x.get("status") == "ok" and x.get("agrees", True)), None)
                 if a_ and b_:
                     ratios.append(b_["wall_median_ms"] / a_["wall_median_ms"])
+                    if min(len(a_.get("wall_ms", [])), len(b_.get("wall_ms", []))) >= MIN_RUNS:
+                        _, lo, hi = boot(b_["wall_ms"], a_["wall_ms"], statistics.median)
+                        faster += lo > 1
+                        slower += hi < 1
         if ratios:
             gm = statistics.geometric_mean(ratios)
-            w(f"| {LABEL[t]} | {len(ratios)} | {sum(1 for r in ratios if r > 1)} | {sum(1 for r in ratios if r < 1)} | {gm:.2f}× |")
+            w(f"| {LABEL[t]} | {len(ratios)} | {faster} | {slower} | {len(ratios) - faster - slower} | {gm:.2f}× |")
     w("")
     # CPU and memory
     w("## CPU time and peak memory (common literal query)\n")
+    w("Only tools that returned the same lines as the reference (no `≠` above) are listed here and under the cold cache.\n")
     w("| Corpus | Tool | CPU s (user+sys, median) | peak RSS MB |")
     w("|---|---|---|---|")
     for c in corpora:
         for t in tools:
-            r = next((x for x in rows if x["corpus"] == c and x["query"] == "common literal" and x["tool"] == t and x.get("status") == "ok"), None)
+            r = next((x for x in rows if x["corpus"] == c and x["query"] == "common literal" and x["tool"] == t and x.get("status") == "ok"
+                      and x.get("agrees", True)), None)
             if r:
                 w(f"| {c} | {LABEL[t]} | {r['cpu_median_s']:.3f} | {r['maxrss_mb']:.1f} |")
     w("")
@@ -190,7 +204,7 @@ def section(d, results):
                 vals = []
                 for t in tools:
                     r = next((x for x in rows if x["corpus"] == c and x["query"] == q and x["tool"] == t and x.get("status") == "ok"), None)
-                    vals.append(fmt_ms(r.get("cold_wall_ms")) if r else "n/a")
+                    vals.append(("≠" if not r.get("agrees", True) else fmt_ms(r.get("cold_wall_ms"))) if r else "n/a")
                 w(f"| {c} | {q} | " + " | ".join(vals) + " |")
         w("")
         w("Cold-cache numbers are single runs, dominated by disk reads every tool shares: reported for completeness, not ranking.\n")

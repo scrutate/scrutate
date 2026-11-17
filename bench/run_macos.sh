@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The macOS runs behind docs/LEADERBOARD.md and docs/BENCHMARKS.md, in order: the Engine A
 # leaderboard with a warm and a cold cache, the tool comparison, the indexed comparison. About
-# 3.5 hours on an M3 Pro after the wait below; leave the machine idle. Build the binary first and
+# 3.5 hours on an M3 Pro after the wait below when the tool comparison took 6 runs; it takes 30 now,
+# so allow more; leave the machine idle. Build the binary first and
 # do not run `cargo test` in between (it replaces target/release/scrutate). macOS starts a
 # just-built executable about 0.2 ms slower than the same file later (identical copies, the same
 # instructions executed), which is 5% of a small-tree search, and every competitor's binary is
@@ -35,7 +36,7 @@ log "warm again exit $?"
 python3 bench/leaderboard.py "${cold[@]}" --redo-unstable >> "$out/leaderboard-cold.log" 2>&1
 log "cold again exit $?"
 python3 bench/compare_tools.py --corpus "small=$corpora/py-small" --corpus "big=$corpora/py-big" --corpus "massive=$corpora/py-massive" \
-  --runs 6 --out "$out/compare.json" > "$out/compare.log" 2>&1
+  --runs 30 --out "$out/compare.json" > "$out/compare.log" 2>&1
 log "compare_tools exit $?"
 python3 bench/indexed.py --corpus "$corpora/linux-nodot" --out "$out/indexed.json" --tools scrutate,zoekt --max-load 40 > "$out/indexed.log" 2>&1
 log "indexed exit $?"

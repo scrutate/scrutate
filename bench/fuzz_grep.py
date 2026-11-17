@@ -202,7 +202,7 @@ def ours(a):
 
 
 def run(tool, a, again=False):
-    cmd = [RG, "-n", "--no-heading", "--no-messages"] + a if tool == "rg" else [BIN, "grep"] + ours(a)
+    cmd = [RG, "--no-config", "-n", "--no-heading", "--no-messages"] + a if tool == "rg" else [BIN, "grep"] + ours(a)
     if tool == "rg" and "--sort" in a:
         cmd.insert(cmd.index("--sort") + 1, "path")
     try:
