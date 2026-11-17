@@ -24,8 +24,10 @@ and `read_code` with `scope: "deps"`, answer from a dependency (`packages.rs`):
   is the package.
 - Its files come from where its locked version is installed, and only there: the cargo registry,
   `node_modules`, `.venv`'s `site-packages` (the files the distribution's `RECORD` lists), the Go
-  module cache. An installed package at another version is an error that names both versions and
-  the command that installs the locked one.
+  module cache. In `node_modules` or `.venv`, a package installed at another version is an error
+  that names both versions and the command that installs the locked one; in the cargo registry or
+  the Go module cache, where versions sit side by side, a missing locked version is an error that
+  names it and the command that fetches it.
 - A path dependency answers from the repository's own index, kept to its directory, when the
   directory is inside the root, and is refused when it is outside.
 - The package is copied once into the user cache, `deps/ECO/NAME@VERSION/src`, and indexed there

@@ -7,8 +7,8 @@ Status: accepted, 2026-11-15.
 A running `scrutate serve` offers its open index to command line calls of the same user on the
 same root (CLI.md, `serve`). On Unix the meeting point is `.scrutate/session.sock`, an `AF_UNIX`
 socket, mode 0600, checked both ways by the peer's uid (`getpeereid`, `SO_PEERCRED`). On Windows
-`session::ask` and `session::listen` are stubs: every command line call does the whole work
-itself, so Windows never gets the resident path, and Windows is where starting a process and
+`session::ask` and `session::listen` were stubs: every command line call did the whole work
+itself, so Windows never got the resident path, and Windows is where starting a process and
 opening the index cost the most.
 
 The brief named two transports: `AF_UNIX` (Windows 10 1803 and later) with a named-pipe fallback.

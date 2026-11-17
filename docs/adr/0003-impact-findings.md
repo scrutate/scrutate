@@ -38,7 +38,8 @@ The rules a renderer and a later kind keep:
   `minor` and `major` as `warning`, `critical` and `blocker` as `error`.
 - A new kind is one `What` variant with its kind, severity, sentence, identity and related
   places. The text, the JSON, the MCP tool and the GitLab report then show it with no edit of
-  their own; `review`'s Markdown has a section per kind and needs one for it.
+  their own; `review`'s Markdown gives duplicates a section and shows an untested change as a
+  count and a mark on the changed definition, so a new kind needs its own place there.
 - The answer's JSON gains keys only: `findings` and `more_findings` were added under schema 2.
 
 ## Consequences

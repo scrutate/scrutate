@@ -4,8 +4,8 @@ Status: accepted, 2026-11-15.
 
 ## Context
 
-Every MCP tool reads: the server writes nothing but its index, and its tools say so to the
-client (`readOnlyHint`). Agents edit code with their own tools, by line ranges or by text they
+Every MCP tool read: the server wrote no source file (only `.scrutate/`, the frecency file and
+the package cache), and its tools said so to the client (`readOnlyHint`). Agents edit code with their own tools, by line ranges or by text they
 search for. Two failures recur. An edit applies to a file that changed after the agent read it,
 and overwrites the change (Serena #1013, a stale buffer). An edit that replaces a body by its
 range leaves the old body in place beside the new one, or cuts a neighbour in half (Serena #576:
@@ -22,7 +22,7 @@ and a call is refused like a call of an unknown tool. The flag is read from the 
 no environment variable or configuration file turns it on, so nothing in a repository can. Only
 an MCP call reaches the edit: the operation is never serialized, so the session socket that
 command line calls use cannot carry one to a running server (one without the flag included), and
-`batch` refuses the tool by name (the Python bindings have no call that edits).
+`batch` answers it as an unknown tool (the Python bindings have no call that edits).
 
 `edit_symbol` replaces one whole definition with `new_text`:
 
@@ -49,8 +49,10 @@ command line calls use cannot carry one to a running server (one without the fla
   may stand only before that node: after it, one would mark the next item (a Rust `#[cfg(any())]`
   compiles it out), so only plain comments and a lone `;` may follow it. A new text that opens with
   comments documents the definition, which may begin that many lines lower: a doc comment in the
-  language's own form (one table in edit.rs) replaces the doc comment right above it, which the
-  index's range leaves out, and any other comment above is kept. A definition declared together with it (`const a = 1, b = 2`,
+  language's own form (one table in edit.rs) replaces the doc comments right above it, which the
+  index's range leaves out, unless that run of comments holds another comment, starts on the
+  file's first line or holds a `#!` line; then every comment above is kept and the new one is
+  added below them. A definition declared together with it (`const a = 1, b = 2`,
   one declaration for both) is refused, as is one whose extent the parse does not give when
   another definition starts or ends on its lines. An edit that fails a check is refused with the
   check that failed.
@@ -73,7 +75,7 @@ command line calls use cannot carry one to a running server (one without the fla
   edit at the next call, as it sees any write to the tree.
 
 `edit_symbol` is the one tool that writes source; it and `reindex` (which rewrites the index, a
-cache) are the tools without `readOnlyHint`. Its hints are `destructiveHint: true` (it
+cache) are the tools whose `readOnlyHint` is false. Its hints are `destructiveHint: true` (it
 replaces text) and `idempotentHint: true` (the same call again is refused: the hash moved).
 
 ## Consequences
