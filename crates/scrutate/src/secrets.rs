@@ -1027,7 +1027,8 @@ fn public_in(texts: &[&str]) -> (LineRanges, LineRanges) {
     let mut body = PublicBody::default();
     let (mut public, mut key) = (vec![Vec::new(); texts.len()], vec![Vec::new(); texts.len()]);
     for (ti, text) in texts.iter().enumerate() {
-        if !body.open && !text.contains("-----") {
+        // a text with no armour can still hold a body's lines, or the key lines that run on after one
+        if !body.open && !body.marking && !text.contains("-----") {
             continue;
         }
         let mut at = 0;
@@ -1745,6 +1746,15 @@ mod tests {
         {
             assert_eq!(body_lines_shown(&lines), [0; 3], "{what}");
         }
+        // over the hold with a short last line, also as `read_code` gives a file: a line to an item,
+        // its number before it
+        let over_short = armoured("PUBLIC KEY", &der_lines(182, 85 * 48 + 10));
+        assert!(over_short[over_short.len() - 2].len() < 40);
+        assert_eq!(body_lines_shown(&over_short), [0; 3], "over the hold, a short last line");
+        let mut numbered: Vec<String> = over_short.iter().enumerate().map(|(i, l)| format!("{:>5}  {l}", i + 1)).collect();
+        Redactor::default().redact_shown(&mut numbered, 0, usize::MAX);
+        let shown: Vec<&String> = numbered.iter().filter(|l| !l.contains("-----") && !l.contains("[redacted:")).collect();
+        assert!(shown.is_empty(), "read_code's lines of a body over the hold shown: {shown:?}");
     }
 
     /// A certificate's shape of `n` bytes or so: a SEQUENCE of a SEQUENCE, a SEQUENCE and a BIT
