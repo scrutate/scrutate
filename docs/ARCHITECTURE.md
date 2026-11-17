@@ -59,8 +59,9 @@ adds:
 - **Traversal**: the `ignore` parallel walker (work stealing, `.gitignore` / `.ignore` / global
   excludes, hidden files off, symlink loop detection, depth and size filters, type globs from the
   language registry), vendored (`vendor/ignore`) with eleven changes listed in its README and
-  published as `scrutate-ignore`, which `crates/scrutate` imports as `ignore`. The first nine are for speed or memory, the last two let it run on wasi. The global git excludes path comes from `~/.gitconfig` through a
-  small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs, doubling
+  published as `scrutate-ignore`, which `crates/scrutate` imports as `ignore`. The first nine are for speed or memory, the last two let it run on wasi. The global git excludes path comes from git's configuration
+  (`GIT_CONFIG_GLOBAL`, else `~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, then the system file)
+  through a small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs, doubling
   up to the original 1 ms, before looking for work (598 files: 12.3 ms to 9.3 ms). Gitignore lines
   of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal path, `/` and a name with
   `*` or `?`) match by a byte loop, tested at random against `GlobSet`, whose regex cost 100 to
@@ -86,12 +87,14 @@ adds:
   speed across all processes, so four searches on five threads each lose to four on one. A search
   that joins the count ([CLI](CLI.md#engine-a-grep-alias-g); also `grep_code` and references)
   adds 1 to a per-user System V semaphore (`running.rs`) with `SEM_UNDO`, so the kernel takes it
-  back however the process dies. It reads the count after its first four files (searches started
-  together undercount each other) and, past 1,000 files, every 64 files. Walk threads over the
+  back however the process dies. It reads the count when it starts, again after its first four
+  files (searches started together undercount each other) and, past 1,000 files, every 64 files. Walk threads over the
   share pause between directories (`pause` in the vendored walker) until it rises; a list's extra
   threads end and restart as it rises. A paused thread sleeps a thirty-second of its paused time,
   at most 1 ms: the walk cannot end before it wakes, and a 1 ms sleep cost a 13 ms search over a
-  millisecond. A lone search makes three system calls for this; a directory without
+  millisecond. A lone search of up to 1,000 files makes nine system calls for this (`semget` and
+`semctl` to find the set, `semop` and `sigaction` to join, a `semctl` for each of its two reads,
+a `semop` and two `sigaction` calls to leave); a directory without
   subdirectories holding 256 files or fewer, or a list of 256 files or fewer, makes none. A process leaves the count while a
   pipe or terminal write may block and while stopped from its terminal: the SIGTSTP handler
   (installed only while counted and only if nothing else handles the signal) takes it out, stops it
@@ -106,7 +109,8 @@ adds:
   | py-big, eight | 482 ms | 413 ms |
   | the ripgrep sources (250 files), four | 14.7 ms | 13.3 ms (`-j1` 13.1 ms) |
 - **One scheduler, one set of thread rules** (`instant::schedule`, `policy.rs`): every walk, file
-  list and standard input goes through one scheduler, which builds each thread's `Run`, starts the
+  list and standard input goes through one scheduler (a list handed over in path order, `--sort`,
+  through `schedule_in_order`, with the same rules), which builds each thread's `Run`, starts the
   threads, and asks the rules how many to start, when to add one and the search's share. The rules
   read cores, performance cores, searches running, slow small reads, and a table measured per
   system (macOS, Linux; Windows and others take the macOS read time and cold threads, measured
@@ -157,8 +161,9 @@ adds:
   On macOS each `open` or `getcwd` costs 150 to 200 thousand instructions. So the global git
   excludes file is read when a walk first meets a repository (git's configuration and that file
   cost 0.5 M in every walk outside one), the walk reuses the command line's current directory for
-  `.`, a search without the index skips resolving the repository root, and a one-file tree starts
-  no thread.
+  `.`, a search without the index skips resolving the repository root, and a one-file tree with
+  plain output starts no thread (other output searches the file on one thread while the calling
+  thread takes its records).
 
   Page reclaims were mostly the executable's own code. `scrutate grep` parses plain argument shapes
   by hand and hands the rest to clap (a property test holds both to one answer; a configuration
@@ -343,7 +348,8 @@ TypeScript object literal's methods are owned by the name holding the literal (`
 `callers` treats them as methods, never free functions.
 
 ### Tokens (`text.rs`)
-One tokenizer serves index and query in both engines. An ASCII word is split at `_` and case
+One tokenizer serves index and query in Engine B's code index (Engine A and the text index match
+bytes and trigrams, not tokens). An ASCII word is split at `_` and case
 changes, lowercased and stemmed (Snowball English); a compound identifier also gives its joined
 form. Another word is normalised to NFC first: runs of a script written without spaces (Han, kana,
 Thai, Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) give overlapping
@@ -351,8 +357,8 @@ character bigrams (a lone character itself), and any other script one lowercased
 final sigma folded. A Tibetan run ends at the tsheg closing each syllable. Before the bigrams are
 cut, in index and query, every Han character with a simplified form is replaced by it, and a
 Japanese shinjitai by the key of its traditional form, so 関, 關 and 关 give one token; names and
-stored text keep their own characters. The table `crates/scrutate/data/han_fold.txt`, which both
-engines read, comes from `tools/gen_han_fold.py`: Unihan `kSimplifiedVariant`, then OpenCC's
+stored text keep their own characters. The table `crates/scrutate/data/han_fold.txt`, which the
+tokenizer embeds, comes from `tools/gen_han_fold.py`: Unihan `kSimplifiedVariant`, then OpenCC's
 `JPShinjitaiCharacters.txt` at a pinned release whose SHA-256 the script checks. The script leaves
 out a shinjitai line whose values fold to several keys (連 for 連 or 聯) and a shinjitai that is a
 common Chinese character with another reading (芸, 沪, 予, 欠, 缶, 萌, by the Unihan fields
@@ -372,8 +378,10 @@ NFC with final sigma folded.
   path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
   line, the chunks of a name, a name's definitions in lookup order, a name's callers and a chunk's
   callees, call counts, a file's imports and every import, the counts `check` and `stats` print).
-  Each question keeps the order its callers read, and its statement is cached on the connection. A
-  test that damages the index does it through `Index::damage_for_tests`.
+  Each question keeps the order its callers read; a statement prepared with `prepare_cached` is
+  cached on the connection, and the others (`chunk`, `chunk_at`, `imports`, `call_edges`,
+  `constants` and the questions with an `IN` list) are prepared at each call. A test damages the
+  index through `Index::damage_for_tests` or with its own connection to `index.db`.
 - **Names** (`names`, `names_tri`): one row per spelling of a definition name, keyed by name key
   and name (`setup` and `setUp` share a key and are two rows), with its word initials and a count,
   kept by the same writes as `chunks` (a file's chunks add one per spelling, its delete takes them
@@ -448,7 +456,8 @@ NFC with final sigma folded.
   files equal the main checkout's: one left by a lost database can carry a name the main checkout
   gave another segment. The first update reads and hashes every file and
   parses only those that differ. Content an update has not seen is looked up in this checkout's
-  store, then the main checkout's, read-only in one snapshot per update. Nothing of the other
+  store, then the main checkout's, read-only, each lookup in a read transaction of its own (the
+  other checkout's segment list is read once, when it is opened). Nothing of the other
   checkout is written (review in docs/SECURITY.md). Two plain clones do not find each other.
 - **Lifecycle**:
   - content hashing: a fast path when size, mtime and `ctime_ns` match, so a `chmod`
@@ -473,7 +482,8 @@ NFC with final sigma folded.
     cut to nothing once the readers on older commits finish, waited for about a second, else
     by the next update (an update a read makes, which must not wait, tries without waiting), and
     a cut log keeps at most 4 MB of its file;
-  - background **compaction** (merge small segments / purge dead rows) that aborts if another
+  - **compaction** (merge small segments / purge dead rows), run by the update itself once its
+    changes are committed, on the same thread, that aborts if another
     writer moved the manifest or a segment it merged is gone (another update's GC removes one the
     wall clock aged past `GC_AGE_S` before the compaction's second lock); an update a read makes, which must not wait, tries its lock once
     before the merge and once after it (only the second when there is nothing to merge but a
@@ -539,26 +549,31 @@ NFC with final sigma folded.
 A query takes candidates from three sources: field-weighted BM25 (name 10, qualified name 3,
 signature 3, docs 5, body 1, path 2), exact name/qualified-name lookup, and semantic nearest
 neighbours (the query encoded into the chunks' 256-d space by a contrastively trained code-word
-model, inference only, bundled in the binary). 48 features per candidate (lexical scores and
-ranks per field, z-scored semantic similarities of both views, literal hits, name coverage, the
+model, inference only, bundled in the binary). 48 features per candidate (each field's lexical
+score as a logarithm and as a ratio to the best, the lexical and semantic ranks, z-scored
+semantic similarities of both views, literal hits, name coverage, the
 name as typed (case included), kind, lengths, test-path flags...) go through a LightGBM
 LambdaRank ensemble exported to plain arrays and evaluated in Rust. In `search.rs` the sources are
-a list (`Source::ALL`, each with the rank feature it fills) and the features are tables filled by
-name (`LEX_FIELDS`, `ROW_FEATURES`, `QUERY_FEATURES`), so a new source or feature is one entry.
+a list (`Source::ALL`, each with the rank feature it fills, none for the exact lookup), and most
+features are tables filled by name (`LEX_FIELDS`, `ROW_FEATURES`, `QUERY_FEATURES`); the others
+are set one by one, and every feature's name is in the model's list (`models.rs` `FEATURES`).
 
-All arithmetic is specified to the bit; `tests/ranking_pins.rs` pins every candidate, feature and
-score of a small tree with the bundled models in `cargo test`. IEEE basic operations, no fused
-multiply-add, no reordered sums. The platform's `ln` is taken only of counts and ratios of
-counts. Where it is rounded to float32 at once (count features, idf), any `ln` within one unit in
+All arithmetic is specified to the bit but one step; `tests/ranking_pins.rs` pins every candidate,
+feature and score of a small tree with the bundled models in `cargo test`. IEEE basic operations,
+no fused multiply-add, no reordered sums. The platform's `ln` is taken of counts and ratios of
+counts, and of each field's BM25 score (`ln_1p`, the seven `*_log` features), a real number the
+check below does not cover. Where it is rounded to float32 at once (count features, idf), any `ln` within one unit in
 the last place gives the same float32: checked for every count up to 200,000 and every idf of an
 index of up to 1,000 chunks. In the vector weights it stays float64, and the fixture keeps those
 counts at 7 or less, whose logarithms every libm rounds alike. So the pins should be exact on
-every CI platform: macOS arm64 and Linux arm64 with glibc gave the same bits; x86_64, musl and
-Windows rest on this argument until CI runs there. A Python reference engine once mirrored this
+every CI platform: macOS arm64 and Linux arm64 with glibc gave the same bits, and the `rust` job
+of `ci.yml` runs the pins on Linux, macOS and Windows, x86_64 and arm64; the musl build runs no
+tests and rests on this argument. A Python reference engine once mirrored this
 arithmetic bit for bit (`bench/parity.py`); it ended because it covered 7 of the 73 grammars and
-every change to tokens, chunks, BM25 or features was written twice. Vector dot products are summed in float64 in one fixed order
-(four running sums, added left to right) and rounded once, so no summation order can reorder
-near-tied chunks. Clustering a large segment is deterministic too: one xorshift64* generator draws
+every change to tokens, chunks, BM25 or features was written twice. The semantic and IVF scans
+sum vector dot products in float64 in one fixed order (four running sums, added left to right)
+and round once, so no summation order can reorder near-tied chunks; similar-code search sums in
+float32 over eight running sums. Clustering a large segment is deterministic too: one xorshift64* generator draws
 the sample, the first centroids and the re-seeds of empty clusters in a fixed order, and every
 float32 sum (row norms, cluster sums) runs in index order. The nearest centroid comes from a
 float32 matrix product in any order, within k·2^-24 of the true dot product, so a row with more
@@ -580,8 +595,9 @@ for the low three bits of each byte that follows the trigram in that file, and a
 position of the trigram modulo 8.
 
 A query becomes a boolean trigram condition by walking the pattern's regex-syntax HIR (literals,
-small classes and alternations expand to exact string sets; concatenations combine them; anything
-else adds no constraint), evaluated over the postings as bitsets; Engine A's per-file searcher
+small classes and alternations expand to exact string sets; concatenations combine them; `x?` and
+a fixed repetition of up to four become exact sets, and any other repetition of at least one keeps
+the condition of its part; anything else adds no constraint), evaluated over the postings as bitsets; Engine A's per-file searcher
 searches the surviving files. A string of four bytes or more needs its trigrams at positions that
 can line up, each followed by a byte that fits (`kernel_thread` on the Linux tree: 164 candidate
 files instead of 1,781). The condition is necessary, never sufficient: the candidates come from the
@@ -608,8 +624,8 @@ candidate files from the source tree.
 
 ### Watching (`watch.rs`)
 `scrutate watch` and `serve --watch` turn filesystem events into index updates: inotify and
-ReadDirectoryChangesW through the `notify` crate (9.0.0-rc.9, pinned: the first release that
-reports an overflowed Windows buffer as lost events), and on macOS FSEvents through `watch.rs`'s
+ReadDirectoryChangesW through the `notify` crate (9.0.0-rc.9, pinned: only 9.0 reports an
+overflowed Windows buffer as lost events, since 9.0.0-rc.5, and 8.x has no backport), and on macOS FSEvents through `watch.rs`'s
 own `fsevents` module. That module loads CoreServices with `dlopen` and takes every function it
 calls from `dlsym` on that handle, so the executable imports nothing for it and only `watch`
 loads the framework; `notify` is built there with its kqueue backend, which is never started,
