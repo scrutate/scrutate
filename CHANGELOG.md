@@ -1142,6 +1142,10 @@ incompatible index by itself, and that is never breaking.
   `password=...;k3` were redacted only up to it. What starts another item still ends a value: a
   `name=` (`;Initial Catalog=`, `&amp;format=`), `&&`, a cookie's `HttpOnly` or `Secure`, or
   another command (`;echo done`).
+- On macOS, a program `hook run` started ends within milliseconds of `hook run` being killed:
+  at a high open-file limit (1048576) it ran on for seconds, as the watcher closed every
+  descriptor number up to the limit before it waited; it now closes only those up to the highest
+  one open.
 
 ## [0.1.0] - 2026-11-11
 
