@@ -328,8 +328,8 @@ release checksums. The `.deb` and `.rpm` (`packaging/linux/build-packages.sh`) c
 git, so the script packs `docs/` and `integrations/` as it finds them).
 
 On each platform three hashes must agree: the binary in the archive, the one docs/LEADERBOARD.md
-says was measured, and the reproducible-build hash (`tools/repro_docker.sh` for Linux,
-docs/TEST_RESULTS.md for macOS). On glibc Linux all three are of the binary linked twice with the
+says was measured, and the reproducible-build hash (`tools/repro_docker.sh` for Linux, the reproducible-build
+gate of `tools/gen_test_results.py` run on that platform for macOS). On glibc Linux all three are of the binary linked twice with the
 function order (section 2), which changes its bytes. The archives contain `docs/`, so build them
 last.
 
