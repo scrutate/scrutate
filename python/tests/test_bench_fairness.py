@@ -14,6 +14,7 @@ import compare_tools as C  # noqa: E402
 import indexed as I  # noqa: E402
 import leaderboard as L  # noqa: E402
 import make_benchmarks_md as MB  # noqa: E402
+import make_dashboard as MD  # noqa: E402
 import make_leaderboard_md as ML  # noqa: E402
 
 BUILT_FROM = os.path.join(BENCH, "competitors", "built_from.sh")
@@ -133,6 +134,33 @@ def test_the_edited_files_are_restored_when_the_update_phase_fails(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         I.edit_and_restore(str(tmp_path), ["a.c", "b.c"], body)
     assert (tmp_path / "a.c").read_bytes() == b"int a;\n" and (tmp_path / "b.c").read_bytes() == b"int b;\n"
+
+
+def test_the_edited_files_are_restored_when_the_run_gets_sigterm(tmp_path):
+    (tmp_path / "a.c").write_bytes(b"int a;\n")
+    script = (
+        "import os, signal, sys, time\n"
+        f"sys.path.insert(0, {BENCH!r})\n"
+        "import indexed as I\n"
+        "I.exit_on_sigterm()\n"
+        "def body(backup):\n"
+        "    open(os.path.join(sys.argv[1], 'a.c'), 'ab').write(b'/* benchmark edit 0 */\\n')\n"
+        "    os.kill(os.getpid(), signal.SIGTERM)\n"
+        "    time.sleep(10)\n"
+        "I.edit_and_restore(sys.argv[1], ['a.c'], body)\n"
+    )
+    p = subprocess.run([sys.executable, "-c", script, str(tmp_path)], capture_output=True, timeout=60)
+    assert p.returncode == 128 + 15, p.stderr
+    assert (tmp_path / "a.c").read_bytes() == b"int a;\n"
+
+
+def test_the_dashboard_shows_the_update_row_as_published(tmp_path):
+    os.makedirs(tmp_path / "linux-x")
+    (tmp_path / "linux-x" / "indexed.json").write_text(json.dumps(indexed_data()))
+    (group,) = MD.load_runs(str(tmp_path)).items()
+    assert group[1][0]["items"]["incremental update time"]["status"] == "n/a"
+    page = MD.section(*group[0], group[1])
+    assert "n/a 1 (of" in page and 'class="tag na"' in page and "PASS 8" not in page
 
 
 def test_a_corpus_that_is_not_the_pinned_tree_stops_the_run(tmp_path, capsys):

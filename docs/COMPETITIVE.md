@@ -124,7 +124,8 @@ the contents and can answer without the tree. Scrutate offers only the first mod
 
 In the Linux VM, on the same tree and 20 queries with every answer checked, against Zoekt and
 livegrep (revision `923d5ad7`, built with Bazel as its README says; its `codesearch` server holds
-the index and a minimal gRPC client prints each answer), Scrutate is ahead on all 8 metrics
+the index and a minimal gRPC client prints each answer), Scrutate is ahead on all 7 metrics
+compared; the incremental update is n/a, as both rivals rebuild
 (`bench/results/linux-aarch64/superseded/indexed-261e.json`).
 
 | Metric | Scrutate | Zoekt | livegrep |

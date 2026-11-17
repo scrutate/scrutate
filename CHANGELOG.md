@@ -1204,8 +1204,9 @@ incompatible index by itself, and that is never breaking.
   comparison row with no ratio (scrutate's own failed throughput) instead of crashing. A resumed
   leaderboard run keeps earlier rows only when the tool versions, machine, corpora and settings
   match. `built_from.sh` refuses a source tree with uncommitted changes. The indexed run checks
-  its corpus against the manifest and puts the files it edits back however it ends, and takes an
-  index build's peak memory from GNU time on Linux. `compare_tools.py` runs ripgrep without its
+  its corpus against the manifest and puts the files it edits back when it ends, also on an error,
+  Ctrl-C or SIGTERM (after a SIGKILL or a power loss the next run's corpus check refuses the
+  edited tree), and takes an index build's peak memory from GNU time on Linux. `compare_tools.py` runs ripgrep without its
   config file, takes the tools in turn in each repetition, 30 runs by default, and agrees on the
   lines printed, not their count; BENCHMARKS.md counts a row faster or slower only past 30 runs
   with its 95% interval clear of 1, and leaves tools with another answer out of its CPU, memory

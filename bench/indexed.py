@@ -17,7 +17,8 @@ is left out of that comparison and named. A query scrutate answered differently 
 and throughput row (they compare only the queries every tool got right), and the update row is n/a
 when every rival's update is a full rebuild (settle(), which make_leaderboard_md.py applies too).
 The corpus must be the tree its manifest.json pins, and the files the update phase edits are put
-back however the run ends. Every measurement takes the tools in turn (A B, A B, ...), so load
+back when the run ends, also on an error, Ctrl-C or SIGTERM; after a SIGKILL or a power loss the
+next run's corpus check refuses the edited tree. Every measurement takes the tools in turn (A B, A B, ...), so load
 drift on the machine does not turn into a difference between them; each comparison row says how
 many runs per tool it rests on.
 
@@ -36,6 +37,7 @@ import platform
 import random
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -336,8 +338,14 @@ def du(path, apparent=False):
     return total
 
 
+def exit_on_sigterm():
+    """SIGTERM ends the run as Ctrl-C does, through the finally blocks that put the corpus back."""
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
+
+
 def main() -> int:
     lb.drop_scrutate_settings()
+    exit_on_sigterm()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=os.path.expanduser("~/.cache/scrutate-bench/corpora/linux-nodot"))
     ap.add_argument("--work", default=os.path.expanduser("~/.cache/scrutate-bench/indexed-work"))
