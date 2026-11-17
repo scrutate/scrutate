@@ -503,7 +503,12 @@ none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is 
 
 Where a rule differs from its gitleaks v8.30.1 source, it marks more: `digitalocean-token` reads
 all three forms without regard to case (gitleaks only the refresh token), and `vault-token` takes
-a batch token above entropy 3.5 (gitleaks 4).
+a batch token above entropy 3.5 (gitleaks 4). A token glued to a word character (`qghp_...`,
+minified code) is marked where gitleaks' rule has no word boundary before it: `github-token`,
+`github-fine-grained-token`, `gitlab-token`, `slack-token`, `pypi-token`, `twilio-api-key` and
+`shopify-token`. Where gitleaks' rule starts at a word boundary (`aws-access-key-id`, `npm-token`,
+`stripe-key` and the others), a token glued after a letter is left as it is, by gitleaks too
+(checked with gitleaks 8.30.1 on the same lines).
 
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
@@ -942,5 +947,7 @@ link to a file outside the package and a package directory that is a link out of
 
 ## Reporting
 
-Report vulnerabilities privately to the maintainers (see README), not in public issues; include
-the version (`scrutate --version`), platform and a reproduction.
+Report vulnerabilities privately through the repository's Security tab, "Report a vulnerability"
+(<https://github.com/scrutate/scrutate/security/advisories/new>, GitHub's private vulnerability
+reporting), never in a public issue; it is the only channel. Include the version
+(`scrutate --version`), platform and a reproduction.

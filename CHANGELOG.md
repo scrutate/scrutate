@@ -1285,6 +1285,13 @@ incompatible index by itself, and that is never breaking.
   runs past 4 MiB goes out as its marker with the rest of its line withheld. The key-line read
   back of `hook run` and the Grep hook opens only a regular file: a printed line naming
   `/dev/zero` spun forever and one naming a FIFO blocked ([Security](docs/SECURITY.md)).
+- That read back opens the file without waiting (`O_NONBLOCK`) and then checks the handle, so a
+  FIFO put in place of the file between the check of its path and the open no longer blocks it.
+- A GitHub, GitLab, Slack, PyPI or Twilio token glued to a word character (`qghp_...`, as in
+  minified code) is redacted, as gitleaks marks it: these rules had a word boundary their
+  gitleaks source does not have ([Security](docs/SECURITY.md)).
+- docs/SECURITY.md and README name the private reporting channel: the repository's Security tab,
+  "Report a vulnerability".
 
 ## [0.1.0] - 2026-11-11
 
