@@ -1173,6 +1173,13 @@ incompatible index by itself, and that is never breaking.
   The keyword run on into a different word (`tokenizer`, `secretary`), or followed by a part such
   as `label`, `header`, `hint`, `cache` or `path`, spares the value; every other name with the
   keyword (`password_prod`, `token_eu`, `secret_value`, `secretkey`, `tokenvalue`) still hides it.
+- A private key's body under a public label (`PUBLIC KEY`, `CERTIFICATE`, `CERTIFICATE REQUEST`,
+  `X509 CRL`) is redacted: any SEQUENCE of the right length was shown as public. A public key's
+  body must now be a SubjectPublicKeyInfo or a PKCS#1 RSAPublicKey, and a certificate's, a
+  request's or a CRL's a SEQUENCE of a SEQUENCE, a SEQUENCE and a BIT STRING. Any other body
+  under those labels, a cut one or one without its END too, is marked line by line, its short
+  last line included, and a body line's trailing `+` no longer drops it to the ordinary rules
+  ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 

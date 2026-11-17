@@ -839,6 +839,12 @@ struct PublicBody {
     /// the body's base64 characters so far, padding left out, and the first eight of them
     chars: usize,
     head: String,
+    /// all of it, padding kept: what a public key label's body is decoded from at its END
+    b64: String,
+    /// the lines of a body that ended without being let out (`Seen::Key`), for the caller
+    key: Vec<(usize, usize, usize)>,
+    /// such a body ended inside its base64: the base64 lines after it are its own (`Seen::KeyLine`)
+    marking: bool,
 }
 
 /// What a public body's first bytes say of it.
@@ -855,30 +861,41 @@ enum Seen {
     Held,
     /// the END: the lines held are a public body
     Released,
-    /// something else ended it: the lines held are not shown to be one
-    Dropped,
+    /// the body ended without being let out (the END of its label after an element of no public
+    /// shape, another END, a cut, more than its element, over the hold): the lines it held,
+    /// in `PublicBody::key`, are key material, a private key's body under a public label
+    Key,
+    /// a base64 line that runs on after such a body: key material too
+    KeyLine,
     Other,
 }
 
 impl PublicBody {
     fn line(&mut self, ti: usize, at: usize, line: &str) -> Seen {
+        if self.marking {
+            if !PUBLIC_ARMOUR.is_match(line) && matches!(key_body(line), Body::Base64(..)) {
+                return Seen::KeyLine;
+            }
+            self.marking = false;
+        }
         if self.open {
             if let Some(c) = PUBLIC_ARMOUR.captures(line).filter(|c| &c[1] == "END") {
                 self.open = false;
-                if c[2].trim().eq_ignore_ascii_case(&self.label) && matches!(self.der(), Der::Len(n) if n == self.decoded()) {
+                if c[2].trim().eq_ignore_ascii_case(&self.label) && matches!(self.der(), Der::Len(n) if n == self.decoded()) && self.public_shape() {
                     return Seen::Released;
                 }
-                self.held.clear();
-                return Seen::Dropped;
+                self.key = std::mem::take(&mut self.held);
+                return Seen::Key;
             }
             let body = key_body(line);
             if !matches!(body, Body::NotKey) && self.lines < PUBLIC_LINES && self.bytes + line.len() <= PUBLIC_BYTES {
                 self.lines += 1;
                 self.bytes += line.len();
                 if let Body::Base64(a, b) = body {
-                    let b64 = &line[a..b];
+                    let b64 = &line[a..base64_run(line, b)];
                     let take = (8 - self.head.len()).min(b64.len());
                     self.head.push_str(&b64[..take]);
+                    self.b64.push_str(b64);
                     self.chars += b64.bytes().filter(|&c| c != b'=').count();
                     self.held.push((ti, at, at + line.len()));
                 }
@@ -888,11 +905,16 @@ impl PublicBody {
                     Der::Len(n) if self.decoded() <= n => return Seen::Held,
                     _ => {}
                 }
+            } else if matches!(body, Body::Base64(..)) {
+                // over the hold: this line is the body's too
+                self.held.push((ti, at, at + line.len()));
             }
             self.open = false;
-            self.held.clear();
+            let key = std::mem::take(&mut self.held);
             self.opens(line);
-            return Seen::Dropped;
+            self.key = key;
+            self.marking = !self.open && matches!(body, Body::Base64(..));
+            return Seen::Key;
         }
         self.opens(line);
         Seen::Other
@@ -933,6 +955,61 @@ impl PublicBody {
             _ => Der::Not,
         }
     }
+
+    /// Whether the body is what its label says, and nothing else in it. Under a public key's label a
+    /// SubjectPublicKeyInfo (a SEQUENCE and a BIT STRING) or a PKCS#1 RSAPublicKey (two INTEGERs);
+    /// under a certificate's, a request's or a list of revoked ones', a SEQUENCE, a SEQUENCE and a
+    /// BIT STRING. A private key starts with its version, an INTEGER, then more, so it is none.
+    fn public_shape(&self) -> bool {
+        let Some(der) = base64_decode(&self.b64) else { return false };
+        let Some((0x30, content)) = der_element(&der).filter(|(_, c)| c.len() + der_header(&der) == der.len()) else { return false };
+        let mut tags = Vec::new();
+        let mut rest = content;
+        while !rest.is_empty() {
+            let Some((tag, inner)) = der_element(rest) else { return false };
+            tags.push(tag);
+            rest = &rest[der_header(rest) + inner.len()..];
+        }
+        if self.label.to_ascii_uppercase().ends_with("PUBLIC KEY") { matches!(tags[..], [0x30, 0x03] | [0x02, 0x02]) } else { tags[..] == [0x30, 0x30, 0x03] }
+    }
+}
+
+/// Where the base64 that `key_body` found ending at `end` really ends: a PEM line's own `+`, which
+/// `key_core` takes off as the joint of a key in code, is part of it.
+fn base64_run(line: &str, end: usize) -> usize {
+    end + line[end..].bytes().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'=')).count()
+}
+
+/// The bytes of standard base64, `=` padding at its end; None for any other character.
+fn base64_decode(b64: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| B64_DIGITS.iter().position(|&d| d == c).map(|d| d as u32);
+    let body = b64.trim_end_matches('=');
+    let mut out = Vec::with_capacity(body.len() * 3 / 4);
+    for chunk in body.as_bytes().chunks(4) {
+        let v = chunk.iter().try_fold(0u32, |acc, &c| value(c).map(|d| acc << 6 | d))? << (6 * (4 - chunk.len()));
+        out.extend_from_slice(&[(v >> 16) as u8, (v >> 8) as u8, v as u8][..chunk.len().saturating_sub(1)]);
+    }
+    Some(out)
+}
+
+/// The length of the tag and length bytes of the DER element `der` starts with (0 if unread).
+fn der_header(der: &[u8]) -> usize {
+    match der.get(1) {
+        Some(&n) if n < 0x80 => 2,
+        Some(&n @ 0x81..=0x83) => 2 + (n - 0x80) as usize,
+        _ => 0,
+    }
+}
+
+/// The tag and content of the DER element `der` starts with, when its length fits in `der`.
+fn der_element(der: &[u8]) -> Option<(u8, &[u8])> {
+    let head = der_header(der);
+    let len = match head {
+        0 => return None,
+        2 => der[1] as usize,
+        _ => der.get(2..head)?.iter().fold(0usize, |a, &b| a << 8 | b as usize),
+    };
+    Some((der[0], der.get(head..head + len)?))
 }
 
 /// `text` as the rules read it: JSON may write `/` as `\/` (PHP does).
@@ -940,24 +1017,36 @@ fn seen(text: &str) -> Cow<'_, str> {
     if text.contains("\\/") { Cow::Owned(unslash(text).0) } else { Cow::Borrowed(text) }
 }
 
+/// For each of a call's texts, byte ranges of it.
+type LineRanges = Vec<Vec<(usize, usize)>>;
+
 /// For each of `texts`, the byte ranges (as the rules read it) of the lines of a public key's or a
 /// certificate's body whose END comes later in `texts`: a body cut off before it is no public one.
-fn public_in(texts: &[&str]) -> Vec<Vec<(usize, usize)>> {
+/// And of the lines of a body under a public key's label that is no public key (`Seen::Key`).
+fn public_in(texts: &[&str]) -> (LineRanges, LineRanges) {
     let mut body = PublicBody::default();
-    let mut out = vec![Vec::new(); texts.len()];
+    let (mut public, mut key) = (vec![Vec::new(); texts.len()], vec![Vec::new(); texts.len()]);
     for (ti, text) in texts.iter().enumerate() {
-        if !body.open && !text.contains("-----") {
+        // a text with no armour can still hold a body's lines, or the key lines that run on after one
+        if !body.open && !body.marking && !text.contains("-----") {
             continue;
         }
         let mut at = 0;
         for line in seen(text).split_inclusive('\n') {
-            if let Seen::Released = body.line(ti, at, line) {
-                body.held.drain(..).for_each(|(t, a, b)| out[t].push((a, b)));
+            match body.line(ti, at, line) {
+                Seen::Released => body.held.drain(..).for_each(|(t, a, b)| public[t].push((a, b))),
+                Seen::Key => body.key.drain(..).for_each(|(t, a, b)| key[t].push((a, b))),
+                Seen::KeyLine => key[ti].push((at, at + line.len())),
+                _ => {}
             }
             at += line.len();
         }
     }
-    out
+    // a body its END never came for
+    if body.open {
+        body.held.drain(..).for_each(|(t, a, b)| key[t].push((a, b)));
+    }
+    (public, key)
 }
 
 /// Redacts texts in order, a private key's body carried from one text into the next (the lines of
@@ -967,6 +1056,11 @@ pub struct Redactor {
     in_key: bool,
     /// the public body a stream of lines (`hold`) is inside
     stream: PublicBody,
+    /// the lines (as the rules read the text being redacted) of a body under a public key's label
+    /// that is no public key, marked whole as key material
+    key_lines: Vec<(usize, usize)>,
+    /// how many such lines a stream released and has still to mark
+    stream_key_lines: usize,
     /// the redactions the page `ops::Answer::text_page` last made shows, in either form
     pub shown: usize,
     /// redactions made, by kind
@@ -976,8 +1070,9 @@ pub struct Redactor {
 impl Redactor {
     /// `text` with its secrets replaced, and where each marker is.
     pub fn redact<'a>(&mut self, text: &'a str) -> (Cow<'a, str>, Vec<Mark>) {
-        let public = public_in(&[text]).remove(0);
-        self.redact_with(text, &public)
+        let (mut public, mut key) = public_in(&[text]);
+        self.key_lines = key.remove(0);
+        self.redact_with(text, &public.remove(0))
     }
 
     /// `text` redacted as a line of a public key's or a certificate's body, which `hold` released.
@@ -992,8 +1087,25 @@ impl Redactor {
         match self.stream.line(0, 0, &seen(line)) {
             Seen::Held => Hold::Line,
             Seen::Released => Hold::Release { public: true },
-            Seen::Dropped | Seen::Other => Hold::Release { public: false },
+            Seen::Key => {
+                self.stream_key_lines += std::mem::take(&mut self.stream.key).len();
+                Hold::Release { public: false }
+            }
+            Seen::KeyLine => {
+                self.stream_key_lines += 1;
+                Hold::Release { public: false }
+            }
+            Seen::Other => Hold::Release { public: false },
         }
+    }
+
+    /// The stream `hold` reads has ended, the lines it holds about to go out: a body whose END never
+    /// came is key material.
+    pub fn end_stream(&mut self) {
+        if self.stream.open {
+            self.stream_key_lines += self.stream.held.len();
+        }
+        self.stream = PublicBody::default();
     }
 
     /// `redact`, with the byte ranges of `text` (as the rules read it) that are a public body.
@@ -1057,6 +1169,19 @@ impl Redactor {
         }
         // base64 alone on a line is a key's body only outside a public key or a certificate
         spans.retain(|&(a, _, k)| k != "key-material" || !public.iter().any(|&(s, e)| s <= a && a < e));
+        // a body under a public key's label that is no public key: every line of it, a short last
+        // one too, from the text's ranges or, in a stream, the lines released one by one
+        let mut key_lines = std::mem::take(&mut self.key_lines);
+        if self.stream_key_lines > 0 && matches!(key_body(seen), Body::Base64(..)) {
+            self.stream_key_lines -= 1;
+            key_lines.push((0, seen.len()));
+        }
+        for (a, b) in key_lines {
+            let line = &seen[a.min(seen.len())..b.min(seen.len())];
+            if let Body::Base64(x, y) = key_body(line) {
+                spans.push((a + x, a + base64_run(line, y), "key-material"));
+            }
+        }
         if let Some(map) = map {
             spans = spans.into_iter().map(|(a, b, k)| (map[a], map[b - 1] + 1, k)).collect();
         }
@@ -1139,13 +1264,14 @@ impl Redactor {
     pub fn redact_shown(&mut self, texts: &mut [String], first: usize, room: usize) -> Vec<usize> {
         let first = first.min(texts.len());
         texts[..first].iter().for_each(|t| self.track(t));
-        let public = public_in(&texts[first..].iter().map(String::as_str).collect::<Vec<_>>());
+        let (public, key) = public_in(&texts[first..].iter().map(String::as_str).collect::<Vec<_>>());
         let mut marks = vec![0; texts.len()];
         let mut used = 0;
-        for ((t, n), public) in texts[first..].iter_mut().zip(&mut marks[first..]).zip(&public) {
+        for (((t, n), public), key) in texts[first..].iter_mut().zip(&mut marks[first..]).zip(&public).zip(key) {
             if used > room {
                 break;
             }
+            self.key_lines = key;
             let (redacted, m) = self.redact_with(t, public);
             *n = m.len();
             if let Cow::Owned(s) = redacted {
@@ -1216,7 +1342,9 @@ pub fn detectors() -> Vec<(&'static str, &'static str)> {
 
 /// The secrets in `text` (one line or more), as byte ranges of it with their kinds, in order.
 pub fn spans(text: &str) -> Vec<(usize, usize, &'static str)> {
-    Redactor::default().find(text, &public_in(&[text]).remove(0))
+    let (mut public, mut key) = public_in(&[text]);
+    let mut r = Redactor { key_lines: key.remove(0), ..Redactor::default() };
+    r.find(text, &public.remove(0))
 }
 
 /// `text` with its secrets replaced, and where each marker is.
@@ -1509,18 +1637,158 @@ mod tests {
         }
     }
 
-    /// The base64 lines, 64 to a line, of one DER SEQUENCE of `n` bytes in all, its content from
-    /// `seed`: a body read as one public element.
+    /// The base64 lines, 64 to a line, of a SubjectPublicKeyInfo of `n` bytes in all (at least 28),
+    /// its key bits from `seed`: a body read as one public key.
     fn der_lines(seed: u64, n: usize) -> Vec<String> {
+        pem_lines(&spki(seed, n))
+    }
+
+    /// `n` bytes over the whole range, the same for a seed every run.
+    fn random_bytes(seed: u64, n: usize) -> Vec<u8> {
+        let mut x = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        (0..n)
+            .map(|_| {
+                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (x >> 33) as u8
+            })
+            .collect()
+    }
+
+    /// A SubjectPublicKeyInfo of `n` bytes in all (at least 28): an RSA algorithm and a BIT STRING
+    /// of `seed`'s bytes, each length in the long form, as `der_lines` has always measured it.
+    fn spki(seed: u64, n: usize) -> Vec<u8> {
+        let alg = tlv(0x30, &[tlv(0x06, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]), vec![0x05, 0x00]].concat());
+        let bits = n - 4 - alg.len() - 4;
+        let mut bit_string = vec![0x03, 0x82, (bits >> 8) as u8, bits as u8, 0x00];
+        bit_string.extend(random_bytes(seed, bits - 1));
+        let content = [alg, bit_string].concat();
+        [vec![0x30, 0x82, (content.len() >> 8) as u8, content.len() as u8], content].concat()
+    }
+
+    /// `der` in base64, 64 characters to a line, as PEM writes a body.
+    fn pem_lines(der: &[u8]) -> Vec<String> {
         const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut der = vec![0x30, 0x82, ((n - 4) >> 8) as u8, (n - 4) as u8];
-        der.extend(fake(seed, ALNUM, n - 4).bytes());
         let mut b64 = String::new();
         for c in der.chunks(3) {
             let v = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
             (0..4).for_each(|i| b64.push(if i <= c.len() { SET[(v >> (18 - 6 * i) & 63) as usize] as char } else { '=' }));
         }
         b64.as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect()
+    }
+
+    /// One DER element: its tag, its length in the short or long form, its content.
+    fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let n = content.len();
+        let mut v = vec![tag];
+        match n {
+            0..0x80 => v.push(n as u8),
+            0x80..0x100 => v.extend([0x81, n as u8]),
+            _ => v.extend([0x82, (n >> 8) as u8, n as u8]),
+        }
+        v.extend(content);
+        v
+    }
+
+    /// The DER of an RSA key's shapes, built here from seeded bytes so no file holds a key:
+    /// SubjectPublicKeyInfo, PKCS#1 RSAPublicKey, PKCS#1 RSAPrivateKey and PKCS#8 PrivateKeyInfo.
+    fn rsa_shapes(seed: u64) -> [(&'static str, Vec<u8>); 4] {
+        let big = |s: u64, n: usize| [&[0u8][..], &random_bytes(s, n)].concat();
+        let int = |s: u64, n: usize| tlv(0x02, &big(s, n));
+        let rsa_alg = tlv(0x30, &[tlv(0x06, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]), vec![0x05, 0x00]].concat());
+        let rsa_public = tlv(0x30, &[int(seed, 256), tlv(0x02, &[0x01, 0x00, 0x01])].concat());
+        let spki = tlv(0x30, &[rsa_alg.clone(), tlv(0x03, &[&[0u8][..], &rsa_public].concat())].concat());
+        let version = tlv(0x02, &[0x00]);
+        let mut private = version.clone();
+        for (i, n) in [256, 3, 256, 128, 128, 128, 128, 128].into_iter().enumerate() {
+            private.extend(int(seed + 1 + i as u64, n));
+        }
+        let pkcs1 = tlv(0x30, &private);
+        let pkcs8 = tlv(0x30, &[version, rsa_alg, tlv(0x04, &pkcs1)].concat());
+        [("SubjectPublicKeyInfo", spki), ("RSAPublicKey", rsa_public), ("RSAPrivateKey", pkcs1), ("PrivateKeyInfo", pkcs8)]
+    }
+
+    /// Under a public key's armour, with its END, a public key's body is left as written and a
+    /// private key's body is marked: a SEQUENCE of the right length is not proof enough.
+    #[test]
+    fn a_private_key_body_under_a_public_key_label_is_redacted() {
+        let armoured =
+            |label: &str, body: &[String]| [vec![format!("-----BEGIN {label}-----")], body.to_vec(), vec![format!("-----END {label}-----")]].concat();
+        for (what, der) in rsa_shapes(151) {
+            let public = !what.contains("Private");
+            for label in ["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"] {
+                let body = pem_lines(&der);
+                // a public key is shown under a public key's label; under a certificate's it is none
+                let shown = if public && label.ends_with("PUBLIC KEY") { body.len() } else { 0 };
+                assert_eq!(body_lines_shown(&armoured(label, &body)), [shown; 3], "{what} under {label}");
+            }
+        }
+        // a certificate, a request and a list of revoked ones are shown under their labels
+        for label in ["CERTIFICATE", "CERTIFICATE REQUEST", "X509 CRL"] {
+            let body = pem_lines(&certificate(161, 700));
+            assert_eq!(body_lines_shown(&armoured(label, &body)), [body.len(); 3], "a certificate's shape under {label}");
+        }
+        // a private key whose body has a line that ends in `+`, and a short last line
+        let plus = (200..400)
+            .map(|seed| pem_lines(&rsa_shapes(seed)[3].1))
+            .find(|b| b[..b.len() - 1].iter().any(|l| l.ends_with('+')) && b.last().is_some_and(|l| l.len() < 40))
+            .unwrap();
+        assert_eq!(body_lines_shown(&armoured("PUBLIC KEY", &plus)), [0; 3], "a body line that ends in `+`");
+        // a body under a public label that ends without being let out: every line of it marked
+        let pkcs8 = pem_lines(&rsa_shapes(171)[3].1);
+        let no_end = [vec!["-----BEGIN PUBLIC KEY-----".to_string()], pkcs8.clone()].concat();
+        let padded = armoured("PUBLIC KEY", &[pkcs8.clone(), vec!["QUJDRA==".to_string()]].concat());
+        let cut = armoured("PUBLIC KEY", &[&pkcs8[..3], &pkcs8[4..]].concat());
+        let other_end = [vec!["-----BEGIN PUBLIC KEY-----".to_string()], pkcs8.clone(), vec!["-----END CERTIFICATE-----".to_string()]].concat();
+        let crl_plus = armoured("X509 CRL", &plus);
+        let over_hold = armoured("PUBLIC KEY", &der_lines(181, 85 * 48));
+        for (what, lines) in
+            [("no END", no_end), ("padded", padded), ("cut", cut), ("another label's END", other_end), ("a CRL", crl_plus), ("over the hold", over_hold)]
+        {
+            assert_eq!(body_lines_shown(&lines), [0; 3], "{what}");
+        }
+        // over the hold with a short last line, also as `read_code` gives a file: a line to an item,
+        // its number before it
+        let over_short = armoured("PUBLIC KEY", &der_lines(182, 85 * 48 + 10));
+        assert!(over_short[over_short.len() - 2].len() < 40);
+        assert_eq!(body_lines_shown(&over_short), [0; 3], "over the hold, a short last line");
+        let mut numbered: Vec<String> = over_short.iter().enumerate().map(|(i, l)| format!("{:>5}  {l}", i + 1)).collect();
+        Redactor::default().redact_shown(&mut numbered, 0, usize::MAX);
+        let shown: Vec<&String> = numbered.iter().filter(|l| !l.contains("-----") && !l.contains("[redacted:")).collect();
+        assert!(shown.is_empty(), "read_code's lines of a body over the hold shown: {shown:?}");
+    }
+
+    /// A certificate's shape of `n` bytes or so: a SEQUENCE of a SEQUENCE, a SEQUENCE and a BIT
+    /// STRING, as a certificate, a request and a list of revoked ones are.
+    fn certificate(seed: u64, n: usize) -> Vec<u8> {
+        let alg = tlv(0x30, &[tlv(0x06, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]), vec![0x05, 0x00]].concat());
+        let signed = tlv(0x30, &random_bytes(seed, n));
+        let signature = tlv(0x03, &[&[0u8][..], &random_bytes(seed + 1, 256)].concat());
+        tlv(0x30, &[signed, alg, signature].concat())
+    }
+
+    /// How many lines of `lines` that are no armour are shown, read as one text, as an answer's
+    /// lines (`redact_shown`) and as a stream that `hook run` reads with `hold`, the lines held at
+    /// the end let out as it does.
+    fn body_lines_shown(lines: &[String]) -> [usize; 3] {
+        let shown = |out: &[String]| out.iter().zip(lines).filter(|(o, l)| !l.starts_with("-----") && !o.contains("[redacted:")).count();
+        let one_text: Vec<String> = redact(&lines.join("\n")).0.split('\n').map(str::to_string).collect();
+        let mut answer = lines.to_vec();
+        Redactor::default().redact_shown(&mut answer, 0, usize::MAX);
+        let (mut r, mut held, mut streamed) = (Redactor::default(), Vec::new(), Vec::new());
+        for l in lines {
+            match r.hold(l) {
+                Hold::Line => held.push(l.clone()),
+                Hold::Release { public } => {
+                    for h in held.drain(..) {
+                        streamed.push(if public { r.redact_public(&h).0.into_owned() } else { r.redact(&h).0.into_owned() });
+                    }
+                    streamed.push(r.redact(l).0.into_owned());
+                }
+            }
+        }
+        r.end_stream();
+        streamed.extend(held.iter().map(|h| r.redact(h).0.into_owned()));
+        [shown(&one_text), shown(&answer), shown(&streamed)]
     }
 
     /// A PEM armour line, written out here so no file holds one.
@@ -1693,11 +1961,11 @@ mod tests {
         assert!(redact(&host).1.is_empty(), "{host}");
         let mut r = Redactor::default();
         for what in ["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"] {
-            let body = der_lines(71, 110);
-            let mut lines = [format!("-----BEGIN {what}-----"), body[0].clone(), body[1].clone(), body[2].clone(), format!("-----END {what}-----")];
+            let body = if what == "CERTIFICATE" { pem_lines(&certificate(71, 40)) } else { der_lines(71, 110) };
+            let mut lines = [vec![format!("-----BEGIN {what}-----")], body, vec![format!("-----END {what}-----")]].concat();
             // whole: as the lines of one answer, and as one text
             assert!(r.redact(&lines.join("\n")).1.is_empty(), "{what}");
-            assert_eq!(r.redact_shown(&mut lines, 0, usize::MAX), [0; 5], "{what}");
+            assert_eq!(r.redact_shown(&mut lines, 0, usize::MAX).iter().sum::<usize>(), 0, "{what}");
         }
         let body = fake(74, &b64, 64);
         let out: Vec<String> = [armour("BEGIN", ""), body.clone(), armour("END", "")].iter().map(|l| r.redact(l).0.into_owned()).collect();
@@ -2366,13 +2634,13 @@ mod tests {
             }
             s.as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect::<Vec<_>>()
         };
-        let (public, private) = (der(294, 1), der(1192, 2));
+        let (public, private) = (der_lines(1, 294), der(1192, 2));
         let stream = [vec![begin("PUBLIC KEY")], public[..3].to_vec(), private.clone(), vec![end("PUBLIC KEY")]].concat();
         assert_eq!(steps(&stream).last(), Some(&Hold::Release { public: false }), "a cut key and another body, the same label");
         // what stays public: a whole key, and two certificates back to back
         let whole = [vec![begin("PUBLIC KEY")], public.clone(), vec![end("PUBLIC KEY")]].concat();
         assert_eq!(steps(&whole).last(), Some(&Hold::Release { public: true }));
-        let (a, b) = (der(1000, 3), der(1400, 4));
+        let (a, b) = (pem_lines(&certificate(3, 700)), pem_lines(&certificate(4, 1100)));
         let chain = [vec![begin("CERTIFICATE")], a.clone(), vec![end("CERTIFICATE"), begin("CERTIFICATE")], b.clone(), vec![end("CERTIFICATE")]].concat();
         let s = steps(&chain);
         assert_eq!((&s[a.len() + 1], s.last()), (&Hold::Release { public: true }, Some(&Hold::Release { public: true })));

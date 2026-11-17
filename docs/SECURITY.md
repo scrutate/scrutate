@@ -545,11 +545,18 @@ material: an SSH key after its type, as `known_hosts` writes it, and the body of
 certificate or a certificate request between its armour, read as a private key's is: armour
 that ends its line opens it, and the first line that is not base64 ends it. Such a body is left
 as written only when an END line of the same label comes later in the same answer and the body
-is then exactly the one DER element its first bytes give the length of; `hook run` holds at most
-64 lines (8 KiB) of it for that END. A body under a public key label is shown only when it is a
-DER public key; any other body is marked: one that is no DER element, one longer than that hold,
-one that runs past its element's length, or one shown without its own END line, since base64
-after it may be another file's private key. An OpenPGP public key block and an RFC 4716 SSH2
+is then exactly the one DER element its first bytes give the length of, of its label's shape;
+`hook run` holds at most 64 lines (8 KiB) of it for that END. Under a public key label the shape
+is a SubjectPublicKeyInfo (a SEQUENCE holding a SEQUENCE and a BIT STRING and nothing else) or a
+PKCS#1 RSAPublicKey (a SEQUENCE of two INTEGERs and nothing else); under a certificate's, a
+certificate request's or an `X509 CRL` label, a SEQUENCE holding a SEQUENCE, a SEQUENCE and a BIT
+STRING and nothing else. A body line's base64 is read as written, a `+` at its end included. Any
+other body under these labels is marked as key material, every base64 line of it whole, a short
+last line included: a private key (PKCS#1 or PKCS#8) or any element of another shape, one that is
+no DER element, one longer than that hold, one that runs past its element's length or stops
+short of it, one under another label's END, and one whose END is not in the answer or the
+stream; base64 lines that run on after a body ended inside it are marked too, since they may be
+another file's private key. An OpenPGP public key block and an RFC 4716 SSH2
 public key are marked as any key material, since nothing here proves their bodies public);
 `generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
 holding a common word; after a name holding `password`, `passwd`, `secret` or `token` it also takes
