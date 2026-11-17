@@ -126,6 +126,32 @@ fn small_updates_do_not_write_the_large_segment_again() {
     assert_eq!(counts(&t.0, "# again").len(), 40);
 }
 
+#[test]
+fn small_updates_do_not_write_a_second_large_segment_again() {
+    let t = Tmp::new("merge_two");
+    // two large segments, as a build of two batches leaves: the second has fewer files
+    let words = |seed: usize| (0..400).map(|k| format!("w{:x}_{k} = {}\n", seed * 7919 + k * 31, k)).collect::<String>();
+    for i in 0..60 {
+        fs::write(t.0.join(format!("a{i:02}.py")), words(i)).unwrap();
+    }
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    for i in 0..40 {
+        fs::write(t.0.join(format!("b{i:02}.py")), words(100 + i)).unwrap();
+    }
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let large = segments(&t.0);
+    assert_eq!(large.len(), 2, "{large:?}");
+    for round in 0..9 {
+        fs::write(t.0.join(format!("small{round}.py")), format!("def small_{round}():\n    return {round}\n")).unwrap();
+        assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+        let now = segments(&t.0);
+        assert!(large.iter().all(|s| now.contains(s)), "round {round}: a large segment was written again: {large:?} -> {now:?}");
+        assert!(now.len() <= 4, "round {round}: {now:?}");
+    }
+    assert_eq!(counts(&t.0, "def small_").len(), 9);
+    assert_eq!(counts(&t.0, "^w[0-9a-f]+_0 ").len(), 100);
+}
+
 /// Overwrite the element `back` places before the end of a little-endian `.npy` array of 4- or
 /// 8-byte elements.
 fn patch_npy(path: &Path, back: usize, value: i64) {
