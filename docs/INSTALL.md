@@ -26,9 +26,9 @@ The logs each row names are in `bench/results/platforms/`.
 |---|---|---|---|---|
 | macOS arm64 (Apple Silicon; macOS 13 or newer, tested on macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
 | Linux aarch64 (glibc and static musl) | built and tested in a clean `rust:1-slim-bookworm` container (no Python on the image); the static musl binary prints byte-identical output | `cp39-abi3` on CPython 3.10, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | `linux-aarch64/verify.log`, `musl-identical.txt`, `wheels.json` |
-| Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container under emulation on the Apple Silicon host (behaviour, not x86 speed). For the release commit gcc crashed under emulation, so the binary and every test binary were cross-built on arm64 and all 118 Linux tests run in an amd64 container (the other four of the 122 are for macOS on Apple silicon) | same as aarch64 (full run on an earlier commit) | **supported** | `linux-x86_64/cross-verify.log` (release commit); `verify.log`, `musl-identical.txt`, `wheels.json` (earlier full run) |
+| Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container under emulation on the Apple Silicon host (behaviour, not x86 speed). gcc crashed under emulation in the 2026-11-09 run (`verify.log`), so for the 2026-11-11 run the binary and every test binary were cross-built on arm64 and all 118 Linux tests run in an amd64 container (the other four of the 122 are for macOS on Apple silicon) | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on GitHub's `ubuntu-latest` runner (CI run 43408907893); in the container run of 2026-11-09 only `cp314t` passed, and `cp39-abi3` on 3.10, 3.12 and 3.13 each failed one bindings test | **supported** | `linux-x86_64/cross-verify.log` (2026-11-11); `verify.log`, `musl-identical.txt`, `wheels.json` (2026-11-09); CI run 43408907893 |
 | macOS x86_64 | GitHub's `macos-15-intel` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893); cross-built here, where the test binaries compile and link (no Rosetta 2 on the build machine) | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `macos-x86_64/verify.log`; CI runs 43013926055 and 43408907893 |
-| Windows x86_64 | GitHub's `windows-latest` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893; five tests of files removed while open or of file names Windows forbids run on Unix only); cross-built here with MinGW-w64 | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `windows-x86_64-cross/build.log`; CI runs 43013926055 and 43408907893 |
+| Windows x86_64 | GitHub's `windows-latest` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893; tests of Unix file-system behaviour (links, permissions, FIFOs, file names Windows forbids, files removed while open) and of signals run on Unix only); cross-built here with MinGW-w64 | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `windows-x86_64-cross/build.log`; CI runs 43013926055 and 43408907893 |
 | Windows ARM64 | GitHub's `windows-11-arm` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893); not built here | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | CI runs 43013926055 and 43408907893 |
 
 ## From a release archive
@@ -103,7 +103,7 @@ VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more). `.gitatt
 text files out with LF line ends everywhere, so a Windows build's compiled-in data
 (`crates/scrutate/data`) matches every other build.
 
-With GCC 15 or newer, parsing is about 1.8 times slower unless the grammars are compiled with
+With GCC 15 or newer, parsing is slower unless the grammars are compiled with
 `-fjump-tables`: their generated `parser.c` asks for `-O0`, and GCC 15 drops jump tables at
 `-O0` (tree-sitter #5971). tree-sitter #5984 makes the generator write
 `#pragma GCC optimize ("O0", "jump-tables")`, but of the grammars scrutate uses only tree-sitter-md
@@ -115,8 +115,8 @@ x86_64 and aarch64 Linux by setting `CFLAGS_x86_64_unknown_linux_gnu` and
 `CFLAGS_x86_64_unknown_linux_gnu` (or the aarch64 one) takes its place, so add `-fjump-tables` to
 that one if you set it. A build outside the repository (`cargo install`) does not read that file:
 give it `CFLAGS=-fjump-tables`. The
-x86_64 number is measured (Linux's C sources, GCC 15.2: 22 s against 12 s); aarch64 is from
-tree-sitter #5971's report, not measured here. `python3 tools/jump_tables.py target/release` says
+x86_64 slowdown was measured on Linux's C sources with GCC 15, but no log of it is committed;
+aarch64 is from tree-sitter #5971's report, not measured here. `python3 tools/jump_tables.py target/release` says
 whether the built C grammar has its jump tables.
 
 ## Python package

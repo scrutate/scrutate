@@ -37,7 +37,7 @@ crates/scrutate/        the product: Engine A (instant.rs, source.rs, policy.rs)
                         models/ (semantic.npz, ranker.npz, embedded into the binary)
 crates/scrutate-py/     optional PyO3 bindings (not built by default)
 python/scrutate_ref/    the models' training code (ranker export, vector model tables)
-python/tests/           tests of the training code, the benchmark builders and the bindings
+python/tests/           tests of the training code, the benchmark builders, the tools/ scripts and the bindings
 bench/                  benchmark harness, differential tests, ranking quality, training scripts,
                         the agent eval (agent_eval.py: paid Claude Code runs, never in CI)
 tools/                  name research, SBOM, docs generators, reproducibility check
@@ -52,7 +52,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
 cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features; the tests that run or compare with rg skip without it, and fail without it when SCRUTATE_TEST_NEEDS_RG is set (CI, tools/ci_ripgrep.sh)
 cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
-bash tools/ci_gate.sh [--quick]                   # CI's Linux checks on a box set up by its ci_setup.sh; tools/gate_map.json names what covers each CI step
+bash tools/ci_gate.sh [--quick]                   # CI's Linux checks on a box set up by its ci_setup.sh (on the box, not in this repository); tools/gate_map.json names what covers each CI step
 python3 tools/gate_parity.py                      # every step of the six workflows, run: and uses:, is in that map, keyed by what decides how it runs (PyYAML from python[test])
 python3 tools/fuzz_lock.py --check                # fuzz/Cargo.lock holds the root lock's versions; without --check it makes the file again
 python3 tools/gitleaks_config.py                  # .gitleaks.toml holds title and [extend] useDefault = true alone, in any case, and no .gitleaksignore sits beside it (Python 3.11+)
@@ -62,10 +62,10 @@ python3 tools/unsafe_count.py                     # each file's `unsafe` count m
 gitleaks dir . --no-banner --redact --config .gitleaks.toml   # no secret in the tree (gitleaks 8.30.1)
 python3 tools/check_doc_shift.py HEAD             # no new item lands between a doc comment and the item it documented
 ruff check --select F .                           # pyflakes over every Python file (ruff from python/constraints.txt)
-cd python && SCRUTATE_BIN=../target/release/scrutate python -m pytest -q   # training code, benchmark builders (+ bindings if installed)
+cd python && SCRUTATE_BIN=../target/release/scrutate python -m pytest -q   # training code, benchmark builders, tools/ scripts (+ bindings if installed)
 python bench/quality.py target/release/scrutate   # ranking quality (MRR@10, hit@5) not below bench/quality/floor.json
 python bench/differential.py --cases 200          # Engine A == ripgrep on random inputs (ripgrep 15.2.0 or newer; SCRUTATE_RG names it)
-SCRUTATE_BIN=target/release/scrutate python bench/yardstick.py --smoke   # every scrutate form answers each workload right; installed rivals too
+SCRUTATE_BIN=target/release/scrutate python bench/yardstick.py --smoke   # every scrutate form answers right what it can express; installed rivals run, not gated
 python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check   # images, charts, document heads and links are what the scripts write
 ```
 

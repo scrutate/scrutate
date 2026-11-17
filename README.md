@@ -43,8 +43,8 @@ independent engines behind one CLI ([questions and answers](docs/FAQ.md)).
 **Engine A, universal instant search.** No index, no parsers, no background process. Literal,
 regex (linear-time, size-limited), identifier (all casings), fuzzy, multiline, whole-word and
 inverted matching over every readable file, with `.gitignore` rules, a parallel walk, streaming,
-cancellation, and colour or JSON Lines. Built on ripgrep's own `grep-*` and `ignore` crates, and
-differentially tested against ripgrep.
+cancellation, and colour or JSON Lines. Built on ripgrep's own `grep-*` crates and a modified copy of
+its `ignore` crate, and differentially tested against ripgrep.
 
 **Engine B, code intelligence.** A persistent, incremental index (SQLite and memory-mapped
 segments): tree-sitter symbols from 61 grammars (74 with `--features extra-langs`), keyword
@@ -179,7 +179,8 @@ queries all three answered. In the same run Scrutate's own MCP server answered 4
 1,260 ms median against 7.6 ms for `scrutate grep --index` on those 4; the other 16 pass the 5,000 lines
 its `grep_code` returns. That run predates the server keeping its look of the tree between calls
 (on macOS while its kqueue is in place, so not on a tree with more files and directories than half
-of `kern.maxfilesperproc` less 1,024, about 29,700 where it is 61,440),
+of the descriptor limit (the hard limit or `kern.maxfilesperproc`, whichever is lower) less 1,024,
+about 29,700 where it is 61,440),
 which took those 4 from 669.6 to 50.8 ms on another machine, and on a Mac 7 queries on a 24,866-file
 part of the same tree from 82.7 to 8.4 ms, numbers not comparable with these ([docs/COMPETITIVE.md](docs/COMPETITIVE.md#3-against-zoekt-and-livegrep-indexed-search)).
 
@@ -200,8 +201,9 @@ scrutate --root /path/to/repo serve --watch
 
 ### Set up your agent
 
-`scrutate setup` adds one entry that runs this binary by its absolute path, and keeps every other
-line of the agent's file:
+`scrutate setup` adds one entry that runs this binary by its absolute path. Every other byte of
+the agent's file stays (a JSON file gains only the comma before the new entry); Claude Code's user file goes through `claude mcp add-json`
+when `claude` is on `PATH`, and Claude Code writes that file itself:
 
 ```sh
 scrutate setup claude          # also codex, opencode, cursor, gemini
@@ -210,8 +212,8 @@ scrutate setup claude --hook   # also the hooks for Claude Code's Grep and its r
 scrutate setup claude --uninstall   # take back exactly what setup wrote, the hooks included
 ```
 
-`--dry-run` writes nothing. Only `--instructions` touches `CLAUDE.md`, `AGENTS.md` and
-`GEMINI.md`. `scrutate hook stats` shows the bytes the hook sent against Grep's. Details:
+`--dry-run` writes nothing. Only `--instructions`, and `--uninstall` taking its block out, touch
+`CLAUDE.md`, `AGENTS.md` and `GEMINI.md`. `scrutate hook stats` shows the bytes the hook sent against Grep's. Details:
 [docs/CLI.md](docs/CLI.md#setup-and-the-grep-hook).
 
 `scrutate lsp` is a Language Server Protocol server on stdio: definitions, references and symbols
@@ -263,7 +265,7 @@ The first release, **not** declared production-ready:
 **Platforms.** All six are supported: macOS arm64 and x86_64, Linux aarch64 and x86_64 (static musl
 binaries too), Windows x86_64 and ARM64. macOS arm64 and Linux are built and tested here, and
 macOS x86_64 and Windows x86_64 are cross-built here. On GitHub's runners (CI run 43408907893, commit
-`8f60af9`) every job passed: the Rust tests, and a wheel built, installed and tested for CPython 3.13
+`8f60af9`) every job that ran passed (the one for pull requests alone was skipped): the Rust tests, and a wheel built, installed and tested for CPython 3.13
 and free-threaded 3.14, on all six platforms, and the editor integrations
 ([docs/INSTALL.md](docs/INSTALL.md)). CI run 43013926055 (commit `9384c18`) was the first such run
 of the Rust tests.
@@ -272,8 +274,9 @@ of the Rust tests.
 passed 122 Rust tests (unit, per-language snapshot, robustness, property, end-to-end CLI and MCP,
 incremental parsing), the Python and bindings tests, fuzz regressions and a reproducible-build
 check; the ranking pins and quality floor came later, and CI runs both. Engine A agrees with
-ripgrep on 2,000 random corpora and patterns, run as shipped, with the parallel walk forced, and
-with every file searched in ranges.
+ripgrep on 2,000 random corpora and patterns, each run as shipped and again in one forced mode:
+the one-thread walk, the parallel walk, a hand-over between them, or a file over 64 KiB searched
+in pieces.
 
 **Engine B.** Its models train on rows it writes itself. A test pins its features and scores bit
 for bit, and CI fails when its ranking quality falls below a recorded floor. On held-out code in
