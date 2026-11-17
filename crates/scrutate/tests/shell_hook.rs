@@ -560,3 +560,47 @@ fn hook_run_refuses_an_rg_it_cannot_answer_as_rg_does() {
         assert!(code == 0 && out.contains("b.txt"), "{code}\n{out}");
     }
 }
+
+/// `hook run --session s -- ARGS` in `r` with a scratch state directory and `redact` as
+/// SCRUTATE_REDACT -> (stdout, `hook stats --json` after it).
+fn counted_run(r: &Repo, args: &[&str], redact: &str) -> (String, serde_json::Value) {
+    let state = r.root.join(".state");
+    let with_state = |c: &mut Command| {
+        c.current_dir(&r.root).env("HOME", &state).env("XDG_STATE_HOME", &state).env("LOCALAPPDATA", &state).env_remove("SCRUTATE_MAX_BYTES");
+    };
+    let mut c = Command::new(BIN);
+    c.args(["hook", "run", "--session", "s", "--"]).args(args).env("SCRUTATE_REDACT", redact);
+    with_state(&mut c);
+    let out = c.output().unwrap();
+    let mut s = Command::new(BIN);
+    s.args(["hook", "stats", "--json"]);
+    with_state(&mut s);
+    let stats = serde_json::from_slice(&s.output().unwrap().stdout).unwrap();
+    (String::from_utf8_lossy(&out.stdout).into_owned(), stats)
+}
+
+#[test]
+fn a_cut_search_counts_the_programs_whole_output() {
+    let r = Repo::new("cut_count");
+    let lines: String = (0..200_000).map(|i| format!("foo line {i}\n")).collect();
+    r.write("big.txt", &lines);
+    let (out, s) = counted_run(&r, &["grep", "foo", "big.txt"], "off");
+    assert!(out.ends_with("narrow the search, or pass a path\n"), "{out}");
+    assert_eq!(s["shell"]["grep_bytes"].as_u64(), Some(lines.len() as u64), "{s}");
+    assert_eq!(s["shell"]["sent_bytes"].as_u64(), Some(out.len() as u64), "{s}");
+    assert!(s["shell"]["saved_bytes"].as_i64().unwrap() > 0, "{s}");
+}
+
+#[test]
+fn a_cut_answer_counts_only_the_redactions_it_shows() {
+    let r = Repo::new("cut_redact");
+    // a distinct token per line, each one redaction, far more lines than the budget shows
+    let token = |i: usize| format!("ghp_{:0>36}", format!("aB3dE5gH7jK9mN1pQ3sT5vW7y{i}"));
+    let lines: String = (0..5_000).map(|i| format!("GITHUB = \"{}\"\n", token(i))).collect();
+    r.write("c.py", &lines);
+    let (out, _) = counted_run(&r, &["grep", "GITHUB", "c.py"], "on");
+    assert!(out.contains("narrow the search, or pass a path\n"), "{out}");
+    let shown: Vec<&str> = out.lines().filter(|l| l.starts_with("GITHUB = ")).collect();
+    assert!(!shown.is_empty() && shown.iter().all(|l| !l.contains("aB3dE5")), "{out}");
+    assert_eq!(out.lines().last().unwrap(), format!("({} secrets redacted: SCRUTATE_REDACT=off shows them)", shown.len()), "{out}");
+}

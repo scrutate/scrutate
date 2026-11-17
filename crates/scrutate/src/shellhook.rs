@@ -1005,8 +1005,8 @@ fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, 
 }
 
 /// Streams the child's standard output to ours, line by line, with secrets redacted. With a
-/// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
-/// the child wrote that were read, the bytes sent)
+/// `room`, it stops sending at that many bytes, says so, and reads the rest unsent so the count
+/// is the whole output. -> (the exit code, the bytes the child wrote that were read, the bytes sent)
 fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize) {
     use std::io::BufRead;
     let out = child.stdout.take().expect("a piped stdout");
@@ -1020,6 +1020,8 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     // a line of a key's body grep shows without its armour, read back from its file
     let mut keys = crate::secrets::KeyFiles::default();
     let (mut read, mut sent, mut cut) = (0usize, 0usize, false);
+    // the redactions in the lines sent: a line that did not fit is not shown
+    let mut redacted = 0;
     // the lines of a public key's or a certificate's body, until its END shows they are one
     let mut held: Vec<Vec<u8>> = Vec::new();
     let mut line = Vec::new();
@@ -1060,23 +1062,36 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
                 crate::secrets::Hold::Release { public } => Some(public),
             },
         };
-        let mut out: Vec<Vec<u8>> = Vec::new();
+        // each line with the redactions it made
+        let mut out: Vec<(Vec<u8>, usize)> = Vec::new();
+        let mut show = |r: &mut crate::secrets::Redactor, l: &[u8], public: bool| {
+            let before = r.total();
+            let o = shown(r, &mut keys, l, public);
+            (o, r.total() - before)
+        };
         if let Some(public) = public {
-            out.extend(held.drain(..).map(|h| shown(&mut r, &mut keys, &h, public)));
+            out.extend(held.drain(..).map(|h| show(&mut r, &h, public)));
         }
         if at_end {
             done = true;
         } else {
-            out.push(if redact { shown(&mut r, &mut keys, &line, false) } else { line.clone() });
+            out.push(if redact { show(&mut r, &line, false) } else { (line.clone(), 0) });
         }
-        for o in &out {
+        for (o, n) in &out {
             match send(o, &mut sent) {
-                Ok(()) => {}
-                Err(over) => {
-                    // the reader is gone or the budget is spent: left running, the program fills
-                    // the pipe and the wait below never ends
+                Ok(()) => redacted += n,
+                Err(true) => {
+                    // the budget is spent: the rest is read unsent, so the count is the program's
+                    // whole output and it never blocks on a full pipe
+                    read += std::io::copy(&mut reader, &mut std::io::sink()).map_or(0, |n| n as usize);
+                    cut = true;
+                    done = true;
+                    break;
+                }
+                Err(false) => {
+                    // the reader is gone: left running, the program fills the pipe and the wait
+                    // below never ends
                     let _ = child.kill();
-                    cut = over;
                     done = true;
                     break;
                 }
@@ -1088,7 +1103,7 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         let _ = so.write_all(note.as_bytes());
         sent += note.len();
     }
-    if let Some(note) = r.note() {
+    if let Some(note) = crate::secrets::note(redacted) {
         let _ = writeln!(so, "{note}");
         sent += note.len() + 1;
     }

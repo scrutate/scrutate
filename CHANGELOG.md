@@ -1180,6 +1180,11 @@ incompatible index by itself, and that is never breaking.
   under those labels, a cut one or one without its END too, is marked line by line, its short
   last line included, and a body line's trailing `+` no longer drops it to the ordinary rules
   ([Security](docs/SECURITY.md)).
+- `hook stats` counts a search `hook run` cut at the byte bound by the program's whole output:
+  it counted only the bytes read before the cut, so the saving of exactly those searches came
+  out negative. `hook run` now reads the rest unsent instead of ending the program, and its
+  closing line counts only the redactions in the lines sent; it counted the line that did not
+  fit too ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 
 ## [0.1.0] - 2026-11-11
 
