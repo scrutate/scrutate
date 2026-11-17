@@ -1285,6 +1285,10 @@ incompatible index by itself, and that is never breaking.
   runs past 4 MiB goes out as its marker with the rest of its line withheld. The key-line read
   back of `hook run` and the Grep hook opens only a regular file: a printed line naming
   `/dev/zero` spun forever and one naming a FIFO blocked ([Security](docs/SECURITY.md)).
+- A Rust `#[path = "impls/h.rs"] mod helper;` names `src/impls/h.rs`: `helper::compute()` in the
+  declaring file resolves there, `deps` shows the file and `rdeps` of it lists the declaration.
+  The attribute was not read, so the call was unresolved and `callees` listed every `compute` in
+  the crate ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 
