@@ -13,15 +13,21 @@ impl Rules for Go {
         go_bindings(n, src, out)
     }
 
+    // the files of the directory with the same package clause (`package a_test` is another
+    // package), and the `_test.go` ones only for a test file: other code does not see them
     fn package_files(r: &mut Resolver, path: &str) -> Vec<String> {
-        let dir = dir_of(path).to_string();
-        r.go_dir(&dir)
+        let own = r.go_package(path);
+        let test = path.ends_with("_test.go");
+        let mut out = r.go_dir(dir_of(path));
+        // a file whose clause cannot be read is kept: a half-written file hides nothing
+        out.retain(|f| (test || !f.ends_with("_test.go")) && (own.is_none() || f == path || r.go_package(f).is_none_or(|p| Some(p) == own)));
+        out
     }
 
     // a method is declared outside its type, in any file of the package: its receiver names the type
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let owner = strip_generics(qualname);
-        for f in r.go_dir(dir_of(path)) {
+        for f in Self::package_files(r, path) {
             let gf = r.file(&f);
             let Some(tree) = gf.tree() else { continue };
             let root = tree.root_node();
@@ -75,7 +81,10 @@ impl Rules for Go {
         } else {
             r.go_imports().get(module)?.clone()
         };
-        Some(r.go_dir(&best))
+        // an import sees the package without its tests
+        let mut files = r.go_dir(&best);
+        files.retain(|f| !f.ends_with("_test.go"));
+        Some(files)
     }
 
     fn import_files(r: &mut Resolver, from: &str, _fi: &FileInfo, _line: i64, module: &str) -> Option<Vec<String>> {
@@ -147,6 +156,17 @@ impl Resolver<'_> {
 
     fn go_dir(&mut self, dir: &str) -> Vec<String> {
         self.go_dirs().get(dir).cloned().unwrap_or_default()
+    }
+
+    /// The name in the package clause of the Go file `f`.
+    fn go_package(&mut self, f: &str) -> Option<String> {
+        let gf = self.file(f);
+        let root = gf.tree()?.root_node();
+        let mut cur = root.walk();
+        let clause = root.named_children(&mut cur).find(|n| n.kind() == "package_clause")?;
+        let mut cur = clause.walk();
+        let id = clause.named_children(&mut cur).find(|n| n.kind() == "package_identifier")?;
+        Some(text(id, &gf.src).to_string())
     }
 }
 

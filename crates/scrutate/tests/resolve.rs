@@ -433,6 +433,24 @@ fn go_two_areas() {
 }
 
 #[test]
+fn go_a_test_package_is_not_part_of_the_package_it_tests() {
+    let r = Repo::new(
+        "go_test_pkg",
+        &[
+            ("go.mod", "module example.com/m\n\ngo 1.22\n"),
+            ("a/use.go", "package a\n\nfunc Use() int { return helper() + Exported() }\n"),
+            ("a/z.go", "package a\n\nfunc helper() int { return 1 }\n\nfunc Exported() int { return 2 }\n"),
+            ("a/a_test.go", "package a_test\n\nfunc helper() int { return 3 }\n\nfunc Exported() int { return 4 }\n"),
+            ("b/b.go", "package b\n\nimport \"example.com/m/a\"\n\nfunc B() int { return a.Exported() }\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "a/z.go:3"), ["a/use.go:3", "a/z.go:3"]);
+    assert_eq!(r.refs_of("helper", "a/a_test.go:3"), ["a/a_test.go:3"]);
+    assert_eq!(r.refs_of("Exported", "a/z.go:5"), ["a/use.go:3", "a/z.go:5", "b/b.go:5"]);
+    assert_eq!(r.callers("a/z.go:3"), ["Use"]);
+}
+
+#[test]
 fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
     let use_js = "import { helper } from './lib';\nfunction viaVar(flag) {\n  if (flag) {\n    var helper = other();\n  }\n  return helper();\n}\nfunction viaLet(flag) {\n  if (flag) {\n    let helper = other();\n  }\n  return helper();\n}\nfunction viaConst(flag) {\n  {\n    const helper = 3;\n  }\n  for (var i = 0; i < 1; i++) {\n    var other = helper();\n  }\n  return helper();\n}\n";
     let r = Repo::new("js_var", &[("lib.js", "export function helper() { return 1; }\n"), ("use.js", use_js)]);
