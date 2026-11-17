@@ -27,7 +27,7 @@ Every PASS refers to a test, benchmark or audit output here.
 | Literal and regex search | **met**: linear-time regex with size limits |
 | Machine-readable output | **met**: JSON Lines (schema 1) from `grep`, one JSON envelope (schema 2) from the index commands, JSON error records |
 | Functioning, tested code-intelligence foundation | **met**: 61 + 13 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
-| Automated tests | **met**: Rust tests (the count per test binary of `cargo test -p scrutate` is in docs/TEST_RESULTS.md), Python tests of the training code and benchmark builders, bindings tests on four interpreters per platform in CI (3.13, 3.14t, 3.15, 3.15t), pinned ranking features, a ranking quality floor, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
+| Automated tests | **met**: in docs/TEST_RESULTS.md, Rust tests (the count per test binary of `cargo test -p scrutate`), Python tests, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing; in CI (`ci.yml`), the pinned ranking features (`tests/ranking_pins.rs` in `cargo test`), the ranking quality floor (`bench/quality.py`) and the bindings tests on four interpreters per platform (3.13, 3.14t, 3.15, 3.15t) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
 | Verified builds for declared supported platforms | **met on all six**: three built and tested here, three on GitHub's runners (INSTALL.md) |
 | Security assessment | **met as a self-assessment** with fuzzing; no independent audit |
@@ -121,7 +121,7 @@ search engines, each one the first user or CI run would hit:
 
 ## Recommendation
 
-Use 0.1.0 for development on any of the six supported platforms; macOS arm64 and Linux are also
-where the benchmarks ran and the results reproduce from this repository. Before calling it production-ready: release archives and
-wheels built by the release workflow and installed on Windows and Intel macOS, an independent
-security review, and the benchmarks repeated on dedicated hardware.
+Use 0.1.0 for development on any of the six supported platforms; macOS arm64 and Linux aarch64 are
+also where the benchmarks ran and the results reproduce from this repository. Before calling it
+production-ready: release archives and wheels built by the release workflow and installed on Windows
+and Intel macOS, an independent security review, and the benchmarks repeated on dedicated hardware.

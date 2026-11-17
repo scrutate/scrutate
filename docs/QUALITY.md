@@ -244,7 +244,7 @@ change, goes here.
 - Six languages. The semantic model was trained on Python only, the ranker fitted on Python and
   the five other languages above. Other languages get the lexical layer's quality plus what the
   ranker and the code-word vectors generalise.
-- - No comparison with other code-search products is published here: `bench/yardstick.py --quality
+- No comparison with other code-search products is published here: `bench/yardstick.py --quality
   N` runs these queries on ck, grepai and claude-context (its W8 workload), but no result of it is
   committed, and public code-search benchmarks (e.g. natural-language-to-code retrieval sets) use
   other protocols. Absolute MRR does not compare across protocols.
@@ -314,13 +314,13 @@ samples) and a dictionary to version in the index.
 
 ## Semantic model and ranker
 
-- - Semantic model (`crates/scrutate/models/semantic.npz`, 7.6 MB): a code-word model with two views
+- Semantic model (`crates/scrutate/models/semantic.npz`, 7.6 MB): a code-word model with two views
   per chunk (description: name + signature + docs; implementation: body), 256 dimensions, trained in
   numpy (`bench/train_semantic.py`) with an InfoNCE contrastive objective over (query, description),
   (query, implementation) and (description, implementation) pairs with 20 % word dropout. On DEV its
   semantic-only doc MRR rose from 0.247 (the previous PLS-SVD model) to 0.427, in a run whose output
   is not committed.
-- - Its two word tables are stored as int8 codes with one float32 scale per row (symmetric, value =
+- Its two word tables are stored as int8 codes with one float32 scale per row (symmetric, value =
   code × max|row| / 127, rounded half to even, as the index's vectors), in place of float16: the
   file went from 14.6 MB to 7.6 MB, so the crate fits crates.io's 10 MB limit. `bench/quality.py` on
   a release build, float16 → int8 (the float16 values and the floors are those of
@@ -343,7 +343,7 @@ samples) and a dictionary to version in the index.
   | MIT or Apache-2.0 | | rayon |
   | MPL-2.0 | pikepdf | |
 
-- - Ranker (`crates/scrutate/models/ranker.npz`, 86 KB): LightGBM LambdaRank over 48 features,
+- Ranker (`crates/scrutate/models/ranker.npz`, 86 KB): LightGBM LambdaRank over 48 features,
   exported to arrays; numpy and LightGBM predictions agree to 3.5e-8 (printed by the fit; its log is
   not committed). Fitted on the 7 Python DEV packages and the 16 `CODE_DEV` repositories of
   `bench/groups.py` (tokio, clap, chrono, grpc-go, zap, cobra, commons-lang, gson, javapoet, guava,

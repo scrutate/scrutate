@@ -136,7 +136,7 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   fresh copy of the binary (a new file, so slow) and goes on once the binary starts faster than
   the copy in two rounds in a row with a steady median, or after an hour. The chain log records
   each round.
-- - `bench/leaderboard.py` stops a row after its second block, at 20 runs (`--no-stop-early` turns
+- `bench/leaderboard.py` stops a row after its second block, at 20 runs (`--no-stop-early` turns
   it off), when its wall-time verdict and its four CPU and memory verdicts (default and `-j1`) are
   all PASS, FAIL or n/a at alpha 0.001 and no tool's block medians differ by more than 25%. Every
   other row takes all 30 runs and is judged at alpha 0.049. This is the Haybittle-Peto boundary

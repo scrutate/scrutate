@@ -11,8 +11,8 @@
 
 What Scrutate 0.1.0 does better than the tools it was measured against, where it ties, and where it
 is behind. Performance statements point at docs/LEADERBOARD.md (generated from the raw results in
-`bench/results/`), except the few in sections 2 and 3 that say they have no committed result file;
-capability statements point at a test. Claims about other tools cover only what those runs observed
+`bench/results/`), except the few in sections 2 and 3 that say they have no committed result file.
+Claims about other tools cover only what those runs observed
 and the tools' documented options. The leaderboard's machine is a developer laptop (Apple M3 Pro)
 shared with other work, and section 14 of the mission keeps "#1" claims for dedicated idle hardware,
 so the wins below are measured results, not publishable leadership claims.
@@ -178,14 +178,14 @@ concurrent writers are tested; its dependencies are audited and listed in an SBO
 
 What the evidence does not support, and this page does not claim:
 
-- - A published "#1": every leaderboard number comes from one developer laptop shared with other
+- A published "#1": every leaderboard number comes from one developer laptop shared with other
   work and a VM on it, and section 14 of the mission asks for dedicated idle hardware
   (docs/RELEASE_READINESS.md).
 - Results on Windows or Intel Macs, tested on GitHub's runners only, with no benchmark there
   (docs/INSTALL.md).
 - Linux results on real hardware: the cold-tree thread count and the read time that counts as a
   disk read were fitted in the VM (docs/ROADMAP.md).
-- - A lead of half the time everywhere: on macOS a search of a large tree takes 1 to 22% longer than
+- A lead of half the time everywhere: on macOS a search of a large tree takes 1 to 22% longer than
   merely reading its files (the second measurement of `llvm/case-insensitive` aside), so the margin
   has little room left there.
 - An answer without the source tree: the text index stores no file contents; Zoekt's does.

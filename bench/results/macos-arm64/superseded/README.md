@@ -55,6 +55,6 @@ stopped to work on the tie.
 
 `*-9aa0` is a complete run (37 of 37 warm, 5 of 5 cold and every indexed metric PASS) of the build
 before the MCP server served revision 2026-07-28 and `refs` followed the types of variables and
-TypeScript path aliases. Six of its warm rows were measured twice
-because other work on the laptop disturbed them; `llvm/case-insensitive` was measured the second
-time with the LLVM tree no longer in the page cache.
+TypeScript path aliases. Six of its warm rows were measured twice because other work on the laptop
+disturbed them; `llvm/case-insensitive` came out slower the second time, and the committed result
+does not record why.
