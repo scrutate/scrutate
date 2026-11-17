@@ -1198,6 +1198,10 @@ incompatible index by itself, and that is never breaking.
 - On Windows the dependency cache of `--deps` and `scope: "deps"` stays under `%LOCALAPPDATA%`
   when `XDG_CACHE_HOME` is set: an `XDG_CACHE_HOME` from MSYS or Git Bash moved it to a place no
   check covered ([Security](docs/SECURITY.md#dependency-source)).
+- A `serve` tool call after the repository root was deleted answers with an error the client can
+  read (`no such directory`), and so does every call after it, with or without `--watch`. The
+  reader whose index the failed rebuild had closed went back to the pool, and handing it back
+  panicked (`the index was not reopened after a rebuild`), so the call never answered.
 
 ## [0.1.0] - 2026-11-11
 

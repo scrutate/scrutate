@@ -665,3 +665,48 @@ fn a_call_cancelled_after_its_first_progress_report_stops_and_sends_nothing_more
         answered.push(m);
     }
 }
+
+#[test]
+fn a_call_after_the_root_is_deleted_is_answered_and_the_server_keeps_answering() {
+    struct Killed(Child);
+    impl Drop for Killed {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let r = Repo::new("root_gone", 3);
+    let mut child = Killed(spawn(&r, &["serve"], &[]));
+    let mut stdin = child.0.stdin.take().unwrap();
+    let stdout = BufReader::new(child.0.stdout.take().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel::<Value>();
+    std::thread::spawn(move || {
+        for line in stdout.lines().map_while(Result::ok) {
+            let _ = tx.send(serde_json::from_str(&line).unwrap());
+        }
+    });
+    // a call that hangs fails the test at the deadline instead of hanging it
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut ask = |msg: Value| -> Option<Value> {
+        writeln!(stdin, "{msg}").unwrap();
+        loop {
+            let v = rx.recv_timeout(deadline.checked_duration_since(std::time::Instant::now())?).ok()?;
+            if v["id"] == msg["id"] {
+                return Some(v);
+            }
+        }
+    };
+    let call = |id: i64| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": "find_symbol", "arguments": {"name": "make_widget_0"}}});
+    for id in 1.. {
+        let v = ask(call(id)).expect("an answer before the root is deleted");
+        if !v["result"]["content"][0]["text"].as_str().unwrap_or("").contains("still building its index") {
+            break;
+        }
+    }
+    fs::remove_dir_all(&r.root).unwrap();
+    for id in [100, 101] {
+        let a = ask(call(id)).unwrap_or_else(|| panic!("tools/call {id} after the root is deleted got no answer"));
+        assert_eq!(a["result"]["isError"], true, "{a}");
+    }
+    assert!(ask(json!({"jsonrpc": "2.0", "id": 102, "method": "ping"})).is_some(), "the server still answers a ping");
+}
