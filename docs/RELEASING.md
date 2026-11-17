@@ -432,9 +432,9 @@ first. No PyPI document says whether PyPI takes the `cp315-abi3.abi3t` wheels. I
 reads `abi3.abi3t` as two tags, and checks only the platform tag; a dry run's TestPyPI upload
 settles it.
 
-R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055. R-6.12 and R-13.9
-stay PARTIAL until `release.yml` and `benchmarks.yml` have run on a runner: flip them from the
-recorded runs, not before.
+R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055. R-6.12 stays
+PARTIAL until `release.yml` and `benchmarks.yml` have run on a runner: flip it from the recorded
+runs, not before.
 
 `.github/FUNDING.yml` lists GitHub Sponsors and Buy Me a Coffee, both under `crisnahine`, and
 shows the Sponsor button. The "Sponsor and hire" section of README.md links the same two pages; a

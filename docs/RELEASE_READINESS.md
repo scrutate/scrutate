@@ -42,9 +42,12 @@ Every PASS refers to a test, benchmark or audit output here.
    (docs/ROADMAP.md, known limits).
 2. **No independent security review** ([SECURITY](SECURITY.md#known-gaps-and-residual-risks)).
 3. **Release pipeline unexercised**: `release.yml` has never run on GitHub, so the attestations,
-   the draft release and the `.deb`, `.rpm` and `.vsix` exist only as workflow definitions. Its
-   dry run (`gh workflow run release.yml --ref main -f dry_run=true`) exercises all of it but
-   publishing, and needs the owner's yes. Publishing to PyPI, the VS Code Marketplace, Open VSX,
+   the draft release and the release's own `.deb`, `.rpm` and `.vsix` exist only as workflow
+   definitions (`ci.yml` packages and installs a `.vsix` on every run, and a `.deb` and `.rpm`
+   were built and installed locally, packaging/README.md). Its dry run
+   (`gh workflow run release.yml --ref main -f dry_run=true`) exercises all of it but publishing
+   to PyPI, the Marketplace and Open VSX (with `PYPI_PUBLISH` set it uploads the wheels to
+   TestPyPI), and needs the owner's yes. Publishing to PyPI, the VS Code Marketplace, Open VSX,
    the Homebrew tap and the Scoop bucket waits on the owner's accounts and repositories
    ([Releasing](RELEASING.md#7-what-a-published-release-adds), packaging/README.md); the
    binaries carry no Apple or Windows code signature
@@ -64,7 +67,6 @@ Status words as in docs/TRACEABILITY.md.
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push), and `benchmarks.yml` one on a pull request (43823369090); `benchmarks.yml` runs on `main` and `release.yml` runs on a runner; for `release.yml` before the tag, a dry run (`gh workflow run release.yml --ref main -f dry_run=true`, docs/RELEASING.md section 7) |
 | R-12.17 | Signed releases and published packages | PARTIAL | one run of the release workflow's Sigstore steps (a dry run first), then the owner's PyPI, Marketplace and Open VSX setup, the tap and bucket repositories and the winget pull request |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
-| R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |
 
 ## Defects found and fixed while preparing this release
 

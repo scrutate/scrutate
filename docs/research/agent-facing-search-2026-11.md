@@ -2,6 +2,8 @@
 
 Research date: 2026-11-10. Every claim links to the primary source it came from. Versions and dates are given where the source states them. Context on the scrutate side comes from `crates/scrutate/src/mcp.rs` (14 tools, protocol versions `2024-11-05`, `2025-03-26`, `2025-06-18`, text-only results, no annotations, no server instructions, no progress, cancellation ignored).
 
+Status on 2026-11-17: the scrutate side of this note is the code of its research date. Since then the MCP server has 19 tools (and `edit_symbol` with `serve --allow-edits`), accepts the handshake revisions `2024-11-05` to `2025-11-25` and the stateless `2026-07-28` (`server/discover`), sends tool annotations and server instructions, cuts every answer at `max_bytes` (24,000 bytes by default) with `offset` to continue, reports progress while a first index is built, stops a call on `notifications/cancelled`, sends `structuredContent` with an `outputSchema` per tool under `serve --structured`, and takes `response_format` (`concise` or `detailed`) on every tool but `edit_symbol` (`crates/scrutate/src/mcp.rs`). Items 1 to 7 below are done; the rest stand as written.
+
 ## What this means for scrutate
 
 1. **Annotate every tool.** Set `readOnlyHint: true` on the 13 read tools and `openWorldHint: false` on all 14. Claude Code runs read-only calls in parallel and may repeat them after a dropped connection. Codex `writes` mode, VS Code and Gemini CLI plan-mode policies skip the approval prompt only for read-only tools. Today scrutate sends no annotations, so every client treats it as destructive and open-world. See [section 1](#1-model-context-protocol-current-state).

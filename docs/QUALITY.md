@@ -28,7 +28,8 @@ Two sets are held out, of different weight:
 
 The numbers hold for the shipped binary. Their rows came from a Python reference engine matching
 the binary's candidates, features and scores bit for bit, checked by `bench/parity.py`
-on networkx, the engine's own sources and 21 repositories. That mirror ended
+on networkx, the engine's own sources and 21 repositories (the script went with the reference
+engine; commit `57b5c9cc` is the last that has it). That mirror ended
 ([Architecture](ARCHITECTURE.md#retrieval-and-ranking-searchrs-semanticrs-rankrs) says why); before
 it went, both ways gave the same benchmark files, rows and ranker, byte for byte. Now
 `bench/gen_features.py` indexes each package with the binary and keeps what `batch --features`

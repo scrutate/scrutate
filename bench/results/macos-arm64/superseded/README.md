@@ -12,7 +12,8 @@ charts every run here as history.
 | `leaderboard-warm-blocks.json` | 9 | no | `53a90727e157...` |
 | `leaderboard-warm-prevbin.json` | 33 | 3 | `53a90727e157...` |
 | `leaderboard-warm-eeab.json` | 35 | 3 | `eeab24663509...` |
-| `leaderboard-warm-a82a.json` | 37 | 3 | `a82a23c54270...` |
+| `leaderboard-warm-a82a.json` | 36 | 3 | `a82a23c54270...` |
+| `leaderboard-warm-9da7-partial.json` | 17 | 3 | `9da7b62ae74e...` |
 | `leaderboard-warm-fb5c.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb5c4e0a1250...` |
 | `leaderboard-warm-fb3b.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb3bd578c6d9...` |
 | `leaderboard-warm-b57d.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `b57d2a666dba...` |
@@ -30,7 +31,8 @@ A newer run goes in the directory above as `leaderboard-warm.json`, `leaderboard
 
 `indexed-eeab.json` and `compare-eeab.json` were measured with the same `eeab24663509...` binary (the latter before
 the harness measured peak memory on macOS).
-`leaderboard-warm-a82a.json` is the last full run before regexes were built with `^` and `$` as line
+`leaderboard-warm-a82a.json` is the last run (it stopped at `ripgrep/structural`, where the
+tree-sitter reference failed, so 36 of 37 rows) before regexes were built with `^` and `$` as line
 anchors (without that, patterns using them were matched one line at a time) and before the structural
 benchmarks compared the same query in both tools.
 

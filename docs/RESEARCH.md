@@ -94,7 +94,7 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
   engine is faster still): a 100 000-chunk repository on 4 threads takes about 15 min (MiniLM) or
   28 min (bge) with PyTorch, more with candle, against seconds today.
 - Every query pays one more forward pass: 5 to 11 ms on CPU.
-- The binary is 84 MB today (release, macOS arm64). A transformer adds:
+- The binary is 82 MB today (release, macOS arm64). A transformer adds:
   - runtime: candle-core + candle-nn + candle-transformers + tokenizers, about 4.3 MB stripped
     (a probe binary with the same profile, 4.6 MB, against 0.4 MB for an empty one); or ONNX
     Runtime, whose macOS arm64 library is 33 MB (version 1.31.1);
@@ -104,7 +104,7 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
   batch 64; smaller batches would cut memory at some cost in speed.
 - At the time the Python reference and the Rust engine agreed to the bit (`bench/parity.py`), a
   mirror since ended. The engine's features are still pinned bit for bit on every platform
-  (`tests/ranking_pins.rs`); transformer inference through another backend would not give the
+  (`crates/scrutate/tests/ranking_pins.rs`); transformer inference through another backend would not give the
   same bits everywhere, so those pins would need a tolerance.
 
 ## Recommendation
