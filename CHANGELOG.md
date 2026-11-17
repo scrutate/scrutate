@@ -436,8 +436,9 @@ incompatible index by itself, and that is never breaking.
   `password: @Model.Password` and `secret_file: ~/.aws/credentials` were redacted. Only a chain of
   letter names with `?.` or `!.` in it, `@` before a dotted chain of letter names, and `~/` and a
   path of path characters whose first segment starts with a dot or is followed by another are
-  spared; a chain with a digit or another symbol, words joined by dots alone, and `~/` and one
-  segment (`~/Prod2024key`) are redacted as before.
+  spared; a chain with a digit or another symbol, and `~/` and one segment (`~/Prod2024key`), are
+  redacted as before. Words joined by dots alone (a passphrase) are redacted only quoted or under
+  an `env-secret` name: unquoted, `password: Correct.Horse.Battery.Staple` is shown.
 - `xml-secret` leaves a deploy-time placeholder as written, so the variable it names stays
   readable: Octopus `#{db.password}`, token replacement `@@DB_PASSWORD@@`, a bracketed
   `[ClientSecret]` and Razor's `@Model.Password`. Only those closed forms of names alone are
@@ -1156,7 +1157,7 @@ incompatible index by itself, and that is never breaking.
 - On macOS, a program `hook run` started ends within milliseconds of `hook run` being killed:
   at a high open-file limit (1048576) it ran on for seconds, as the watcher closed every
   descriptor number up to the limit before it waited; it now closes only those up to the highest
-  one open.
+  one open plus 64.
 - An unquoted password, secret or token with a symbol that holds a `:` or `,` is redacted
   whole: `password: ...@...:yZk3` came out unchanged. A `,` before a `name=` or `name:` still ends
   it, and code (a ternary, `@user.field`, a method chain ending in `!`, an image digest) and an

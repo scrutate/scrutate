@@ -533,7 +533,8 @@ quoted value of a name holding `password`, `passwd`, `pwd`, `secret` or `token`,
 `password`, `passwd`, `pwd`, `secret`, `secretKey`, `token` or `apiKey` (Maven's `<password>`,
 `<ns:accessToken>`), up to a quote or its closing tag, and all of it to a closing tag on its
 line, quotes and spaces included, unless it reads as a sentence (a space, no digit, no symbol
-but punctuation: `Forgot your password?`) or an escaped `&lt;...&gt;`; and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
+but punctuation: `Forgot your password?`) or an escaped `&lt;...&gt;` with a space in it
+(`&lt;your password&gt;`; without one, `&lt;value&gt;` is redacted); and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
 with `password`'s test of the value, so an empty element and a placeholder (`${env.X}`) stay, as
 do the closed deploy-time forms of names alone (`#{db.password}`, `@@DB_PASSWORD@@`,
 `[ClientSecret]`, and Razor's `@Model.`, `@ViewBag.`, `@ViewData.`, `@Html.` or `@Configuration.`
@@ -556,9 +557,9 @@ an unquoted value with other symbols (a YAML `password:` or a `.properties`
 `spring.datasource.password=` whose value holds `@` or `!`), up to a space, quote, `;`, `&` or the
 line's end, and no URL. A `:` or `,` with more of such a value after it is part of it
 (`password: ...@...:yZk3`), as a `;` or `&` is (above): the part before it needs ten
-characters and every test but entropy, which the whole value may pass in its place when the part
-mixes upper case, lower case and digits, as an address (`git@github.com:`, `vault@prod:8200`)
-does not; a `,` before
+characters and every test; before a `:` or `,` the whole value may pass the entropy test in the
+part's place when the part mixes upper case, lower case and digits, as an address
+(`git@github.com:`, `vault@prod:8200`) does not; a `,` before
 a `name=` or `name:` ends it, and a ternary (`isAuth?user.token:null`), an `@name.field`, a
 method chain that ends in `!` or `?` and an image digest (`repo@sha256:`) are code, left as
 written. A name whose keyword runs on into a different word (`tokenizer`,
@@ -586,8 +587,10 @@ password, secret or token name `generic-secret` also leaves a chain of names of 
 `?.` or `!.` (`this.form?.value?.password`) or after `@` (Razor's `@Model.Password`), and `~/`
 and a path of letters, digits, `_`, `.`, `-` and `/` alone whose first segment starts with a dot
 or is followed by another (`~/.aws/credentials`, `~/keys2/prod9.pem`): a chain with a digit or
-another symbol in it, words joined by dots alone (a passphrase), and `~/` and one segment
-(`~/Prod2024key`) are still read as secrets; hex values are kept as secrets.
+another symbol in it and `~/` and one segment (`~/Prod2024key`) are still read as secrets; words
+joined by dots alone (a passphrase) are redacted only quoted (`password`) or under an
+`env-secret` name, so `password: Correct.Horse.Battery.Staple` unquoted is shown; hex values are
+kept as secrets.
 
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
 it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,
@@ -602,11 +605,13 @@ text and 2.1 ms more for that page; a text that needs every rule pays what build
 changes which rules it needs; `cargo test --release -p scrutate --lib the_cost_of_redacting --
 --ignored --nocapture` measures it again.
 
-`tests/secrets.rs` plants three secrets of each kind (a `.env`, private keys with a last line
+`tests/secrets.rs` plants three secrets of each of 25 kinds, every kind of the table but
+`curl-user`, `digitalocean-token`, `huggingface-token`, `key-material`, `shopify-token`,
+`telegram-bot-token`, `url-token`, `vault-token` and `xml-secret` (a `.env`, private keys with a last line
 shorter than any rule for base64 alone, a typed Rust constant, a line too long to show whole and a
 file named with a token among them) and asks every MCP tool that returns text, in both forms, at
 pages of 24,000 and 700 bytes, a page from inside a key among them, and the Grep hook, its context
-lines too; no byte of any secret comes back, each kind is marked, and with `SCRUTATE_REDACT=off`
+lines too; no byte of any secret comes back, each planted kind is marked, and with `SCRUTATE_REDACT=off`
 every one does. The CLI's `--json` stays one JSON document with it on.
 
 Not detected: token families outside the table (any
@@ -615,15 +620,15 @@ would send nearly every line of code to the regex.
 
 Not covered, in assignments: a quoted value that reads as a name (a file path with a common
 file extension, none of whose parts mixes both cases with digits, or capitalized words run
-together with up to four digits after them, so a password such as `WinterIsComing2024` too); two on one line; `=` inside a type's generics; a type over 80
+together with up to four digits after them, so a password such as `WinterIsComing2024` too); `=` inside a type's generics; a type over 80
 characters; a value built in a closure (`Lazy::new(|| ...)`) or a Kotlin `by lazy`; an f-string;
 a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borrowed`); an
 unquoted value with a symbol that a `:`, `,` or bracket ends (`password: x!yz, user: y`,
 `connect(password=x!yz)`), which reads as code that lists or calls; one cut by `;`, `&`, `:` or
 `,` before its tenth character, or whose part before that cut fails a test but entropy, or fails
-entropy without mixing upper case, lower case and digits; a value
-of ten or eleven characters whose entropy is under the floor (`password=Xq7r@T2vW9`) whatever
-follows it. Not covered in
+entropy (before a `:` or `,` only when it does not mix upper case, lower case and digits:
+`password: Ab1@cdefgh;xyzQW` is shown); a value of ten or eleven characters whose entropy is
+under the floor (`password=Xq7r@T2vW9`) with no `:` or `,` and more of it after. Not covered in
 XML: a value in a Spring `<property name="password" value="..."/>`, in an element with attributes
 (`<password encrypted="false">`) or in an `<entry key="db.password">`, a CDATA section, and an
 element's text over more than one line. Not covered elsewhere: a private key's short last line in a `search_code` or definition answer that
