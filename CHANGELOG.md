@@ -1295,6 +1295,10 @@ incompatible index by itself, and that is never breaking.
 - A `grep --json` record whose text was redacted gives its `column` in bytes of the redacted
   text: it kept the column of the line as the file has it, so a match after a secret pointed
   inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
+- `review --format gitlab` gives overloads that share a qualified name (Java's `f(int)` and
+  `f(String)`) a fingerprint each: they shared one, and GitLab, which takes fingerprints as
+  unique, showed one of the two issues. A finding no other shares keeps its fingerprint
+  ([CLI](docs/CLI.md)).
 
 ## [0.1.0] - 2026-11-11
 

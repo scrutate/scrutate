@@ -201,13 +201,20 @@ impl Review {
     /// GitLab's Code Quality report: one issue per finding, its check `scrutate-` and its kind, and a
     /// fingerprint of its kind and identity, so GitLab follows it while its lines move.
     pub fn gitlab(&self) -> Value {
-        let issue = |f: &crate::findings::Finding| {
-            let check = format!("scrutate-{}", f.kind());
-            let fingerprint = crate::index::content_hash(format!("{check}\0{}", f.identity()).as_bytes());
-            json!({"description": f.text(), "check_name": check, "fingerprint": fingerprint, "severity": f.severity(),
-                "location": {"path": f.path, "lines": {"begin": f.start.max(1)}}})
+        let found = &self.impact.findings;
+        let keys: Vec<String> = found.iter().map(|f| format!("scrutate-{}\0{}", f.kind(), f.identity())).collect();
+        let issue = |(i, f): (usize, &crate::findings::Finding)| {
+            // overloads share a qualified name: findings that share a key add their order by line,
+            // so each gets a fingerprint of its own and a lone one keeps the one it had
+            let same: Vec<usize> = (0..found.len()).filter(|&j| keys[j] == keys[i]).collect();
+            let key = match same.len() {
+                1 => keys[i].clone(),
+                _ => format!("{}\0#{}", keys[i], same.iter().filter(|&&j| (found[j].start, j) < (f.start, i)).count() + 1),
+            };
+            json!({"description": f.text(), "check_name": format!("scrutate-{}", f.kind()), "fingerprint": crate::index::content_hash(key.as_bytes()),
+                "severity": f.severity(), "location": {"path": f.path, "lines": {"begin": f.start.max(1)}}})
         };
-        Value::Array(self.impact.findings.iter().map(issue).collect())
+        Value::Array(found.iter().enumerate().map(issue).collect())
     }
 }
 

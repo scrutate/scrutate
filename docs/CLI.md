@@ -842,7 +842,9 @@ report: a JSON list of issues with `description`, `check_name`, `fingerprint`, `
 `location.path`/`location.lines.begin`, one per finding: `check_name` is `scrutate-` and its kind
 (`scrutate-duplicate`, `scrutate-untested-change`), `description` its sentence, at its place. A
 fingerprint is the SHA-1 of the check and the paths and qualified names involved, not the lines,
-so GitLab matches an issue across pushes.
+so GitLab matches an issue across pushes. Findings that share all of those (Java overloads share
+a qualified name) add their order by line among themselves, so each has a fingerprint of its own;
+it stays while their lines move, and changes when an overload is put before another one.
 
 Nothing to report (no changed definition, note or test, no new duplicate) is exit code 1, with
 the report still printed (in Markdown a line that says so, in GitLab an empty list). The errors
