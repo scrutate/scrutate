@@ -91,7 +91,7 @@ comes through the step's environment and is used only in quotes, so no input rea
 the first three are also checked against their shape (a number, a commit id, `owner/name`).
 `zizmor --persona pedantic` reports nothing on the action, and `actionlint` nothing on this
 repository's workflows. On the workflow above, pedantic `zizmor` asks only for what any
-workflow needs: actions pinned by commit (as this repository pins its own), a job `name` and a
+workflow needs: actions pinned by commit (as this repository pins its own), a workflow and a job `name` and a
 `concurrency` group.
 
 The action lives in a subdirectory, so it is not on the Marketplace.
