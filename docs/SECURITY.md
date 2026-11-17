@@ -457,8 +457,8 @@ prints. A path that holds a secret (a file named with a token) is redacted like 
 other text, so that path cannot be opened from the answer.
 
 The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,
-each regex run only on text holding one of its keywords (an Aho-Corasick pass), with gitleaks'
-entropy thresholds; JSON's `\/` is read as `/`:
+each regex run only on text holding one of its keywords (an Aho-Corasick pass; `key-material` has
+none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is read as `/`:
 
 | Kind | Rule it comes from |
 |---|---|
@@ -518,21 +518,23 @@ change between them three times or more), or is a UUID or 32 or more hex digits,
 number after it (`accesstoken12345678`) is left alone. `basic-auth` takes the base64 after `Basic` when it decodes to a printable
 `user:password` whose password is no doc's example word (`password`, `pass`, `secret`,
 `changeme`). `env-secret`
-takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKEN`,
-`KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`), except a
+takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `PASSWD`, `PWD`,
+`TOKEN`, `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`, `AUTH_KEY` (each `_` optional) or `CREDENTIAL`
+(`CACHE_KEY` is none), or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`), except a
 render or build stage's setting: a `_PASS` name with a render pass's word among its parts
 (`RENDER`, `SHADOW`, `GBUFFER` and their kin) and a value of graphics or setting words alone
 (`shadowmap`, `deferred`, `msaa`, `high`, `enabled` and a few dozen more), each with at most a
 1 to 2 digit version (`RENDER_PASS=shadowmap2`), or with a build stage's word (`LINT`, `BUILD`,
 `COMPILE`, `CODEGEN`, `OPT`) and a value of setting words alone (`strict`, `mode`, `enabled`,
-`debug`, `release` and a few more) and short versions (`LINT_PASS=strict_mode`). Either name may
-be a login's (`RENDER` is a hosting platform, `CI_BUILD_PASS` a CI credential), so a value with
-any other word stays redacted; `password` a quoted value of a name holding `password`, `secret` or
-`token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
+`debug`, `release` and a few more) and short versions (`LINT_PASS=strict_mode`); a name with
+both takes the build stage's test. Either name may be a login's (`RENDER` is a hosting platform,
+`CI_BUILD_PASS` a CI credential), so a value with any other word stays redacted; `password` a
+quoted value of a name holding `password`, `passwd`, `pwd`, `secret` or `token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
 `password`, `passwd`, `pwd`, `secret`, `secretKey`, `token` or `apiKey` (Maven's `<password>`,
 `<ns:accessToken>`), up to a quote or its closing tag, and all of it to a closing tag on its
 line, quotes and spaces included, unless it reads as a sentence (a space, no digit, no symbol
-but punctuation: `Forgot your password?`) or an escaped `&lt;...&gt;`; and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
+but punctuation: `Forgot your password?`) or an escaped `&lt;...&gt;` with a space in it
+(`&lt;your password&gt;`; without one, `&lt;value&gt;` is redacted); and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
 with `password`'s test of the value, so an empty element and a placeholder (`${env.X}`) stay, as
 do the closed deploy-time forms of names alone (`#{db.password}`, `@@DB_PASSWORD@@`,
 `[ClientSecret]`, and Razor's `@Model.`, `@ViewBag.`, `@ViewData.`, `@Html.` or `@Configuration.`
@@ -555,9 +557,9 @@ an unquoted value with other symbols (a YAML `password:` or a `.properties`
 `spring.datasource.password=` whose value holds `@` or `!`), up to a space, quote, `;`, `&` or the
 line's end, and no URL. A `:` or `,` with more of such a value after it is part of it
 (`password: ...@...:yZk3`), as a `;` or `&` is (above): the part before it needs ten
-characters and every test but entropy, which the whole value may pass in its place when the part
-mixes upper case, lower case and digits, as an address (`git@github.com:`, `vault@prod:8200`)
-does not; a `,` before
+characters and every test; before a `:` or `,` the whole value may pass the entropy test in the
+part's place when the part mixes upper case, lower case and digits, as an address
+(`git@github.com:`, `vault@prod:8200`) does not; a `,` before
 a `name=` or `name:` ends it, and a ternary (`isAuth?user.token:null`), an `@name.field`, a
 method chain that ends in `!` or `?` and an image digest (`repo@sha256:`) are code, left as
 written. A name whose keyword runs on into a different word (`tokenizer`,
@@ -581,10 +583,14 @@ body is redacted line by line between its armour, which is matched in any case (
 Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
 a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
 writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone, and after a
-password, secret or token name so are a chain of names through `?.` or `!.`
-(`this.form?.value?.password`), Razor's `@Model.Password` and a `~/` path (`~/.aws/credentials`):
-a value with a digit or another symbol, or words joined by dots alone (a passphrase), is still read
-as a secret; hex values are kept as secrets.
+password, secret or token name `generic-secret` also leaves a chain of names of letters through
+`?.` or `!.` (`this.form?.value?.password`) or after `@` (Razor's `@Model.Password`), and `~/`
+and a path of letters, digits, `_`, `.`, `-` and `/` alone whose first segment starts with a dot
+or is followed by another (`~/.aws/credentials`, `~/keys2/prod9.pem`): a chain with a digit or
+another symbol in it and `~/` and one segment (`~/Prod2024key`) are still read as secrets; words
+joined by dots alone (a passphrase) are redacted only quoted (`password`) or under an
+`env-secret` name, so `password: Correct.Horse.Battery.Staple` unquoted is shown; hex values are
+kept as secrets.
 
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
 it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,
@@ -599,11 +605,13 @@ text and 2.1 ms more for that page; a text that needs every rule pays what build
 changes which rules it needs; `cargo test --release -p scrutate --lib the_cost_of_redacting --
 --ignored --nocapture` measures it again.
 
-`tests/secrets.rs` plants three secrets of each kind (a `.env`, private keys with a last line
+`tests/secrets.rs` plants three secrets of each of 25 kinds, every kind of the table but
+`curl-user`, `digitalocean-token`, `huggingface-token`, `key-material`, `shopify-token`,
+`telegram-bot-token`, `url-token`, `vault-token` and `xml-secret` (a `.env`, private keys with a last line
 shorter than any rule for base64 alone, a typed Rust constant, a line too long to show whole and a
 file named with a token among them) and asks every MCP tool that returns text, in both forms, at
 pages of 24,000 and 700 bytes, a page from inside a key among them, and the Grep hook, its context
-lines too; no byte of any secret comes back, each kind is marked, and with `SCRUTATE_REDACT=off`
+lines too; no byte of any secret comes back, each planted kind is marked, and with `SCRUTATE_REDACT=off`
 every one does. The CLI's `--json` stays one JSON document with it on.
 
 Not detected: token families outside the table (any
@@ -612,15 +620,15 @@ would send nearly every line of code to the regex.
 
 Not covered, in assignments: a quoted value that reads as a name (a file path with a common
 file extension, none of whose parts mixes both cases with digits, or capitalized words run
-together with up to four digits after them, so a password such as `WinterIsComing2024` too); two on one line; `=` inside a type's generics; a type over 80
+together with up to four digits after them, so a password such as `WinterIsComing2024` too); `=` inside a type's generics; a type over 80
 characters; a value built in a closure (`Lazy::new(|| ...)`) or a Kotlin `by lazy`; an f-string;
 a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borrowed`); an
 unquoted value with a symbol that a `:`, `,` or bracket ends (`password: x!yz, user: y`,
 `connect(password=x!yz)`), which reads as code that lists or calls; one cut by `;`, `&`, `:` or
 `,` before its tenth character, or whose part before that cut fails a test but entropy, or fails
-entropy without mixing upper case, lower case and digits; a value
-of ten or eleven characters whose entropy is under the floor (`password=Xq7r@T2vW9`) whatever
-follows it. Not covered in
+entropy (before a `:` or `,` only when it does not mix upper case, lower case and digits:
+`password: Ab1@cdefgh;xyzQW` is shown); a value of ten or eleven characters whose entropy is
+under the floor (`password=Xq7r@T2vW9`) with no `:` or `,` and more of it after. Not covered in
 XML: a value in a Spring `<property name="password" value="..."/>`, in an element with attributes
 (`<password encrypted="false">`) or in an `<entry key="db.password">`, a CDATA section, and an
 element's text over more than one line. Not covered elsewhere: a private key's short last line in a `search_code` or definition answer that
@@ -801,7 +809,10 @@ link to a file outside the package and a package directory that is a link out of
     `STARTUPINFOW` whose size it sets, both returned handles taken into `OwnedHandle`s once, and
     `GetExitCodeProcess` into a `u32`); three unit tests' `ConnectNamedPipe` for a
     server that greets and then reads nothing or reads slowly, and for the low-integrity process
-    that takes the pipe's name first, through the same `Pipe::io`;
+    that takes the pipe's name first, through the same `Pipe::io`; and in a Unix unit test of
+    sessions starting together, a `usleep` declared `extern "C"` and a `Command::pre_exec`
+    closure that only calls it, so the children other threads fork keep their copies of the
+    sessions' descriptors a while before exec;
   - `kq.rs` (macOS only): `kqueue`; `open` of a nul-terminated path with `O_EVTONLY |
     O_CLOEXEC`, each returned descriptor taken into an `OwnedFd` once; `kevent` with one change
     from a live `struct kevent` and no events asked back, or with no changes and a zeroed array of
@@ -864,7 +875,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/policy.rs` | 2 |
   | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 13 |
-  | `crates/scrutate/src/session.rs` | 59 |
+  | `crates/scrutate/src/session.rs` | 61 |
   | `crates/scrutate/src/shellhook.rs` | 6 |
   | `crates/scrutate/src/source.rs` | 1 |
   | `crates/scrutate/src/text.rs` | 1 |
