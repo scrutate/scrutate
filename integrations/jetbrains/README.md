@@ -43,12 +43,16 @@ any JetBrains IDE to a language server, so `scrutate lsp` gives Go to Declaratio
 Go to Symbol and the Structure view from the Scrutate index.
 
 1. Install LSP4IJ from *Settings → Plugins → Marketplace* and restart the IDE.
-2. Open *Settings → Languages & Frameworks → Language Servers* and click **+**.
-3. On the **Server** tab: name `Scrutate`, command `scrutate lsp` (use the full path to the
-   binary if it is not on the IDE's `PATH`, and always on Windows, as above).
-4. On the **Mappings** tab, under **File name patterns**, add the files to answer for, such as
-   `*.py`, `*.rs`, `*.go`, `*.ts`, each with a language id (`python`, `rust`, ...). The server
-   ignores the id; any value works.
+2. Open *Settings → Languages & Frameworks → Language Servers*, click **+**, and in the
+   **Template** list choose *Import from custom template...*. Select the `lsp4ij-template`
+   folder next to this README (in a clone of the repository, or in a release archive under
+   `integrations/jetbrains/`). It fills the name `Scrutate`, the command `scrutate lsp`, and a
+   file name pattern for each of Python, Rust, Go, TypeScript, JavaScript, Java, PHP, C, C++ and
+   C#, each with a language id the server ignores.
+3. On the **Server** tab, put the full path to the binary in the command if it is not on the
+   IDE's `PATH`, and always on Windows, as above.
+4. On the **Mappings** tab, remove the patterns you do not want answered, or add others
+   (any language id works).
 5. Click **OK** and open a project file. The server takes the project directory from the IDE
    (`workspaceFolders`, else `rootUri`); the first start builds `.scrutate/` and says so in the
    *Language Servers* tool window log.
@@ -66,8 +70,10 @@ as the IntelliJ Platform's tests do, with LSP4IJ 0.21.0 from the Marketplace, an
 
 1. opens the fixture repository below as a project whose only content root it is, and waits until
    LSP4IJ's roots are that directory;
-2. registers the server with the values steps 3 and 4 save (name `Scrutate`, command
-   `<binary> lsp`, the mapping `*.py` / `python`), through the call the dialog's **OK** makes;
+2. imports `lsp4ij-template` through `LanguageServerTemplateManager.importServerTemplate`, the
+   call *Import from custom template...* makes, checks its name `Scrutate`, its command
+   `scrutate lsp` and its `*.py`, `*.pyi` / `python` mapping, and registers it with this run's
+   binary in place of `scrutate`, through the call the dialog's **OK** makes;
 3. opens `src/app.py`, puts the caret on `make_point` in line 5 and asks for the targets of
    *Navigate → Declaration or Usages*. It passes when the one target comes from the language
    server and is `src/geo.py`, line 6.
@@ -91,7 +97,7 @@ For another IDE build, or when the workflow cannot run. On a named IDE build wit
 
 1. Make the test repository: `bash integrations/fixture.sh /tmp/scrutate-fixture` and
    `mkdir /tmp/scrutate-fixture/.git`, then open that folder as a project.
-2. Follow steps 2 to 5 above exactly, with the mapping `*.py` / `python`.
+2. Follow steps 2 to 5 above exactly, keeping only the `*.py`, `*.pyi` / `python` mapping.
 3. In the *Language Servers* tool window, set the server's trace to *verbose*.
 4. In `src/app.py`, put the caret on `make_point` in `return make_point().norm()` (line 5) and
    run *Navigate → Declaration or Usages*. The editor jumps to `src/geo.py`, line 6.

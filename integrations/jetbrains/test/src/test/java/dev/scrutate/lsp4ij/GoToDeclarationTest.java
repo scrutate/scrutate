@@ -30,6 +30,8 @@ import com.redhat.devtools.lsp4ij.LSPIJUtils;
 import com.redhat.devtools.lsp4ij.LanguageServersRegistry;
 import com.redhat.devtools.lsp4ij.features.LSPPsiElement;
 import com.redhat.devtools.lsp4ij.features.navigation.LSPDefinitionParams;
+import com.redhat.devtools.lsp4ij.launching.templates.LanguageServerTemplate;
+import com.redhat.devtools.lsp4ij.launching.templates.LanguageServerTemplateManager;
 import com.redhat.devtools.lsp4ij.server.definition.launching.UserDefinedLanguageServerDefinition;
 import com.redhat.devtools.lsp4ij.templates.ServerMappingSettings;
 import com.redhat.devtools.lsp4ij.usages.LocationData;
@@ -37,15 +39,18 @@ import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Matcher;
 
 /**
- * Registers `scrutate lsp` as the Language Servers settings page does, opens the
+ * Imports integrations/jetbrains/lsp4ij-template as the Language Servers settings page's "Import
+ * from custom template..." does, registers it with this run's binary, opens the
  * integrations/fixture.sh repository as the project and runs Go to Declaration on it.
  */
 public class GoToDeclarationTest extends UsefulTestCase {
@@ -101,11 +106,27 @@ public class GoToDeclarationTest extends UsefulTestCase {
         PlatformTestUtil.waitWithEventsDispatching(() -> "the project's base directories are " + LSPIJUtils.getRoots(project) + ", not " + root,
                 () -> LSPIJUtils.getRoots(project).equals(Set.of(root)), 60);
 
-        // README steps 3 and 4: name Scrutate, command `scrutate lsp`, the mapping *.py / python
-        server = new UserDefinedLanguageServerDefinition(UUID.randomUUID().toString(), "Scrutate", "",
-                env("SCRUTATE_BIN") + " lsp", Map.of(), true, null, null);
-        LanguageServersRegistry.getInstance().addServerDefinition(project, server,
-                List.of(ServerMappingSettings.createFileNamePatternsMappingSettings(List.of("*.py"), "python")));
+        // the README's template, imported as "Import from custom template..." imports it; the
+        // program is this run's binary, since the IDE's PATH has no scrutate
+        VirtualFile templateDir = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(Path.of("..", "lsp4ij-template").toAbsolutePath().normalize());
+        assertNotNull("integrations/jetbrains/lsp4ij-template is missing", templateDir);
+        LanguageServerTemplate template;
+        try {
+            template = LanguageServerTemplateManager.getInstance().importServerTemplate(templateDir);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+        assertNotNull("LSP4IJ read no template there", template);
+        assertEquals("Scrutate", template.getName());
+        assertEquals("scrutate lsp", template.getProgramArgs());
+        List<ServerMappingSettings> mappings = template.getAllMappings();
+        // equals() leaves the patterns out, so they are compared here; a mapping with a file type
+        // name would map an IDE file type that does not exist
+        assertTrue("mappings: " + mappings, mappings.stream().anyMatch(m -> "python".equals(m.getLanguageId()) && List.of("*.py", "*.pyi").equals(m.getFileNamePatterns())));
+        assertTrue("mappings: " + mappings, mappings.stream().allMatch(m -> m.getFileType() == null && m.getLanguage() == null && !m.getFileNamePatterns().isEmpty()));
+        server = new UserDefinedLanguageServerDefinition(UUID.randomUUID().toString(), template.getName(), "",
+                template.getProgramArgs().replaceFirst("^scrutate", Matcher.quoteReplacement(env("SCRUTATE_BIN"))), Map.of(), true, null, null);
+        LanguageServersRegistry.getInstance().addServerDefinition(project, server, mappings);
 
         VirtualFile app = root.findFileByRelativePath("src/app.py");
         VirtualFile geo = root.findFileByRelativePath("src/geo.py");

@@ -249,6 +249,10 @@ incompatible index by itself, and that is never breaking.
   `bench/make_yardstick_md.py` writes a marked section of docs/COMPETITIVE.md from the result
   files it names, which `tools/gen_doc_assets.py --check` checks
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- An LSP4IJ template for JetBrains IDEs (`integrations/jetbrains/lsp4ij-template`): *Import from
+  custom template...* in the Language Servers settings fills the name, the command `scrutate lsp` and
+  a file name pattern per language; the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and
+  runs Go to Declaration through it ([JetBrains](integrations/jetbrains/README.md)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,
