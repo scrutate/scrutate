@@ -249,6 +249,7 @@ def run_rg(cmd: list[str], root: str, late: list[str], by_path: bool = False, er
     rest is rg's run without those files. `by_path`: put the output back in path order (`--sort`).
     `errors`, when given, collects what each run whose exit code counts wrote to stderr (all of
     them when none searched a file), so a reason read from it is the combined exit code's."""
+    cmd = [cmd[0], "--no-config", *cmd[1:]]  # a RIPGREP_CONFIG_PATH would change rg's answer
     if not late:
         rc, out, err = run_err(cmd, root)
         if errors is not None:

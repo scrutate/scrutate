@@ -14,6 +14,9 @@ import shlex
 import statistics
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from indexed import settle  # noqa: E402
+
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
@@ -395,9 +398,11 @@ def indexed(data, label, note=()):
     out.append("")
     if "comparison" in data:
         out.append("| Comparison (scrutate / best other) | ratio | 95% CI | status |\n|---|---|---|---|")
-        for k, v in data["comparison"].items():
-            ci = f"{v['ci95'][0]:.3f} to {v['ci95'][1]:.3f}" if "ci95" in v else "(deterministic)"
-            out.append(f"| {k} (vs {v['best']}) | {v['ratio']:.3f} | {ci} | {v['status']} |")
+        for k, v in settle(data["comparison"], data["tools"]).items():
+            ci = f"{v['ci95'][0]:.3f} to {v['ci95'][1]:.3f}" if "ci95" in v else "-" if "ratio" not in v else "(deterministic)"
+            vs = f" (vs {v['best']})" if "best" in v else ""
+            ratio = f"{v['ratio']:.3f}" if "ratio" in v else "-"
+            out.append(f"| {k}{vs} | {ratio} | {ci} | {v['status']}{': ' + v['why'] if v.get('why') else ''} |")
         out.append("")
     wrong = [(e["q"]["pats"], t, x) for e in data.get("queries", []) for t, x in e["tools"].items() if not x["valid"]]
     if wrong:

@@ -164,7 +164,11 @@ home directory with containers. The first script checks each tool it downloads a
 in the script: a new tool version needs its new hash there, from the tool's own release page.
 It builds GNU grep and git from their latest release sources, since Debian's are older, and
 records the commit `/src` is at in `/bench/scrutate/BUILT_FROM`; both scripts refuse to run when
-`/src` has moved to another commit since (`bench/competitors/built_from.sh`). `linux_indexed.sh`
+`/src` has moved to another commit since, or has changes no commit holds (an edited or staged
+file, or an untracked one outside `bench/results/` and `host-facts.json`), since the build copies
+the working tree (`bench/competitors/built_from.sh`). `linux_bench.sh` and `bench/indexed.py`
+also stop when a corpus they read is not the tree its `manifest.json` pins (`bench/corpora.py
+--verify`), so a corpus an interrupted run left edited is never measured under the pinned hash. `linux_indexed.sh`
 takes its idle threshold from `INDEXED_MAX_LOAD` (default: the CPU count).
 The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux x86_64 runs on a
 dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,

@@ -951,6 +951,23 @@ def environment(data_dir="."):
     return env
 
 
+# what a row's timing depends on, besides the settings: the binaries, the rival tools, the machine
+RUN_FACTS = ("scrutate_sha256", "scrutate_base_sha256", "tools", "hyperfine", "platform", "machine", "cpu", "cpus", "memory_bytes", "perf_cores",
+             "efficiency_cores", "kernel", "virtualization", "cpu_governor", "disk", "container")
+
+
+def run_changes(data, env, corpora, settings):
+    """What differs between the run in `data` and this one (`settings` None: not compared), by name;
+    empty when the rows `data` holds may be kept beside new ones."""
+    was = data.get("environment", {})
+    out = [k for k in RUN_FACTS if env.get(k) != was.get(k)]
+    if data.get("corpora") is not None and corpora != data["corpora"]:
+        out.append("corpora")
+    if settings is not None and data.get("settings") is not None and settings != data["settings"]:
+        out.append("settings")
+    return out
+
+
 def check_hyperfine():
     """The harness reads each run from hyperfine 2's JSON (`measurements`); 1.x writes none."""
     try:
@@ -1040,26 +1057,28 @@ def main() -> int:
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
-    env, was = environment(a.corpora), data.get("environment", {})
-    same = all(env.get(k) == was.get(k) for k in ("scrutate_sha256", "scrutate_base_sha256"))
+    env = environment(a.corpora)
+    corpora = json.load(open(os.path.join(a.corpora, "manifest.json")))
+    settings = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
+                "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
+    if a.stop:
+        interim, last = stop_rule(a.blocks)
+        settings["stop"] = {"after_blocks": interim, "interim_alpha": INTERIM_ALPHA, "last_alpha": last}
     if a.redo_unstable:
-        # the same run, continued: its environment and settings stand, so the binaries must be the same
-        if not same:
-            raise SystemExit("--redo-unstable: the scrutate binary, or its base, is not the one this run measured")
+        # the same run, continued: its settings stand, so all else it was measured with must be the same
+        if changed := run_changes(data, env, corpora, None):
+            raise SystemExit(f"--redo-unstable: {', '.join(changed)} differ from what this run measured with")
     else:
-        # rows kept from an earlier run would get this binary's hash over another binary's timings
-        if data["benchmarks"] and not same and not (a.force and not a.only):
-            raise SystemExit(f"{a.out} holds rows that another scrutate binary, or base, measured: move the file away, or measure every row again with --force")
-        if not same:
-            # a run that dies part way must not leave the other binary's rows under this one's hash
+        # rows kept from an earlier run would be listed under this run's binary, tools, machine, corpora and settings
+        changed = run_changes(data, env, corpora, settings)
+        if data["benchmarks"] and changed and not (a.force and not a.only):
+            raise SystemExit(f"{a.out} holds rows measured with other {', '.join(changed)}: move the file away, or measure every row again with --force")
+        if changed:
+            # a run that dies part way must not leave rows measured otherwise under this run's facts
             data["benchmarks"] = {}
         data["environment"] = env
-        data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
-        data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
-                            "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
-        if a.stop:
-            interim, last = stop_rule(a.blocks)
-            data["settings"]["stop"] = {"after_blocks": interim, "interim_alpha": INTERIM_ALPHA, "last_alpha": last}
+        data["corpora"] = corpora
+        data["settings"] = settings
     for b in benches:
         old = data["benchmarks"].get(b["id"])
         if a.only and not any(b["id"].startswith(p) for p in a.only):

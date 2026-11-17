@@ -141,6 +141,8 @@ cp /corpora/manifest.json $B/corpora/
 if [ -n "${SETUP_ONLY:-}" ]; then step "set up; no benchmark asked for"; exit 0; fi
 
 bash /src/bench/competitors/built_from.sh check /src $B/scrutate
+# a corpus copied by an earlier run is kept, so check it is still the tree the manifest pins
+python3 /src/bench/corpora.py --root $B/corpora --only linux ripgrep --verify
 out=/results/linux-$arch
 mkdir -p $out
 cd $B/scrutate

@@ -19,6 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 import gen_assets as G  # noqa: E402  (the design tokens)
+from indexed import settle  # noqa: E402  (the indexed rows as LEADERBOARD.md publishes them)
 
 # the runs carry no timestamp; this is the order they were measured in (superseded/README.md)
 HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-warm-prevbin", "leaderboard-warm-eeab",
@@ -28,8 +29,13 @@ HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-wa
            "leaderboard-warm-558e", "leaderboard-cold-558e", "indexed-558e", "leaderboard-warm-e49f", "leaderboard-cold-e49f",
            "indexed-e49f", "leaderboard-warm-587a", "leaderboard-cold-587a-partial", "leaderboard-warm-261e", "leaderboard-cold-261e",
            "indexed-261e", "leaderboard-warm-9aa0", "leaderboard-cold-9aa0", "indexed-9aa0"]
-STATUSES = ["PASS", "PARTIAL", "BLOCKED", "FAIL"]
-MARK = {"PASS": "P", "PARTIAL": "~", "BLOCKED": "B", "FAIL": "F"}
+STATUSES = ["PASS", "PARTIAL", "BLOCKED", "FAIL", "n/a"]
+MARK = {"PASS": "P", "PARTIAL": "~", "BLOCKED": "B", "FAIL": "F", "n/a": "-"}
+
+
+def css(status):
+    """The class of a status: `n/a` is `na`."""
+    return status.lower().replace("/", "")
 
 
 def load_runs(results):
@@ -51,7 +57,7 @@ def load_runs(results):
         env = d.get("environment", {})
         if name.startswith("indexed"):
             kind = "indexed"
-            items = d.get("comparison", {})
+            items = settle(d.get("comparison", {}), d.get("tools", {}))
         else:
             kind = f"leaderboard, {d.get('settings', {}).get('cache', '?')} cache"
             items = d.get("benchmarks", {})
@@ -93,7 +99,7 @@ def strip_chart(cells, lo_d, hi_d, labels):
             continue
         r, lo, hi, st, best, why = c
         tip = html.escape(f"{labels[i]}: " + (f"{fmt(r)} [{fmt(lo)}, {fmt(hi)}] vs {best}, {st}" if r is not None else f"{st}: {why or 'no ratio'}"))
-        cls = st.lower() if st in STATUSES else "other"
+        cls = css(st) if st in STATUSES else "other"
         out.append(f'<g class="{cls}"><title>{tip}</title>')
         out.append(f'<rect x="{cx - step / 2:.1f}" y="0" width="{step:.1f}" height="{h}" class="hit"/>')
         if r is None:
@@ -124,7 +130,7 @@ def section(platform, kind, runs):
             st = norm(it)[3]
             c[st if st in c else "FAIL"] += 1
         total = sum(c.values())
-        bar = "".join(f'<span class="seg {s.lower()}" style="flex:{v}" title="{s} {v}"></span>' for s, v in c.items() if v)
+        bar = "".join(f'<span class="seg {css(s)}" style="flex:{v}" title="{s} {v}"></span>' for s, v in c.items() if v)
         text = ", ".join(f"{s} {v}" for s, v in c.items() if v)
         o.append(f'<div class="crow"><div class="clab">{html.escape(lab)}</div><div class="bar">{bar}</div>'
                  f'<div class="ctext">{text} (of {total})</div></div>')
@@ -137,7 +143,7 @@ def section(platform, kind, runs):
         last = next(c for c in reversed(cells) if c)
         st = last[3]
         o.append(f'<div class="brow"><div class="bname">{html.escape(k)}</div>{strip_chart(cells, lo_d, hi_d, labels)}'
-                 f'<div class="blast"><span class="tag {st.lower()}">{MARK.get(st, "?")}</span> {st} {fmt(last[0])}</div></div>')
+                 f'<div class="blast"><span class="tag {css(st)}">{MARK.get(st, "?")}</span> {st} {fmt(last[0])}</div></div>')
     o.append("</div><details><summary>Table view</summary><div class='scroll'><table><thead><tr><th>Benchmark</th>"
              + "".join(f"<th>{html.escape(l)}</th>" for l in labels) + "</tr></thead><tbody>")
     for k in keys:
@@ -176,6 +182,7 @@ border-bottom:1px solid var(--grid)}
 .seg{border-radius:3px}
 .seg.pass,.tag.pass{background:var(--pass)}.seg.partial,.tag.partial{background:var(--partial)}
 .seg.blocked,.tag.blocked{background:var(--blocked)}.seg.fail,.tag.fail{background:var(--fail)}
+.seg.na,.tag.na{background:var(--grid);color:var(--ink)}
 .tag{display:inline-block;min-width:1.4em;text-align:center;border-radius:4px;color:var(--bg);font-weight:600;font-size:.75rem}
 .strip{height:64px;width:auto;max-width:100%;display:block}
 .strip .one{stroke:var(--axis);stroke-width:1;stroke-dasharray:3 3}
@@ -187,6 +194,7 @@ border-bottom:1px solid var(--grid)}
 .strip .partial .ci{stroke:var(--partial)}.strip .partial .dot{fill:var(--partial)}
 .strip .blocked .ci{stroke:var(--blocked)}.strip .blocked .dot{fill:var(--blocked)}
 .strip .fail .ci{stroke:var(--fail)}.strip .fail .dot{fill:var(--fail)}
+.strip .na .ci{stroke:var(--muted)}.strip .na .dot{fill:var(--muted)}
 .strip .axis{fill:var(--muted);font-size:10px}
 .strip .glyph,.strip .miss{fill:var(--muted);font-size:12px;text-anchor:middle}
 .scroll{overflow-x:auto}
@@ -206,12 +214,12 @@ def main() -> int:
     groups = load_runs(a.results)
     if not groups:
         raise SystemExit(f"no leaderboard or indexed results under {a.results}")
-    legend = "".join(f'<span><span class="tag {s.lower()}">{MARK[s]}</span> {s}</span>' for s in STATUSES)
+    legend = "".join(f'<span><span class="tag {css(s)}">{MARK[s]}</span> {s}</span>' for s in STATUSES)
     body = [
         "<h1>Scrutate benchmark dashboard</h1>",
         "<p class='note'>Generated by <code>bench/make_dashboard.py</code> from the raw results in <code>bench/results/</code>. "
         "Ratio = median(scrutate) / median(best competitor). PASS: the 95% interval lies below 1. FAIL: above 1. PARTIAL: it contains 1. "
-        "BLOCKED: a tie at the hardware limit. Runs are listed oldest first; runs under <code>superseded/</code> used older binaries "
+        "BLOCKED: a tie at the hardware limit. n/a: not compared (an indexed update where every rival rebuilds). Runs are listed oldest first; runs under <code>superseded/</code> used older binaries "
         "or an older harness. The machine was shared, so no row is a #1 claim.</p>",
         f"<p class='legend'>{legend}</p>",
     ]
