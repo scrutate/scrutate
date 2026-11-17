@@ -221,11 +221,12 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
     // a wrong value is refused with the other arguments
     let form = ops::Form::from_tool(args).unwrap_or_default();
     let op = if name == "edit_symbol" && settings.edits { ops::Op::edit_from_tool(args) } else { ops::Op::from_tool(name, args) };
+    // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off: the answer, the
+    // files it says are pending and an error, any of which can name a file whose name holds one
+    let redact = crate::secrets::on(true);
     match op.and_then(|op| session.run_noted(&op, cancel, count)) {
         Ok((mut answer, pending)) => {
-            // what an agent reads has its secrets redacted unless SCRUTATE_REDACT=off; a capture
-            // of a value alone, as its line reads it
-            let redact = crate::secrets::on(true);
+            // a capture of a value alone, as its line reads it
             if redact {
                 crate::secrets::know_key_lines_at(&session.root());
             }
@@ -233,20 +234,26 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
             let mut r = crate::secrets::Redactor::default();
             let (mut text, shown, total) = answer.text_page(Some(&session.root()), max_bytes, offset, form, redact.then_some(&mut r));
             let mut structured = answer.structured(&session.root(), text.len(), max_bytes, offset, shown, total);
+            let mut pending = pending.note().zip(pending.json());
             if redact {
                 let mut rj = crate::secrets::Redactor::default();
                 rj.redact_json(&mut structured);
+                let mut in_note = 0;
+                if let Some((note, json)) = &mut pending {
+                    in_note = crate::secrets::Redactor::default().redact_in_place(note);
+                    rj.redact_json(json);
+                }
                 if rj.total() > 0 {
                     structured["redacted"] = json!(rj.counts);
                 }
                 // the structured form counts what it holds; the text, what its page shows
-                crate::secrets::close(&mut text, r.shown + context.iter().skip(offset).take(shown).sum::<usize>());
+                crate::secrets::close(&mut text, r.shown + context.iter().skip(offset).take(shown).sum::<usize>() + in_note);
             }
             if structured["result"].is_null() {
                 // a client that shows only the structured form still gets the part that fits
                 structured["text"] = json!(text);
             }
-            if let (Some(note), Some(json)) = (pending.note(), pending.json()) {
+            if let Some((note, json)) = pending {
                 text.push_str(&format!("\n[{note}]"));
                 structured["pending"] = json;
             }
@@ -265,7 +272,14 @@ fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings
             };
             Called::note(text, true)
         }
-        Err(e) => Called::note(format!("error: {e}"), true),
+        Err(e) => {
+            let mut text = format!("error: {e}");
+            if redact {
+                let n = crate::secrets::Redactor::default().redact_in_place(&mut text);
+                crate::secrets::close(&mut text, n);
+            }
+            Called::note(text, true)
+        }
     }
 }
 

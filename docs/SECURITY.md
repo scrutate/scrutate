@@ -393,7 +393,9 @@ marker is not).
 ## Secrets in answers
 
 What an agent reads is secret-safe by default: the MCP tools, the Grep hook and `lsp` replace each
-secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour around it.
+secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour around it,
+in an answer and in what names files beside it (the MCP note and `pending` list of files an update
+has not reached yet, an MCP or `lsp` error, an `lsp` log message), since a file's name can hold one.
 A text page ends with `(N secrets redacted: SCRUTATE_REDACT=off shows them)`, N counting the
 redactions that page shows; the structured form carries `"redacted": {KIND: count}` for what it
 holds, which may be more items than the page. `SCRUTATE_REDACT=off` turns it off and `on` turns it
@@ -462,7 +464,8 @@ other text, so that path cannot be opened from the answer.
 
 The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,
 each regex run only on text holding one of its keywords (an Aho-Corasick pass; `key-material` has
-none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is read as `/`:
+none and runs on every text), with gitleaks' entropy thresholds except where the paragraph below the
+table says; JSON's `\/` is read as `/`:
 
 | Kind | Rule it comes from |
 |---|---|
@@ -501,14 +504,19 @@ none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is 
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
-Where a rule differs from its gitleaks v8.30.1 source, it marks more: `digitalocean-token` reads
-all three forms without regard to case (gitleaks only the refresh token), and `vault-token` takes
-a batch token above entropy 3.5 (gitleaks 4). A token glued to a word character (`qghp_...`,
-minified code) is marked where gitleaks' rule has no word boundary before it: `github-token`,
-`github-fine-grained-token`, `gitlab-token`, `slack-token`, `pypi-token`, `twilio-api-key` and
-`shopify-token`. Where gitleaks' rule starts at a word boundary (`aws-access-key-id`, `npm-token`,
-`stripe-key` and the others), a token glued after a letter is left as it is, by gitleaks too
-(checked with gitleaks 8.30.1 on the same lines).
+Where a rule differs from its gitleaks v8.30.1 source, it marks more, never less:
+`aws-access-key-id` and `npm-token` keep no entropy threshold (gitleaks 3 and 2), and `npm-token`
+takes its prefix in any case, as gitleaks does; `slack-token` takes a bot token above entropy 2
+(gitleaks 3); `gitlab-token` takes a routable token above entropy 3 (gitleaks 4);
+`anthropic-api-key` takes any `api` or `admin` key of version `0N` with 90 to 128 characters
+(gitleaks `api03` and `admin01`, 93 exactly); `digitalocean-token` reads all three forms without
+regard to case (gitleaks only the refresh token); and `vault-token` takes a batch token above
+entropy 3.5 (gitleaks 4). A token glued to a word character (`qghp_...`, minified code) is marked
+where gitleaks' rule has no word boundary before it: `github-token`, `github-fine-grained-token`,
+`gitlab-token`, `slack-token`, `pypi-token`, `twilio-api-key` and `shopify-token`. Where gitleaks'
+rule starts at a word boundary (`aws-access-key-id`, `npm-token`, `stripe-key` and the others), a
+token glued after a letter is left as it is, by gitleaks too (checked with gitleaks 8.30.1 on the
+same lines).
 
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other

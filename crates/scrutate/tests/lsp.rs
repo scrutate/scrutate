@@ -1431,3 +1431,53 @@ fn a_session_over_a_tree_with_nothing_left_out_logs_nothing_new() {
     c.notify("exit", Value::Null);
     let _ = child.wait();
 }
+
+/// One redaction switch for every agent surface: by default, and with a value that is neither
+/// `off` nor `on` (`OFF`, `0`: the default stays, and stderr says so), the language server redacts
+/// a secret in a symbol's name and in the warning that names a file the index leaves out;
+/// `SCRUTATE_REDACT=off` gives both as they are.
+#[test]
+fn the_language_server_follows_the_redaction_switch_in_answers_and_logs() {
+    // built here: no tracked file holds a secret-shaped literal
+    let key = format!("AKIA{}", "Q7JMWB5VRT3NZ2XK");
+    for (value, raw) in [(None, false), (Some("OFF"), false), (Some("0"), false), (Some("off"), true)] {
+        let r = Repo::new(&format!("switch_{}", value.unwrap_or("unset").to_lowercase()));
+        r.write("src/keys.py", &format!("def {key}():\n    return 1\n"));
+        // `-`, not `_`: the key's rule wants a word boundary before it, as gitleaks' does
+        r.write(&format!("big-{key}.py"), &"x = 1\n".repeat(200_000));
+        let mut cmd = Command::new(BIN);
+        cmd.arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        match value {
+            Some(v) => cmd.env("SCRUTATE_REDACT", v),
+            None => cmd.env_remove("SCRUTATE_REDACT"),
+        };
+        let mut child = cmd.spawn().unwrap();
+        let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+        c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+        c.notify("initialized", json!({}));
+        let t0 = Instant::now();
+        let ws = loop {
+            let ws = c.request("workspace/symbol", json!({"query": "AKIA"}));
+            if ws["result"].as_array().is_some_and(|a| !a.is_empty()) {
+                break ws;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(60), "{value:?}: no symbol: {ws}");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        c.request("shutdown", Value::Null);
+        c.notify("exit", Value::Null);
+        let logs =
+            c.notifications.iter().filter(|n| n["method"] == "window/logMessage").map(|n| n["params"]["message"].to_string()).collect::<Vec<_>>().join("\n");
+        drop(c);
+        let out = child.wait_with_output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(logs.contains("big-"), "{value:?}: the left-out file is named: {logs}");
+        assert_eq!(ws.to_string().contains(&key), raw, "{value:?}: {ws}");
+        assert_eq!(logs.contains(&key), raw, "{value:?}: {logs}");
+        if !raw {
+            assert!(ws.to_string().contains("[redacted:aws-access-key-id]"), "{value:?}: {ws}");
+            assert!(logs.contains("big-[redacted:aws-access-key-id].py"), "{value:?}: {logs}");
+        }
+        assert_eq!(err.contains("is neither off nor on"), matches!(value, Some("OFF") | Some("0")), "{value:?}: {err}");
+    }
+}

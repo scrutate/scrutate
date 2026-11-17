@@ -2345,6 +2345,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// The pending note names files, and a file's name can hold a secret: an MCP client gets it
+    /// redacted in the text and in `structured.pending`, as it gets the answer.
+    #[test]
+    fn a_pending_file_whose_name_holds_a_secret_reaches_an_mcp_client_redacted() {
+        let (root, s) = watched("pending_secret", 1, Every::given(Some(0.0)));
+        // built here: no tracked file holds a secret-shaped literal
+        let token = format!("AKIA{}", "Z2XKQ7JMWB5VRT3N");
+        let token = token.as_str();
+        std::fs::write(root.join(format!("src/d0/{token}.py")), "def late():\n    return 2\n").unwrap();
+        let called = while_own_write_runs(&s, Duration::from_secs(20), || {
+            crate::mcp::call_tool(&s, "find_symbol", &serde_json::json!({"name": "late"}), &crate::mcp::Settings::new(None), &Arc::default())
+        });
+        assert!(called.text.contains("an index update is still running"), "{}", called.text);
+        assert!(!called.text.contains(token) && !called.structured.to_string().contains(token), "{}\n{}", called.text, called.structured);
+        assert!(called.text.contains("[redacted:aws-access-key-id]"), "{}", called.text);
+        assert!(called.structured["pending"]["files"][0].as_str().is_some_and(|f| f.contains("[redacted:aws-access-key-id]")), "{}", called.structured);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// A write of this process that ends within the wait is waited for: the read's answer holds
     /// the files of its change set, and nothing is pending.
     #[test]
