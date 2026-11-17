@@ -104,7 +104,9 @@
   ([below](#custom-languages)). Precedence: command line > environment variable > configuration
   file > built-in default. Every configurable option names its variable in `--help` (e.g.
   `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`, `false`, `f`, `no`, `n`,
-  `off` (in any case) or empty, on otherwise (`1`, `true`, `yes`, `on`). `--root` (`SCRUTATE_ROOT`) must be an
+  `off` (in any case) or empty, on otherwise (`1`, `true`, `yes`, `on`), except `SCRUTATE_REDACT`
+  and `SCRUTATE_HOOK_BASH`, whose rows under [Environment variables](#environment-variables) give
+  their values. `--root` (`SCRUTATE_ROOT`) must be an
   existing directory for a command that opens the index (`grep --index` and `--symbols` among
   them), else it exits 2 and creates nothing; `grep` with paths does not use it.
 - **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
@@ -1557,13 +1559,15 @@ root.
 | `SCRUTATE_PROFILE` | print indexing phase timings |
 | `SCRUTATE_DIAGNOSTICS` | `json`: errors as JSON records |
 | `SCRUTATE_CACHE_DIR` | where `--deps` keeps its copies of dependencies, in place of the user cache ([`--deps`](#--deps-a-dependency-at-its-locked-version)); `CARGO_HOME`, `GOMODCACHE` and `GOPATH` name the stores it reads |
-| `NO_COLOR` | any non-empty value |
+| `NO_COLOR` | any value, empty too |
 | `XDG_STATE_HOME` | where `files` keeps its frecency, see `files` above |
 
-On/off variables follow the rule under Conventions.
+On/off variables but `SCRUTATE_REDACT` and `SCRUTATE_HOOK_BASH` follow the rule under
+Conventions.
 
 ### The index directory
-`.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays),
+`.scrutate/index.db` (SQLite, WAL), `.scrutate/checked` (the last database state its integrity
+checks passed, so an open of the same state skips them), `.scrutate/seg/*/` (memory-mapped arrays),
 `.scrutate/text/` (the text index: a manifest and immutable trigram segments, which also hold the
 hash of every line of a private key's body),
 `.scrutate/tsquery/` (the `tsquery` cache), `.scrutate/answers/` (what `callers` and `callees`
