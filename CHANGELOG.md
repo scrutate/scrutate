@@ -1251,6 +1251,24 @@ incompatible index by itself, and that is never breaking.
   before the NUL included, and no note. It now reads a file as the index does, to its end, so
   such a file no longer ends with a `stopped searching binary file` note; one with a NUL in its
   first 4 KiB is still binary and left out ([CLI](docs/CLI.md#refs)).
+- `grep` takes ripgrep's long names `--after-context`, `--before-context` and `--word-regexp` for
+  `--after`, `--before` and `--word`: they were refused, so an `rg` call the shell hook answered
+  with them failed ([CLI](docs/CLI.md)).
+- In the home directory or at a filesystem root with no index, a command that would build one
+  fails with `scrutate: error: ...`, and with `--json` or `SCRUTATE_DIAGNOSTICS=json` an error
+  record; it printed a `[scrutate]` line with no record.
+- An invalid pattern's error quotes at most 200 characters of it, as other errors quote an
+  argument; `grep`, `grep --index`, `--fuzzy-regex` and `grep_code` quoted it whole.
+- `tsquery` under `--max-bytes` counts its `(stopped at N matches ...)` line in the budget and
+  prints it on the last page only; it was added after the page, past the budget, beside the
+  page's own `more not shown` line.
+- A repository's own `.scrutate.toml` is read for its settings only as it is for its languages: a
+  regular file inside the root, at most 1 MB, through a link only to a file inside the root. One
+  outside those bounds stops the command with a line naming it; it was read anyway, so its
+  settings applied and TOML that did not parse stopped every command ([Security](docs/SECURITY.md)).
+- A symbolic link to the index directory that a search does not follow gets no stderr note, and
+  `check` does not list it; the note called it a hard link, and `rg` prints nothing there.
+- `--no-color`'s help says an empty `NO_COLOR` turns colour off too, as it does.
 
 ## [0.1.0] - 2026-11-11
 

@@ -2120,6 +2120,11 @@ pub fn paged(items: Vec<String>, noun: &'static str, max_bytes: usize, offset: u
     paged_counted(items, 0, noun, max_bytes, offset)
 }
 
+/// `paged` with `tail` as the last line of the last page, counted in `max_bytes`.
+pub fn paged_ending(items: Vec<String>, tail: String, noun: &'static str, max_bytes: usize, offset: usize) -> String {
+    Parts { items, tail, noun, ..Parts::default() }.within(max_bytes, offset, Form::Detailed).0
+}
+
 /// `paged` for a caller that kept the items up to what can be shown and counted the `rest`.
 pub fn paged_counted(items: Vec<String>, rest: usize, noun: &'static str, max_bytes: usize, offset: usize) -> String {
     Parts { items, rest, noun, ..Parts::default() }.within(max_bytes, offset, Form::Detailed).0
