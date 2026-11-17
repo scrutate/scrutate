@@ -53,6 +53,40 @@ def test_unknown_virtualization_is_not_reported_as_bare_metal(tmp_path):
     assert f["virtualization"] is None and f["cpu_governor"] is None
 
 
+def _container_root(tmp_path):
+    root = _fake_root(tmp_path)
+    (tmp_path / ".dockerenv").write_text("")
+    return root
+
+
+def test_a_container_without_host_facts_is_not_bare_metal(tmp_path):
+    # systemd-detect-virt in a container prints the container's type, never the host's
+    run = _run({"systemd-detect-virt": "docker\n"})
+    f = LB.machine_facts("/bench", root=_container_root(tmp_path), run=run, system="Linux", host_facts=None)
+    assert f["container"] == "docker" and f["virtualization"] is None
+    import make_leaderboard_md as L
+    assert L.kind(f) is None
+    assert L.kind({**f, "virtualization": "docker", "virtualization_source": "systemd-detect-virt"}) is None
+
+
+def test_a_container_with_the_hosts_facts_records_the_host(tmp_path):
+    host = tmp_path / "host-facts.json"
+    host.write_text(json.dumps(FACTS))
+    f = LB.machine_facts("/bench", root=_container_root(tmp_path), run=_run({"systemd-detect-virt": "docker\n"}), system="Linux", host_facts=str(host))
+    assert f["container"] == "docker"
+    assert (f["virtualization"], f["virtualization_source"]) == ("none", "host: systemd-detect-virt")
+    assert f["cpu_governor"] == "performance" and f["disk"] == FACTS["disk"] and f["kernel"] == FACTS["kernel"]
+    import make_leaderboard_md as L
+    assert L.kind(f) == "bare metal"
+    assert L.machine_line(f)[0].startswith("- Machine: virtualization `none` (host: systemd-detect-virt), in a docker container, kernel")
+
+
+def test_host_facts_script_writes_what_machine_facts_reads(tmp_path):
+    out = subprocess.run([sys.executable, os.path.join(ROOT, "bench", "host_facts.py"), str(tmp_path)], check=True, capture_output=True, text=True).stdout
+    facts = json.loads(out)
+    assert {"kernel", "virtualization", "virtualization_source", "cpu_governor", "disk", "cpu"} <= set(facts)
+
+
 def _leaderboard_file(tmp_path, sub, platform, machine, facts, cache="warm"):
     with open(VM_WARM, encoding="utf-8") as fh:
         d = json.load(fh)

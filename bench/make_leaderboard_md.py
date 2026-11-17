@@ -152,8 +152,17 @@ VM_NOTE = ("- The Linux virtual machine is Colima (Apple Virtualization); macOS 
 def kind(env):
     """"bare metal" or "virtual machine" as the results record it; None where they cannot tell."""
     if "virtualization" in env:
-        return {None: None, "none": "bare metal"}.get(env["virtualization"], "virtual machine")
+        virt = env["virtualization"]
+        if env.get("container") and not (env.get("virtualization_source") or "").startswith("host: "):
+            return None  # a container's own view says nothing of the machine under it
+        if virt in CONTAINERS:
+            return None
+        return {None: None, "none": "bare metal"}.get(virt, "virtual machine")
     return "virtual machine" if hardware(env).startswith(VM) else None
+
+
+# what systemd-detect-virt names a container: not a virtual machine, and not the host's answer
+CONTAINERS = {"docker", "podman", "lxc", "lxc-libvirt", "systemd-nspawn", "rkt", "wsl", "proot", "pouch", "openvz"}
 
 
 def machine_line(env):
@@ -161,6 +170,8 @@ def machine_line(env):
     if "virtualization" not in env:
         return []
     virt = f"virtualization `{env['virtualization']}` ({env['virtualization_source']})" if env["virtualization"] else "virtualization not detected"
+    if env.get("container"):
+        virt += f", in a {env['container']} container"
     gov = f"CPU frequency governor `{env['cpu_governor']}`" if env.get("cpu_governor") else "CPU frequency governor not exposed"
     disk = env.get("disk")
     medium = {True: "rotational", False: "solid state"}.get(disk and disk.get("rotational"), "medium not reported")

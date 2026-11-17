@@ -8,6 +8,9 @@
 #
 #   docker run --rm --platform linux/arm64 -v "$PWD":/src:ro -v "$HOME/.cache/scrutate-bench/livegrep":/livegrep:ro \
 #     -v scrutate-bench-linux:/bench -v "$PWD/bench/results":/results ubuntu:24.04 bash /src/bench/competitors/linux_indexed.sh
+#
+# Add the host's facts as for linux_bench.sh (its header writes host-facts.json):
+#   -v "$PWD/host-facts.json":/host-facts.json:ro -e SCRUTATE_BENCH_HOST_FACTS=/host-facts.json
 set -euo pipefail
 B=/bench
 apt-get update -qq && apt-get install -y -qq python3 git time > /dev/null  # GNU time: per-query peak memory

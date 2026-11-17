@@ -228,7 +228,9 @@ incompatible index by itself, and that is never breaking.
   Python, Rust, C and Go ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - On Linux the benchmark results record the machine they ran on: kernel, virtualization, CPU
   frequency governor and the disk under the corpora, and `bench/indexed.py` records the load
-  before each tool's runs as `bench/leaderboard.py` does. LEADERBOARD.md heads a section "bare
+  before each tool's runs as `bench/leaderboard.py` does. In a container they name the container
+  and take the host's facts from a file `bench/host_facts.py` writes on the host
+  (`SCRUTATE_BENCH_HOST_FACTS`). LEADERBOARD.md heads a section "bare
   metal" when its results record no virtualization and lists those facts under it, and marks a
   virtual-machine run filed as superseded beside a bare-metal run of its platform. BENCHMARKS.md
   takes several results files, one section per machine

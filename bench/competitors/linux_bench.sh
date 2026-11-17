@@ -11,6 +11,13 @@
 #     -v "$HOME/.cache/scrutate-bench/corpora":/corpora:ro -v "$HOME/.cache/scrutate-bench/livegrep":/livegrep:ro \
 #     -v scrutate-bench-linux:/bench -v "$PWD/bench/results":/results rust:1-slim-bookworm bash /src/bench/competitors/linux_bench.sh
 #
+# In a container the results can only say which container they ran in; to record the host as well
+# (what makes a section read "bare metal"), write its facts on the host first and hand them in:
+#   docker volume create scrutate-bench-linux
+#   sudo python3 bench/host_facts.py "$(docker volume inspect -f '{{.Mountpoint}}' scrutate-bench-linux)" > host-facts.json
+# and add to the docker run: -v "$PWD/host-facts.json":/host-facts.json:ro -e SCRUTATE_BENCH_HOST_FACTS=/host-facts.json
+# (keys: kernel, virtualization, virtualization_source, cpu_governor, disk, cpu; see bench/host_facts.py).
+#
 # The corpora are copied into the container's own disk (/bench) so reads do not go through the
 # host file-sharing layer; the cold-cache runs drop the guest page cache before every run.
 set -euo pipefail

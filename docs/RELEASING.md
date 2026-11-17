@@ -244,9 +244,20 @@ The two make_*_md.py commands name the files step 2 writes. On Linux, `leaderboa
 memory, kernel, virtualization (`systemd-detect-virt`, else `/sys/hypervisor/type`; not
 detected when neither says), the CPU frequency governor and the disk the corpora are on.
 `leaderboard.py` and `indexed.py` also record the 1-minute load average before each tool's runs.
-A section whose results record virtualization `none` is headed "bare metal" with those facts
-under it, and a virtual-machine run filed under `superseded/` beside a bare-metal run of the same
-platform says the bare-metal sections replace it. LEADERBOARD.md and BENCHMARKS.md
+In a container (`systemd-detect-virt --container`, `/.dockerenv` or `/run/.containerenv`) they
+record the container's type and no virtualization, governor or disk of their own, since those
+would describe the container: run `sudo python3 bench/host_facts.py DIR > host-facts.json` on the
+host first, with DIR the directory that holds the corpora (for the `scrutate-bench-linux` volume,
+`docker volume inspect -f '{{.Mountpoint}}' scrutate-bench-linux`), and add
+`-v "$PWD/host-facts.json":/host-facts.json:ro -e SCRUTATE_BENCH_HOST_FACTS=/host-facts.json` to
+both `docker run` lines (the headers of `linux_bench.sh` and `linux_indexed.sh` have them). The
+file's keys are `kernel`, `virtualization`, `virtualization_source`, `cpu_governor`, `disk`
+(`source`, `fstype`, `model`, `rotational`) and `cpu`, and the results record the host's
+virtualization with the source `host: systemd-detect-virt`. A section whose results record
+virtualization `none` from the machine itself or from the host is headed "bare metal" with those
+facts under it; a container without the host's facts never is. A virtual-machine run filed under
+`superseded/` beside a bare-metal run of the same platform says the bare-metal sections replace
+it. LEADERBOARD.md and BENCHMARKS.md
 record the result files they were written from (`<!-- inputs: ... -->`), and
 `gen_doc_assets.py --check` writes both pages again from those files and fails on any
 difference, so a number edited by hand, or a page not written again after a new run, fails. Until

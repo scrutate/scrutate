@@ -64,6 +64,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
 SCRUTATE_BASE = os.environ.get("SCRUTATE_BASE_BIN") or None
+# read at import, as the two above: main() drops every SCRUTATE_ variable before it runs a tool
+HOST_FACTS = os.environ.get("SCRUTATE_BENCH_HOST_FACTS") or None
 
 
 def drop_scrutate_settings():
@@ -880,13 +882,16 @@ def stdout_of(cmd):
         return ""
 
 
-def machine_facts(path, root="/", run=stdout_of, system=None):
+def machine_facts(path, root="/", run=stdout_of, system=None, host_facts=HOST_FACTS):
     """What a reader needs to accept a Linux machine as dedicated hardware: kernel, virtualization (None
     when neither systemd-detect-virt nor /sys/hypervisor says), CPU frequency governor, and the disk
-    `path` is on. Nothing elsewhere: the pages head those sections as they always have."""
+    `path` is on. Nothing elsewhere: the pages head those sections as they always have.
+    In a container these describe the container, so `container` names it and virtualization stays
+    None unless `host_facts` (a file bench/host_facts.py wrote on the host) gives the host's."""
     if (system or platform.system()) != "Linux":
         return {}
-    facts = {"kernel": platform.release(), "virtualization": None, "virtualization_source": None, "cpu_governor": None, "disk": None}
+    facts = {"kernel": platform.release(), "virtualization": None, "virtualization_source": None, "cpu_governor": None, "disk": None,
+             "container": None}
 
     def read(p):
         try:
@@ -894,6 +899,20 @@ def machine_facts(path, root="/", run=stdout_of, system=None):
                 return f.read().strip() or None
         except OSError:
             return None
+    inside = run(["systemd-detect-virt", "--container"]).strip()
+    if inside and inside != "none":
+        facts["container"] = inside
+    elif os.path.exists(os.path.join(root, ".dockerenv")):
+        facts["container"] = "docker"
+    elif os.path.exists(os.path.join(root, "run/.containerenv")):
+        facts["container"] = "podman"
+    if facts["container"]:
+        if host_facts:
+            with open(host_facts) as f:
+                host = json.load(f)
+            facts.update({k: host.get(k) for k in ("kernel", "virtualization", "cpu_governor", "disk")})
+            facts["virtualization_source"] = f"host: {host['virtualization_source']}" if host.get("virtualization_source") else None
+        return facts
     virt = run(["systemd-detect-virt"]).strip()
     if virt:
         facts.update(virtualization=virt, virtualization_source="systemd-detect-virt")
