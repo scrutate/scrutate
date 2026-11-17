@@ -57,6 +57,7 @@ gap they close in docs/TRACEABILITY.md.
 | Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
 | Function order on glibc Linux (R-4.6) | release builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` link twice, the second time with lld's `--symbol-ordering-file` from `crates/scrutate/startup.order` under the build's own names (`tools/order_file.py --elf`); docs/RELEASING.md section 2 |
 | OpenSSF Scorecard | `.github/workflows/scorecard.yml` (ossf/scorecard-action 2.5.0, pinned by commit) runs on every push to main and once a week, publishing its score to api.scorecard.dev and its findings to code scanning; its first run is the next push to main |
+| An LSP4IJ template for JetBrains IDEs | `integrations/jetbrains/lsp4ij-template` fills the Language Servers dialog in one import (name, `scrutate lsp`, a file name pattern per language); the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and runs Go to Declaration through it |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the first release
@@ -85,8 +86,6 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 - Now that `ci.yml` is green, one job or setting each (docs/research/github-ci-2026-11.md): wheels
   to PyPI by trusted publishing (the jobs are in `release.yml` and wait for the `PYPI_PUBLISH`
   variable), and CodeQL default setup for Rust, a repository setting the owner turns on (no file).
-  For the integrations
-  (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one import.
 
 ## Next
 

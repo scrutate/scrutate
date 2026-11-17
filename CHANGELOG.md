@@ -252,6 +252,10 @@ incompatible index by itself, and that is never breaking.
 - An OpenSSF Scorecard workflow (`.github/workflows/scorecard.yml`, ossf/scorecard-action 2.5.0
   pinned by commit) runs on every push to main and once a week, and publishes its score and its
   findings to code scanning ([Security](docs/SECURITY.md)).
+- An LSP4IJ template for JetBrains IDEs (`integrations/jetbrains/lsp4ij-template`): *Import from
+  custom template...* in the Language Servers settings fills the name, the command `scrutate lsp` and
+  a file name pattern per language; the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and
+  runs Go to Declaration through it ([JetBrains](integrations/jetbrains/README.md)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,

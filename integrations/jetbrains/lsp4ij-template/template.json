@@ -1,0 +1,23 @@
+{
+  "id": "scrutate",
+  "name": "Scrutate",
+  "url": "https://github.com/scrutate/scrutate/blob/main/integrations/jetbrains/README.md",
+  "programArgs": {
+    "default": "scrutate lsp",
+    "windows": "scrutate.exe lsp"
+  },
+  "fileTypeMappings": [
+    { "fileType": { "patterns": ["*.py", "*.pyi"] }, "languageId": "python" },
+    { "fileType": { "patterns": ["*.rs"] }, "languageId": "rust" },
+    { "fileType": { "patterns": ["*.go"] }, "languageId": "go" },
+    { "fileType": { "patterns": ["*.ts", "*.mts", "*.cts"] }, "languageId": "typescript" },
+    { "fileType": { "patterns": ["*.tsx"] }, "languageId": "typescriptreact" },
+    { "fileType": { "patterns": ["*.js", "*.mjs", "*.cjs"] }, "languageId": "javascript" },
+    { "fileType": { "patterns": ["*.jsx"] }, "languageId": "javascriptreact" },
+    { "fileType": { "patterns": ["*.java"] }, "languageId": "java" },
+    { "fileType": { "patterns": ["*.php"] }, "languageId": "php" },
+    { "fileType": { "patterns": ["*.c", "*.h"] }, "languageId": "c" },
+    { "fileType": { "patterns": ["*.cc", "*.cpp", "*.cxx", "*.hh", "*.hpp", "*.hxx"] }, "languageId": "cpp" },
+    { "fileType": { "patterns": ["*.cs"] }, "languageId": "csharp" }
+  ]
+}
