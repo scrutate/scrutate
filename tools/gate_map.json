@@ -810,5 +810,17 @@
  "scorecard.yml:analysis:76ca1d4c0c": {
   "step": "github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066",
   "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "fuzz-weekly.yml:barrier-stress:6583f65237": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "fuzz-weekly.yml:barrier-stress:d37fbfda8c": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "fuzz-weekly.yml:barrier-stress:4a4989beee": {
+  "step": "cargo test --release -p scrutate --lib --locked a_file_written_just_before_a_call",
+  "by": "gate: test-stress"
  }
 }

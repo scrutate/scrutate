@@ -172,6 +172,8 @@ if [ "$mode" = "full" ]; then
   fast="env CARGO_TARGET_DIR=$target/fasttest CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
   step test $fast cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast
   step test-extra-langs $fast cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
+  # the session's write-then-read barrier tests at 1000 loops (ci.yml runs 200, fuzz-weekly.yml 1000)
+  step test-stress $fast env SCRUTATE_TEST_STRESS=1 cargo test --release -p scrutate --lib --locked a_file_written_just_before_a_call
   # ci.yml fuzz job's targets on stable: fuzz/ is a workspace of its own, which no clippy above
   # compiles; the nightly sanitizer build and the crash inputs stay CI's
   step fuzz-check bash -c "python3 tools/fuzz_lock.py --check && CARGO_TARGET_DIR='$target/fuzz' cargo check --manifest-path fuzz/Cargo.toml --bins --locked"
