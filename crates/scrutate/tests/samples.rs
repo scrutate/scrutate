@@ -69,6 +69,34 @@ fn the_registry_names_every_kind_a_sample_yields() {
     assert!(missing.is_empty(), "kinds the registry does not name:\n{}", missing.join("\n"));
 }
 
+/// A language whose registry entry declares call edges or imports shows them in its samples, so
+/// docs/LANGUAGES.md's Calls and Imports columns are checked here as its kinds are above.
+#[test]
+fn every_sample_shows_the_call_edges_and_imports_its_language_declares() {
+    let mut dirs = vec!["tests/samples"];
+    if cfg!(feature = "extra-langs") {
+        dirs.push("tests/samples_extra");
+    }
+    let mut missing = Vec::new();
+    for sub in dirs {
+        for entry in fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(sub)).unwrap() {
+            let p = entry.unwrap().path();
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let Ok(src) = fs::read_to_string(&p) else { continue };
+            let Some(spec) = scrutate::parse::spec_for(&name, &src) else { continue };
+            let parsed = scrutate::parse::parse_file(&name, &src);
+            if !spec.calls.is_empty() && parsed.chunks.iter().all(|c| c.calls.is_empty()) {
+                missing.push(format!("{}: no call edge ({sub}/{name})", spec.id));
+            }
+            if !spec.imports.is_empty() && parsed.imports.is_empty() {
+                missing.push(format!("{}: no import ({sub}/{name})", spec.id));
+            }
+        }
+    }
+    missing.sort();
+    assert!(missing.is_empty(), "declared but not shown by the sample:\n{}", missing.join("\n"));
+}
+
 #[test]
 fn a_racket_define_syntax_rule_is_a_macro() {
     let chunks = parse_source("m.rkt", "#lang racket\n(define-syntax-rule (twice e) (begin e e))\n(define (f x) (twice x))\n");

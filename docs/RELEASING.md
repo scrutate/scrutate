@@ -50,7 +50,7 @@ every push to main and every pull request, so a difference shows before the tag.
   on security beyond docs/SECURITY.md. Edit that file before the tag. Then
   `python3 tools/fold_changelog.py X.Y.Z YYYY-MM-DD`, with the tag's date, makes the version's
   section that description, dated, with one sentence linking the full list; moves the full list
-  (every Unreleased entry and the version's old section, verbatim) to `docs/changes/X.Y.Z.md`,
+  (every Unreleased entry and the version's old section, with relative links rewritten to resolve from `docs/changes/`) to `docs/changes/X.Y.Z.md`,
   which the archives pack; leaves `## [Unreleased]` as an empty heading; puts the link references
   for both headings at the end (`[Unreleased]: .../compare/vX.Y.Z...HEAD`,
   `[X.Y.Z]: .../releases/tag/vX.Y.Z`); and writes the date into DELIVERY.md, SECURITY.md and
@@ -107,7 +107,7 @@ row in that directory's `README.md` and an entry in `HISTORY` in `bench/make_das
 macOS, about 3.5 hours plus the wait for the binary to settle (at most an hour):
 
 ```sh
-cargo build --release -p scrutate --locked && bash bench/run_macos.sh
+bash bench/run_macos.sh   # refuses changes no commit holds, then builds the binary from HEAD
 ```
 
 - Before the build, on Apple silicon: `python3 tools/order_file.py --check` reports the share of
@@ -145,9 +145,10 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   95% claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20
   runs and changed no verdict; a look after one block flipped 5, since one block has no interleaving
   (that replay's output is not committed). R-14.10 in docs/TRACEABILITY.md defines a #1 over at
-  least 20 runs per tool, 30 when a verdict does not hold at the first look, with the run count
-  recorded per row. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
-  needs every block of both binaries.
+  least 30 runs per tool, with the run count recorded per row: LEADERBOARD.md shows a row that
+  stopped at 20 as measured, not ranked, so the stop rule serves CI's gate. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
+  needs every block of both binaries, and the publish scripts (`bench/run_macos.sh`,
+  `bench/competitors/linux_bench.sh`) pass `--no-stop-early`, so a published row takes all 30 runs.
 - Cold runs evict only the corpus files' pages on macOS (`bench/evict.c`, `msync` with
   `MS_INVALIDATE`, no root); Linux drops the whole page cache with `drop_caches`.
 - No `cargo test` or `cargo build` until the chain ends: both can replace the binary.
@@ -164,7 +165,11 @@ home directory with containers. The first script checks each tool it downloads a
 in the script: a new tool version needs its new hash there, from the tool's own release page.
 It builds GNU grep and git from their latest release sources, since Debian's are older, and
 records the commit `/src` is at in `/bench/scrutate/BUILT_FROM`; both scripts refuse to run when
-`/src` has moved to another commit since (`bench/competitors/built_from.sh`). `linux_indexed.sh`
+`/src` has moved to another commit since, or has changes no commit holds (an edited or staged
+file, or an untracked one outside `bench/results/` and `host-facts.json`), since the build copies
+the working tree (`bench/competitors/built_from.sh`). `linux_bench.sh` and `bench/indexed.py`
+also stop when a corpus they read is not the tree its `manifest.json` pins (`bench/corpora.py
+--verify`), so a corpus an interrupted run left edited is never measured under the pinned hash. `linux_indexed.sh`
 takes its idle threshold from `INDEXED_MAX_LOAD` (default: the CPU count).
 The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux x86_64 runs on a
 dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,
@@ -181,6 +186,15 @@ a run, and starts only the tools those workloads have. A tool gets `--start-time
 to build its index or start its server; past that it is that tool's error and the run goes on. The
 output records each rival's version and the machine. clangd needs a
 `compile_commands.json` in the corpus, and gopls a Go corpus (`corpora.py --only hugo`).
+W3 on the Linux tree takes `--queries bench/yardstick_queries/w3-linux.json`, one query per entry
+of `bench/indexed.py`'s QUERIES (`yardstick.py --write-w3 FILE` writes it again). A query whose
+answer cannot be checked (no `expect`, or an empty one that is not `exact`) is never timed.
+Before each query the run waits up to `--max-wait` seconds (1800) for the 1-minute load average
+to fall under `--max-load` (0.3 x CPUs) and records it. Each row gives p50, p95 and p99, and each
+rival its ratio and 95% bootstrap interval (10,000 resamples) against every scrutate form timed
+on the query (`vs`). `python3 bench/make_yardstick_md.py RESULT.json ...` writes those into the
+marked section of docs/COMPETITIVE.md, and `gen_doc_assets.py --check` fails when the section
+differs from the files it names.
 
 Then read the results:
 
@@ -229,7 +243,7 @@ python3 bench/make_leaderboard_md.py --engine-a $M/leaderboard-warm.json --engin
   --engine-a $X/leaderboard-warm.json --engine-a $X/leaderboard-cold.json \
   --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json \
   --indexed $M/indexed.json --indexed $X/indexed.json --indexed $L/indexed.json
-python3 bench/make_benchmarks_md.py $M/compare.json $X/compare.json $L/compare.json   # one section per machine
+python3 bench/make_benchmarks_md.py $(ls $M/compare.json $X/compare.json $L/compare.json 2>/dev/null)   # one section per machine that has one
 python3 bench/make_dashboard.py
 python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
@@ -243,7 +257,13 @@ python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then -
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
-The two make_*_md.py commands name the files step 2 writes. On Linux, `leaderboard.py`,
+The make_leaderboard_md.py command names the files step 2 writes. A machine's `compare.json`
+exists only where `bench/compare_tools.py` ran: `bench/run_macos.sh` runs it on macOS, and the
+Linux scripts in `bench/competitors/` do not, so on Linux run it by hand with the same corpora
+(`python3 bench/compare_tools.py --corpus small=DIR --corpus big=DIR --corpus massive=DIR --runs 30
+--out bench/results/linux-<arch>/compare.json`). `make_benchmarks_md.py` stops with an error on a
+file that is not there, so the command passes only the ones that exist, and a machine without one
+has no section in docs/BENCHMARKS.md. On Linux, `leaderboard.py`,
 `indexed.py` and `compare_tools.py` record the machine with the results: CPU model, logical CPUs,
 memory, kernel, virtualization (`systemd-detect-virt`, else `/sys/hypervisor/type`; not
 detected when neither says), the CPU frequency governor and the disk the corpora are on.

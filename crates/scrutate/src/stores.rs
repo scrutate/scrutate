@@ -592,7 +592,8 @@ pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::in
     let mut there = found.iter().filter(|f| f.repo && f.path.starts_with(under.as_str())).map(|f| (f.path.as_str(), f.stat)).peekable();
     // a directory the look did not enter is searched as the walk searches it
     there.peek()?;
-    let read = ti.to_read(&cond, q.pattern.multiline, there).ok()?;
+    // a file with a NUL byte has trigrams only up to it: one read past it is read whatever they say
+    let read = ti.to_read(&cond, q.pattern.multiline || q.as_indexed, there).ok()?;
     // named from the directory searched, as its walk names them
     let files = read.into_iter().map(|p| p[under.len()..].to_string()).collect();
     Some(crate::instant::Files { paths: Paths::List { root: at.clone(), files }, paths_as_given: false, ..walk.clone() })

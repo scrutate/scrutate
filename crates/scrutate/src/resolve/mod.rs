@@ -714,6 +714,7 @@ pub struct Resolver<'a> {
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
     go_imports: Option<HashMap<String, String>>,
+    rust_path_files: Option<Vec<String>>,
     /// by directory: the config found there, or that there is none
     ts: HashMap<String, Option<Rc<js::TsPaths>>>,
     js_packages: Option<HashMap<String, Vec<Rc<js::JsPackage>>>>,
@@ -1304,6 +1305,7 @@ impl<'a> Resolver<'a> {
             crates: None,
             go_dirs: None,
             go_imports: None,
+            rust_path_files: None,
             ts: HashMap::new(),
             js_packages: None,
             nest: 0,
@@ -3152,7 +3154,7 @@ impl Resolved {
 
 /// The Engine A search for the whole-word occurrences of `bare`, the first `max_results` in path
 /// order, in its composed and its decomposed spelling: names compare in NFC, and a file may hold
-/// either.
+/// either. Each file is read as the code index reads it, so a use past a NUL byte is found.
 pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Query {
     use unicode_normalization::UnicodeNormalization;
     let (nfc, nfd): (String, String) = (bare.nfc().collect(), bare.nfd().collect());
@@ -3162,7 +3164,7 @@ pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Query {
         (format!("(?:{}|{})", regex::escape(&nfc), regex::escape(&nfd)), crate::instant::Mode::Regex)
     };
     let pattern = crate::instant::Pattern { text, mode, word: true, ..Default::default() };
-    crate::instant::Query { pattern, max_results: Some(max_results), first_in_path_order: true, ..Default::default() }
+    crate::instant::Query { pattern, max_results: Some(max_results), first_in_path_order: true, as_indexed: true, ..Default::default() }
 }
 
 /// Plain-text rendering of `Names::references`, optionally for the definitions `only`.

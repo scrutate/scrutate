@@ -324,7 +324,7 @@ pub fn query_for(o: &Query) -> Result<Q> {
         .utf8(false)
         .build()
         .parse(&t.pattern)
-        .with_context(|| format!("invalid pattern {:?}", o.pattern.text))?;
+        .with_context(|| format!("invalid pattern \"{}\"", crate::fmt::echo(&o.pattern.text)))?;
     Ok(analyze(&hir).query())
 }
 

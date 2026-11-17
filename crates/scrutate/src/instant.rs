@@ -43,7 +43,7 @@ pub enum Mode {
     Literal,
     /// `refreshToken` matches refresh_token / RefreshToken / REFRESH-TOKEN
     Identifier,
-    /// literal within `max_edits` insertions, deletions or substitutions (pattern up to 64 bytes)
+    /// literal within `max_edits` insertions, deletions or substitutions (pattern up to `FUZZY_MAX` characters)
     Fuzzy {
         max_edits: u8,
     },
@@ -137,6 +137,9 @@ pub struct Query {
     pub with_filename: bool,
     /// plain output has line numbers (`-N` turns them off; records always carry them)
     pub line_numbers: bool,
+    /// a walked file with no NUL byte in its first 4 KiB is read to its end as text, as the code
+    /// index reads it; off, as ripgrep reads it, which stops at the read that meets a NUL
+    pub as_indexed: bool,
 }
 
 impl Default for Query {
@@ -156,6 +159,7 @@ impl Default for Query {
             raw_member_names: false,
             with_filename: true,
             line_numbers: true,
+            as_indexed: false,
         }
     }
 }
@@ -1478,7 +1482,7 @@ pub fn build_matcher(p: &Pattern) -> Result<AnyMatcher> {
                 .size_limit(p.regex_size_limit)
                 .dfa_size_limit(p.dfa_size_limit)
                 .line_terminator(if p.multiline { None } else { Some(b'\n') });
-            let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", p.text))?;
+            let m = b.build(&pat).with_context(|| format!("invalid pattern \"{}\"", crate::fmt::echo(&p.text)))?;
             let suffix_ok = !p.word && p.mode != Mode::Literal;
             let mut m = if suffix_ok { LineRegex::new(m, &pat, insensitive) } else { LineRegex::plain(m) };
             if insensitive && m.line_terminator().is_some() {

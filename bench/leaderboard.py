@@ -60,6 +60,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "competitors"))
+import latest  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
@@ -115,6 +118,18 @@ def version(tool):
         return out[0] if out else None
     except Exception:
         return None
+
+
+def outliers(xs) -> int:
+    """How many of the runs `xs` are outliers by the modified z-score (Iglewicz and Hoaglin 1993):
+    0.6745 * |x - median| / MAD above 3.5. They are counted and reported, never dropped."""
+    if not xs:
+        return 0
+    med = statistics.median(xs)
+    mad = statistics.median(abs(x - med) for x in xs)
+    if mad == 0:
+        return sum(x != med for x in xs)
+    return sum(0.6745 * abs(x - med) / mad > 3.5 for x in xs)
 
 
 # ------------------------------------------------------------------------- the suite
@@ -944,11 +959,29 @@ def environment(data_dir="."):
             env["cpu"] = next((l.split(":", 1)[1].strip() for l in stdout_of(["lscpu"]).splitlines() if l.startswith("Model name:")), env["cpu"])
     env.update(machine_facts(data_dir))
     env["tools"] = {t: version(t) for t in BIN}
+    env["version_check"] = latest.run_check(env["tools"])
     env["scrutate_sha256"] = hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest()
     if SCRUTATE_BASE:
         env["scrutate_base_sha256"] = hashlib.sha256(open(SCRUTATE_BASE, "rb").read()).hexdigest()
     env["hyperfine"] = subprocess.run(["hyperfine", "--version"], capture_output=True, text=True).stdout.strip() if shutil.which("hyperfine") else None
     return env
+
+
+# what a row's timing depends on, besides the settings: the binaries, the rival tools, the machine
+RUN_FACTS = ("scrutate_sha256", "scrutate_base_sha256", "tools", "hyperfine", "platform", "machine", "cpu", "cpus", "memory_bytes", "perf_cores",
+             "efficiency_cores", "kernel", "virtualization", "cpu_governor", "disk", "container")
+
+
+def run_changes(data, env, corpora, settings):
+    """What differs between the run in `data` and this one (`settings` None: not compared), by name;
+    empty when the rows `data` holds may be kept beside new ones."""
+    was = data.get("environment", {})
+    out = [k for k in RUN_FACTS if env.get(k) != was.get(k)]
+    if data.get("corpora") is not None and corpora != data["corpora"]:
+        out.append("corpora")
+    if settings is not None and data.get("settings") is not None and settings != data["settings"]:
+        out.append("settings")
+    return out
 
 
 def check_hyperfine():
@@ -1040,26 +1073,28 @@ def main() -> int:
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
-    env, was = environment(a.corpora), data.get("environment", {})
-    same = all(env.get(k) == was.get(k) for k in ("scrutate_sha256", "scrutate_base_sha256"))
+    env = environment(a.corpora)
+    corpora = json.load(open(os.path.join(a.corpora, "manifest.json")))
+    settings = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
+                "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
+    if a.stop:
+        interim, last = stop_rule(a.blocks)
+        settings["stop"] = {"after_blocks": interim, "interim_alpha": INTERIM_ALPHA, "last_alpha": last}
     if a.redo_unstable:
-        # the same run, continued: its environment and settings stand, so the binaries must be the same
-        if not same:
-            raise SystemExit("--redo-unstable: the scrutate binary, or its base, is not the one this run measured")
+        # the same run, continued: its settings stand, so all else it was measured with must be the same
+        if changed := run_changes(data, env, corpora, None):
+            raise SystemExit(f"--redo-unstable: {', '.join(changed)} differ from what this run measured with")
     else:
-        # rows kept from an earlier run would get this binary's hash over another binary's timings
-        if data["benchmarks"] and not same and not (a.force and not a.only):
-            raise SystemExit(f"{a.out} holds rows that another scrutate binary, or base, measured: move the file away, or measure every row again with --force")
-        if not same:
-            # a run that dies part way must not leave the other binary's rows under this one's hash
+        # rows kept from an earlier run would be listed under this run's binary, tools, machine, corpora and settings
+        changed = run_changes(data, env, corpora, settings)
+        if data["benchmarks"] and changed and not (a.force and not a.only):
+            raise SystemExit(f"{a.out} holds rows measured with other {', '.join(changed)}: move the file away, or measure every row again with --force")
+        if changed:
+            # a run that dies part way must not leave rows measured otherwise under this run's facts
             data["benchmarks"] = {}
         data["environment"] = env
-        data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
-        data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
-                            "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
-        if a.stop:
-            interim, last = stop_rule(a.blocks)
-            data["settings"]["stop"] = {"after_blocks": interim, "interim_alpha": INTERIM_ALPHA, "last_alpha": last}
+        data["corpora"] = corpora
+        data["settings"] = settings
     for b in benches:
         old = data["benchmarks"].get(b["id"])
         if a.only and not any(b["id"].startswith(p) for p in a.only):

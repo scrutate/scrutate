@@ -145,7 +145,7 @@ impl FuzzyRegex {
             .case_insensitive(case_insensitive)
             .build()
             .parse(pattern)
-            .with_context(|| format!("invalid pattern {pattern:?}"))?;
+            .with_context(|| format!("invalid pattern \"{}\"", crate::fmt::echo(pattern)))?;
         let mut m = Self::of(&hir, max_edits)?;
         m.rev = Some(Box::new(Self::of(&reversed(&hir), max_edits)?));
         Ok(m)

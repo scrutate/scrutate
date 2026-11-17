@@ -1,4 +1,5 @@
 -- Lua sample
+local util = require("demo.util")
 local M = {}
 -- Greets.
 function M.greet(name)

@@ -282,6 +282,37 @@ fn rust_a_use_of_an_inline_module_item_is_that_item() {
 }
 
 #[test]
+fn rust_a_path_attribute_names_the_module_file() {
+    let r = Repo::new(
+        "rs_path_attr",
+        &[
+            ("Cargo.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("src/lib.rs", "mod a;\nmod other;\n"),
+            (
+                "src/a.rs",
+                "#[path = \"impls/h.rs\"]\nmod helper;\nmod outer {\n    #[path = \"x.rs\"]\n    mod inner;\n}\n#[path = \"nope.rs\"]\nmod gone;\n\npub fn run() -> i32 {\n    helper::compute()\n}\n",
+            ),
+            ("src/impls/h.rs", "pub fn compute() -> i32 {\n    1\n}\n"),
+            ("src/other.rs", "pub fn compute() -> i32 {\n    2\n}\n"),
+            ("src/a/outer/x.rs", "pub fn deep() -> i32 {\n    3\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("compute", "src/impls/h.rs:1"), ["src/a.rs:11", "src/impls/h.rs:1"]);
+    assert_eq!(r.refs_of("compute", "src/other.rs:1"), ["src/other.rs:1"]);
+    assert!(r.reasons("compute", "src/a.rs").is_empty());
+    let (_, callees) = r.run(&["callees", "src/a.rs:10"]);
+    assert!(callees.contains("src/impls/h.rs") && !callees.contains("src/other.rs"), "{callees}");
+    let (_, deps) = r.run(&["deps", "src/a.rs"]);
+    let lines: Vec<&str> = deps.lines().collect();
+    // inside an inline block the path starts at the module's directory; a missing file is no file
+    assert!(lines.contains(&"src/a.rs:2  helper  -> src/impls/h.rs"), "{deps}");
+    assert!(lines.contains(&"src/a.rs:5  inner  -> src/a/outer/x.rs"), "{deps}");
+    assert!(lines.contains(&"src/a.rs:8  gone"), "{deps}");
+    let (code, rdeps) = r.run(&["rdeps", "src/impls/h.rs"]);
+    assert!(code == 0 && rdeps.lines().any(|l| l == "src/a.rs:2  helper"), "{rdeps}");
+}
+
+#[test]
 fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
     let r = Repo::new(
         "rs_trait_default",

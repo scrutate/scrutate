@@ -3,14 +3,21 @@
 
     python3 bench/yardstick.py --corpus DIR --queries FILE --out FILE.json [--runs 20] [--only W3,W4]
     python3 bench/yardstick.py --smoke          # the tiny fixture: scrutate's rows must pass
+    python3 bench/yardstick.py --write-w3 bench/yardstick_queries/w3-linux.json   # W3 from indexed.py's QUERIES
 
 A tool is an Adapter (bench/rivals): one request per `ask`. A query names its workload and what
 the answer must hold (`expect`, or exactly that with `exact: true`). An answer that does not hold
-it is reported as wrong and never timed; a tool that cannot run here says why. Passing tools are
+it is reported as wrong and never timed, and a query whose answer cannot be checked (no `expect`,
+or an empty one that is not `exact`; no relevant definitions for W8) is not timed at all; a tool
+that cannot run here says why. Before each query the run waits (bounded) for the 1-minute load
+average to fall under --max-load and records it. Passing tools are
 timed in turn (A B C, B C A, ...), so load drift does not turn into a difference between them, and
 each is compared with one named scrutate adapter of the same form, the first of that form in
 adapters(): resident with scrutate-mcp (a server that holds its index), process with scrutate or,
-for W10, scrutate-mcp-cold (a program per request). Each row with a ratio names its `base`.
+for W10, scrutate-mcp-cold (a program per request). Each row with a ratio names its `base`, and
+`vs` gives its ratio against every scrutate form timed on the query (a resident rival against
+`scrutate grep --index` too). Intervals are leaderboard.boot_ratio's 95% percentile bootstrap at
+its own resample count (10,000).
 """
 from __future__ import annotations
 
@@ -23,6 +30,25 @@ import time
 
 import leaderboard as lb
 from rivals import Unsupported
+
+
+def checkable(query: dict) -> bool:
+    """Whether an answer to `query` can be checked: a ranked W8 query by its relevant definitions,
+    any other by `expect` (an empty one only when `exact`: then it says "no match")."""
+    if query["workload"] == "W8":
+        return bool(query.get("relevant"))
+    return "expect" in query and (bool(query["expect"]) or bool(query.get("exact")))
+
+
+def w3_queries() -> list[dict]:
+    """W3: one query per entry of bench/indexed.py's QUERIES, in order (bench/yardstick_queries/w3-linux.json)."""
+    from indexed import QUERIES
+    return [{"id": f"W3/{i:02d}-{kind.replace(' ', '-')}", "workload": "W3", "grep": q} for i, (kind, q) in enumerate(QUERIES)]
+
+
+def ratio(times, base) -> dict:
+    r, lo, hi = lb.boot_ratio(times, base)
+    return {"ratio": r, "ci_low": lo, "ci_high": hi, "n": len(times), "n_base": len(base)}
 
 
 def check(workload: str, answer, query: dict) -> str | None:
@@ -71,9 +97,11 @@ def bounded(seconds: float, fn, *args):
         signal.signal(signal.SIGALRM, old)
 
 
-def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus: str, work: str, start_limit: float = 1800) -> dict:
+def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus: str, work: str, start_limit: float = 1800,
+            max_load: float | None = None, max_wait: float = 0) -> dict:
     """Check, then time, every adapter on every query of a workload it serves. Only an adapter
-    some query needs is started, each start within `start_limit` seconds."""
+    some query needs is started, each start within `start_limit` seconds. With `max_load`, each
+    query first waits up to `max_wait` seconds for the load average to fall under it."""
     tools: dict = {}
     started = []
     for a in adapters:
@@ -100,15 +128,19 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 # a grep query is checked against leaderboard.py's Python reference, line for line
                 found, _ = lb.reference(corpus, lb.file_list(corpus, q.get("mode", "ignore")), q["grep"])
                 q = {**q, "expect": sorted(found), "exact": True}
+            unchecked = not checkable(q)
+            load = lb.wait_idle(max_load, max_wait) if max_load is not None else lb.loadavg()
             live, mine = [], []
             for a in (a for a in adapters if serves(a, q)):
-                row = {"workload": w, "query": q["id"], "tool": a.name, "form": a.form}
+                row = {"workload": w, "query": q["id"], "tool": a.name, "form": a.form, "load": load}
                 rows.append(row)
                 mine.append(row)
                 if tools[a.name]["missing"]:
                     row["status"] = f"missing: {tools[a.name]['missing']}"
                 elif a not in started:
                     row["status"] = f"error: {tools[a.name]['error']}"
+                elif unchecked:
+                    row["status"] = "unchecked: the query has no expected answer to check one against"
                 else:
                     try:
                         answer = a.ask(w, q)
@@ -141,7 +173,8 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
             for _, row in live:
                 if row.get("times"):
                     row["p50_ms"] = 1000 * statistics.median(row["times"])
-                    row["p95_ms"] = 1000 * sorted(row["times"])[max(0, math.ceil(0.95 * len(row["times"])) - 1)]
+                    for p in (95, 99):
+                        row[f"p{p}_ms"] = 1000 * sorted(row["times"])[max(0, math.ceil(p / 100 * len(row["times"])) - 1)]
             # one named base per form: the first scrutate adapter of that form serving the query, in
             # adapters() order; with no times of its own, the rows get no ratio (no other base)
             ours: dict = {}
@@ -152,7 +185,10 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 base = ours.get(row["form"])
                 if base and base is not row and row.get("times") and base.get("times"):
                     row["base"] = base["tool"]
-                    row["ratio"], row["ci_low"], row["ci_high"] = lb.boot_ratio(row["times"], base["times"], B=2000)
+                    row["ratio"], row["ci_low"], row["ci_high"] = lb.boot_ratio(row["times"], base["times"])
+                if not row["tool"].startswith("scrutate") and row.get("times"):
+                    row["vs"] = {b["tool"]: ratio(row["times"], b["times"]) for b in mine
+                                 if b["tool"].startswith("scrutate") and b.get("times")}
     finally:
         for a in started:
             a.stop()
@@ -268,9 +304,19 @@ def main() -> int:
     ap.add_argument("--only", help="workloads, comma-separated (W3,W4)")
     ap.add_argument("--start-timeout", type=float, default=1800, metavar="S", help="seconds a tool may take to build its index or start (default 1800)")
     ap.add_argument("--quality", type=int, metavar="N", help="W8 alone: N of the QUALITY queries on the frozen corpus (bench/quality)")
+    ap.add_argument("--max-load", type=float, default=(os.cpu_count() or 4) * 0.3,
+                    help="before each query, wait for the 1-minute load average to fall under this (default 0.3 x CPUs)")
+    ap.add_argument("--max-wait", type=float, default=1800, help="seconds to wait for it at most (default 1800)")
+    ap.add_argument("--write-w3", metavar="FILE", help="write the W3 queries (from bench/indexed.py) to FILE and exit")
     a = ap.parse_args()
+    if a.write_w3:
+        with open(a.write_w3, "w") as f:
+            json.dump(w3_queries(), f, indent=1)
+            f.write("\n")
+        return 0
     if a.smoke:
-        a.queries, a.runs, a.warmup = os.path.join(here, "yardstick_smoke", "queries.json"), 3, 1
+        # a check that the forms answer right, not a measurement: no wait for an idle machine
+        a.queries, a.runs, a.warmup, a.max_wait = os.path.join(here, "yardstick_smoke", "queries.json"), 3, 1, 0
     elif not (a.corpus and a.queries) and not a.quality:
         ap.error("give --corpus and --queries, --quality N, or --smoke")
     queries = json.load(open(a.queries)) if a.queries else []
@@ -292,9 +338,10 @@ def main() -> int:
             # clangd indexes the files a compilation database lists, by absolute path
             with open(os.path.join(corpus, "compile_commands.json"), "w") as f:
                 json.dump([{"directory": os.path.realpath(corpus), "file": "point.c", "command": "cc -c point.c"}], f)
-        out = measure(adapters(), queries, a.runs, a.warmup, os.path.realpath(corpus), work, a.start_timeout)
+        out = measure(adapters(), queries, a.runs, a.warmup, os.path.realpath(corpus), work, a.start_timeout, a.max_load, a.max_wait)
     # environment() hashes the binary; without one, the scrutate rows say missing and passed() fails the run
-    out["environment"] = lb.environment() if os.path.isfile(lb.SCRUTATE) else {"scrutate": f"missing: {lb.SCRUTATE}"}
+    out["environment"] = lb.environment(a.corpus or ".") if os.path.isfile(lb.SCRUTATE) else {"scrutate": f"missing: {lb.SCRUTATE}"}
+    out["settings"] = {"runs": a.runs, "warmup": a.warmup, "max_load": a.max_load, "max_wait": a.max_wait}
     # the pinned rivals' versions, as bench/competitors/install_rivals.sh wrote them
     rivals = os.path.join(os.path.dirname(shutil.which("ck") or shutil.which("ctags") or "/nonexistent/bin/x"), "..", "versions.json")
     if os.path.exists(rivals):

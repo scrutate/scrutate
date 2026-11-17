@@ -250,6 +250,10 @@
     ],
     [
       "function",
+      "Counter.Step"
+    ],
+    [
+      "function",
       "Counter.Next"
     ],
     [
@@ -283,6 +287,22 @@
     [
       "impl",
       "rtl"
+    ],
+    [
+      "module",
+      "util"
+    ],
+    [
+      "module",
+      "util"
+    ],
+    [
+      "function",
+      "util.double"
+    ],
+    [
+      "function",
+      "util.quad"
     ]
   ]
 }

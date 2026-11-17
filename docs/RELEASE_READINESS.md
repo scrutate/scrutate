@@ -9,7 +9,7 @@
 
 <!-- End of head. -->
 
-**Verdict: 0.1.0 is a verified first release for developer use on the six platforms INSTALL.md
+**Verdict: 0.1.0, not yet tagged or released, is verified as a first release for developer use on the six platforms INSTALL.md
 supports (macOS arm64, macOS x86_64, Linux aarch64, Linux x86_64, Windows x86_64 and Windows
 ARM64). It is not declared production-ready for mission-critical environments**, whose criteria
 are not all met (below). Still unproven until the release workflow has run once: the release
@@ -27,7 +27,7 @@ Every PASS refers to a test, benchmark or audit output here.
 | Literal and regex search | **met**: linear-time regex with size limits |
 | Machine-readable output | **met**: JSON Lines (schema 1) from `grep`, one JSON envelope (schema 2) from the index commands, JSON error records |
 | Functioning, tested code-intelligence foundation | **met**: 61 + 13 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
-| Automated tests | **met**: in docs/TEST_RESULTS.md, Rust tests (the count per test binary of `cargo test -p scrutate`), Python tests, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing; in CI (`ci.yml`), the pinned ranking features (`tests/ranking_pins.rs` in `cargo test`), the ranking quality floor (`bench/quality.py`) and the bindings tests on four interpreters per platform (3.13, 3.14t, 3.15, 3.15t) |
+| Automated tests | **met**: in docs/TEST_RESULTS.md, Rust tests (the count per test binary of `cargo test -p scrutate`), Python tests, 200 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing; in CI (`ci.yml`), the pinned ranking features (`tests/ranking_pins.rs` in `cargo test`), the ranking quality floor (`bench/quality.py`) and the bindings tests on four interpreters per platform (3.13, 3.14t, 3.15, 3.15t) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
 | Verified builds for declared supported platforms | **met on all six**: three built and tested here, three on GitHub's runners (INSTALL.md) |
 | Security assessment | **met as a self-assessment** with fuzzing; no independent audit |
@@ -62,11 +62,14 @@ Status words as in docs/TRACEABILITY.md.
 
 | ID | What is missing | Status | What closes it |
 |---|---|---|---|
-| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has only an early `bench/compare_tools.py` run (`bench/results/final.json`, 2026-11-08, a 2-core Xeon VM) and no leaderboard run, Intel macOS, Windows x64 and Windows ARM64 have no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
+| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 7 indexed; Linux aarch64 VM: 14 warm, 4 cold, 7 indexed; the eighth indexed metric, the update after 100 edits, is n/a where every rival rebuilds), but Linux x86_64 has only an early `bench/compare_tools.py` run (`bench/results/final.json`, 2026-11-08, a 2-core Xeon VM) and no leaderboard run, Intel macOS, Windows x64 and Windows ARM64 have no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push), and `benchmarks.yml` one on a pull request (43823369090); `benchmarks.yml` runs on `main` and `release.yml` runs on a runner; for `release.yml` before the tag, a dry run (`gh workflow run release.yml --ref main -f dry_run=true`, docs/RELEASING.md section 7) |
 | R-12.17 | Signed releases and published packages | PARTIAL | one run of the release workflow's Sigstore steps (a dry run first), then the owner's PyPI, Marketplace and Open VSX setup, the tap and bucket repositories and the winget pull request |
 | R-6.15, R-12.16 | The GitLab and Bitbucket templates run on gitlab.com and bitbucket.org (CI runs them in local emulators) | PARTIAL | a pipeline run of each template on gitlab.com and on bitbucket.org |
+| R-8.10 | Deliver 0.1.0 | PARTIAL | the `v0.1.0` tag, a run of `release.yml` and the published release (docs/RELEASING.md) |
+| R-13.1 | Python only in the roles section 13 permits: 21 docs, release and CI scripts (20 in `tools/` and `packaging/validate_manifests.py`) and their 11 tests are outside them | PARTIAL | a Rust `xtask` crate that replaces them, ported after 0.1.0 in the order docs/ROADMAP.md gives |
+| R-14.9 | Equivalent work: the published structural rows compare scrutate's capture cache with ast-grep's full parse | PARTIAL | a committed run with `tsquery --no-cache`, which the harness uses since `e91166e0` |
 
 ## Defects found and fixed while preparing this release
 

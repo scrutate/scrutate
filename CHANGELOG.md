@@ -241,6 +241,14 @@ incompatible index by itself, and that is never breaking.
   A run refuses a scrutate binary built from another commit than the harness it runs
   (`bench/competitors/built_from.sh`), and `linux_indexed.sh` takes its idle threshold from
   `INDEXED_MAX_LOAD`.
+- `bench/yardstick.py` never times a query whose answer it cannot check, waits for an idle machine
+  before each query and records its load, gives p99 beside p50 and p95, compares each rival with
+  every scrutate form timed on the query (a resident server against `scrutate grep --index` too),
+  and bootstraps its intervals at 10,000 resamples where it took 2,000. The W3 queries for the
+  Linux tree are committed (`bench/yardstick_queries/w3-linux.json`), and
+  `bench/make_yardstick_md.py` writes a marked section of docs/COMPETITIVE.md from the result
+  files it names, which `tools/gen_doc_assets.py --check` checks
+  ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,
@@ -420,6 +428,22 @@ incompatible index by itself, and that is never breaking.
   name`, and `missing to` for `call_path`), `missing path or symbol` names what each takes, and
   `path outside repo` says to give a path relative to the root. `batch` reports the same text
   ([CLI](docs/CLI.md#serve-mcp)).
+- The benchmark harness publishes a verdict only on 30 runs per tool. `bench/indexed.py` takes
+  30 query runs and 30 throughput runs by default, and a comparison under 30 (its 5 index builds,
+  or a committed result's 20 query runs) is shown as measured, not ranked, so docs/LEADERBOARD.md
+  and README.md now rank the indexed results on index size and query memory only; an Engine A row
+  whose scrutate or best competitor has fewer than 30 runs reads measured as well. The publish
+  scripts take every run (`--no-stop-early`), and `bench/run_macos.sh` refuses a tree with changes
+  no commit holds and builds the binary from it. `indexed.py` records the corpus's tree checksum,
+  `indexed.py` and `compare_tools.py` make one untimed warm-up run per tool and count outliers,
+  and every harness checks each competitor against the latest stable release pinned in
+  `bench/competitors/latest.json`, warning on an older one. Each LEADERBOARD.md row now gives
+  every tool's 95% interval, scrutate's rank and a link to its raw result file
+  ([Leaderboard](docs/LEADERBOARD.md)).
+- CI builds the test binaries at opt-level 3 without cross-crate LTO and with 16 codegen units, as
+  `tools/ci_gate.sh` does; the binary is still linked with the release profile (fat LTO, one
+  unit). The two write-then-read session tests run 200 loops, 1000 with `SCRUTATE_TEST_STRESS`
+  set ([Contributing](CONTRIBUTING.md#quality-gates-all-must-pass-before-a-change-is-merged)).
 - `grep` without `--max-results` counts a file's matches in the file's own search and adds them
   to the shared total once per file, where every matching line added to it, and the counters every
   search thread adds to each sit on a cache line of their own. On many-core x86 the threads had
@@ -1213,6 +1237,75 @@ incompatible index by itself, and that is never breaking.
   read (`no such directory`), and so does every call after it, with or without `--watch`. The
   reader whose index the failed rebuild had closed went back to the pool, and handing it back
   panicked (`the index was not reopened after a rebuild`), so the call never answered.
+- A path in a Python `RECORD` written with backslashes (`pkg\..\..\x`) no longer reaches
+  outside `site-packages` on Unix: its `..` parts passed the check as one name, so `--deps` and
+  `scope: "deps"` read a file outside the repository and wrote over one outside the cache,
+  emptying it when the two met. Separators are made `/` before the check, which drops the entry
+  ([Security](docs/SECURITY.md#dependency-source)).
+- The benchmark harness publishes no win it has not earned. An indexed run where scrutate answered
+  a query differently fails its latency and throughput rows, and the update row is n/a when every
+  rival rebuilds; the leaderboard page computes both from the result file, and prints a
+  comparison row with no ratio (scrutate's own failed throughput) instead of crashing. A resumed
+  leaderboard run keeps earlier rows only when the tool versions, machine, corpora and settings
+  match. `built_from.sh` refuses a source tree with uncommitted changes. The indexed run checks
+  its corpus against the manifest and puts the files it edits back when it ends, also on an error,
+  Ctrl-C or SIGTERM (after a SIGKILL or a power loss the next run's corpus check refuses the
+  edited tree), and takes an index build's peak memory from GNU time on Linux. `compare_tools.py` runs ripgrep without its
+  config file, takes the tools in turn in each repetition, 30 runs by default, and agrees on the
+  lines printed, not their count; BENCHMARKS.md counts a row faster or slower only past 30 runs
+  with its 95% interval clear of 1, and leaves tools with another answer out of its CPU, memory
+  and cold-cache tables ([Leaderboard](docs/LEADERBOARD.md), [Benchmarks](docs/BENCHMARKS.md)).
+- docs/LANGUAGES.md's Calls and Imports columns are now checked by `cargo test`, as its tier text
+  said: `tests/samples.rs` fails when a language that declares call edges or imports has a sample
+  with none, and the 22 samples (two of them extra-langs) that lacked one now hold a call or an
+  import. The Docstrings column is named Body docstrings, since every grammar keeps the comment
+  above a definition as its documentation ([Languages](docs/LANGUAGES.md)).
+- `refs`, and the `references` of the MCP server and the language server, find the uses in a
+  file with a NUL byte past its first 4 KiB, which the index holds: the search read the file as
+  `grep` does, which stops at the read that meets the NUL, so a small such file gave none, those
+  before the NUL included, and no note. It now reads a file as the index does, to its end, so
+  such a file no longer ends with a `stopped searching binary file` note; one with a NUL in its
+  first 4 KiB is still binary and left out ([CLI](docs/CLI.md#refs)).
+- `grep` takes ripgrep's long names `--after-context`, `--before-context` and `--word-regexp` for
+  `--after`, `--before` and `--word`: they were refused, so an `rg` call the shell hook answered
+  with them failed ([CLI](docs/CLI.md)).
+- In the home directory or at a filesystem root with no index, a command that would build one
+  fails with `scrutate: error: ...`, and with `--json` or `SCRUTATE_DIAGNOSTICS=json` an error
+  record; it printed a `[scrutate]` line with no record.
+- An invalid pattern's error quotes at most 200 characters of it, as other errors quote an
+  argument; `grep`, `grep --index`, `--fuzzy-regex` and `grep_code` quoted it whole.
+- `tsquery` under `--max-bytes` counts its `(stopped at N matches ...)` line in the budget and
+  prints it on the last page only; it was added after the page, past the budget, beside the
+  page's own `more not shown` line.
+- A repository's own `.scrutate.toml` is read for its settings only as it is for its languages: a
+  regular file inside the root, at most 1 MB, through a link only to a file inside the root. One
+  outside those bounds stops the command with a line naming it; it was read anyway, so its
+  settings applied and TOML that did not parse stopped every command ([Security](docs/SECURITY.md)).
+- A symbolic link to the index directory that a search does not follow gets no stderr note, and
+  `check` does not list it; the note called it a hard link, and `rg` prints nothing there.
+- `--no-color`'s help says an empty `NO_COLOR` turns colour off too, as it does.
+- `hook stats` no longer shows a negative saving for a search `hook run` cut at the byte bound:
+  such a search counts only the bytes read before the program was ended, so its row now has
+  `"cut": true`, is counted apart (`cut_calls`, `of which cut at the byte bound: N`) and saves at
+  least 0. `hook run`'s closing line counts only the redactions in the lines sent; it counted
+  the line that did not fit too ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `hook run` no longer lets a secret out whole across the 1 MiB cut of a long line: each piece
+  was redacted on its own, so a token crossing the cut matched no rule and both halves went out
+  back to back. A piece is now cut at least 64 KiB before its end and 4 KiB before any match of
+  a rule near the cut, and the rest is redacted with the next piece; a match crossing the cut that
+  runs past 4 MiB goes out as its marker with the rest of its line withheld. The key-line read
+  back of `hook run` and the Grep hook opens only a regular file: a printed line naming
+  `/dev/zero` spun forever and one naming a FIFO blocked ([Security](docs/SECURITY.md)).
+- A Rust `#[path = "impls/h.rs"] mod helper;` names `src/impls/h.rs`: `helper::compute()` in the
+  declaring file resolves there, `deps` shows the file and `rdeps` of it lists the declaration.
+  The attribute was not read, so the call was unresolved and `callees` listed every `compute` in
+  the crate ([CLI](docs/CLI.md#refs)).
+- `setup --help` names the hooks `--hook` adds: those that answer the agent's search tools with
+  scrutate, Grep and Bash for Claude Code and Bash for Codex. It named only Claude Code's Grep
+  hook.
+- A `grep --json` record whose text was redacted gives its `column` in bytes of the redacted
+  text: it kept the column of the line as the file has it, so a match after a secret pointed
+  inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
 
 ## [0.1.0] - 2026-11-11
 

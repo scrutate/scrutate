@@ -104,7 +104,7 @@ pub struct Cli {
     /// repository root for the indexed engine (default: current directory)
     #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
     pub root: PathBuf,
-    /// never print color (also when NO_COLOR is set and not empty)
+    /// never print color (also when NO_COLOR is set, empty too)
     #[arg(long, global = true)]
     pub no_color: bool,
     /// size limit, in bytes, of an answer from the index; a cut answer says how many items are left
@@ -206,7 +206,7 @@ pub struct GrepArgs {
     #[arg(short = 'S', long, overrides_with = "ignore_case")]
     pub smart_case: bool,
     /// match whole words only
-    #[arg(short = 'w', long)]
+    #[arg(short = 'w', long, alias = "word-regexp")]
     pub word: bool,
     /// let the pattern span lines
     #[arg(short = 'U', long)]
@@ -235,10 +235,10 @@ pub struct GrepArgs {
     #[arg(short = 'N', long, overrides_with = "line_number")]
     pub no_line_number: bool,
     /// lines of context after each match (wins over -C, as in ripgrep)
-    #[arg(short = 'A', long)]
+    #[arg(short = 'A', long, alias = "after-context")]
     pub after: Option<usize>,
     /// lines of context before each match (wins over -C, as in ripgrep)
-    #[arg(short = 'B', long)]
+    #[arg(short = 'B', long, alias = "before-context")]
     pub before: Option<usize>,
     /// lines of context around each match
     #[arg(short = 'C', long)]
@@ -300,7 +300,7 @@ struct GrepCli {
     /// repository root for the indexed engine (default: current directory)
     #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
     root: PathBuf,
-    /// never print color (also when NO_COLOR is set and not empty)
+    /// never print color (also when NO_COLOR is set, empty too)
     #[arg(long, global = true)]
     no_color: bool,
     /// size limit, in bytes, of the answer, closing line included: whole lines in path order, then
@@ -863,7 +863,7 @@ pub enum Cmd {
         /// print each file it would change and the change; write nothing
         #[arg(long)]
         dry_run: bool,
-        /// also the hook that answers Claude Code's Grep with scrutate's search
+        /// also the hooks that answer the agent's search tools with scrutate (Claude Code: Grep and Bash; Codex: Bash)
         #[arg(long)]
         hook: bool,
         /// also a short block in the agent's instruction file (CLAUDE.md, AGENTS.md, GEMINI.md)
@@ -1198,7 +1198,7 @@ pub fn run() -> Result<i32> {
     let mut cfg_excludes = false;
     // a bad file stops the commands that read it, after clap has had --help and --version
     let cfg_error = cfg_path.as_deref().and_then(|p| {
-        crate::config::load(p)
+        (if local { crate::config::load_own(&cfg_root, p) } else { crate::config::load(p) })
             .map(|mut cfg| {
                 cfg_excludes = !cfg.index.exclude_dirs.is_empty();
                 if local {
@@ -1289,8 +1289,7 @@ pub fn run() -> Result<i32> {
         && !matches!(cli.cmd, Cmd::Index { .. })
         && let Some(why) = cwd.as_deref().and_then(no_first_build)
     {
-        eprintln!("{why}");
-        return Ok(2);
+        anyhow::bail!("{}", why.strip_prefix("[scrutate] ").unwrap_or(&why));
     }
     if let Some(top) = found_index {
         eprintln!("[scrutate] using the index in {}", crate::paths::plain_path(&top).display());
@@ -1442,6 +1441,7 @@ pub fn run() -> Result<i32> {
                             && !paths[0].is_dir()
                             && !(search_zip && crate::archive::Kind::of(&paths[0].to_string_lossy()).is_some_and(|k| k.has_members())))),
                 line_numbers: !no_line_number,
+                as_indexed: false,
             };
             let mut f = Files {
                 hidden,
@@ -1621,7 +1621,9 @@ pub fn run() -> Result<i32> {
             match &cfg_path {
                 Some(p) => {
                     outln!("configuration file: {}", p.display());
-                    outln!("{}", std::fs::read_to_string(p)?.trim_end());
+                    // the root's own file only within its bounds, as it is read for the settings
+                    let text = if local { crate::files::root_config_text(&cfg_root).unwrap_or_default() } else { std::fs::read_to_string(p)? };
+                    outln!("{}", text.trim_end());
                     if !cfg_globs.is_empty() {
                         outln!("\ngrep globs, matched from {}: {}", crate::paths::plain_path(&cfg_root).display(), cfg_globs.join(", "));
                     }
@@ -1803,11 +1805,15 @@ pub fn run() -> Result<i32> {
                     err = Some(e);
                 }
             })?;
+            let mut note = (n > limit).then(|| crate::ops::stop_line(Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT }), "matches"));
             if paging && !lines.is_empty() {
-                err = writeln!(w, "{}", crate::ops::paged(lines, "matches", text_room(page.0), page.1)).err();
+                // the stop line closes the last page, within the budget
+                let tail = note.take().unwrap_or_default();
+                err = writeln!(w, "{}", crate::ops::paged_ending(lines, tail, "matches", text_room(page.0), page.1)).err();
             }
-            if n > limit && err.is_none() {
-                let note = crate::ops::stop_line(Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT }), "matches");
+            if let Some(note) = note
+                && err.is_none()
+            {
                 if json {
                     eprintln!("{note}");
                 } else {
@@ -2379,11 +2385,24 @@ impl Redacting {
         let mut text = String::from_utf8_lossy(&raw).into_owned();
         if self.json {
             if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let was = v["text"].clone();
+                let line = v.as_object_mut().and_then(|o| o.remove("text"));
                 self.r.redact_json(&mut v);
-                // the spans count bytes of the text as the file has it
-                if v["text"] != was {
-                    v.as_object_mut().map(|o| o.remove("spans"));
+                if let Some(mut line) = line {
+                    if let serde_json::Value::String(t) = &mut line {
+                        let (redacted, marks) = self.r.redact(t);
+                        if let std::borrow::Cow::Owned(redacted) = redacted {
+                            // the spans count bytes of the text as the file has it; the column
+                            // moves with the markers
+                            v.as_object_mut().map(|o| o.remove("spans"));
+                            if let Some(c) = v["column"].as_u64().filter(|&c| c > 0) {
+                                v["column"] = (crate::secrets::redacted_at(c as usize - 1, &marks) + 1).into();
+                            }
+                            *t = redacted;
+                        }
+                    } else {
+                        self.r.redact_json(&mut line);
+                    }
+                    v["text"] = line;
                 }
                 text = v.to_string();
             }

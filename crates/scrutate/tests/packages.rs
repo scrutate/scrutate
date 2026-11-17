@@ -1010,6 +1010,35 @@ fn a_site_packages_or_a_package_file_reached_through_a_link_is_never_read() {
     assert!(copy.join("api.py").is_file() && !copy.join("keys.py").exists() && !copy.join("more").exists() && !copy.join("borrowed.py").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_record_path_that_climbs_out_with_backslashes_is_never_read_or_written() {
+    let t = Tree::new("record_backslash");
+    t.uv_lock(&[("requests", "2.32.3")]);
+    t.wheel("requests", "2.32.3", &[("requests/__init__.py", ""), ("requests/api.py", "def get(url):\n    return url\n")]);
+    let victim = t.home.join("victim.py");
+    write(&victim, "def stolen():\n    return 1\n");
+    let sp = t.root.join(".venv/lib/python3.12/site-packages");
+    let record = sp.join("requests-2.32.3.dist-info/RECORD");
+    let mut r = fs::read_to_string(&record).unwrap();
+    for line in [
+        r"requests\..\..\..\..\..\..\home\victim.py",
+        r"requests/..\..\..\..\..\../home/victim.py",
+        &format!("{}", victim.display()).replace('/', "\\"),
+        r"..\requests\api.py",
+        r".\requests\api.py",
+    ] {
+        r.push_str(&format!("\"{line}\",,\n"));
+    }
+    fs::write(&record, r).unwrap();
+    let (code, out, err) = t.run(&["symbol", "--deps", "requests.get"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "def stolen():\n    return 1\n", "a file outside the root is left as it was");
+    let (code, out, _) = t.run(&["symbol", "--deps", "--exact", "requests.stolen"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(!out.contains("victim"), "{out}");
+}
+
 #[test]
 fn lockfile_text_reaches_no_answer_or_error_unescaped() {
     let (esc, bel) = ('\u{1b}', '\u{7}');

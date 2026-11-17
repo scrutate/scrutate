@@ -114,9 +114,10 @@ adds:
   list and standard input goes through one scheduler (a list handed over in path order, `--sort`,
   through `schedule_in_order`, with the same rules), which builds each thread's `Run`, starts the
   threads, and asks the rules how many to start, when to add one and the search's share. The rules
-  read cores, performance cores, searches running, slow small reads, and a table measured per
-  system (macOS, Linux; Windows and others take the macOS read time and cold threads, measured
-  nowhere, and count nothing), once per search and per look at the count, never per file. A test
+  read cores, performance cores, searches running and a table measured per system (macOS, Linux;
+  Windows and others take the macOS read time and cold threads, measured nowhere, and count
+  nothing) once per search and per look at the count, never per file; the slow small reads,
+  counted as files are opened, are weighed after each file (`Threads::after_file`). A test
   supplies its own readings, so the share and the cold-disk rule are tested without the hardware.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
   each). Pass one counts each range's newlines, 256 KiB at a time per thread (1 MiB held 15.2 MB on
@@ -153,8 +154,8 @@ adds:
   ripgrep repository, 60 directories: 5.6 ms in parallel against 6.0).
 - **Start-up** (`lazy_bind.rs`, `cli.rs`): process start dominates a search of a few hundred
   files. dyld binds every imported symbol before `main`, about 3.3 µs each for libSystem symbols
-  (a C program importing 121 more starts 0.4 ms later); the executable imported 210 and a search
-  calls about 75. On macOS arm64 the others are private stubs (159 of them, the `lazy!` list in
+  (a C program importing 121 more starts 0.4 ms later); the executable imports 82 (`nm -u`) and a search
+  calls about 75 symbols. On macOS arm64, 159 more are private stubs (the `lazy!` list in
   `lazy_bind.rs`) that look the function up with
   `dlsym` on first call and jump to it, keeping every argument register and the stack; `fork`
   binds them all first, so a child never looks one up. clap built every subcommand's definitions
@@ -277,7 +278,8 @@ Three tiers, so every file yields something (docs/LANGUAGES.md): tree-sitter gra
 **data-driven rule registry** (per language: which node kinds are definitions, how the name is
 found, what a call is, how imports look), a keyword heuristic tier, and overlapping line windows.
 Each definition becomes a *chunk* with fields name / qualified name / signature / documentation /
-body / path, plus call edges and imports. A new language is a registry entry and a sample file.
+body / path, plus call edges and imports. A new language is a registry entry and a sample file. Compilers and language servers stay out of
+this path ([ADR 0014](adr/0014-language-servers-and-compilers-are-not-default-resolution.md)).
 
 A file with a syntax error still yields definitions. tree-sitter recovers around the error and
 leaves an ERROR or MISSING node where it gave up, and the registry reads the definitions in the
@@ -379,7 +381,7 @@ NFC with final sigma folded.
   `ctime_ns`, SHA-1 content hash, and `art`, the key of the file's artifact: the path map), `chunks`
   (metadata + zlib-compressed text), `refs` (call edges), `imports`, `dupkeys` (each code
   definition's duplicate keys, written with its chunk row: below), `artifacts` (the artifact
-  store, below), `meta` (schema version, model signature, segment manifest, data version, and
+  store, below), `meta` (schema version, content revision, model signature and revision, segment manifest and counter, next chunk id, custom-language signatures, data version, and
   `chunks_at`, the data version with the chunk counts of the commit that wrote it: below). The tables are private
   to `index.rs` (the database handle is not public): other modules ask `Index` a question (whether a
   path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
@@ -563,7 +565,7 @@ neighbours (the query encoded into the chunks' 256-d space by a contrastively tr
 model, inference only, bundled in the binary). 48 features per candidate (each field's lexical
 score as a logarithm and as a ratio to the best, the lexical and semantic ranks, z-scored
 semantic similarities of both views, literal hits, name coverage, the
-name as typed (case included), kind, lengths, test-path flags...) go through a LightGBM
+name as typed (case included), kind, lengths, a test-path flag...) go through a LightGBM
 LambdaRank ensemble exported to plain arrays and evaluated in Rust. In `search.rs` the sources are
 a list (`Source::ALL`, each with the rank feature it fills, none for the exact lookup), and most
 features are tables filled by name (`LEX_FIELDS`, `ROW_FEATURES`, `QUERY_FEATURES`); the others
@@ -618,7 +620,8 @@ searched and one edited since is searched only if its indexed text passed (`--up
 that gap); a property test and a coverage-guided fuzz target check that any text a pattern matches
 satisfies its condition, Unicode case folding included (the Kelvin sign matches `k` under `-i`).
 Files with a NUL byte index only the bytes before it (line-mode search stops there) and are always
-searched by multi-line queries; UTF-16 files and files unreadable at index time are always searched.
+searched by multi-line queries and by `refs`, which reads a file with no NUL in its first 4 KiB to
+its end; UTF-16 files and files unreadable at index time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per
@@ -756,7 +759,7 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 | `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at once while a watch gives the change set (unless a `--refresh-interval` you gave holds it back, as above) and at most once per interval without one, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
 | `read(cancel, refresh, f)`, `read_pending(cancel, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again; `read_pending` scans first and gives the `Pending` set |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
-| `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing while a first build runs with nothing committed, when the session followed its root's link to another tree, or when the call fails |
+| `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing while a first build runs with nothing committed, or when the call fails (the socket server's `run_scanned_for` also gives nothing when the session followed its root's link to another tree) |
 | `hold_writes()` | at exit: the first build is waited for and no write starts after it |
 
 Every call gets its own cancel flag, and a panic stays inside it: the call gets the error
@@ -1001,14 +1004,14 @@ as git reads it, never from an included file or the global one; or, built with `
 are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
 process, its configuration and programs included; any other name is refused before git runs. On Windows
-each path Git hands git, its directory and these values, goes in its plain form (`paths::plain_path`),
+each path Git hands git, its directory and these values, goes in its plain form (`paths::plain`, through `plain_dir` and `plain_value`),
 since git does not read a verbatim one (`\\?\C:\x`, what `canonicalize` gives). Each hunk's new lines map onto the index's definitions
 of the file as it is now (the working tree), or for git's copy (`--staged`, `review`) onto a parse of
 it, each definition named where the index holds it and a line outside them by that parse's window,
 and its old lines onto the definitions a parse of the base copy gives
 (`parse::parse_file`, the parse the index stores); a definition is matched across the sides by
 kind and qualified name ([CLI](CLI.md#impact) has the statuses and windows). The callers are
-followed breadth first through one `Names` for the whole request, each step the answer of
+followed breadth first through one `Names` for the walk (a request with renamed files opens one more to check them), each step the answer of
 `Names::callers` for one location (as `callers --limit 500`), so the answer agrees with `callers`
 and each file is parsed once. A deleted definition is not in the index, so its first step is
 `Names::callers_of_deleted`: the call edges of its name (`Index::callers_of`), of its other cases
@@ -1249,7 +1252,7 @@ never mapped, so replacing that file under a running `serve` cannot end it with 
 copied again; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
 point at other files or `none` (a vector model file with the float16 tables of revision 1 is an
 error that names the file). `models.rs` holds them as one model set, with the feature list the
-ranker reads (`FEATURES`) and the model revision. Each part loads on first use, once per process,
+ranker reads (`FEATURES`) and the model revision. Each part loads on first use, once per open repository,
 and a server's threads share it: `symbol`, `outline` and the other lookups never unpack either
 file. A ranker whose feature names are not `FEATURES` is an error the moment a search ranks with
 it; commands that do not rank never read it.
@@ -1292,8 +1295,9 @@ model's tables. Ranking is watched by the pinned features above and by the quali
   run. Outside
   `.scrutate/` the program writes the frecency state of `files` and the Grep hook's counter (in
   `scrutate/` of the user state directory: `XDG_STATE_HOME`, `~/.local/state` or `%LOCALAPPDATA%`), the dependency source copies of `--deps` in the
-  user cache (`SCRUTATE_CACHE_DIR`, else `%LOCALAPPDATA%` on Windows, `XDG_CACHE_HOME` or the platform's), and the agent
-  configuration files `setup` is asked to write. A
+  user cache (`SCRUTATE_CACHE_DIR`, else `%LOCALAPPDATA%` on Windows, `XDG_CACHE_HOME` or the platform's), the agent
+  configuration files `setup` is asked to write, and the source files `tsquery --rewrite` and
+  `edit_symbol` (under `serve --allow-edits`) are asked to change. A
   command line call may use a session a running `serve` offers on a local socket, and never
   starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.

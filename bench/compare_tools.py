@@ -4,10 +4,13 @@
 usage: compare_tools.py --corpus NAME=DIR [--corpus NAME=DIR ...] [--runs N] [--cold] [--out results.json]
 
 For every (corpus, query, tool) the harness
-  1. runs the command once and records the number of matching lines (all tools must agree, or the
-     row is flagged: a benchmark of a tool that returns different results is not a benchmark);
-  2. runs it N more times, warm cache, taking the median and minimum wall time, CPU time
-     (user+sys) and peak RSS from the child's rusage (os.wait4);
+  1. runs the command once and records the lines it matched (all tools must print the same paths
+     and line numbers, or the row is flagged: a benchmark of a tool that returns different results
+     is not a benchmark);
+  2. runs it once more untimed (a warm-up), then N more times (default 30), warm cache, the tools
+     taken in turn within each repetition, taking the median and minimum wall time, CPU time
+     (user+sys) and peak RSS from the child's rusage (os.wait4), and counting the runs far from the
+     median (leaderboard.outliers: flagged, not dropped);
   3. optionally drops the page cache (root only) and measures one cold run.
 Startup cost is measured on a directory with one file; concurrency as K simultaneous processes, each with
 its own output file checked against the reference count, N rounds per cell.
@@ -30,7 +33,8 @@ import sys
 import tempfile
 import time
 
-from leaderboard import stdout_of, drop_scrutate_settings, machine_facts
+from leaderboard import LINE, stdout_of, drop_scrutate_settings, machine_facts, outliers
+import latest  # noqa: E402  (bench/competitors, on the path leaderboard.py sets)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
@@ -100,7 +104,8 @@ def command(tool: str, t: dict, q: dict, corpus: str) -> list[str] | None:
             c += ["--fuzzy=1", pat]
         return c + ["."]
     if tool == "rg":
-        c = [t["exe"], "--no-messages"]
+        # --no-config: a RIPGREP_CONFIG_PATH on the machine would change the work it does
+        c = [t["exe"], "--no-config", "--no-messages"]
         if mode == "literal":
             c += ["-n", "-F", pat]
         elif mode == "regex":
@@ -239,6 +244,24 @@ def count_lines(mode: str, out: bytes) -> int:
                 pass
         return total
     return sum(1 for ln in out.splitlines() if ln.strip())
+
+
+def answer_of(mode: str, out: bytes) -> frozenset:
+    """What a run answered, to compare tools by: the (path, line) pairs it printed; in count mode
+    the (path, count) pairs over 0; in files mode the paths. A leading `./` is dropped."""
+    def plain(path):
+        return path[2:] if path.startswith(b"./") else path
+    lines = out.splitlines()
+    if mode == "files":
+        return frozenset(plain(ln.strip()) for ln in lines if ln.strip())
+    if mode == "count":
+        got = set()
+        for ln in lines:
+            path, _, n = ln.rpartition(b":")
+            if n.strip().isdigit() and int(n) > 0:
+                got.add((plain(path), int(n)))
+        return frozenset(got)
+    return frozenset((m.group(1), int(m.group(2))) for m in map(LINE.match, lines) if m)
 
 
 # --------------------------------------------------------------------------- measurement
@@ -409,12 +432,17 @@ QUERIES = [
 
 
 def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list[dict]:
+    """Each query's timed runs take the tools in turn, one run each per repetition with the order
+    turned by one every time, so load drift on the machine does not turn into a difference between
+    tools; a tool agrees when it printed the same lines (path and line number) as ripgrep, or
+    scrutate where ripgrep cannot run the query."""
     rows = []
     for cname, cdir in corpora.items():
         n_runs = max(2, runs // 2) if corpus_stats(cdir)["bytes"] > 500e6 else runs  # the massive corpus: fewer repetitions
         has_git = ensure_git(cdir) if tools["git"]["exe"] else False
         for q in QUERIES:
-            counts: dict[str, int] = {}
+            answers: dict[str, frozenset] = {}
+            timed_ok = []  # (tool, cmd, exe, row, walls, cpus)
             for tool, t in tools.items():
                 if not t.get("exe") or tool == "ast-grep":
                     continue
@@ -429,19 +457,21 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                 if first["rc"] not in (0, 1):
                     rows.append({"corpus": cname, "query": q["name"], "tool": tool, "status": f"exit {first['rc']}: {first['err'][:200].decode(errors='replace')}"})
                     continue
-                n = count_lines(q["mode"], first["out"])
-                counts[tool] = n
-                walls, cpus = [], []
-                for _ in range(n_runs):
+                answers[tool] = answer_of(q["mode"], first["out"])
+                row = {"corpus": cname, "query": q["name"], "tool": tool, "status": "ok", "matches": count_lines(q["mode"], first["out"]), "cmd": shown(cmd)}
+                timed_ok.append((tool, cmd, exe, row, [], []))
+            for tool, cmd, exe, row, walls, cpus in timed_ok:
+                timed_rusage(cmd, cdir, executable=exe)  # warm-up, untimed
+            for rep in range(n_runs):
+                k = rep % len(timed_ok) if timed_ok else 0
+                for tool, cmd, exe, row, walls, cpus in timed_ok[k:] + timed_ok[:k]:
                     r = timed_rusage(cmd, cdir, executable=exe)
                     walls.append(r["wall"])
                     cpus.append(r["cpu"])
-                row = {
-                    "corpus": cname, "query": q["name"], "tool": tool, "status": "ok", "matches": n,
-                    "wall_median_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls), "wall_ms": [1000 * w for w in walls],
-                    "cpu_median_s": statistics.median(cpus), "maxrss_mb": peak_rss_mb(cmd, cdir, exe),
-                    "cmd": shown(cmd),
-                }
+            for tool, cmd, exe, row, walls, cpus in timed_ok:
+                row.update({"wall_median_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls), "wall_ms": [1000 * w for w in walls],
+                            "outliers": outliers(walls),
+                            "cpu_median_s": statistics.median(cpus), "maxrss_mb": peak_rss_mb(cmd, cdir, exe)})
                 if cold:
                     if drop_caches():
                         r = timed_rusage(cmd, cdir, executable=exe)
@@ -449,12 +479,12 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                     else:
                         row["cold_wall_ms"] = None
                 rows.append(row)
-                print(f"  {cname:8} {q['name']:26} {tool:8} {row['wall_median_ms']:9.1f} ms  matches={n}", file=sys.stderr)
+                print(f"  {cname:8} {q['name']:26} {tool:8} {row['wall_median_ms']:9.1f} ms  matches={row['matches']}", file=sys.stderr)
             # agreement
-            ref = counts.get("rg", counts.get("scrutate"))
+            ref = answers.get("rg", answers.get("scrutate"))
             for r in rows:
                 if r["corpus"] == cname and r["query"] == q["name"] and r.get("status") == "ok":
-                    r["agrees"] = (r["matches"] == ref)
+                    r["agrees"] = answers[r["tool"]] == ref
     return rows
 
 
@@ -665,7 +695,7 @@ def main() -> int:
     drop_scrutate_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", action="append", required=True, help="NAME=DIR")
-    ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--runs", type=int, default=30, help="timed runs per cell; BENCHMARKS.md counts a row faster or slower only at 30 or more")
     ap.add_argument("--cold", action="store_true", help="also measure one cold-cache run per cell (needs root)")
     ap.add_argument("--skip-index", action="store_true")
     ap.add_argument("--only", default=None, help="comma-separated phases to (re)run: text,startup,concurrency,structural,index; other phases are kept from --out if it exists")
@@ -685,7 +715,11 @@ def main() -> int:
     # phases kept from the file would stand under this binary's hash
     if res and res.get("environment", {}).get("scrutate_sha256") != env["scrutate_sha256"]:
         raise SystemExit(f"{out} holds phases that another scrutate binary measured: move the file away, or run every phase")
-    res.update({"environment": env, "corpora": {k: corpus_stats(v) for k, v in corpora.items()}, "runs": a.runs})
+    res.update({"environment": env, "corpora": {k: corpus_stats(v) for k, v in corpora.items()}, "runs": a.runs,
+                "version_check": latest.run_check({k: v.get("version") for k, v in tools.items() if v.get("exe")})})
+    if "text" in phases:
+        # how `agrees` was decided: by the lines printed (path and line number), not by their count
+        res["agreement"] = "lines"
 
     def save():
         json.dump(res, open(out, "w"), indent=1)

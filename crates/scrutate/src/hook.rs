@@ -155,7 +155,7 @@ fn key_lines(items: &mut [Item]) -> usize {
             if !crate::secrets::could_be_key_line(&i.text) {
                 return 0;
             }
-            let Some((line, k)) = keys.line(path, *n, || std::fs::File::open(&**path).ok()) else { return 0 };
+            let Some((line, k)) = keys.line(path, *n, || crate::secrets::open_regular(path)) else { return 0 };
             i.text = line.to_string();
             k
         })
@@ -648,9 +648,14 @@ fn count(session: &str, grep_bytes: usize, sent_bytes: usize) -> Result<()> {
     counted(json!({"session": session, "grep_bytes": grep_bytes, "sent_bytes": sent_bytes}))
 }
 
-/// Counts one shell search `hook run` answered: the bytes the program gave, the bytes sent.
-pub(crate) fn count_bash(session: &str, full_bytes: usize, sent_bytes: usize) -> Result<()> {
-    counted(json!({"session": session, "grep_bytes": full_bytes, "sent_bytes": sent_bytes, "via": "bash"}))
+/// Counts one shell search `hook run` answered: the bytes the program gave, the bytes sent; a
+/// search `cut` at the byte bound gave only those read before it was ended.
+pub(crate) fn count_bash(session: &str, full_bytes: usize, sent_bytes: usize, cut: bool) -> Result<()> {
+    let mut rec = json!({"session": session, "grep_bytes": full_bytes, "sent_bytes": sent_bytes, "via": "bash"});
+    if cut {
+        rec["cut"] = json!(true);
+    }
+    counted(rec)
 }
 
 fn counted(mut rec: Value) -> Result<()> {
@@ -668,21 +673,28 @@ struct Tally {
     calls: u64,
     grep: u64,
     sent: u64,
+    saved: i64,
+    /// shell searches ended at the byte bound: their output was not read whole
+    cut: u64,
 }
 
 impl Tally {
+    fn add(&mut self, grep: u64, sent: u64, cut: bool) {
+        self.calls += 1;
+        self.grep += grep;
+        self.sent += sent;
+        let saved = grep as i64 - sent as i64;
+        // a cut search's whole output is more than was read, so its saving is at least 0
+        self.saved += if cut { saved.max(0) } else { saved };
+        self.cut += u64::from(cut);
+    }
+
     fn json(&self) -> Value {
-        json!({"calls": self.calls, "grep_bytes": self.grep, "sent_bytes": self.sent, "saved_bytes": self.grep as i64 - self.sent as i64})
+        json!({"calls": self.calls, "grep_bytes": self.grep, "sent_bytes": self.sent, "saved_bytes": self.saved, "cut_calls": self.cut})
     }
 
     fn text(&self) -> String {
-        format!(
-            "{} calls, Grep would have returned {} bytes, scrutate sent {} ({} saved)",
-            self.calls,
-            self.grep,
-            self.sent,
-            self.grep as i64 - self.sent as i64
-        )
+        format!("{} calls, Grep would have returned {} bytes, scrutate sent {} ({} saved)", self.calls, self.grep, self.sent, self.saved)
     }
 }
 
@@ -706,10 +718,9 @@ pub fn stats(json_out: bool) -> Result<i32> {
             sessions.len() - 1
         });
         let shell = v.get("via").and_then(Value::as_str) == Some("bash");
+        let cut = v.get("cut").and_then(Value::as_bool) == Some(true);
         for t in [Some(&mut sessions[i].1), Some(&mut all), shell.then_some(&mut bash)].into_iter().flatten() {
-            t.calls += 1;
-            t.grep += g;
-            t.sent += s;
+            t.add(g, s, cut);
         }
     }
     let mut so = std::io::stdout().lock();
@@ -737,6 +748,9 @@ pub fn stats(json_out: bool) -> Result<i32> {
         writeln!(so, "all sessions: {}", all.text())?;
         if bash.calls > 0 {
             writeln!(so, "of which shell searches (hook run): {}", bash.text())?;
+        }
+        if all.cut > 0 {
+            writeln!(so, "of which cut at the byte bound: {} (their whole output was not read, so their saving is at least what is shown)", all.cut)?;
         }
     }
     Ok(if all.calls == 0 { 1 } else { 0 })

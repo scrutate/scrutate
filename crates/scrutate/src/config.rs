@@ -126,6 +126,19 @@ pub fn confine(cfg: &mut Config) {
     }
 }
 
+/// `load` for the `.scrutate.toml` of `root`, read as the repository's other files are: a regular
+/// file inside the root, at most 1 MB, through a link only to a file inside the root; any other is
+/// an error that names it.
+pub fn load_own(root: &Path, path: &Path) -> Result<Config> {
+    let text = crate::files::root_config_text(root).with_context(|| {
+        format!(
+            "{}: not read: a repository's configuration file must be a regular file inside the root, at most 1 MB, linked only to a file inside the root",
+            path.display()
+        )
+    })?;
+    parse(path, &text)
+}
+
 pub fn load(path: &Path) -> Result<Config> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     parse(path, &text)

@@ -374,7 +374,7 @@ impl WalkGuard {
         match self.0.as_deref() {
             Some(Guard::Fixed(ix)) => {
                 if let Some(twin) = ix.twin(e) {
-                    say_left_out(e.path(), twin);
+                    say_walked_left_out(e, twin);
                     return true;
                 }
             }
@@ -387,7 +387,7 @@ impl WalkGuard {
                 if g.any.load(std::sync::atomic::Ordering::Acquire) {
                     let ix = g.ix.read().unwrap_or_else(|p| p.into_inner());
                     if let Some(twin) = ix.twin(e) {
-                        say_left_out(e.path(), twin);
+                        say_walked_left_out(e, twin);
                         return true;
                     }
                 }
@@ -434,6 +434,15 @@ impl NamedGuard {
     }
 }
 
+/// `say_left_out` for a walk's entry; a symbolic link the walk does not follow is searched by no
+/// walk, so nothing is said of it.
+#[cfg(unix)]
+fn say_walked_left_out(e: &ignore::DirEntry, twin: &Path) {
+    if !e.file_type().is_some_and(|t| t.is_symlink()) {
+        say_left_out(e.path(), twin);
+    }
+}
+
 /// `left_out_line` on stderr, once per run.
 fn say_left_out(path: &Path, twin: &Path) {
     static SAID: std::sync::Once = std::sync::Once::new();
@@ -475,7 +484,11 @@ pub fn left_out(root: &Path) -> Vec<(PathBuf, PathBuf)> {
         let mut wb = CodeWalk::rules(root);
         wb.hidden(false).ignore(false).git_ignore(false).git_global(false).git_exclude(false).parents(false);
         wb.filter_entry(move |e| !(e.depth() > 0 && e.file_type().is_some_and(|t| t.is_dir()) && skipped(&skip, &e.file_name().to_string_lossy())));
-        wb.build().flatten().filter_map(|e| ix.twin(&e).map(|t| (e.path().to_path_buf(), t.to_path_buf()))).collect()
+        wb.build()
+            .flatten()
+            .filter(|e| !e.file_type().is_some_and(|t| t.is_symlink()))
+            .filter_map(|e| ix.twin(&e).map(|t| (e.path().to_path_buf(), t.to_path_buf())))
+            .collect()
     }
     #[cfg(not(unix))]
     {

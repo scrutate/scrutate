@@ -1,4 +1,5 @@
 #!/bin/bash
+source ./lib.sh
 # Prints a greeting.
 greet() {
   echo "hi $1"

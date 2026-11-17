@@ -166,10 +166,10 @@ if [ "$mode" != "--bench" ]; then
   step "msrv-$msrv" env RUSTFLAGS= cargo "+$msrv" check -p scrutate --locked
 fi
 if [ "$mode" = "full" ]; then
-  # the suites build with ThinLTO and 16 codegen units in their own target dir: fat LTO with one
-  # unit relinks every test binary whole and was most of a gate's time; CI runs them with the real
-  # release profile on every platform, and the release-build step below keeps it for the binary
-  fast="env CARGO_TARGET_DIR=$target/fasttest CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
+  # the suites build without cross-crate LTO and with 16 codegen units in their own target dir, as ci.yml's test
+  # steps do: fat LTO with one unit relinks every test binary whole and was most of a gate's time;
+  # the release-build step below keeps the release profile for the binary
+  fast="env CARGO_TARGET_DIR=$target/fasttest CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
   step test $fast cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast
   step test-extra-langs $fast cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
   # ci.yml fuzz job's targets on stable: fuzz/ is a workspace of its own, which no clippy above

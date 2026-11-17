@@ -14,7 +14,8 @@
 How good the answers are, apart from how fast. The numbers come from `bench/retrain_ranker.sh`
 (its `eval` and `compare` stages, run `f3`, 2026-11-12) on packages never used to train the
 semantic model or fit the ranker. The logs of that run (`eval.log`, `eval_python.log`,
-`compare.log`) are not committed, and no other file in the repository holds the tables' figures;
+`compare.log`) are not committed, and no committed result file holds the tables' figures
+(docs/TRACEABILITY.md and docs/COMPETITIVE.md only repeat some);
 only the floor of `bench/quality.py` has a committed source (`bench/quality/floor.json`).
 
 Two sets are held out, of different weight:
@@ -211,7 +212,9 @@ the query in their name: the cost is a type whose name matches the query, which 
 candidate set tells apart from a wanted function. Features for a method's holder and its members
 lifted no function row by 0.005 in cross-validation, so the engine lacks them.
 
-Type weights on TEST (variant A, all languages) and in DEV cross-validation:
+Type weights on TEST (variant A, all languages) and in DEV cross-validation, from a sweep of fits
+apart from the shipped one, so the 1.0 column differs from the table above by up to 0.001 (no log
+of either is committed):
 
 | Type weight | 0.1 | 0.3 | 0.5 | 1.0 |
 |---|---:|---:|---:|---:|
@@ -258,7 +261,7 @@ Since schema 13 the index stores each semantic vector as int8 codes plus one flo
 with an earlier ranker (v7) when the change went in, reruns the protocol before and after on one
 fresh benchmark (`bench/make_bench.py` on networkx 3.4.2, mcp 1.30.0 and rich 15.0.0, then
 `bench/gen_features.py` and `bench/train_ranker.py eval` with the shipped models, not retrained).
-Package versions differ from the v7 run, so n and absolute values differ from the tables above;
+The ranker differs from the one in the tables above, so absolute values differ (n is the same);
 only the difference matters. No output of these schema 13 checks (the tables, recall, sizes,
 latency and parity counts of this section, and the zstd trial) is committed.
 
@@ -374,7 +377,7 @@ agent or saves tokens.
 # the features come from target/release/scrutate, which retrain_ranker.sh builds first
 # (SCRUTATE_BIN names another build);
 # a virtual environment with numpy, lightgbm, scikit-learn
-# and the DEV, TEST and SEALED packages at the versions named in the scripts' headers
+# the DEV packages, and the TEST and SEALED packages at the versions named in the scripts' headers
 export SCRUTATE_WORK=/some/scratch SCRUTATE_VENV=/path/to/venv THREADS=4
 bash bench/retrain_ranker.sh   # benchmark, features, fit on DEV, old and new ranker on TEST
 bash bench/eval_sealed.sh      # the sealed group, once per ranker

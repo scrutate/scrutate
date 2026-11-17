@@ -1,5 +1,7 @@
 module Demo where
 
+import Data.List (sort)
+
 -- | A point.
 data Point = Point Int Int
 

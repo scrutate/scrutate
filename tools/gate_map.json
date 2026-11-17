@@ -15,7 +15,7 @@
   "step": "ripgrep 15.2.0 for the tests that compare with it",
   "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
  },
- "ci.yml:rust:7fcddabe91": {
+ "ci.yml:rust:6865bd9299": {
   "step": "cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast",
   "by": "gate: test"
  },
@@ -215,7 +215,7 @@
   "step": "ripgrep 15.2.0 for the tests that compare with it",
   "by": "setup: the box's ci_setup.sh puts the pinned ripgrep 15.2.0 in SCRUTATE_GATE_TOOLS (tools/ci_gate.sh sets SCRUTATE_RG and SCRUTATE_TEST_NEEDS_RG)"
  },
- "ci.yml:compat:a9159a33bc": {
+ "ci.yml:compat:a801d0989b": {
   "step": "cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast",
   "by": "gate: test-extra-langs"
  },

@@ -18,6 +18,7 @@ The tables read a result file filed as superseded (an earlier build). They are r
 
 - Machine: Apple M3 Pro, 11 logical cores, 19.3 GB RAM, macOS-27.2.1-arm64-arm-64bit
 - Runs per cell: 6 for text search (3 on the massive corpus), 3 for structural search, 18 for startup; warm cache unless noted; median wall time of the whole process (start to exit); CPU time from each child's `wait4` rusage, peak RSS from one more run under `/usr/bin/time -l` on macOS or from VmHWM sampled on Linux.
+- Timing: `bench/compare_tools.py`'s own loop (`os.wait4`, not hyperfine). This run predates its warm-up run and outlier count: the answer-checking run before the timed runs was its only untimed run.
 - Tools (absolute paths; shell aliases bypassed):
   - scrutate: `scrutate 0.1.0`
   - ripgrep: `ripgrep 15.2.0`
@@ -90,16 +91,20 @@ Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express 
 
 ### Summary across all comparable rows
 
-| Tool | rows compared with scrutate | scrutate faster | scrutate slower | geometric mean of (tool time / scrutate time) |
-|---|---|---|---|---|
-| ripgrep | 27 | 27 | 0 | 1.73× |
-| GNU grep | 24 | 24 | 0 | 4.06× |
-| git grep | 24 | 24 | 0 | 1.95× |
-| ugrep | 27 | 26 | 1 | 1.37× |
-| ack | 14 | 14 | 0 | 13.66× |
-| ag | 12 | 12 | 0 | 2.14× |
+A row counts as faster or slower only when both tools ran at least 30 times and the 95% bootstrap interval of median(tool) / median(scrutate) lies wholly above or below 1; any other row is undecided. The geometric mean is of the medians.
+
+| Tool | rows compared with scrutate | scrutate faster | scrutate slower | undecided (interval contains 1, or under 30 runs) | geometric mean of (tool time / scrutate time) |
+|---|---|---|---|---|---|
+| ripgrep | 27 | 0 | 0 | 27 | 1.73× |
+| GNU grep | 24 | 0 | 0 | 24 | 4.06× |
+| git grep | 24 | 0 | 0 | 24 | 1.95× |
+| ugrep | 27 | 0 | 0 | 27 | 1.37× |
+| ack | 14 | 0 | 0 | 14 | 13.66× |
+| ag | 12 | 0 | 0 | 12 | 2.14× |
 
 ## CPU time and peak memory (common literal query)
+
+Only tools that returned the same lines as the reference (no `≠` above) are listed here and under the cold cache.
 
 | Corpus | Tool | CPU s (user+sys, median) | peak RSS MB |
 |---|---|---|---|
@@ -108,22 +113,16 @@ Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express 
 | small | GNU grep | 0.018 | 2.4 |
 | small | git grep | 0.058 | 9.3 |
 | small | ugrep | 0.020 | 4.0 |
-| small | ack | 0.108 | 12.2 |
-| small | ag | 0.045 | 6.4 |
 | big | scrutate | 0.182 | 12.3 |
 | big | ripgrep | 0.689 | 9.2 |
 | big | GNU grep | 0.220 | 3.0 |
 | big | git grep | 0.594 | 17.0 |
 | big | ugrep | 0.223 | 4.0 |
-| big | ack | 1.064 | 15.4 |
-| big | ag | 0.482 | 7.5 |
 | massive | scrutate | 1.735 | 12.2 |
 | massive | ripgrep | 6.442 | 13.3 |
 | massive | GNU grep | 2.159 | 3.0 |
 | massive | git grep | 4.940 | 32.0 |
 | massive | ugrep | 2.058 | 4.0 |
-| massive | ack | 8.736 | 22.8 |
-| massive | ag | 4.207 | 14.1 |
 
 ## Startup (a directory with one file, no match; median ms)
 
@@ -177,4 +176,4 @@ No competitor here builds a persistent index, so these numbers have no compariso
 
 - 11 logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; grep, ack and ag search one file at a time.
 - The corpora are Python only: byte-level search cost does not depend on the language, but structural search and indexing figures do.
-- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (at least 20 runs per tool, 30 unless every verdict holds at the first look (its published rows took 30, from a run before that rule); confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.
+- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (30 runs per tool: its published runs take every run; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.

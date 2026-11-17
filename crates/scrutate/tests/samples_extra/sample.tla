@@ -4,7 +4,9 @@ VARIABLE count
 
 Init == count = 0
 
-Next == count' = count + 1
+Step(n) == n + 1
+
+Next == count' = Step(count)
 
 Spec == Init /\ [][Next]_count
 ====

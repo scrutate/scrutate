@@ -3,8 +3,9 @@
 registry (`scrutate languages --json`) joined with the snapshot test evidence
 (crates/scrutate/tests/samples/expected.json, re-checked by `cargo test` on every build).
 
-A capability is listed only when the registry declares it AND the sample for that language shows
-the kind of symbol in question; anything else is marked as not verified.
+A definition kind is listed only when the language's sample yields it (expected.json); the Calls,
+Imports and Body docstrings columns are the registry's declarations, and `tests/samples.rs` fails
+when a sample shows none of the call edges or imports its language declares.
 """
 from __future__ import annotations
 
@@ -105,7 +106,8 @@ def main() -> int:
     out.append("## Tiers\n")
     out.append("1. **Grammar** (tree-sitter): definitions with kinds, qualified names, signatures, documentation, "
                "call edges and imports as listed per language below. `cargo test` re-verifies every row with a sample file "
-               "(`tests/samples.rs` compares the parse of `tests/samples/<file>` with `expected.json`).\n"
+               "(`tests/samples.rs` compares the parse of `tests/samples/<file>` with `expected.json`, and fails when a "
+               "sample shows no call edge or no import where its language declares them).\n"
                "2. **Heuristic**: a language without a grammar in this build gets keyword-introduced definitions "
                "(`def`, `fn`, `function`, `sub`, `proc`, `class`, `struct`, `module`, Lisp `(def...`, SQL `CREATE ...`, "
                "shell `name() {`) with the indented block below them, and no call edges or imports. A comment block "
@@ -121,7 +123,7 @@ def main() -> int:
                "outside the definitions, the rest of a long one) are windows too, named after their definition or file.\n")
     out.append("Engine A (instant search) needs none of this: it searches every readable file, in any language or none.\n")
     out.append("## Grammar tier\n")
-    out.append("| Language | Extensions / files | Definition kinds verified | Calls | Imports | Docstrings | Evidence |")
+    out.append("| Language | Extensions / files | Definition kinds verified | Calls | Imports | Body docstrings | Evidence |")
     out.append("|---|---|---|---|---|---|---|")
     n_verified = 0
     h_objc, h_cpp = header_rule()
@@ -161,7 +163,10 @@ def main() -> int:
     n_opt = sum(r["id"] not in default_ids for r in regs)
     out.append(f"\n{len(regs) - n_opt} grammars in the default build" + (f", {n_opt} more with `--features extra-langs`" if n_opt else "")
                + f"; {n_verified} verified by snapshot samples. "
-               "Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.\n")
+               "Call edges and imports are declared per language by the registry rules, and every sample of a language that "
+               "declares them holds at least one of each (`tests/samples.rs`). Every grammar keeps the comment block right "
+               "above a definition as its documentation; Body docstrings marks the languages where a string that opens "
+               "the body documents it too.\n")
     out.append("## Heuristic tier (samples in the snapshot test)\n")
     out.append("| Sample | Language | Definition kinds verified |")
     out.append("|---|---|---|")

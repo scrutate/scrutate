@@ -43,7 +43,7 @@ PURPOSE = {
     "half": "float16 arrays in the `.npy` reader",
     "scrutate-ignore": "parallel, ignore-aware directory walking, imported as `ignore` (a modified copy of `ignore` 0.4.34 in vendor/ignore; its changes are listed in its README)",
     "matrixmultiply": "sgemm for k-means (pure Rust)",
-    "libc": "`F_BARRIERFSYNC` for the index's files (macOS; already in the tree through other crates)",
+    "libc": "`F_BARRIERFSYNC` for the index's files and the kqueue watcher (macOS), `malloc_trim` after a front end's answers (glibc Linux); already in the tree through other crates",
     "memchr": "newline and NUL scans when one large file is searched in ranges",
     "memmap2": "memory-mapped segments",
     "notify": "filesystem events for `watch` and `serve --watch` (inotify, ReadDirectoryChangesW; only its event types on macOS, where `watch.rs` loads FSEvents; not built for wasi)",
@@ -78,7 +78,8 @@ def main() -> int:
            "## Toolchain\n",
            f"- Built and tested with `{rustc}` (pinned in `rust-toolchain.toml`); minimum supported `rust-version` = {core['rust_version']}.",
            "- Edition 2024. Release profile: `opt-level=3`, fat LTO, `codegen-units=1`, no debug info, stripped.",
-           "- Python ≥ 3.9 is needed only for the optional bindings, the models' training code and the benchmark/test harnesses.\n",
+           "- Python is needed only for the optional bindings (≥ 3.9), the models' training code (≥ 3.10, `python/pyproject.toml`) "
+           "and the benchmark/test harnesses (the versions their pinned packages in `python/constraints.txt` support).\n",
            "## Direct dependencies of the `scrutate` crate\n",
            "| Crate | Version (locked) | Licence | Purpose | Optional |", "|---|---|---|---|---|"]
     # one row per crate: a crate declared twice (per target, with other features) is one dependency
@@ -109,7 +110,8 @@ def main() -> int:
     out.append("## Policy\n")
     out.append("- A dependency is added only with a written reason (what it replaces, size, maintenance, licence), and only under a permissive licence.\n"
                "- `Cargo.lock` is committed; CI builds with `--locked`; `cargo deny check` (advisories, licences, bans, sources) runs on every push to main, every pull request, once a week and on the tagged commit before a release; every release carries the SBOM.\n"
-               "- C code in the dependency tree: SQLite (bundled), the tree-sitter runtime and grammars. No other native code; no networking crates.\n")
+               "- C code in the dependency tree: SQLite (bundled), PCRE2 (`pcre2-sys` through `grep-pcre2`, the default `pcre2` feature), "
+               "the tree-sitter runtime and grammars. No other native code; no networking crates.\n")
     rc = write_or_check("docs/DEPENDENCIES.md", "\n".join(out) + "\n", "tools/gen_dependencies_md.py", sys.argv[1:])
     if rc == 0 and "--check" not in sys.argv[1:]:
         print(f"wrote docs/DEPENDENCIES.md ({shipped} shipped crates)", file=sys.stderr)

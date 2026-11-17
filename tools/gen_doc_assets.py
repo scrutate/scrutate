@@ -1156,6 +1156,8 @@ PAGES = {"docs/LEADERBOARD.md": "bench/make_leaderboard_md.py", "docs/BENCHMARKS
 # pages written from the tree alone (DEPENDENCIES.md from Cargo.toml and `cargo metadata --locked`), so a
 # lockfile change that skipped its script fails here; LANGUAGES.md needs two builds, so ci.yml's compat job checks it
 FROM_TREE = {"docs/DEPENDENCIES.md": "tools/gen_dependencies_md.py"}
+# pages where a script writes one marked section from the result files it names, and the rest is prose
+SECTIONS = {"docs/COMPETITIVE.md": "bench/make_yardstick_md.py"}
 
 
 def regenerated_problems(path, text):
@@ -1165,13 +1167,17 @@ def regenerated_problems(path, text):
     if path in FROM_TREE:
         script, args = FROM_TREE[path], []
     else:
-        script = PAGES[path]
+        script = PAGES.get(path) or SECTIONS[path]
         m = re.search(r"^<!-- inputs: (.*) -->$", text, re.M)
         if not m:
             return [f"{path}: names no inputs (<!-- inputs: ... -->): write it with {script}"]
         args = shlex.split(m.group(1))
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "page.md")
+        if path in SECTIONS:
+            # the script rewrites its section in the page as it is
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(text)
         r = subprocess.run([sys.executable, os.path.join(ROOT, script), *args, "--out", out], cwd=ROOT, capture_output=True, text=True)
         if r.returncode:
             return [f"{path}: {script} failed: {(r.stderr.strip().splitlines() or [''])[-1]}"]
@@ -1191,10 +1197,10 @@ README_COUNTS = [
     (r"warm-cache benchmarks and all (\w+) cold-cache ones", "## Engine A and structural search: macos-arm64, cold cache"),
     (r"Engine A is significantly fastest on all (\w+) Linux-tree benchmarks", "## Engine A and structural search: linux-aarch64, warm cache"),
     (r"Linux-tree benchmarks and all (\w+) cold-cache ones", "## Engine A and structural search: linux-aarch64, cold cache"),
-    (r"leading all (\w+) indexed metrics", "## Engine B: indexed search against zoekt: macos-arm64"),
-    (r"leads Zoekt and livegrep on all (\w+) indexed metrics", "## Engine B: indexed search against zoekt and livegrep: linux-aarch64"),
+    (r"It leads on (\w+) indexed metrics", "## Engine B: indexed search against zoekt: macos-arm64"),
+    (r"leads Zoekt and livegrep on (\w+) indexed metrics", "## Engine B: indexed search against zoekt and livegrep: linux-aarch64"),
 ]
-WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())} | {"both": 2}
 
 
 def section(md, heading):
@@ -1208,12 +1214,13 @@ def section(md, heading):
 
 
 def pass_counts(lines):
-    """(PASS, all) of a LEADERBOARD.md section: its wall-time status counts, or its comparison rows."""
+    """(PASS, all) of a LEADERBOARD.md section: its wall-time status counts, or its comparison rows
+    (an n/a row, which compares nothing, and a measured one, which ranks nothing, counted in neither)."""
     for line in lines:
         m = re.match(r"Status counts, wall time: .*?\*\*PASS\*\* (\d+) \(of (\d+)\)", line)
         if m:
             return int(m.group(1)), int(m.group(2))
-    rows = [line for line in lines if re.match(r"^\| .* \(vs .*\) \|", line)]
+    rows = [line for line in lines if re.match(r"^\| .* \(vs .*\) \|", line) and not re.search(r"\| (n/a|measured)(: [^|]*)? \|$", line.rstrip())]
     return sum(line.rstrip().endswith("| PASS |") for line in rows), len(rows)
 
 
@@ -1388,7 +1395,7 @@ def main():
     check_content_revision(problems)
     check_platforms(problems)
     check_changelog(problems)
-    for path in [*PAGES, *FROM_TREE]:
+    for path in [*PAGES, *FROM_TREE, *SECTIONS]:
         text = files.get(path)
         if text is None:
             with open(os.path.join(ROOT, path), encoding="utf-8") as f:

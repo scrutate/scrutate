@@ -15,6 +15,10 @@ import statistics
 import sys
 
 from make_leaderboard_md import kind, machine_line, platform_of
+from indexed import boot
+
+# a row counts as faster or slower only past this many runs per tool and with its 95% interval clear of 1
+MIN_RUNS = 30
 
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
@@ -92,6 +96,25 @@ def section(d, results):
       f"structural search, {runs * 3} for startup{conc}; warm cache unless noted; median wall time of the whole process "
       "(start to exit); CPU time from each child's `wait4` rusage, peak RSS from one more run under `/usr/bin/time -l` "
       "on macOS or from VmHWM sampled on Linux.")
+    rows = d["text_search"]
+    if any("outliers" in r for r in rows):
+        w("- Timing: `bench/compare_tools.py`'s own loop (`os.wait4`, not hyperfine), one untimed warm-up run per tool "
+          "before the timed runs; a run whose modified z-score from its row's median is above 3.5 is counted as an outlier "
+          "(flagged, never dropped).")
+        per = {}
+        for r in rows:
+            if "outliers" in r:
+                k, n = per.get(r["tool"], (0, 0))
+                per[r["tool"]] = (k + r["outliers"], n + len(r["wall_ms"]))
+        if any(k for k, _ in per.values()):
+            w("- Outlier runs in the text-search rows, per tool: " + "; ".join(f"{LABEL.get(t, t)} {k} of {n}" for t, (k, n) in per.items()) + ".")
+    else:
+        w("- Timing: `bench/compare_tools.py`'s own loop (`os.wait4`, not hyperfine). This run predates its warm-up run and "
+          "outlier count: the answer-checking run before the timed runs was its only untimed run.")
+    stale = (d.get("version_check") or {}).get("stale")
+    if stale:
+        w(f"- Not the latest stable release (`bench/competitors/latest.json`, checked {d['version_check']['checked']}): "
+          + "; ".join(f"{s['tool']} `{s['recorded']}`, latest stable `{s['latest']}`" for s in stale) + ".")
     w("- Tools (absolute paths; shell aliases bypassed):")
     for k, v in env["tools"].items():
         if v.get("version"):
@@ -118,13 +141,13 @@ def section(d, results):
       "`bench/corpora.py` does not build these three, and no checksum pins them.\n")
 
     # ---------------------------------------------------------------- text search tables
-    rows = d["text_search"]
     corpora = list(dict.fromkeys(r["corpus"] for r in rows))
     queries = list(dict.fromkeys(r["query"] for r in rows))
     tools = [t for t in TOOL_ORDER if any(r["tool"] == t and r.get("status") == "ok" for r in rows)]
     w("## Engine A: text search (median wall time, ms, warm cache)\n")
-    w("Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express the query; `≠` = the tool returned another "
-      "number of matching lines than ripgrep (than scrutate where ripgrep cannot run the query; not comparable); the last column is the match count.\n")
+    other = ("other matching lines (by path and line number)" if d.get("agreement") == "lines" else "another number of matching lines")
+    w("Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express the query; `≠` = the tool returned " + other + " "
+      "than ripgrep (than scrutate where ripgrep cannot run the query; not comparable); the last column is the match count.\n")
     for c in corpora:
         w(f"### {c}\n")
         w("| Query | " + " | ".join(LABEL[t] for t in tools) + " | matches |")
@@ -154,29 +177,38 @@ def section(d, results):
         w("")
     # summary: wins and geometric mean ratio vs each tool
     w("### Summary across all comparable rows\n")
-    w("| Tool | rows compared with scrutate | scrutate faster | scrutate slower | geometric mean of (tool time / scrutate time) |")
-    w("|---|---|---|---|---|")
+    w(f"A row counts as faster or slower only when both tools ran at least {MIN_RUNS} times and the 95% bootstrap interval of "
+      "median(tool) / median(scrutate) lies wholly above or below 1; any other row is undecided. The geometric mean is of the medians.\n")
+    w("| Tool | rows compared with scrutate | scrutate faster | scrutate slower | undecided (interval contains 1, or under "
+      f"{MIN_RUNS} runs) | geometric mean of (tool time / scrutate time) |")
+    w("|---|---|---|---|---|---|")
     for t in tools:
         if t == "scrutate":
             continue
-        ratios = []
+        ratios, faster, slower = [], 0, 0
         for c in corpora:
             for q in queries:
                 a_ = next((x for x in rows if x["corpus"] == c and x["query"] == q and x["tool"] == "scrutate" and x.get("status") == "ok" and x.get("agrees", True)), None)
                 b_ = next((x for x in rows if x["corpus"] == c and x["query"] == q and x["tool"] == t and x.get("status") == "ok" and x.get("agrees", True)), None)
                 if a_ and b_:
                     ratios.append(b_["wall_median_ms"] / a_["wall_median_ms"])
+                    if min(len(a_.get("wall_ms", [])), len(b_.get("wall_ms", []))) >= MIN_RUNS:
+                        _, lo, hi = boot(b_["wall_ms"], a_["wall_ms"], statistics.median)
+                        faster += lo > 1
+                        slower += hi < 1
         if ratios:
             gm = statistics.geometric_mean(ratios)
-            w(f"| {LABEL[t]} | {len(ratios)} | {sum(1 for r in ratios if r > 1)} | {sum(1 for r in ratios if r < 1)} | {gm:.2f}× |")
+            w(f"| {LABEL[t]} | {len(ratios)} | {faster} | {slower} | {len(ratios) - faster - slower} | {gm:.2f}× |")
     w("")
     # CPU and memory
     w("## CPU time and peak memory (common literal query)\n")
+    w("Only tools that returned the same lines as the reference (no `≠` above) are listed here and under the cold cache.\n")
     w("| Corpus | Tool | CPU s (user+sys, median) | peak RSS MB |")
     w("|---|---|---|---|")
     for c in corpora:
         for t in tools:
-            r = next((x for x in rows if x["corpus"] == c and x["query"] == "common literal" and x["tool"] == t and x.get("status") == "ok"), None)
+            r = next((x for x in rows if x["corpus"] == c and x["query"] == "common literal" and x["tool"] == t and x.get("status") == "ok"
+                      and x.get("agrees", True)), None)
             if r:
                 w(f"| {c} | {LABEL[t]} | {r['cpu_median_s']:.3f} | {r['maxrss_mb']:.1f} |")
     w("")
@@ -190,7 +222,7 @@ def section(d, results):
                 vals = []
                 for t in tools:
                     r = next((x for x in rows if x["corpus"] == c and x["query"] == q and x["tool"] == t and x.get("status") == "ok"), None)
-                    vals.append(fmt_ms(r.get("cold_wall_ms")) if r else "n/a")
+                    vals.append(("≠" if not r.get("agrees", True) else fmt_ms(r.get("cold_wall_ms"))) if r else "n/a")
                 w(f"| {c} | {q} | " + " | ".join(vals) + " |")
         w("")
         w("Cold-cache numbers are single runs, dominated by disk reads every tool shares: reported for completeness, not ranking.\n")
@@ -266,8 +298,8 @@ def section(d, results):
         w(f"- Not available on this machine, so absent rather than estimated: {', '.join(missing)}.")
     w(f"- {env['cores']} logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; grep, ack and ag search one file at a time.")
     w("- The corpora are Python only: byte-level search cost does not depend on the language, but structural search and indexing figures do.")
-    old = " (its published rows took 30, from a run before that rule)" if "superseded" in os.path.normpath(results).split(os.sep) else ""
-    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (at least 20 runs per tool, 30 unless every verdict holds at the first look" + old + "; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
+    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (30 runs per tool: "
+      "its published runs take every run; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
     return out
 
 

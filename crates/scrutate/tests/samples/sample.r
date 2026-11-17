@@ -1,4 +1,5 @@
 # R sample
+library(stats)
 # Greets.
 greet <- function(name) {
   paste("hi", name)
