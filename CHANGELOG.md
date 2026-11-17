@@ -1295,6 +1295,9 @@ incompatible index by itself, and that is never breaking.
 - A `grep --json` record whose text was redacted gives its `column` in bytes of the redacted
   text: it kept the column of the line as the file has it, so a match after a secret pointed
   inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
+- `grep --fuzzy` and `--fuzzy-regex` with `--json` or colour keep where each character of a
+  matched line starts as one bit per byte, not eight bytes per character: a 64 MB line takes
+  219 MB at peak instead of 723 MB, in the same time, with the same spans.
 
 ## [0.1.0] - 2026-11-11
 
