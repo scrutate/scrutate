@@ -133,7 +133,7 @@ jobs:
       - name: hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)
         run: |
           name=hyperfine-v2.0.0-x86_64-unknown-linux-gnu
-          curl -sSfL -o "$RUNNER_TEMP/$name.tar.gz" "https://github.com/sharkdp/hyperfine/releases/download/v2.0.0/$name.tar.gz"
+          curl -sSfL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$name.tar.gz" "https://github.com/sharkdp/hyperfine/releases/download/v2.0.0/$name.tar.gz"
           echo "ae2beda2ac99c098427e4f755244552daf20e514422889cca6d44421e2d93c87  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/$name/hyperfine" /usr/local/bin/hyperfine
