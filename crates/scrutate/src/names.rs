@@ -39,6 +39,21 @@ pub type Importer = (String, i64, String);
 /// 3.53 s, `refs kfree --def mm/slub.c:6781 --max-results 20` 21.4 s and 492 MB.
 pub const REFS_KIND_RESOLVE_MAX: u64 = 10_000;
 
+/// A name defined in more files than this keeps its calls as one `Hub` of `file_edges`, not an
+/// edge per calling file and defining file.
+pub const HUB_DEFINERS: usize = 32;
+
+/// An edge of the file graph: (from, to, weight) by index into the files.
+pub type FileEdge = (usize, usize, f64);
+
+/// The calls of one name from the files of one language family: each calling file sends its
+/// weight (its calls of the name), split evenly, to every file of `to`.
+#[derive(Clone, Debug, Default)]
+pub struct Hub {
+    pub from: Vec<(usize, f64)>,
+    pub to: Vec<usize>,
+}
+
 /// One request's view of what the names of the repository refer to.
 pub struct Names<'a> {
     s: &'a Searcher,
@@ -1215,8 +1230,9 @@ impl<'a> Names<'a> {
     /// The weighted edges between `files` (sorted) that the index's names give, without resolving
     /// a call site: a call of a name goes to every other file of the caller's language family
     /// that defines it, its weight split among them, unless the caller's own file defines it; an
-    /// import goes to the file its module path maps onto. -> (from, to, weight) by index into `files`
-    pub fn file_edges(&mut self, files: &[String]) -> Result<Vec<(usize, usize, f64)>> {
+    /// import goes to the file its module path maps onto. -> ((from, to, weight) by index into
+    /// `files`, and the calls of each name defined in more than HUB_DEFINERS files as one `Hub`)
+    pub fn file_edges(&mut self, files: &[String]) -> Result<(Vec<FileEdge>, Vec<Hub>)> {
         let s = self.s;
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
         let at = |p: &str| files.binary_search_by(|f| f.as_str().cmp(p)).ok();
@@ -1231,12 +1247,25 @@ impl<'a> Names<'a> {
         let same = |a: usize, b: usize| fam[a].is_none() || fam[b].is_none() || fam[a] == fam[b];
         // by file, the files it calls into and imports, with their weights
         let mut out: Vec<HashMap<usize, f64>> = vec![HashMap::new(); files.len()];
+        let mut hubs: Vec<Hub> = Vec::new();
+        let mut hub_of: HashMap<(&str, Option<&str>), usize> = HashMap::new();
         // rows come by path and name: the calls of one name from one file are counted together
         let calls = s.ix.call_edges()?;
         for run in calls.chunk_by(|a, b| a == b) {
             let (path, callee) = &run[0];
             let (Some(from), Some(defs)) = (at(path), definers.get(callee)) else { continue };
             if defs.contains(&from) {
+                continue;
+            }
+            if defs.len() > HUB_DEFINERS {
+                // the same weights as edges, without one per caller and definer (get, new, run)
+                let h = *hub_of.entry((callee.as_str(), fam[from])).or_insert_with(|| {
+                    hubs.push(Hub { from: Vec::new(), to: defs.iter().copied().filter(|&t| same(from, t)).collect() });
+                    hubs.len() - 1
+                });
+                if !hubs[h].to.is_empty() {
+                    hubs[h].from.push((from, run.len() as f64));
+                }
                 continue;
             }
             let to: Vec<usize> = defs.iter().copied().filter(|&t| same(from, t)).collect();
@@ -1261,7 +1290,7 @@ impl<'a> Names<'a> {
             to.sort_by_key(|e| e.0);
             edges.extend(to.into_iter().map(|(t, w)| (from, t, w)));
         }
-        Ok(edges)
+        Ok((edges, hubs))
     }
 
     /// Modules a file imports, resolved to repository files where the module path maps onto one.

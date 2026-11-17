@@ -1307,6 +1307,11 @@ incompatible index by itself, and that is never breaking.
   in `a/use.go`, or `a.Exported()` from another package, tied to a namesake in `a/a_test.go`, the
   first file of the directory by name, so `refs`, `callers`, `impact` and `dead` missed the real
   callers ([CLI](docs/CLI.md#refs)).
+- `map` and the MCP repo map no longer build an edge per calling file and defining file for a
+  name defined in more than 32 files: with 3,000 files defining `get` and 3,000 calling it they
+  built 9 million edges. Such a name's calls are now summed once per caller and once per definer,
+  with the same scores but for rounding in the last digits of a `--json` score
+  ([CLI](docs/CLI.md#engine-b)).
 
 ## [0.1.0] - 2026-11-11
 
