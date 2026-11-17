@@ -1245,6 +1245,12 @@ incompatible index by itself, and that is never breaking.
   with none, and the 22 samples (two of them extra-langs) that lacked one now hold a call or an
   import. The Docstrings column is named Body docstrings, since every grammar keeps the comment
   above a definition as its documentation ([Languages](docs/LANGUAGES.md)).
+- `refs`, and the `references` of the MCP server and the language server, find the uses in a
+  file with a NUL byte past its first 4 KiB, which the index holds: the search read the file as
+  `grep` does, which stops at the read that meets the NUL, so a small such file gave none, those
+  before the NUL included, and no note. It now reads a file as the index does, to its end, so
+  such a file no longer ends with a `stopped searching binary file` note; one with a NUL in its
+  first 4 KiB is still binary and left out ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 

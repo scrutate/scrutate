@@ -1442,6 +1442,7 @@ pub fn run() -> Result<i32> {
                             && !paths[0].is_dir()
                             && !(search_zip && crate::archive::Kind::of(&paths[0].to_string_lossy()).is_some_and(|k| k.has_members())))),
                 line_numbers: !no_line_number,
+                as_indexed: false,
             };
             let mut f = Files {
                 hidden,

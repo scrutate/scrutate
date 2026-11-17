@@ -137,6 +137,9 @@ pub struct Query {
     pub with_filename: bool,
     /// plain output has line numbers (`-N` turns them off; records always carry them)
     pub line_numbers: bool,
+    /// a walked file with no NUL byte in its first 4 KiB is read to its end as text, as the code
+    /// index reads it; off, as ripgrep reads it, which stops at the read that meets a NUL
+    pub as_indexed: bool,
 }
 
 impl Default for Query {
@@ -156,6 +159,7 @@ impl Default for Query {
             raw_member_names: false,
             with_filename: true,
             line_numbers: true,
+            as_indexed: false,
         }
     }
 }

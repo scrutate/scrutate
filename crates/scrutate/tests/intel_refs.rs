@@ -2351,3 +2351,21 @@ fn a_sigil_or_a_quote_before_a_name_is_an_occurrence_of_the_name() {
     assert!(lines("version").contains(&"App.scala:3".to_string()), "{:?}", lines("version"));
     assert!(lines("helper").contains(&"Main.hs:7".to_string()), "{:?}", lines("helper"));
 }
+
+#[test]
+fn refs_reads_a_file_with_a_nul_past_its_first_4_kib_as_the_index_does() {
+    // the index holds a file with no NUL in its first 4 KiB, so refs reads all of it; one with a
+    // NUL there is binary to both
+    let pad = "# pad\n".repeat(750);
+    let used = format!("from lib import target\ntarget()\n{pad}x = '\0'\ntarget()\n");
+    let files: [(&str, &[u8]); 3] = [("lib.py", b"def target():\n    return 1\n"), ("use.py", used.as_bytes()), ("bin.py", b"\0\ntarget()\n")];
+    let r = Repo::at(scratch("late_nul"), &files);
+    r.index();
+    let lines = || -> Vec<String> { r.resolved("target").into_iter().map(|(at, _)| at).filter(|at| !at.starts_with("lib.py")).collect() };
+    assert_eq!(lines(), ["use.py:1", "use.py:2", "use.py:754"]);
+    // the text index keeps a file's trigrams only up to its first NUL, and still sends it
+    fs::write(r.root.join("use.py"), format!("{pad}x = '\0'\ntarget()\n")).unwrap();
+    let (code, out) = r.run(&["index", "--text"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(lines(), ["use.py:752"]);
+}
