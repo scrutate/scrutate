@@ -1,5 +1,6 @@
 defmodule Billing.Invoice do
   @moduledoc "Invoices."
+  import Billing.Tax
 
   @doc "Total of lines."
   def total(%{lines: lines}) do

@@ -1,6 +1,8 @@
 <?php
 namespace App;
 
+use Psr\Log\LoggerInterface;
+
 /** Greets users. */
 function greet(string $name): string { return "Hi $name"; }
 

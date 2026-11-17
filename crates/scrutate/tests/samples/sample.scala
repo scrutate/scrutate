@@ -1,4 +1,5 @@
 package demo
+import scala.util.Try
 // A greeter.
 class Greeter(name: String) {
   def greet(): String = s"Hi $name"

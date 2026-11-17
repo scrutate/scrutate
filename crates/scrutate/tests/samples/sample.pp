@@ -4,6 +4,7 @@ class nginx (
   String $version = 'latest',
 ) {
   package { 'nginx': ensure => $version }
+  notice($version)
 }
 define nginx::vhost (String $server) {
   file { "/etc/nginx/${server}": ensure => file }

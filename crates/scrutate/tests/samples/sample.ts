@@ -1,4 +1,5 @@
 // TS sample
+import { readFileSync } from "fs";
 export interface Shape { area(): number; }
 export type Id = string;
 export enum Color { Red, Green }

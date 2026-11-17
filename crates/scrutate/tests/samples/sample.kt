@@ -1,5 +1,7 @@
 package demo
 
+import kotlin.math.max
+
 // A greeter.
 class Greeter(val name: String) {
     fun greet(): String {

@@ -1,4 +1,5 @@
 // Groovy sample
+import java.time.LocalDate
 class Greeter {
     String name
     // Greets.

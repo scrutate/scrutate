@@ -1,4 +1,5 @@
 #version 330 core
+#include "common.glsl"
 // GLSL sample
 struct Light { vec3 pos; };
 // Lambert term.

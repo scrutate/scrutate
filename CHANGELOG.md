@@ -1232,6 +1232,11 @@ incompatible index by itself, and that is never breaking.
   lines printed, not their count; BENCHMARKS.md counts a row faster or slower only past 30 runs
   with its 95% interval clear of 1, and leaves tools with another answer out of its CPU, memory
   and cold-cache tables ([Leaderboard](docs/LEADERBOARD.md), [Benchmarks](docs/BENCHMARKS.md)).
+- docs/LANGUAGES.md's Calls and Imports columns are now checked by `cargo test`, as its tier text
+  said: `tests/samples.rs` fails when a language that declares call edges or imports has a sample
+  with none, and the 22 samples (two of them extra-langs) that lacked one now hold a call or an
+  import. The Docstrings column is named Body docstrings, since every grammar keeps the comment
+  above a definition as its documentation ([Languages](docs/LANGUAGES.md)).
 
 ## [0.1.0] - 2026-11-11
 
