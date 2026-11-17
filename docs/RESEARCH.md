@@ -18,8 +18,9 @@ better than the current code-word semantic model (`crates/scrutate/models/semant
 
 - Data and protocol as in [QUALITY.md](QUALITY.md). `bench/make_bench.py` (seed 1234) rebuilt the
   corpora and queries from the latest PyPI releases of the packages in `bench/groups.py`
-  (networkx 3.7, mcp 2.3.0, rich 15.0.0 for TEST). Query counts match QUALITY.md except `kw`
-  (1 585 instead of 1 604, from newer package versions).
+  (networkx 3.7, mcp 2.3.0, rich 15.0.0 for TEST). Query counts matched QUALITY.md as it was
+  before ranker v8 (`d882a7b0`, 2026-11-10) except `kw` (1 585 instead of 1 604, from newer
+  package versions); QUALITY.md's tables now come from a later run with other counts.
 - Models compared:
 
   | Model | Params | Dim | Licence (model card) | Weights on disk |
@@ -104,8 +105,8 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
   batch 64; smaller batches would cut memory at some cost in speed.
 - At the time the Python reference and the Rust engine agreed to the bit (`bench/parity.py`), a
   mirror since ended. The engine's features are still pinned bit for bit on every platform
-  (`crates/scrutate/tests/ranking_pins.rs`); transformer inference through another backend would not give the
-  same bits everywhere, so those pins would need a tolerance.
+  (`crates/scrutate/tests/ranking_pins.rs`); transformer inference through another backend would
+  not give the same bits everywhere, so those pins would need a tolerance.
 
 ## Recommendation
 

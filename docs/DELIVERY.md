@@ -52,9 +52,10 @@ carry the licence files too ([Releasing](RELEASING.md#6-platform-checks-and-arti
 With `uv` installed, `tools/release_local.sh` builds one wheel of each kind (interpreters 3.12,
 3.14t and 3.15) and stops if `uv` cannot find one of them; without `uv` it builds only the wheel
 for `python3`, and without `maturin` no wheel, so `SHA256SUMS` holds the archive and the SBOM. `tools/linux_verify.sh` builds and tests the static musl binary, which is not
-packaged here. The archives of the other platforms, the x86_64 `.deb` and `.rpm`, the `.vsix`
-and the attestations come from `.github/workflows/release.yml` when a version is tagged; a dry
-run of it rehearses them ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
+packaged here. The archives of the other platforms, the `.deb` and `.rpm` of both architectures
+(the aarch64 pair was also built and installed here by `packaging/linux/build-packages.sh`, not by
+this script: packaging/README.md), the `.vsix` and the attestations come from
+`.github/workflows/release.yml` when a version is tagged; a dry run of it rehearses them ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
 
 The Python prototype ("Titan") stays untouched in its sibling directory. Its training code lives
 on as `python/scrutate_ref`, fitting the bundled models on rows the Rust engine writes; its
