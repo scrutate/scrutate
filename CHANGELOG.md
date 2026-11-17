@@ -1203,8 +1203,8 @@ incompatible index by itself, and that is never breaking.
   reader whose index the failed rebuild had closed went back to the pool, and handing it back
   panicked (`the index was not reopened after a rebuild`), so the call never answered.
 - Go: a file of an external test package (`package a_test` in `a/`) is no longer part of package
-  `a`, and a `_test.go` file is seen only from the package's own test files, never through an
-  import. A call
+  `a`, and a `_test.go` file is seen only from the package's own test files, and through an import
+  only from the package's external test (`export_test.go`). A call
   in `a/use.go`, or `a.Exported()` from another package, tied to a namesake in `a/a_test.go`, the
   first file of the directory by name, so `refs`, `callers`, `impact` and `dead` missed the real
   callers ([CLI](docs/CLI.md#refs)).

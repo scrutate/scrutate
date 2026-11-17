@@ -533,7 +533,9 @@ refers to. One inside a longer name of its file's language is no occurrence and 
      `import m = require('./x')`);
    - in Go, a top-level definition of another file of the same package directory with the same
      package clause (`package a_test` is another package), where a `_test.go` file is seen only
-     from a test file; an import sees the package's files without its `_test.go` files;
+     from a test file; an import sees the package's files without its `_test.go` files, except the
+     package's own external test (`package a_test` beside it), whose import also sees the
+     `_test.go` files of `package a` (the `export_test.go` pattern);
    - wildcard imports (`from x import *`, `export * from`, `use a::*`, Go dot imports).
 
 Inside a Rust macro's arguments, which are tokens to the grammar, a name after `.` is a field,

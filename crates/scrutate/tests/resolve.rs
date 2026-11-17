@@ -442,9 +442,13 @@ fn go_a_test_package_is_not_part_of_the_package_it_tests() {
             ("a/z.go", "package a\n\nfunc helper() int { return 1 }\n\nfunc Exported() int { return 2 }\n"),
             ("a/a_test.go", "package a_test\n\nfunc helper() int { return 3 }\n\nfunc Exported() int { return 4 }\n"),
             ("b/b.go", "package b\n\nimport \"example.com/m/a\"\n\nfunc B() int { return a.Exported() }\n"),
+            // export_test.go: package a's own test file, which an external test's import of a sees
+            ("a/export_test.go", "// Copyright\n\n//go:build !nope\n\n/* a block */ package a\n\nvar Helper = helper\n"),
+            ("a/ext_test.go", "package a_test\n\nimport \"example.com/m/a\"\n\nfunc TestH() int { return a.Helper() }\n"),
         ],
     );
-    assert_eq!(r.refs_of("helper", "a/z.go:3"), ["a/use.go:3", "a/z.go:3"]);
+    assert_eq!(r.refs_of("Helper", "a/export_test.go:7"), ["a/export_test.go:7", "a/ext_test.go:5"]);
+    assert_eq!(r.refs_of("helper", "a/z.go:3"), ["a/export_test.go:7", "a/use.go:3", "a/z.go:3"]);
     assert_eq!(r.refs_of("helper", "a/a_test.go:3"), ["a/a_test.go:3"]);
     assert_eq!(r.refs_of("Exported", "a/z.go:5"), ["a/use.go:3", "a/z.go:5", "b/b.go:5"]);
     assert_eq!(r.callers("a/z.go:3"), ["Use"]);
