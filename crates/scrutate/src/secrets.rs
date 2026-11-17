@@ -60,6 +60,26 @@ fn any(_: &str, _: &str, _: &str) -> bool {
 /// before a URL's next query parameter.
 const CODE_END: &str = r#"(?:[`'"\s;&]|\\[nr]|$)"#;
 
+/// What ends an unquoted value after a `&` or `;`: another parameter, its name `=` (a connection
+/// string's `Initial Catalog=` holds spaces), behind HTML's `&amp;` or `&#38;` too; another `&`
+/// (`&&`); a cookie's attribute; or a word and a space, another command (`;echo done`).
+static PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:(?:amp;|#38;)?[A-Za-z_][\w.-]*(?: [A-Za-z_][\w.-]*)*=|&|(?:HttpOnly|Secure|Partitioned)(?:[;\s]|$)|[A-Za-z_][\w.-]*\s+\S)").unwrap()
+});
+
+/// Where an unquoted value that a rule ended at `end` ends: a `&` or `;` there ends it only before
+/// what `PARAMETER` reads as the next item, a space or the line's end; else the value goes on to
+/// the next space or quote, so none of it is left shown.
+fn value_end(text: &str, mut end: usize) -> usize {
+    while let Some(after) = text[end..].strip_prefix(['&', ';']) {
+        if after.is_empty() || after.starts_with(char::is_whitespace) || PARAMETER.is_match(after) {
+            break;
+        }
+        end += 1 + after.find(|c: char| c.is_whitespace() || "`'\"&;".contains(c)).unwrap_or(after.len());
+    }
+    end
+}
+
 /// A typed assignment's annotation and `=` (`: &str =`, `?: string | undefined =`, `!: string =`,
 /// `: HashMap<String, Vec<u8>> =`): printable ASCII but `=`, `;`, `{`, `}`, `!` and quotes (a
 /// lifetime's `'a` aside), and `,`, `(` and `)` only inside angle brackets, so no language's syntax
@@ -334,6 +354,16 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["passw", "pwd", "secret", "token", "apikey", "api_key", "api-key"],
             quoted,
         ),
+        // and such an element's whole text to its closing tag, a quote or a space in it
+        rule(
+            "xml-secret",
+            "scrutate",
+            r#"(?i)<(?:[\w.-]+:)?[\w.-]*(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key)>([^<\r\n]{8,})</"#,
+            1,
+            3.0,
+            &["passw", "pwd", "secret", "token", "apikey", "api_key", "api-key"],
+            element_text,
+        ),
         // a line of a key's base64 body read without its armour (a range that starts inside the
         // key, a search hit): base64 alone on its line, as wide as PEM writes it, near random
         rule("key-material", "scrutate", r#"(?m)(?:^|[\s:"'-])([A-Za-z0-9+/]{40,76}={0,2})["',]?[ \t]*$"#, 1, 4.5, &[], alone_on_its_line),
@@ -503,6 +533,13 @@ fn quoted(secret: &str, whole: &str, before: &str) -> bool {
         && !secret.contains("://")
         && !NUMBER.is_match(secret)
         && !IDENTIFIER.is_match(secret)
+}
+
+/// `quoted` of an element's whole text, but not a sentence (`Forgot your password?`, `Copy to
+/// clipboard`: a space, no digit and no symbol but punctuation) or an escaped `&lt;...&gt;`.
+fn element_text(secret: &str, whole: &str, before: &str) -> bool {
+    let prose = secret.contains(' ') && secret.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?;:'\"()-".contains(c));
+    !prose && !secret.trim_start().starts_with("&lt;") && quoted(secret, whole, before)
 }
 
 /// Base64 that is no checksum a lockfile writes (`h1:` in go.sum, `sha512-` in package-lock),
@@ -848,7 +885,8 @@ impl Redactor {
                 {
                     continue;
                 }
-                spans.push((g.start(), g.end(), r.kind));
+                let end = if r.pattern.ends_with(CODE_END) { value_end(seen, g.end()) } else { g.end() };
+                spans.push((g.start(), end, r.kind));
             }
         }
         // base64 alone on a line is a key's body only outside a public key or a certificate
@@ -1004,6 +1042,8 @@ pub fn close(text: &mut String, n: usize) {
 /// Every detector: its kind and where its rule comes from (docs/SECURITY.md lists them).
 pub fn detectors() -> Vec<(&'static str, &'static str)> {
     let mut out: Vec<(&'static str, &'static str)> = RULES.iter().map(|r| (r.kind, r.source)).collect();
+    // a detector of two rules (xml-secret) is one
+    out.dedup();
     out.push(("private-key", "gitleaks private-key, secretlint-rule-privatekey (line by line between the armour)"));
     out
 }
@@ -1713,6 +1753,40 @@ mod tests {
         }
     }
 
+    /// An unquoted value that holds `&` or `;` is redacted whole: those end it only before another
+    /// parameter (`&x=1`, `;EndpointSuffix=`), a space or the line's end.
+    #[test]
+    fn an_unquoted_value_holding_an_ampersand_or_a_semicolon_is_redacted_whole() {
+        let (a, b) = (fake(121, ALNUM, 16), fake(122, ALNUM, 2));
+        let symbolic = format!("{}@{}!{}", fake(123, ALNUM, 4), fake(124, ALNUM, 5), fake(125, ALNUM, 2));
+        for (line, shown) in [
+            (format!("client_secret = {a}&{b}"), "client_secret = [redacted:generic-secret]".to_string()),
+            (format!("password={symbolic};{b}"), "password=[redacted:generic-secret]".to_string()),
+            (format!("token={a}&{b}&x=1"), "token=[redacted:generic-secret]&x=1".to_string()),
+            (format!("password={symbolic};"), "password=[redacted:generic-secret];".to_string()),
+            (format!("password={symbolic}; other"), "password=[redacted:generic-secret]; other".to_string()),
+        ] {
+            assert_eq!(redact(&line).0, shown, "{line}");
+        }
+        // what starts another parameter, a cookie's attribute or another command still ends it
+        let google = format!("AIza{}", fake(126, ALNUM, 35));
+        for (line, secret, tail) in [
+            (format!("Server=db;User Id=sa;Password={a};Initial Catalog=app"), &a, ";Initial Catalog=app"),
+            (format!("Server=db;Password={a};Persist Security Info=False"), &a, ";Persist Security Info=False"),
+            (format!("Server=db;Password={a};Integrated Security=False"), &a, ";Integrated Security=False"),
+            (format!("Password={a};Data Source=db"), &a, ";Data Source=db"),
+            (format!("<script src=\"https://maps.googleapis.com/maps/api/js?key={google}&amp;libraries=places\">"), &google, "&amp;libraries=places\">"),
+            (format!("https://api.example.com/v1?api_key={a}&amp;format=json"), &a, "&amp;format=json"),
+            (format!("https://api.example.com/v1?api_key={a}&#38;format=json"), &a, "&#38;format=json"),
+            (format!("Set-Cookie: auth_token={a};HttpOnly;Secure"), &a, ";HttpOnly;Secure"),
+            (format!("token={a};echo done"), &a, ";echo done"),
+            (format!("token={a}&&echo ok"), &a, "&&echo ok"),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty() && out.ends_with(tail), "{line} -> {out}");
+        }
+    }
+
     /// A base64 key that starts with `/` or `+` is redacted as one that starts with a letter is
     /// (an Azure storage account key); an absolute path after a key name is not.
     #[test]
@@ -1750,9 +1824,18 @@ mod tests {
             (format!("<add key='Stripe.SecretKey' value='{key}'/>"), &key),
             (format!("<clientSecret>{token}</clientSecret>"), &token),
             (format!("<ns:accessToken>{token}</ns:accessToken>"), &token),
+            // element text in a string, which a quote ends with no closing tag on the line
+            (format!("String xml = \"<password>{}\";", "Xq7rT2vW9yZ"), &"Xq7rT2vW9yZ".to_string()),
+            (format!("String xml = \"<password>{}\";", "Xq7rT2vW9"), &"Xq7rT2vW9".to_string()),
+            (format!("body = '<token>{}' +", "Xq7rT2vW9yZ"), &"Xq7rT2vW9yZ".to_string()),
         ] {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && marks.iter().any(|m| m.kind == "xml-secret"), "{line} -> {out}");
+        }
+        // an element's text holds a quote or a space as any other character, up to `</`
+        for text in [format!("{pw}\"x"), format!("{}'{}", &pw[..7], &pw[7..]), format!("{} {}", &pw[..4], &pw[4..])] {
+            let line = format!("<password>{text}</password>");
+            assert_eq!(redact(&line).0, "<password>[redacted:xml-secret]</password>", "{line}");
         }
         for line in [
             "<password/>",
@@ -1763,6 +1846,19 @@ mod tests {
             "<tokenizerClass>com.example.text.Tokenizer</tokenizerClass>",
             "<add key=\"CacheKey\" value=\"products-v2-2024\" />",
             "<passwordFile>conf/secrets/db.properties</passwordFile>",
+            // a sentence, and an escaped placeholder, as an element's text
+            "<password>your password</password>",
+            "<password>Enter password</password>",
+            "<password>Your password here</password>",
+            "<secret>my secret value</secret>",
+            "<apiKey>Your API key goes here</apiKey>",
+            "<token>See the documentation for details</token>",
+            "<ForgotPassword>Forgot your password?</ForgotPassword>",
+            "<ResetPassword>Reset your password</ResetPassword>",
+            "<CopyToken>Copy to clipboard</CopyToken>",
+            "<app-reset-password>Reset password now</app-reset-password>",
+            "<label-password>Your password</label-password>",
+            "<password>&lt;your password&gt;</password>",
         ] {
             assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
         }

@@ -522,7 +522,9 @@ takes `NAME=value` lines whose upper-case name holds `SECRET`, `PASSWORD`, `TOKE
 `KEY` or `CREDENTIALS`, or is `PASS` or ends in `_PASS` (`DB_PASS`, not `BYPASS`); `password` a quoted value of a name holding `password`, `secret` or
 `token`, any symbol in it; `xml-secret` the text of an XML element whose name ends in
 `password`, `passwd`, `pwd`, `secret`, `secretKey`, `token` or `apiKey` (Maven's `<password>`,
-`<ns:accessToken>`), and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
+`<ns:accessToken>`), up to a quote or its closing tag, and all of it to a closing tag on its
+line, quotes and spaces included, unless it reads as a sentence (a space, no digit, no symbol
+but punctuation: `Forgot your password?`) or an escaped `&lt;...&gt;`; and the `value` of a .NET `<add key="..." value="...">` whose key ends so,
 with `password`'s test of the value, so an empty element and a placeholder (`${env.X}`) stay;
 `key-material` a line of base64 alone as wide as a key's body and near
 random, a key read without its armour (lockfile checksums such as go.sum's `h1:` aside, and public
@@ -546,7 +548,11 @@ string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> =
 in up to two constructors (`Some(String::from("..."))`, `Optional.of("...")`) and a Rust raw
 string (`r"..."`, `r#"..."#`). The rules that end a secret at what follows it take a quote, a
 space, `;`, an escaped line end, the line's end, or `&` before a URL's next query parameter
-(`?api_key=...&format=json`, `jdbc:...&password=...&useSSL=false`). A private key's
+(`?api_key=...&format=json`, `jdbc:...&password=...&useSSL=false`). An unquoted value goes on
+past a `&` or `;` (`client_secret = ...&Rr`) unless what follows starts another item: a
+`name=`, spaces in the name allowed (`;Initial Catalog=`), also behind `&amp;` or `&#38;`; a
+second `&`; a cookie's `HttpOnly`, `Secure` or `Partitioned`; or a word and a space (`;echo
+done`), which leaves a tail shaped so shown. A private key's
 body is redacted line by line between its armour, which is matched in any case (`Rsa Private
 Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
 a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
@@ -562,7 +568,7 @@ it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `
 per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files,
 none (a test holds it there). A rule's regex is built the first time a text holds one of its
 keywords, so a process pays for the rules its answers need. The page measured is the first 24,000
-bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 5 of the 33
+bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 5 of the 34
 rules. On a 16-vCPU AMD EPYC 9R14 server (three runs, load 6), a process takes 0.3 ms before any
 text and 2.1 ms more for that page; a text that needs every rule pays what building them all costs,
 10.3 ms. Redacting the page again then takes 0.45 ms (median of 101 runs). The source a page holds
