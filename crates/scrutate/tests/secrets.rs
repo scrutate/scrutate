@@ -1405,10 +1405,13 @@ fn hook_run_holds_for_every_allowed_flag() {
         (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
     };
     let mut programs = vec!["grep"];
-    if rg::have_rg() {
+    let with_rg = rg::have_rg();
+    if with_rg {
         programs.push("rg");
     }
     let (mut asked, mut ran, mut leaks) = (0, 0, Vec::new());
+    // grep searches a directory only with a flag that makes it recurse; without one it exits 2
+    let (mut recursive_asked, mut recursive_ran) = (0, 0);
     for program in programs {
         for (flag, takes) in allowed_flags(program) {
             let value = match (program, flag.as_str()) {
@@ -1461,6 +1464,10 @@ fn hook_run_holds_for_every_allowed_flag() {
                 let (code, out, err) = run(&clean, &ask);
                 asked += 1;
                 ran += usize::from(code == Some(0));
+                if program == "grep" && (matches!(flag.as_str(), "-r" | "--recursive" | "-R" | "--dereference-recursive") || value == "recurse") {
+                    recursive_asked += 1;
+                    recursive_ran += usize::from(code == Some(0));
+                }
                 let pieces = [&key[4..], &key_secret[..10], &key_secret[30..], &secret[..]];
                 if let Some(line) = out.lines().chain(err.lines()).find(|l| pieces.iter().any(|p| l.contains(p))) {
                     leaks.push(format!("{ask:?}: {}", line.escape_debug()));
@@ -1472,8 +1479,14 @@ fn hook_run_holds_for_every_allowed_flag() {
         }
     }
     assert!(leaks.is_empty(), "a key came back raw:\n{}", leaks.join("\n"));
-    // the table is not empty and most of its searches did run in the clean tree
-    assert!(asked > 500 && ran * 2 > asked / (reach.len() + 3) * 3, "{asked} asked, {ran} ran");
+    // the table is not empty and most of its searches did run in the clean tree: rg's run on a
+    // directory with any flag, grep's only with one that makes it recurse
+    assert!(asked > 500, "{asked} asked");
+    if with_rg {
+        assert!(ran * 2 > asked / (reach.len() + 3) * 3, "{asked} asked, {ran} ran");
+    } else {
+        assert!(recursive_asked > 0 && recursive_ran * 2 > recursive_asked, "grep alone: {recursive_ran} of {recursive_asked} recursive searches ran");
+    }
     let _ = fs::remove_dir_all(&base);
 }
 
