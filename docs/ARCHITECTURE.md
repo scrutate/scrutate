@@ -250,7 +250,8 @@ adds:
   reference](CLI.md#engine-a-grep-alias-g).
 - **No dependency on Engine B by default**: `grep` opens no index unless asked. `--index` reads only
   the files the text index names as candidates (`--update` brings that index up to date first), and
-  `--symbols` groups matches by enclosing function, using the code index if one exists.
+  `--symbols` groups matches by enclosing function through the code index, which it builds, or
+  brings up to date, first (`open_fresh`).
 
 ## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
@@ -475,7 +476,8 @@ NFC with final sigma folded.
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest or a segment it merged is gone (another update's GC removes one the
     wall clock aged past `GC_AGE_S` before the compaction's second lock); an update a read makes, which must not wait, tries its lock once
-    before the merge and once after it (only the second when there is nothing to merge), and
+    before the merge and once after it (only the second when there is nothing to merge but a
+    segment with no live row to drop, and none when there is neither), and
     leaves the compaction to the next update when another writer holds it (a segment it merged
     meanwhile is removed), which does it even when nothing changed; segment **GC** with an age
     guard inside the update's transaction;
@@ -1109,7 +1111,8 @@ references) make a look of their own (one walk and one `stat` per file, no index
 trigrams for the files the text index holds as they are now (the size, mtime and status change
 time that look found) and read every other file of the look directly: new, changed, hidden or left
 out by the text index's walk (`stores::grep_files`). The walk runs instead when there is no text index,
-when the pattern's trigrams narrow nothing, when a glob brings files in, when a name is not UTF-8,
+when the pattern's trigrams narrow nothing, when a glob brings files in, when `references` is given
+a type or language filter, when a name is not UTF-8,
 or when the path is a file or a directory the look did not enter. No grep builds a text index. A
 look costs about what a walk costs without the search (on 12,001 small files, 90 ms of CPU for the
 tool against 405 ms for `grep` over the tree).
