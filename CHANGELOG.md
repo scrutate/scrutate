@@ -1180,6 +1180,12 @@ incompatible index by itself, and that is never breaking.
   under those labels, a cut one or one without its END too, is marked line by line, its short
   last line included, and a body line's trailing `+` no longer drops it to the ordinary rules
   ([Security](docs/SECURITY.md)).
+- `refs`, and the `references` of the MCP server and the language server, find the uses in a
+  file with a NUL byte past its first 4 KiB, which the index holds: the search read the file as
+  `grep` does, which stops at the read that meets the NUL, so a small such file gave none, those
+  before the NUL included, and no note. It now reads a file as the index does, to its end, so
+  such a file no longer ends with a `stopped searching binary file` note; one with a NUL in its
+  first 4 KiB is still binary and left out ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 

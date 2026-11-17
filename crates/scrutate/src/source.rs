@@ -295,6 +295,19 @@ fn quits_as_the_reader(b: &[u8], term: u8) -> bool {
     b.len() <= FIRST_BUFFER && !starts_with_bom(b) && b[..b.len().min(3)].iter().all(|&c| c != term)
 }
 
+/// Whether the source read at `at` reads as text to the code index: its first 4 KiB.
+fn head_is_text<A: ReadAt>(at: &A) -> bool {
+    let mut head = [0u8; 4096];
+    let mut n = 0;
+    while n < head.len() {
+        match at.read_at(&mut head[n..], n as u64) {
+            Ok(k) if k > 0 => n += k,
+            _ => break,
+        }
+    }
+    crate::index::head_reads_as_text(&head[..n])
+}
+
 /// Search `b`, which holds no NUL byte the binary check could find, with that check off: one pass
 /// over the file. A second searcher would cost its 64 KiB line buffer on every start.
 fn unchecked<S: Sink>(m: &AnyMatcher, searcher: &mut Searcher, b: &[u8], sink: S) -> Result<(), S::Error> {
@@ -397,12 +410,18 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
         }
     }
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
+    // the index holds a file whose first 4 KiB have no NUL, and the uses past one with it
+    let as_text = watched && o.as_indexed && src.at().is_some_and(head_is_text);
+    let checked = as_text.then(|| searcher.binary_detection().clone());
+    if as_text {
+        searcher.set_binary_detection(BinaryDetection::none());
+    }
     // built in place: the struct update moved a whole Collector once more per file
     let mut sink = r.collector(Arc::clone(&rel));
     sink.convert = named;
     sink.out = std::mem::take(&mut w.out);
     let res = match whole {
-        Some(b) => match if clear { None } else { memchr::memchr(0, b) } {
+        Some(b) => match if clear || as_text { None } else { memchr::memchr(0, b) } {
             // nothing for a binary check to find: one pass over the file, as before the NUL rules.
             // A byte-order mark is transcoded, and the text it gives may hold a NUL
             None if !src.expands() && !starts_with_bom(b) => unchecked(r.matcher, searcher, b, &mut sink),
@@ -419,6 +438,9 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
             src.stream(r.matcher, searcher, &mut sink, watch)
         }
     };
+    if let Some(c) = checked {
+        searcher.set_binary_detection(c);
+    }
     match res {
         // grep-searcher's own words for the limit name no line
         Err(e) if limit.is_some() && e.to_string().starts_with("configured allocation limit") => {

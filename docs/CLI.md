@@ -458,7 +458,8 @@ and keeps it among the unresolved; `impact` lists a changed one as `big.py  [fil
 scrutate refs NAME [--def PATH[:LINE]] [--textual] [--max-results N] [--json]
 ```
 Finds every whole-word occurrence of `NAME` (as `grep -w`) and decides which definition each
-refers to. One inside a longer name of its file's language is no occurrence and is not listed:
+refers to. A file is read as the index reads it: one with no NUL byte in its first 4 KiB is read
+to its end, where `grep` stops at the NUL, and one with a NUL there is binary and not read. One inside a longer name of its file's language is no occurrence and is not listed:
 `foo` in Haskell's `foo'`, `init` in JavaScript's `$init`, `valid` in Ruby's `valid?`, `foo` in Emacs Lisp, Scheme, Racket or Common Lisp `foo-bar` (a Lisp name runs to the next delimiter; a Common Lisp `pkg:foo` is `foo`). For Python, JavaScript, TypeScript, Rust and Go the rules are, in order:
 
 1. The name of a definition, or the name in an import statement, is that definition (or what

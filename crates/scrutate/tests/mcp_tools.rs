@@ -574,17 +574,16 @@ fn grep_code_shows_a_binary_file_note_as_a_note() {
 }
 
 #[test]
-fn resolved_references_say_when_a_file_s_search_stopped_at_a_nul_byte() {
+fn resolved_references_read_a_file_the_index_holds_past_a_nul_byte() {
     let filler: String = (0..3000).map(|i| format!("x = {i}  # filler line to push the NUL past the first read\n")).collect();
     let body = format!("def needle_xyz():\n    return 1\n\n{filler}\0\nneedle_xyz()\n");
     let mut r =
         Repo::new("nul_refs", &[("nul_probe.py", body.as_str()), ("use.py", "from nul_probe import needle_xyz\n\n\ndef go():\n    return needle_xyz()\n")]);
     let text = r.ok("references", json!({"name": "needle_xyz"}));
-    assert!(text.contains("use.py:5") && text.contains("note: nul_probe.py: ") && text.contains("stopped searching binary file"), "{text}");
+    assert!(text.contains("use.py:5") && text.contains("nul_probe.py:3005") && !text.contains("note:"), "{text}");
     let op = scrutate::ops::Op::from_tool("references", &json!({"name": "needle_xyz"})).unwrap();
     let v = r.repo.run(&op, 0.0).unwrap().json();
-    assert_eq!(v["notes"][0]["path"], "nul_probe.py", "{v}");
-    assert!(v["notes"][0]["note"].as_str().unwrap().contains("stopped searching binary file"), "{v}");
+    assert!(v.get("notes").is_none(), "{v}");
     // a name with no note has no such key
     let op = scrutate::ops::Op::from_tool("references", &json!({"name": "go"})).unwrap();
     assert!(r.repo.run(&op, 0.0).unwrap().json().get("notes").is_none());
