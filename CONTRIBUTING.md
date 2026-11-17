@@ -31,7 +31,8 @@ crates/scrutate/        the product: Engine A (instant.rs, source.rs, policy.rs)
                         operations and sessions (ops.rs, session.rs), the file finder
                         (finder.rs), the structural rewrite (rewrite.rs), CLI (cli.rs, config.rs),
                         MCP server (mcp.rs), language server (lsp.rs), agent set-up and
-                        the Grep hook (setup.rs, hook.rs); tests/ (samples,
+                        the Grep and Bash hooks (setup.rs, hook.rs, shellhook.rs);
+                        tests/ (samples,
                         robustness, properties, ranking pins, CLI, MCP, LSP and more);
                         models/ (semantic.npz, ranker.npz, embedded into the binary)
 crates/scrutate-py/     optional PyO3 bindings (not built by default)

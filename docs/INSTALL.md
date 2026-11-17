@@ -137,7 +137,7 @@ and Ctrl-C: [Python bindings](../crates/scrutate-py/README.md).
 
 `scrutate setup <claude|codex|opencode|cursor|gemini>` writes that agent's MCP server entry,
 running this binary by its absolute path; `--project` writes the repository's file instead,
-`--hook` adds Claude Code's Grep hook, and `--uninstall` takes back all setup added. Every option
+`--hook` adds the Grep and Bash hooks for Claude Code (the Bash hook alone for Codex), and `--uninstall` takes back all setup added. Every option
 and each agent's file: [Command line](CLI.md#setup-and-the-grep-hook).
 
 ## Updating
@@ -156,7 +156,7 @@ rm ~/.local/bin/scrutate ~/.local/share/bash-completion/completions/scrutate
 find ~/code -maxdepth 3 -name .scrutate -type d -prune -exec rm -rf {} +   # the caches, wherever you indexed
 rm -rf ~/.config/scrutate                                                  # optional configuration
 rm -rf ~/.local/state/scrutate                                             # read counts and the Grep hook's counter
-rm -rf ~/.cache/scrutate                                                   # dependency sources symbol --deps copied
+rm -rf ~/.cache/scrutate ~/Library/Caches/scrutate                         # dependency sources --deps copied (Linux, macOS)
 pip uninstall scrutate                                                     # the Python package, if installed
 ```
 Scrutate writes nothing else: no services, no registry keys. Outside the repositories you indexed

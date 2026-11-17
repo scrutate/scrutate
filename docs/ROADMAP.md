@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Dependencies](DEPENDENCIES.md) &nbsp;·&nbsp; Next: [Research](RESEARCH.md)
 
-**Contents**: [Done in this release](#done-in-this-release) &nbsp;·&nbsp; [Blocked: needs the repository published](#blocked-needs-the-repository-published) &nbsp;·&nbsp; [Next](#next)
+**Contents**: [Done in this release](#done-in-this-release) &nbsp;·&nbsp; [Blocked: needs the first release](#blocked-needs-the-first-release) &nbsp;·&nbsp; [Next](#next)
 
 <!-- End of head. -->
 
@@ -50,7 +50,7 @@ gap it closes in docs/TRACEABILITY.md.
 | A read-files ceiling that is one (R-14.8) | `bench/rawread.c` gives each thread 64 neighbouring paths at a time, and the harness keeps the fastest of several thread counts; with one path at a time, its threads shared a directory and read a cold tree at a third of the disk's speed |
 | Measurements a busy machine spoiled (R-14.9) | a benchmark where some tool's block medians differ by more than 25% is measured again, once, whatever its status, and keeps its first result beside the second; a warm row records how much of its corpus was in the page cache (on this 18 GB laptop the LLVM tree, 4.9 GB in 16 KB pages, no longer fits once a browser and an editor are open) |
 | What agents ask of an MCP server now (R-6.15) | revision 2026-07-28 beside the handshake revisions (`server/discover`, a version in each request, `resultType`, cache hints on lists); with `serve --structured`, an `outputSchema` on every tool and the `--json` form of each answer in `structuredContent` (off by default: Claude Code shows its model that JSON in place of the text); `notifications/cancelled` honoured, each call on a thread of its own; progress reports with files read against the total while the first index is built, `reindex` runs or `structural_search` reads; large structured answers paged with the text (`next_offset`); `read_code` of a whole definition by name; the location at the start of every result accepted wherever a tool takes a symbol |
-| Method calls on variables (R-2B.4) | `x.m()` resolves through the type the declaration of `x` states, as an annotation or as the thing it is built from, in Python, JavaScript/TypeScript, Rust and Go; Go methods are found by their receiver type across the files of a package |
+| Method calls on variables (R-2B.4) | `x.m()` resolves through the type the declaration of `x` states, as an annotation or as the thing it is built from, in Python, JavaScript/TypeScript, Rust, Go, Java, PHP and C#; Go methods are found by their receiver type across the files of a package |
 | TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file in `refs`, `deps` and `rdeps`; so does an import of a workspace package by its `package.json` name (`exports`, `module`, `main`, a build output standing for its source under `src/`) |
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
@@ -58,7 +58,7 @@ gap it closes in docs/TRACEABILITY.md.
 | Function order on glibc Linux (R-4.6) | release builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` link twice, the second time with lld's `--symbol-ordering-file` from `crates/scrutate/startup.order` under the build's own names (`tools/order_file.py --elf`); docs/RELEASING.md section 2 |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
-## Blocked: needs the repository published
+## Blocked: needs the first release
 
 Publishing was declined on 2026-11-08 and asked for on 2026-11-11, on one condition: every way to
 install and use the tool works first. The repository is public on GitHub
@@ -173,8 +173,8 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   tree-sitter-verilog 1.0.3 parses as an error, records no call edge, and a VHDL indexed signal
   `a(i)` declared in another file than the use is recorded as a call.
 - Windows and Intel macOS are tested on GitHub's runners only ([Install](INSTALL.md) has the
-  runners and the five Unix-only tests): no release archive is built for them, installed on a
-  machine or benchmarked there.
+  runners and the five Unix-only tests): `release.yml` builds their archives, but no release has
+  run yet, so none has been installed on a machine or benchmarked there.
 - No benchmark has run on x86_64 Linux or on dedicated idle hardware (R-14.11 above).
 - The release binaries carry no platform code signature: no Apple notarization, no Windows
   Authenticode. The integrity check is the Sigstore attestation and `SHA256SUMS`;

@@ -226,7 +226,8 @@ one changed path that the watcher asks. A **look** (`files::look`) is one walk o
 
 **[Setup](docs/CLI.md#setup-and-the-grep-hook)**: what `scrutate setup <agent>` writes
 (`setup.rs`): one MCP server entry named `scrutate` in an agent's configuration and, on request,
-the Grep hook and an instruction block, each added and removed as text.
+the hooks (Grep and Bash for Claude Code, Bash for Codex) and an instruction block, each added
+and removed as text.
 
 **[Grep hook](docs/CLI.md#setup-and-the-grep-hook)**: Claude Code's `PreToolUse` hook for its Grep
 tool (`hook.rs`, `scrutate hook grep`). It answers a Grep call with Engine A's matches, or lets
