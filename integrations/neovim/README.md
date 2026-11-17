@@ -39,9 +39,9 @@ vim.lsp.enable("scrutate")
 ```
 
 Test: in a repository made by `integrations/fixture.sh`,
-`nvim --headless -u NONE -l integrations/neovim/test/run.lua /path/to/scrutate` runs every
-command before any index and after an edit, a go-to-definition through the language server, and
-the commands again from a subdirectory (the test makes a `.git` directory at the top). It last
+`nvim --headless -u NONE -l integrations/neovim/test/run.lua /path/to/scrutate` runs
+`:ScrutateSymbol` before any index, every command once the index is built, `:Scrutate` after an
+edit, a go-to-definition through the language server, and the commands again from a subdirectory (the test makes a `.git` directory at the top). It last
 passed on Neovim 0.12.6 (2026-11-11). The `neovim` job in `.github/workflows/ci.yml` runs it on
 Linux, macOS and Windows with Neovim 0.10.4, 0.11.7 and 0.12.6; on 0.10 it skips the language
 server check, since `vim.lsp.config` is new in 0.11.

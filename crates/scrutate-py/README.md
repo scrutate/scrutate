@@ -46,8 +46,8 @@ sampling floor, else `None`.
 Every `Repo` method runs the operation the CLI and the MCP tools run, with the same defaults, the
 same check of the files an answer cites, and the same recovery from a damaged index.
 `Repo.references(name, max_results=200, textual=False, definition=None)` gives the `references`
-answer as a dict (`scrutate refs --json`'s `result`). `Repo.call(tool, args, max_bytes=None,
-offset=0)` runs any MCP tool by its name and arguments, `grep_code` with a `mode`, a `path` and
+answer as a dict (`scrutate refs --json`'s `result`). `Repo.call(tool, args=None, *, max_bytes=None,
+offset=0)` runs any MCP tool but `edit_symbol` by its name and arguments, `grep_code` with a `mode`, a `path` and
 `globs` included, and returns the tool's envelope as a dict: `schema`, `result`, `stopped_at`
 when the answer stopped at its limit, and `text`, the text form from item `offset` on within
 `max_bytes`. `GrepIter.stats()` lists in `notes` the (path, text) of each file whose search a

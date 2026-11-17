@@ -14,12 +14,15 @@ revisions 2024-11-05 / 2025-03-26 / 2025-06-18 / 2025-11-25, and revision 2026-0
 no handshake (`server/discover`, a protocol version in every request's `_meta`). Tools: `search_code`, `grep_code`,
 `find_symbol`, `callers`, `callees`, `call_path`, `repo_map`, `read_code`, `outline`, `dependencies`, `dependents`,
 `references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `find_files`, `dead_code`, `reindex`.
+`serve --allow-edits` lists one more, `edit_symbol`, the one tool that writes source files
+([edits](../../docs/CLI.md#serve---allow-edits-and-edit_symbol)).
 
 The index refreshes itself before a call (scans at most a second apart by default, or
 `--refresh-interval S`), and a call waits up to 20 seconds for a first index build. Every tool
-except `reindex` is marked read-only and local, so clients that ask before a write do not ask.
-Answers are cut at whole items to 24,000 bytes by default (`max_bytes`, `offset`, or
-`serve --max-bytes` for another default), and every tool takes `response_format: "concise"`.
+except `reindex` and `edit_symbol` is marked read-only and local, so clients that ask before a
+write do not ask. Answers are cut at whole items to 24,000 bytes by default (`max_bytes`,
+`offset`, or `serve --max-bytes` for another default), and every tool but `edit_symbol` takes
+`response_format: "concise"`.
 `read_code path=...` reads lines and `read_code symbol=...` a whole definition; `grep_code`
 searches the files the index holds (not `.git/` or `node_modules/`); `reindex` with `force: true`
 reads every file again. Two switches matter to a client:
@@ -92,6 +95,7 @@ mcp list`: Connected in a trusted folder). VS Code (`code --add-mcp` writes the 
 above) was checked with its own command; Zed follows its documentation as of November 2026 and
 was not started here.
 
-The server stays on the machine: it writes only `.scrutate/` and the frecency file of
-`find_files` under `$XDG_STATE_HOME/scrutate/`, opens no network connections and runs no
-repository code.
+The server stays on the machine: it writes only `.scrutate/`, the frecency file of `find_files`
+under `$XDG_STATE_HOME/scrutate/` (else `~/.local/state/scrutate/`, on Windows
+`%LOCALAPPDATA%\scrutate\`) and, with `--allow-edits`, the definitions `edit_symbol` is asked to
+apply. It opens no network connections and runs no repository code.
