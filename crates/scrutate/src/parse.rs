@@ -2609,6 +2609,7 @@ mod tests {
                 return IDENT_START.find(args.split(',').next()?.trim()).map(|m| m.as_str().to_string());
             }
             ("make", "raw_text") => return None,
+            ("pascal", "statement") if node.named_child_count() != 1 || !matches!(target.kind(), "identifier" | "exprDot") => return None,
             ("verilog", "data_declaration") if !verilog_typeless_call(node, target, src) => return None,
             _ => {}
         }
