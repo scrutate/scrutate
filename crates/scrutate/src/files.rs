@@ -926,6 +926,9 @@ pub fn patch_look(root: &Path, kept: &KeptLook, changes: &crate::stores::Changes
     let list = Arc::make_mut(list);
     let mut listed = crate::index::Listed::default();
     let mut guard = NamedGuard::new(root);
+    // files that come or go are set aside and the list rebuilt once: an insert or remove each
+    // would move the rest of a big list once per file
+    let (mut gone, mut new) = (std::collections::HashSet::new(), Vec::new());
     for rel in named {
         let at = list.binary_search_by(|f| f.path.as_str().cmp(rel));
         // as `look` finds it: a file the repository's walk lists, with a stat when it is code
@@ -942,12 +945,20 @@ pub fn patch_look(root: &Path, kept: &KeptLook, changes: &crate::stores::Changes
         });
         match (at, found) {
             (Ok(i), Some(f)) => list[i] = f,
-            (Err(i), Some(f)) => list.insert(i, f),
-            (Ok(i), None) => {
-                list.remove(i);
+            (Err(_), Some(f)) => new.push(f),
+            (Ok(_), None) => {
+                gone.insert(rel);
             }
             (Err(_), None) => {}
         }
+    }
+    if !gone.is_empty() {
+        list.retain(|f| !gone.contains(&f.path));
+    }
+    if !new.is_empty() {
+        list.extend(new);
+        // two sorted runs: the stable sort merges them in one pass
+        list.sort_by(|a, b| a.path.cmp(&b.path));
     }
 }
 
@@ -1071,6 +1082,32 @@ mod tests {
         assert!(kept.lock().unwrap().as_ref().is_none_or(|(r, _)| r == &b), "b's change set patched a's look");
         assert_eq!(paths(&super::looked(&b, Some(&kept)).unwrap()), ["three.py", "two.py"]);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A change set that adds, deletes and changes files all through the list leaves the kept look
+    /// as a fresh look of the tree.
+    #[test]
+    fn a_kept_look_patched_with_many_changes_is_a_fresh_look() {
+        let root = std::env::temp_dir().join(format!("scrutate_kept_many_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        for f in ["b.py", "d.py", "f.py", "h.py"] {
+            std::fs::write(root.join(f), "x = 1\n").unwrap();
+        }
+        let kept = super::KeptLook::default();
+        super::looked(&root, Some(&kept)).unwrap();
+        for f in ["a.py", "e.py", "z.py"] {
+            std::fs::write(root.join(f), "y = 2\n").unwrap();
+        }
+        std::fs::remove_file(root.join("d.py")).unwrap();
+        std::fs::remove_file(root.join("h.py")).unwrap();
+        std::fs::write(root.join("f.py"), "x = 22\n").unwrap();
+        let code = ["a.py", "d.py", "e.py", "f.py", "h.py", "z.py", "gone.py"].map(String::from).to_vec();
+        let named = crate::stores::Named { code, text: Vec::new(), repo: Vec::new() };
+        super::patch_look(&root, &kept, &crate::stores::Changes::Named(named));
+        let rows = |v: &[super::Found]| v.iter().map(|f| (f.path.clone(), f.code, f.stat.map(|s| s.size))).collect::<Vec<_>>();
+        assert_eq!(rows(&super::looked(&root, Some(&kept)).unwrap()), rows(&super::look(&root, false).unwrap()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A file only the repository's walk lists (hidden, so the text walk leaves it out, and in no
