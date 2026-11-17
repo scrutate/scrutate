@@ -8,7 +8,7 @@ Status: rejected after measurement, 2026-11-16.
 by the query's text, so a new query parses everything again, and the literal gate only skips
 files that hold none of a query's strings. Parsing is the cost: one thread over Linux's 64,436 C
 and header files takes 190 s. The code index parses the same files at index time and keeps
-nothing of the tree.
+none of the tree's structure (only the resolver's bindings, ADR 8).
 
 The budget for keeping something: the default index grows by at most 10% in size and in index
 time on the Linux tree, and a query of the subset below gets clearly faster.

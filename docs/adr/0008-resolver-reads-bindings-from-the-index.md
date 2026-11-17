@@ -77,7 +77,7 @@ which this item first proposed, would not have moved these numbers.
 5. **The process gives freed memory back.** The bounds above are on counted weight. On Linux with
    glibc a process holds more: each thread allocates from an arena of its own, and the pages a
    thread frees stay with that arena until something asks for them. `serve` answers each call
-   on a thread of its own, so over a session of large requests its RSS climbed to 1.7 to 2.2 GB
+   on a thread of its own (up to 32 in flight), so over a session of large requests its RSS climbed to 1.7 to 2.2 GB
    while what it held stayed under the bounds. After an answer is out, `serve`, `lsp` and `batch`
    call `memory::give_back_memory`, which calls `malloc_trim(0)` when the request ran a second or
    more or a second has passed since the last call. A long request pays the trim each time (6 to

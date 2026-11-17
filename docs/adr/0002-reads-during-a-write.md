@@ -5,8 +5,9 @@ Status: accepted, 2026-11-15.
 ## Context
 
 A session's reads and writes share one writer lock inside the process. A write (the first build,
-a watch burst's update, a save, the scan before another read) can itself wait up to 10 minutes
-for another process's SQLite lock. Before this decision the front ends disagreed on what a read did
+a watch burst's update, a save) can itself wait up to 10 minutes for another process's SQLite
+lock; the scan before another read takes the same writer lock in the process, and so waits for
+those. Before this decision the front ends disagreed on what a read did
 then:
 
 - an MCP tool call, a language server request and a Python call skipped the scan and answered
@@ -26,7 +27,9 @@ One contract for every front end:
 
 - An update stays one transaction. A reader sees the index before or after it, never half of it
   (WAL, the segment manifest swapped in the same transaction).
-- A read never waits for a lock another process holds.
+- A read never waits for a lock another process holds, except while another process makes the
+  first index and nothing is committed: then it tries again for up to 20 s
+  (`session::BUILD_WAIT`).
 - The scan before a read waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this
   process. A write that covers the read's change set and ends within that time is waited for, and
   the read then applies what is left of its own change set.
@@ -55,5 +58,6 @@ documentation promise.
 - A read's worst case during this process's own long write is 250 ms plus its own work, with a
   note naming what it lacks.
 - Callers that only need the answer use `Session::run` and `Session::read`; the front ends use
-  `run_counted`, `read_pending` and `run_scanned_pending`, which return the pending set.
+  `run_noted` (the MCP server, the Python bindings), `read_pending` (the language server) and
+  `run_scanned_for` (a command a `serve` answers), which return the pending set.
 - Every session holds one more SQLite connection, the one readers are opened from.

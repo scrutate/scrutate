@@ -21,7 +21,8 @@ One module answers "what changed since token T": `fresh::Freshness::changes_sinc
 named, or every file.
 
 - The walk adapter (`fresh::Walk`) has no watcher and always says every file. A session without a
-  watch, and a fresh process, use it.
+  watch uses it; a command run on its own walks the tree through the index's refresh and asks no
+  freshness.
 - The watch's adapter (`watch::Notes`) notes each event as it arrives, on a thread of its own, so
   no debounce and no running update holds a read up.
 - The barrier: a read writes a cookie file under `.scrutate/cookies/` and waits for that file's
@@ -136,8 +137,8 @@ feed only the watch's bursts.
   went is noted as such for the burst rules, with the other changes of the same drain. A directory
   made in a parent before the build watched that parent is in the parent's listing with no watch
   of its own, and no later note names it, so each build lists the tree's directories again once
-  its watches are set: when they changed, reads keep looking and another build follows, at most 4
-  in a row (`KQ_BUILDS`) while they keep changing. A
+  its watches are set: when they changed, reads keep looking and a rebuild follows, which builds at
+  most 4 more times (`KQ_BUILDS`) while they keep changing. A
   directory no walk enters (an ignored one) changes no listing, so it asks for no build.
 - A listing keeps each name with its kind (directory, file, or a link, socket or pipe): a name
   that keeps its place and changes kind, as a link that `git checkout` turns into a file or a
@@ -203,9 +204,9 @@ kernel's own per-watch memory is not in that count).
 Two more, each measured on one Mac (Apple M3 Pro), with how to measure them again:
 
 - Files the user cannot read, tried again 32 a drain. `cargo test --release -p scrutate --lib --
-  --ignored --nocapture shut_files_cost` (ignored by default) prints two medians over 20 drains: a
-  drain with 10,000 such files, 0.52 ms (0.44 to 0.88; 0.50 ms in the Reviewer's run), and one with
-  none, 0.019 ms. The same test before the bound, when a drain tried them all, gave 155.6 ms (150.5
+  --ignored --nocapture shut_files_cost` (ignored by default) prints the median over 20 drains with
+  10,000 such files, 0.52 ms (0.44 to 0.88; 0.50 ms in the Reviewer's run), and the mean of 20
+  drains with none, 0.019 ms. The same test before the bound, when a drain tried them all, gave 155.6 ms (150.5
   to 237.8, load about 6). Through a running server, on a 10,200-file tree with 10,000 of them mode
   000, a read took 20.8 ms median over 30 reads, against 13.3 ms with them readable (load about 3.5,
   the Reviewer's run).

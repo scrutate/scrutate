@@ -7,8 +7,8 @@ Status: accepted, 2026-11-15.
 A running `scrutate serve` offers its open index to command line calls of the same user on the
 same root (CLI.md, `serve`). On Unix the meeting point is `.scrutate/session.sock`, an `AF_UNIX`
 socket, mode 0600, checked both ways by the peer's uid (`getpeereid`, `SO_PEERCRED`). On Windows
-`session::ask` and `session::listen` are stubs: every command line call does the whole work
-itself, so Windows never gets the resident path, and Windows is where starting a process and
+`session::ask` and `session::listen` were stubs: every command line call did the whole work
+itself, so Windows never got the resident path, and Windows is where starting a process and
 opening the index cost the most.
 
 The brief named two transports: `AF_UNIX` (Windows 10 1803 and later) with a named-pipe fallback.
@@ -72,7 +72,7 @@ path is also one path to test.
   and a timed wait, the command line's write of its request bounded by `REQUEST` too (a pipe
   holds 64 KB, and a server stopped or stuck after its greeting takes no more), 64 KB at a time,
   so the bound is on progress, as a socket's send timeout is; the same limit of 16 calls served at once. The build in the identity is the
-  executable's path, size and times on Windows, where Unix uses device and inode as well.
+  executable's path, size and times on Windows; on Unix its device and inode take the path's place.
 - **The switches stay.** `SCRUTATE_NO_SESSION=1` and `SCRUTATE_SESSION_DEBUG=1` work as on Unix.
 
 ## Consequences

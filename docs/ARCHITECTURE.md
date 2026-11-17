@@ -91,8 +91,8 @@ adds:
   share pause between directories (`pause` in the vendored walker) until it rises; a list's extra
   threads end and restart as it rises. A paused thread sleeps a thirty-second of its paused time,
   at most 1 ms: the walk cannot end before it wakes, and a 1 ms sleep cost a 13 ms search over a
-  millisecond. A lone search makes three system calls for this; one directory without
-  subdirectories, or a list of 256 files or fewer, makes none. A process leaves the count while a
+  millisecond. A lone search makes three system calls for this; a directory without
+  subdirectories holding 256 files or fewer, or a list of 256 files or fewer, makes none. A process leaves the count while a
   pipe or terminal write may block and while stopped from its terminal: the SIGTSTP handler
   (installed only while counted and only if nothing else handles the signal) takes it out, stops it
   with the default action, and puts it back on continue. On Linux the cores are the limit and
@@ -148,7 +148,8 @@ adds:
 - **Start-up** (`lazy_bind.rs`, `cli.rs`): process start dominates a search of a few hundred
   files. dyld binds every imported symbol before `main`, about 3.3 µs each for libSystem symbols
   (a C program importing 121 more starts 0.4 ms later); the executable imported 210 and a search
-  calls about 75. On macOS arm64 the other 133 are private stubs that look the function up with
+  calls about 75. On macOS arm64 the others are private stubs (159 of them, the `lazy!` list in
+  `lazy_bind.rs`) that look the function up with
   `dlsym` on first call and jump to it, keeping every argument register and the stack; `fork`
   binds them all first, so a child never looks one up. clap built every subcommand's definitions
   before parsing; `scrutate grep` builds only its own.
@@ -162,7 +163,7 @@ adds:
   Page reclaims were mostly the executable's own code. `scrutate grep` parses plain argument shapes
   by hand and hands the rest to clap (a property test holds both to one answer; a configuration
   file, or a variable clap reads for grep, goes to clap), `-F` with one literal is a substring
-  search with no regex engine, 14 more system functions bind on first use, and on macOS the linker
+  search with no regex engine, system functions bind on first use (the stubs above), and on macOS the linker
   drops the unused libiconv and lays out side by side the functions a small search runs, from
   `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release links under
   lldb with a breakpoint on every function of the link map (standard library ones included) and
@@ -195,9 +196,11 @@ adds:
   | the Linux tree, open and read only | 1.95 s on one thread, 0.56 s on five, 0.71 s on six, 0.95 s on eleven |
 - **Reading a file**: the first read asks for 64 KB and one byte. A short read is the whole file,
   searched in the thread's buffer with no size call (else a `statx` per file: 96,000 on the Linux
-  tree). A larger file, or a NUL byte or byte-order mark in the first read, goes to the stream
-  reader, up to 1 MB with a searcher made for it, so the thread's own searcher keeps its buffer
-  size (which decides where a NUL byte after the first fill stops output). Reading those whole
+  tree). A short read with a NUL byte stays in that buffer, with the thread's own searcher: searched
+  as a slice when that answers as ripgrep's reader does (no line before the NUL), else through the
+  reader over the bytes held. A larger file, or one that starts with a byte-order mark, goes to the
+  stream reader, a larger one up to 1 MB with a searcher made for it, so the thread's own searcher
+  keeps its buffer size (which decides where a NUL byte after the first fill stops output). Reading those whole
   made every thread keep a buffer as large as the largest it met: 12.6 MB peak resident on py-big
   with five threads against 8.2 MB streamed (ripgrep: 8.5 MB), for 0.2% to 1.5% fewer
   instructions on macOS and 1% to 3% less CPU on the Linux tree in a Linux VM. Linux pseudo
@@ -247,7 +250,8 @@ adds:
   reference](CLI.md#engine-a-grep-alias-g).
 - **No dependency on Engine B by default**: `grep` opens no index unless asked. `--index` reads only
   the files the text index names as candidates (`--update` brings that index up to date first), and
-  `--symbols` groups matches by enclosing function, using the code index if one exists.
+  `--symbols` groups matches by enclosing function through the code index, which it builds, or
+  brings up to date, first (`open_fresh`).
 
 ## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
@@ -363,7 +367,7 @@ NFC with final sigma folded.
   (metadata + zlib-compressed text), `refs` (call edges), `imports`, `dupkeys` (each code
   definition's duplicate keys, written with its chunk row: below), `artifacts` (the artifact
   store, below), `meta` (schema version, model signature, segment manifest, data version, and
-  `chunks_at`, the chunk count of the commit that wrote that data version). The tables are private
+  `chunks_at`, the data version with the chunk counts of the commit that wrote it: below). The tables are private
   to `index.rs` (the database handle is not public): other modules ask `Index` a question (whether a
   path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
   line, the chunks of a name, a name's definitions in lookup order, a name's callers and a chunk's
@@ -461,7 +465,9 @@ NFC with final sigma folded.
     3 ms a file), so a one-file update behind a read takes about 30 ms (28 to 38 ms p50 on an
     M-series Mac); `sync_all` where the file system refuses it), and renamed before the database names them, so
     a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
-    by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
+    by a writer stopped before its commit, and is removed); a deleted chunk is only gone from the
+    `chunks` table: each segment's liveness is rebuilt in memory from the live ids
+    (`LexStore::prepare`), and compaction writes only the live rows;
   - one read snapshot per operation (`ops::run`, each language server request): its reads see
     one commit, and a commit meanwhile shows in the next operation; after an update the log is
     cut to nothing once the readers on older commits finish, waited for about a second, else
@@ -470,7 +476,8 @@ NFC with final sigma folded.
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest or a segment it merged is gone (another update's GC removes one the
     wall clock aged past `GC_AGE_S` before the compaction's second lock); an update a read makes, which must not wait, tries its lock once
-    before the merge and once after it (only the second when there is nothing to merge), and
+    before the merge and once after it (only the second when there is nothing to merge but a
+    segment with no live row to drop, and none when there is neither), and
     leaves the compaction to the next update when another writer holds it (a segment it merged
     meanwhile is removed), which does it even when nothing changed; segment **GC** with an age
     guard inside the update's transaction;
@@ -669,8 +676,8 @@ A look at every file is one walk and one `stat` per file (`files::look`), whatev
 serves: it enters each directory the code index's walk or Engine A's default walk enters, and
 gives each store the files its own walk would list. The walk runs on a thread per core, each
 keeping what it found, and the list is sorted by path at its end. An update reads the stats the
-code index recorded beside that walk, on its own thread, and a file's recorded hash only when its
-stat changed ([ADR 0012](adr/0012-a-fresh-process-look.md)). A command keeps no look between
+code index recorded beside that walk, on its own thread (after it, when one look serves the text
+index too), and a file's recorded hash only when its stat changed ([ADR 0012](adr/0012-a-fresh-process-look.md)). A command keeps no look between
 calls, so a file written just before a call is in its answer. A running server keeps one for
 `grep_code` and `references` (`files::KeptLook`): each change set of its watch looks at the
 files it names again, and a change set of every file drops it, so the next call takes a new look
@@ -684,7 +691,7 @@ whose stat the code index holds as current is not read on a hit.
 Recovery has one rule: a store found damaged is built again from the sources, once, by the
 process that found it, which says so on stderr, and the operation that met the damage runs again.
 The code index's files are deleted first (`Repo::rebuild`, which every front end reaches: the CLI,
-`batch` and the MCP server through `Repo::run` and `Repo::recovering`, the bindings through
+`batch` and the MCP server through `Repo::run_as_is` and `Repo::recovering`, the bindings through
 `Repo::recovering`, the language server and the watcher through `Repo`). On Windows a file another
 handle holds open cannot be deleted, so the database is emptied in place (`Index::clear_in_place`)
 before the build, and a segment directory that stays keeps its name, which a new segment skips.
@@ -698,8 +705,9 @@ index `.scrutate/text/lock`; the `tsquery` cache and the kept answers none, thei
 readers and replaced by rename) and commits in one step (a transaction, a manifest rename, a file
 rename), so a reader sees a store's last commit, never half of one. A writer that keeps both
 indexes takes the two locks in turn, code index first, never both at once, so two writers cannot
-deadlock; between the two commits a reader can see the new code index beside the old text index,
-and no answer reads both. The repositories a session opens (`Repo::another`) share one more
+deadlock; between the two commits a reader can see the new code index beside the old text index;
+an answer that reads both (a search the text index narrows) takes from the text index only the
+files whose stat a look made now still matches. The repositories a session opens (`Repo::another`) share one more
 in-process lock, held by every write any of them makes, so a rebuild after damage happens once;
 reads take no lock. The artifact store, a table of the code index, commits and recovers with it. A
 linked work tree reads its main checkout's index read-only, each lookup in its own read
@@ -717,7 +725,7 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 | `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) for the walk of every file |
 | `open_watched(root, Every)`, `watch(apply)` | `open` with reads told the change set by a watch (`watch::Notes`), which `watch` starts once nothing else needs the process to itself; with `apply` (`serve --watch`) each burst also updates the stores. The MCP server, the language server and the Python bindings open this way, by the root as given: the watch runs on that path, and when it names another tree (a link pointed elsewhere) the session opens its stores and the watch's notes there, its root follows, readers out on the old tree are not given back, a watch that does not apply (the language server, the Python bindings) runs the new tree's first build, and `serve`'s socket in the old tree is removed (on Windows its listener is woken and lets the old tree's pipe name go) |
 | `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()`, `build_count()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through; the files it has read and has to read |
-| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
+| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index brought up to date with the change set, or, when that is every file, scanned at once while a watch gives the change set (unless a `--refresh-interval` you gave holds it back, as above) and at most once per interval without one, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` and gives the answer's `Pending` set |
 | `read(cancel, refresh, f)`, `read_pending(cancel, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again; `read_pending` scans first and gives the `Pending` set |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
 | `run_scanned(op)`, `run_scanned_pending(op)` | a command line call: the change set first (every file when it says so, whatever the interval), then the operation; nothing while a first build runs with nothing committed, when the session followed its root's link to another tree, or when the call fails |
@@ -737,7 +745,7 @@ that holds a segment store; when none holds one, it releases nothing, the writes
 included. Writes take the shared writer lock; a read beside a write sees the index as of
 its last commit (WAL, one transaction per update, the segment manifest swapped in that
 transaction). The scan before a read is a write, and a call that waited for another call's scan
-does not scan again. The scan waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this
+does not scan again (a command line call a `serve` answers with no watch in place does). The scan waits up to 250 ms (`stores::OWN_WRITE_WAIT`) for a write of this
 process, which may itself wait for another process's lock; past that, or when another process
 holds the lock, the read answers from the last committed index with a **pending** set
 (`session::Pending`): the files of its change set the answer does not hold yet, or every file for
@@ -781,8 +789,9 @@ cookies over ten seconds old when it starts. The events since the
 read's token, read by the same rules a burst uses (`Burst::note`, `Burst::files`), name the files.
 Anything those rules cannot vouch for is every file: lost events or a watcher error, an ignore or
 config file in a directory the walks enter, a directory that came or went, a directory left without a watch, a rule file outside
-every watch that changed, the watches set (the first time, and on Linux each time again, since a
-file written while they were set may have no event), more than 10,000 events since the last read,
+every watch that changed, the watches set (the first time, and on Linux again when they gain a
+directory or a directory came or went since, since a file written while they were set may have
+no event), more than 10,000 events since the last read,
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
 floor the user gave and the change sets are a proof (`Freshness::order_proves`; on macOS only
 while the kqueue is in place). A walk the floor holds back still applies the files the events
@@ -807,7 +816,8 @@ printing options (`--json`, the byte limit and offset, a search's `--why`); the 
 the change set (every file when it says so), runs it and prints the answer with the command line's own function, and the command
 line writes those bytes and exits with that code. The command line first checks that the socket
 file is a socket this user owns, the peer is this user, and the greeting names the same executable
-(device, inode, size and times; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings
+(device, inode, size and times; on Windows its path, size and times), index schema and content revisions, models, `SCRUTATE_*` settings (but `SCRUTATE_ROOT`, the
+session switches, `SCRUTATE_MAX_BYTES` and `SCRUTATE_REFRESH_INTERVAL`, which change no answer)
 and root; any difference, error, slow greeting or an answer slower than 60 s makes it do the work
 itself, and so does a session still making its first index with no file in it, which answers
 nothing. A write the session runs is waited for as a read waits for it (above), and a call waits
@@ -822,7 +832,9 @@ Definitions and references, callers/callees, outline, imports mapped to files by
 **duplicates** (exact: the same body text once whitespace runs are squeezed; near: MinHash/LSH
 over token 3-grams, nested chunks excluded; `intel::duplicates` reads the keys the index keeps in
 `dupkeys` in one pass and the text only of a definition in a group or in a bucket of 2 to 64, so
-it finds what reading every text would, `intel::dupes_in`, which the tests keep as its oracle),
+it finds the groups that reading every text finds (`intel::dupes_in`, the tests' oracle), less the
+near pairs that share no bucket of 64 bodies or fewer; a bigger bucket is reported as not
+compared, with its count of bodies and the first place of each, of which the text names five),
 and **structural search** (`tsquery`: tree-sitter
 query language over all files of a language, parallel, no index needed).
 
@@ -836,7 +848,7 @@ per scope, so a function of thousands of uses resolves in linear time. The rules
 resolution order, qualifiers and declared types, Java packages and overloads, import paths and
 re-exports, followed up to 6 import hops deep; Rust `crate`/`self`/`super` paths among them) are in
 [CLI](CLI.md#refs). Java overloads share one qualified name in the index.
-Inherited methods are kept per class, and the Java walks
+Each class's bases, in method resolution order, are kept per class, and the Java walks
 over base types read a type reached by many paths once per depth, so a diamond of interfaces costs
 linear time. It is a query-time step: no schema change, and `refs --textual` keeps the unresolved
 answer.
@@ -852,7 +864,8 @@ and, for Java, PHP and C#, a walk of its own: Java's locals, fields, enclosing c
 overloads; PHP's namespaces, `use`, typed locals and properties, `$this`, `self::` and `parent::`;
 C#'s namespaces, `using`, typed locals, members and partial classes. A PHP or C# class is found by
 name in the index and kept when its defining file declares the namespace the reference names, so
-no namespace list is built for `refs` (C# builds one for `deps`, from the index's namespace rows
+no namespace list is built to find a class (C# builds one for `deps`, and in `refs` only to tell
+a namespace from an outside type at the head of a dotted name, from the index's namespace rows
 and each file's head). The C and C++ rule set (one for both grammars) binds each `#include` as a
 wildcard import, maps it to files by a path suffix through a file name table built once per
 request, and maps a function declaration to the definition with a body, once per declaration. A
@@ -860,7 +873,10 @@ Java field is a definition of the index (kind `field`); a field and a method of 
 apart because the walker's member lookup skips fields and the Java rules ask for a field only
 where a value is read. A step a rule set leaves out is the walker's own. The walker picks a file's
 rule set with one `match` on its language, in a macro, so a language added to the `Lang` enum
-without a rule set does not compile; it tests a language nowhere else. The node kind tables near
+without a rule set does not compile; elsewhere it tests a language where a shared step meets a
+node of one or two grammars (a Go container type, Rust's and TypeScript's `array_type`, a
+TypeScript tuple, Python's `...`, a JavaScript class expression, a Python class body, which
+languages alias an import) or where identifier characters differ (`is_ident`). The node kind tables near
 the top of the walker (functions, local binders, patterns) list the kinds of the grammars that use
 the walker's scopes together, C, C++ and C# binders among them; PHP does not read them. A file's language comes from `langs::detect` alone: by its name, and by its text where an
 extension is shared (`.h`, `.m`, `.pp`, `.cls`); the parser, the resolver and `names.rs` all ask
@@ -880,8 +896,8 @@ standard expression macro answers `macro argument` where the walk would tie it t
 `Names` counts that answer as undecided.
 
 One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolved `refs`, `deps`,
-`rdeps` and the language server's definition and references requests each open one `Names` per
-request and ask what the occurrence at a place refers to; no other module builds a resolver.
+`rdeps` and the language server's definition request each open one `Names` per request (its
+references request two: one for the definition under the cursor, then `refs`'s own) and ask what the occurrence at a place refers to; no other module builds a resolver.
 Within a request a file is read once while the request's set of loaded files holds it, however
 many of its call sites are asked about; the set holds at most 256 MiB of weight (`LOADED_CAP`;
 a file's text, imports and definitions, and its parse as ADR 4's store weighs it) and drops the least recently used, so with that store the
@@ -957,7 +973,7 @@ as git reads it, never from an included file or the global one; or, built with `
 are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
 process, its configuration and programs included; any other name is refused before git runs. On Windows
-each path Git hands git, its directory and these values, goes in its plain form (`git::plain`),
+each path Git hands git, its directory and these values, goes in its plain form (`paths::plain_path`),
 since git does not read a verbatim one (`\\?\C:\x`, what `canonicalize` gives). Each hunk's new lines map onto the index's definitions
 of the file as it is now (the working tree), or for git's copy (`--staged`, `review`) onto a parse of
 it, each definition named where the index holds it and a line outside them by that parse's window,
@@ -1018,13 +1034,14 @@ lines. So a textual use the resolver cannot tie keeps a definition out of dead, 
 The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`):
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
-`tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
-(version, language, query text, searched paths from the root) mapping a 128-bit BLAKE2b content
-hash to the captures, without paths, so files whose content was seen before are read and hashed
-but not parsed. A file cut off by `--limit` is never stored, so a cached list is always complete
-and the global limit gives the same prefix. Files are written to a temporary name and renamed; an
-unreadable one counts as empty. Eviction is by query file, least recently used first, above
-128 MB in total.
+`tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per (version,
+language, query text, searched paths from the root) mapping a key to the captures, without paths.
+The key is a 128-bit BLAKE2b hash of the content hash the code index records (SHA-1) and the
+lowercased file name, so a file whose content was seen before is not parsed, and on a hit one whose
+stat the code index holds as current is not read either. A file cut off by `--limit` is never
+stored, so a cached list is always complete and the global limit gives the same prefix. Files are
+written to a temporary name and renamed; an unreadable one counts as empty. Eviction is by query
+file, least recently used first, above 128 MB in total.
 
 Every file scrutate writes under `.scrutate/` that can hold a file's text reads as binary: it has
 a NUL byte in its first kilobyte (the `tsquery` cache and the answer store from the length after
@@ -1087,23 +1104,25 @@ server's nineteen tools (twenty with `serve --allow-edits`), `batch` and the Pyt
 `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their own), and render answers; none has
 a default or output format of its own (they had drifted: three different limits for `callers`,
 references textual in one and resolved in another). The JSON form leaves in one envelope
-(`Answer::envelope`: `schema`, `result`, `stopped_at`, and a `dupes` answer's `crowded` and `sampling`), which `--json`, a `batch` record and the
+(`Answer::envelope`: `schema`, `result`, `stopped_at` and `stopped_reason`, `not_indexed`, a structural search's `skipped`, and a `dupes` answer's `crowded` and `sampling`), which `--json`, a `batch` record and the
 MCP structured result print (the MCP result adds `complete`, and on a page `offset`,
 `next_offset` and `total`). A tool's JSON arguments are parsed in one place (`Op::from_tool`), used by the MCP server,
 `batch`, the CLI's `read` and the bindings' `Repo.call`. The language server asks the same
 operations for references, document symbols and the definitions of a name, and answers in LSP's
-shapes; resolving the name under the cursor (`Names::at`) and the workspace symbol search
-(`Index::symbols_containing`) are its own. An Engine A search is an operation argument too:
+shapes; resolving the name under the cursor (`Names::at`) is its own, and the workspace symbol search
+ranks as `symbol` does (`symmatch::ranked`). An Engine A search is an operation argument too:
 `Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and an `ops::Scope` (a path
 under the root, globs), so `grep_code` reaches every matching mode.
 
 With a text index, `grep_code` and `references` (textual, and the name search of resolved
-references) make a look of their own (one walk and one `stat` per file, no index update), read the
+references) take a look of the tree (one walk and one `stat` per file, no index update; in a
+session, the session's look, patched with each change set its watch gives), read the
 trigrams for the files the text index holds as they are now (the size, mtime and status change
 time that look found) and read every other file of the look directly: new, changed, hidden or left
 out by the text index's walk (`stores::grep_files`). The walk runs instead when there is no text index,
-when the pattern's trigrams narrow nothing, when a glob brings files in, when a name is not UTF-8,
-or when the path is a file or a directory the look did not enter. No grep builds a text index. A
+when the pattern's trigrams narrow nothing, when a glob brings files in, when `references` is given
+a type or language filter, when a name is not UTF-8,
+or when the path is a file or a directory the look did not enter. Neither builds a text index. A
 look costs about what a walk costs without the search (on 12,001 small files, 90 ms of CPU for the
 tool against 405 ms for `grep` over the tree).
 
@@ -1125,8 +1144,8 @@ and reruns once when one changed ([CLI](CLI.md#serve-mcp)). `read_code` by path 
 through a 64 KB buffer; a file over 1 MB stops after the last line it shows, a smaller one is read
 on to count its lines. The MCP server, the Python
 bindings, the language server and `watch` reach one through their session (`session.rs`). The MCP
-server builds the first index in the background, answering "still building" after a 20 second
-wait. A cancelled call sets the flag the index update checks between batches, so a `reindex` or
+server builds the first index in the background; a call without a progress token answers "still
+building" after a 20 second wait, and one with a token waits for the index. A cancelled call sets the flag the index update checks between batches, so a `reindex` or
 the scan before a read rolls back there.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its client hints (`readOnlyHint`,
@@ -1134,14 +1153,16 @@ The MCP server (`mcp.rs`) is an adapter: the tool table with its client hints (`
 only `readOnlyHint` and `openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`, server
 instructions, and the protocol loop, which serves two eras on one pipe: the `initialize` handshake
 of the revisions up to 2025-11-25, and revision 2026-07-28, where each request names its version in
-`_meta` and nothing is remembered between requests. Each tool call runs on its own thread, so the
-loop keeps reading and a `notifications/cancelled` finds the call it names. A result is text cut
+`_meta` and nothing is remembered between requests. Each tool call runs on its own thread, up to
+32 in flight (`MAX_CALLS`), so the loop keeps reading and a `notifications/cancelled` finds the
+call it names; past that a call runs on the reading thread, and a cancel for it is read when it
+ends. A result is text cut
 to the byte budget; with `serve --structured` it also carries the envelope in `structuredContent`.
 When both forms do not fit, that is a page: `Answer::text_page` says how many items the text
 page shows, and `Answer::page_json` cuts the JSON form to the same items in the same shape,
 walking the text's items in order (`ops::Walk`), so one `offset` continues both. A call with a
 progress token runs beside a thread that looks at the call's `index::FileCount` every 50 ms and
-reports it at most every half second; the session gives each call its count (`run_counted`),
+reports it at most every half second; the session gives each call its count (`Session::run_noted`),
 the index update and `structural_search` add to it, and the first build counts into the
 session's own (`Session::build_count`).
 That is a switch because clients differ in which form they show their model, and the text is the
@@ -1188,11 +1209,12 @@ names of the answer cache, the frecency state and a seeded index leave the proce
 PCRE2's JIT has no wasm backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
 compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` runs that build,
-and runs clippy on the native build without `pcre2`, on every push.
+and runs clippy on the native build without `pcre2`, on every push to `main` and every pull
+request.
 
 ## Models (`crates/scrutate/models/`, `models.rs`)
 `semantic.npz` (7.6 MB: code-word vocabulary tables and projections, the two word tables as int8
-codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (87 KB)
+codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (86 KB)
 are embedded in the binary with `include_bytes!`; the semantic model's stored int8 tables are read
 where they lie (in the binary, or in the bytes of the `SCRUTATE_SEMANTIC` file, read whole once and
 never mapped, so replacing that file under a running `serve` cannot end it with SIGBUS), not
@@ -1208,8 +1230,9 @@ The index records the vector model's signature, a blake2b hash of the model file
 model's is a constant in `models.rs`, checked against the file by a test; a model named at run
 time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's size,
 modification time and status change time. Another vector model makes the vectors
-anew in the next update, inside its write transaction: each segment is written again with its
-postings and the new vectors, or none for `none`, and no database row is rewritten. The vectors
+anew in the next update, inside its write transaction: each segment that keeps a live row is written
+again with its postings and the new vectors, or none for `none`, and no file or chunk row is
+rewritten. The vectors
 come from the word counts of each file's artifact (`Artifact::vectors`), which a build with `none`
 stores as well, so no source file is read or parsed: on this repository 1.39 s CPU where a fresh
 build takes 4.12 s, on Guava 2.90 s of 9.46 s, nearly all of it vector arithmetic a fresh build
@@ -1236,8 +1259,13 @@ model's tables. Ranking is watched by the pinned features above and by the quali
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
   that a CLI, an MCP server and Python call directly. `impact` and `read --history` run the `git` program (`git.rs`) found on
-  `PATH`, which reads the repository; nothing in the repository names a program to run. The one
-  file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A
+  `PATH`, which reads the repository; `setup` runs the agent's own command, and `hook run` the
+  `grep` or `find` it answers for, found on `PATH`; nothing in the repository names a program to
+  run. Outside
+  `.scrutate/` the program writes the frecency state of `files` and the Grep hook's counter (in
+  `scrutate/` of the user state directory: `XDG_STATE_HOME`, `~/.local/state` or `%LOCALAPPDATA%`), the dependency source copies of `--deps` in the
+  user cache (`SCRUTATE_CACHE_DIR`, else `XDG_CACHE_HOME` or the platform's), and the agent
+  configuration files `setup` is asked to write. A
   command line call may use a session a running `serve` offers on a local socket, and never
   starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.
