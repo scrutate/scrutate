@@ -60,6 +60,26 @@ fn any(_: &str, _: &str, _: &str) -> bool {
 /// before a URL's next query parameter.
 const CODE_END: &str = r#"(?:[`'"\s;&]|\\[nr]|$)"#;
 
+/// What ends an unquoted value after a `&` or `;`: another parameter, its name `=` (a connection
+/// string's `Initial Catalog=` holds spaces), behind HTML's `&amp;` or `&#38;` too; another `&`
+/// (`&&`); a cookie's attribute; or a word and a space, another command (`;echo done`).
+static PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:(?:amp;|#38;)?[A-Za-z_][\w.-]*(?: [A-Za-z_][\w.-]*)*=|&|(?:HttpOnly|Secure|Partitioned)(?:[;\s]|$)|[A-Za-z_][\w.-]*\s+\S)").unwrap()
+});
+
+/// Where an unquoted value that a rule ended at `end` ends: a `&` or `;` there ends it only before
+/// what `PARAMETER` reads as the next item, a space or the line's end; else the value goes on to
+/// the next space or quote, so none of it is left shown.
+fn value_end(text: &str, mut end: usize) -> usize {
+    while let Some(after) = text[end..].strip_prefix(['&', ';']) {
+        if after.is_empty() || after.starts_with(char::is_whitespace) || PARAMETER.is_match(after) {
+            break;
+        }
+        end += 1 + after.find(|c: char| c.is_whitespace() || "`'\"&;".contains(c)).unwrap_or(after.len());
+    }
+    end
+}
+
 /// A typed assignment's annotation and `=` (`: &str =`, `?: string | undefined =`, `!: string =`,
 /// `: HashMap<String, Vec<u8>> =`): printable ASCII but `=`, `;`, `{`, `}`, `!` and quotes (a
 /// lifetime's `'a` aside), and `,`, `(` and `)` only inside angle brackets, so no language's syntax
@@ -865,7 +885,8 @@ impl Redactor {
                 {
                     continue;
                 }
-                spans.push((g.start(), g.end(), r.kind));
+                let end = if r.pattern.ends_with(CODE_END) { value_end(seen, g.end()) } else { g.end() };
+                spans.push((g.start(), end, r.kind));
             }
         }
         // base64 alone on a line is a key's body only outside a public key or a certificate
@@ -1729,6 +1750,40 @@ mod tests {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && !marks.is_empty(), "{line} -> {out}");
             assert!(out.ends_with("&useSSL=false") || out.ends_with("&format=json") || out.ends_with("&x=1"), "{line} -> {out}");
+        }
+    }
+
+    /// An unquoted value that holds `&` or `;` is redacted whole: those end it only before another
+    /// parameter (`&x=1`, `;EndpointSuffix=`), a space or the line's end.
+    #[test]
+    fn an_unquoted_value_holding_an_ampersand_or_a_semicolon_is_redacted_whole() {
+        let (a, b) = (fake(121, ALNUM, 16), fake(122, ALNUM, 2));
+        let symbolic = format!("{}@{}!{}", fake(123, ALNUM, 4), fake(124, ALNUM, 5), fake(125, ALNUM, 2));
+        for (line, shown) in [
+            (format!("client_secret = {a}&{b}"), "client_secret = [redacted:generic-secret]".to_string()),
+            (format!("password={symbolic};{b}"), "password=[redacted:generic-secret]".to_string()),
+            (format!("token={a}&{b}&x=1"), "token=[redacted:generic-secret]&x=1".to_string()),
+            (format!("password={symbolic};"), "password=[redacted:generic-secret];".to_string()),
+            (format!("password={symbolic}; other"), "password=[redacted:generic-secret]; other".to_string()),
+        ] {
+            assert_eq!(redact(&line).0, shown, "{line}");
+        }
+        // what starts another parameter, a cookie's attribute or another command still ends it
+        let google = format!("AIza{}", fake(126, ALNUM, 35));
+        for (line, secret, tail) in [
+            (format!("Server=db;User Id=sa;Password={a};Initial Catalog=app"), &a, ";Initial Catalog=app"),
+            (format!("Server=db;Password={a};Persist Security Info=False"), &a, ";Persist Security Info=False"),
+            (format!("Server=db;Password={a};Integrated Security=False"), &a, ";Integrated Security=False"),
+            (format!("Password={a};Data Source=db"), &a, ";Data Source=db"),
+            (format!("<script src=\"https://maps.googleapis.com/maps/api/js?key={google}&amp;libraries=places\">"), &google, "&amp;libraries=places\">"),
+            (format!("https://api.example.com/v1?api_key={a}&amp;format=json"), &a, "&amp;format=json"),
+            (format!("https://api.example.com/v1?api_key={a}&#38;format=json"), &a, "&#38;format=json"),
+            (format!("Set-Cookie: auth_token={a};HttpOnly;Secure"), &a, ";HttpOnly;Secure"),
+            (format!("token={a};echo done"), &a, ";echo done"),
+            (format!("token={a}&&echo ok"), &a, "&&echo ok"),
+        ] {
+            let (out, marks) = redact(&line);
+            assert!(!out.contains(secret.as_str()) && !marks.is_empty() && out.ends_with(tail), "{line} -> {out}");
         }
     }
 

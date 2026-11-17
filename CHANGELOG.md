@@ -1138,6 +1138,10 @@ incompatible index by itself, and that is never breaking.
   password was cut at the quote, its tail shown, or not redacted at all. Text a quote ends with no
   closing tag on its line is redacted as before, and a sentence (`Forgot your password?`) or an
   escaped `&lt;...&gt;` as an element's text is left as written.
+- Redaction takes an unquoted secret that holds a `&` or `;` whole: `client_secret = ...&Rr` and
+  `password=...;k3` were redacted only up to it. What starts another item still ends a value: a
+  `name=` (`;Initial Catalog=`, `&amp;format=`), `&&`, a cookie's `HttpOnly` or `Secure`, or
+  another command (`;echo done`).
 
 ## [0.1.0] - 2026-11-11
 

@@ -548,7 +548,11 @@ string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> =
 in up to two constructors (`Some(String::from("..."))`, `Optional.of("...")`) and a Rust raw
 string (`r"..."`, `r#"..."#`). The rules that end a secret at what follows it take a quote, a
 space, `;`, an escaped line end, the line's end, or `&` before a URL's next query parameter
-(`?api_key=...&format=json`, `jdbc:...&password=...&useSSL=false`). A private key's
+(`?api_key=...&format=json`, `jdbc:...&password=...&useSSL=false`). An unquoted value goes on
+past a `&` or `;` (`client_secret = ...&Rr`) unless what follows starts another item: a
+`name=`, spaces in the name allowed (`;Initial Catalog=`), also behind `&amp;` or `&#38;`; a
+second `&`; a cookie's `HttpOnly`, `Secure` or `Partitioned`; or a word and a space (`;echo
+done`), which leaves a tail shaped so shown. A private key's
 body is redacted line by line between its armour, which is matched in any case (`Rsa Private
 Key`); armour that does not end its line (`const HDR = "-----BEGIN ...-----";`) starts no key, and
 a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`), numbers as code
