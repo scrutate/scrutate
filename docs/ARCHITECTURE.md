@@ -92,9 +92,11 @@ adds:
   share pause between directories (`pause` in the vendored walker) until it rises; a list's extra
   threads end and restart as it rises. A paused thread sleeps a thirty-second of its paused time,
   at most 1 ms: the walk cannot end before it wakes, and a 1 ms sleep cost a 13 ms search over a
-  millisecond. A lone search of up to 1,000 files makes nine system calls for this (`semget` and
-`semctl` to find the set, `semop` and `sigaction` to join, a `semctl` for each of its two reads,
-a `semop` and two `sigaction` calls to leave); a directory without
+  millisecond. A counted search makes a handful of system calls for this: `getuid`, `semget` and
+  `semctl` to find the set, `semop` and `sigaction` to join, a `semctl` at its start and after its
+  first four files (and, past 1,000 files, every 64 files of each thread), and a `semop` and two
+  `sigaction` calls to leave; with plain output to a pipe or terminal each write adds two `semop`,
+  and a stop from the terminal more. A directory without
   subdirectories holding 256 files or fewer, or a list of 256 files or fewer, makes none. A process leaves the count while a
   pipe or terminal write may block and while stopped from its terminal: the SIGTSTP handler
   (installed only while counted and only if nothing else handles the signal) takes it out, stops it
@@ -378,9 +380,10 @@ NFC with final sigma folded.
   path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
   line, the chunks of a name, a name's definitions in lookup order, a name's callers and a chunk's
   callees, call counts, a file's imports and every import, the counts `check` and `stats` print).
-  Each question keeps the order its callers read; a statement prepared with `prepare_cached` is
-  cached on the connection, and the others (`chunk`, `chunk_at`, `imports`, `call_edges`,
-  `constants` and the questions with an `IN` list) are prepared at each call. A test damages the
+  Each question keeps the order its callers read. The questions on the search path use
+  `prepare_cached`, so their statements are cached on the connection; others, such as `chunk`,
+  `chunk_at`, `imports`, `call_edges`, `constants` and the counts `check` and `stats` print, are
+  prepared at each call. A test damages the
   index through `Index::damage_for_tests` or with its own connection to `index.db`.
 - **Names** (`names`, `names_tri`): one row per spelling of a definition name, keyed by name key
   and name (`setup` and `setUp` share a key and are two rows), with its word initials and a count,
@@ -596,8 +599,9 @@ position of the trigram modulo 8.
 
 A query becomes a boolean trigram condition by walking the pattern's regex-syntax HIR (literals,
 small classes and alternations expand to exact string sets; concatenations combine them; `x?` and
-a fixed repetition of up to four become exact sets, and any other repetition of at least one keeps
-the condition of its part; anything else adds no constraint), evaluated over the postings as bitsets; Engine A's per-file searcher
+a fixed repetition of up to four become exact sets when their part is one and the set stays small;
+otherwise `x?` adds no condition and a repetition of at least one keeps its part's; anything else
+adds no constraint), evaluated over the postings as bitsets; Engine A's per-file searcher
 searches the surviving files. A string of four bytes or more needs its trigrams at positions that
 can line up, each followed by a byte that fits (`kernel_thread` on the Linux tree: 164 candidate
 files instead of 1,781). The condition is necessary, never sufficient: the candidates come from the
