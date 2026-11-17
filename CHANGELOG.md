@@ -1142,6 +1142,11 @@ incompatible index by itself, and that is never breaking.
   `password=...;k3` were redacted only up to it. What starts another item still ends a value: a
   `name=` (`;Initial Catalog=`, `&amp;format=`), `&&`, a cookie's `HttpOnly` or `Secure`, or
   another command (`;echo done`).
+- An unquoted password, secret or token with a symbol that holds a `:` or `,` is redacted
+  whole: `password: ...@...:yZk3` came out unchanged. A `,` before a `name=` or `name:` still ends
+  it, and code (a ternary, `@user.field`, a method chain ending in `!`, an image digest) and an
+  address (`git@github.com:acme/secrets.git`, `vault@prod:8200`) are left as written.
+  docs/SECURITY.md says what ends a value and what is not covered.
 
 ## [0.1.0] - 2026-11-11
 

@@ -541,8 +541,15 @@ public key are marked as any key material, since nothing here proves their bodie
 `generic-secret` gitleaks' assignment rule without its stopword list, which drops real secrets
 holding a common word; after a name holding `password`, `passwd`, `secret` or `token` it also takes
 an unquoted value with other symbols (a YAML `password:` or a `.properties`
-`spring.datasource.password=` whose value holds `@` or `!`), up to a space, quote, `;`, `&`, `:`, `,`, a bracket or the
-line's end, and no URL. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
+`spring.datasource.password=` whose value holds `@` or `!`), up to a space, quote, `;`, `&` or the
+line's end, and no URL. A `:` or `,` with more of such a value after it is part of it
+(`password: ...@...:yZk3`), as a `;` or `&` is (above): the part before it needs ten
+characters and every test but entropy, which the whole value may pass in its place when the part
+mixes upper case, lower case and digits, as an address (`git@github.com:`, `vault@prod:8200`)
+does not; a `,` before
+a `name=` or `name:` ends it, and a ternary (`isAuth?user.token:null`), an `@name.field`, a
+method chain that ends in `!` or `?` and an image digest (`repo@sha256:`) are code, left as
+written. `aws-secret-access-key`, `password` and `generic-secret` also take a typed
 assignment with a type of up to 80 characters (`const KEY: &'static str = "..."`, `apiToken?:
 string | undefined = "..."`, `x!: string = "..."`, `: HashMap<String, Vec<u8>> = "..."`), a value
 in up to two constructors (`Some(String::from("..."))`, `Optional.of("...")`) and a Rust raw
@@ -568,7 +575,7 @@ it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `
 per 10,000 lines, were read one by one and none is a secret; in this repository's tracked files,
 none (a test holds it there). A rule's regex is built the first time a text holds one of its
 keywords, so a process pays for the rules its answers need. The page measured is the first 24,000
-bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 5 of the 34
+bytes of the files directly under `crates/scrutate/src/`, in name order, which needs 6 of the 35
 rules. On a 16-vCPU AMD EPYC 9R14 server (three runs, load 6), a process takes 0.3 ms before any
 text and 2.1 ms more for that page; a text that needs every rule pays what building them all costs,
 10.3 ms. Redacting the page again then takes 0.45 ms (median of 101 runs). The source a page holds
@@ -590,8 +597,16 @@ Not covered, in assignments: a quoted value that reads as a name (a file path wi
 file extension, none of whose parts mixes both cases with digits, or capitalized words run
 together with up to four digits after them, so a password such as `WinterIsComing2024` too); two on one line; `=` inside a type's generics; a type over 80
 characters; a value built in a closure (`Lazy::new(|| ...)`) or a Kotlin `by lazy`; an f-string;
-a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borrowed`). Not
-covered elsewhere: a private key's short last line in a `search_code` or definition answer that
+a wrapper other than `Some`, `Ok` and a type's `from`, `new` or `of` (`Cow::Borrowed`); an
+unquoted value with a symbol that a `:`, `,` or bracket ends (`password: x!yz, user: y`,
+`connect(password=x!yz)`), which reads as code that lists or calls; one cut by `;`, `&`, `:` or
+`,` before its tenth character, or whose part before that cut fails a test but entropy, or fails
+entropy without mixing upper case, lower case and digits; a value
+of ten or eleven characters whose entropy is under the floor (`password=Xq7r@T2vW9`) whatever
+follows it. Not covered in
+XML: a value in a Spring `<property name="password" value="..."/>`, in an element with attributes
+(`<password encrypted="false">`) or in an `<entry key="db.password">`, a CDATA section, and an
+element's text over more than one line. Not covered elsewhere: a private key's short last line in a `search_code` or definition answer that
 starts inside the key (no armour on the page, and these answers are not read back from the file),
 or in a file that holds a key's body without its armour; a key's short last line in a file the
 text index does not hold yet (new since its last update, or one it skips) or when the text index
