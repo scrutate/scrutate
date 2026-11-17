@@ -930,11 +930,37 @@ fn same_files(a: &Path, b: &Path) -> Result<bool> {
         return Ok(false);
     }
     for n in &na {
-        if std::fs::read(a.join(n))? != std::fs::read(b.join(n))? {
+        if !same_bytes(&a.join(n), &b.join(n))? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// The files `a` and `b` hold the same bytes, read in 64 KiB pieces so neither is held whole.
+fn same_bytes(a: &Path, b: &Path) -> Result<bool> {
+    use std::io::BufRead;
+    let (fa, fb) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+    let (ma, mb) = (fa.metadata()?, fb.metadata()?);
+    if ma.is_dir() || mb.is_dir() {
+        bail!("a segment holds something that is not a file");
+    }
+    if ma.len() != mb.len() {
+        return Ok(false);
+    }
+    let (mut ra, mut rb) = (std::io::BufReader::with_capacity(1 << 16, fa), std::io::BufReader::with_capacity(1 << 16, fb));
+    loop {
+        let (x, y) = (ra.fill_buf()?, rb.fill_buf()?);
+        if x.is_empty() || y.is_empty() {
+            return Ok(x.is_empty() && y.is_empty());
+        }
+        let k = x.len().min(y.len());
+        if x[..k] != y[..k] {
+            return Ok(false);
+        }
+        ra.consume(k);
+        rb.consume(k);
+    }
 }
 
 /// The hash of a file's bytes the index records for it.
@@ -3925,6 +3951,34 @@ mod tests {
         assert_eq!(ix_b.not_indexed_reason("big.py"), Some("over 1 MB"));
         drop((ix_a, ix_b));
         let _ = (std::fs::remove_dir_all(&a), std::fs::remove_dir_all(&b));
+    }
+
+    /// Two segment directories are the same only with the same file names and every byte equal,
+    /// a byte far past the start or one more at the end included.
+    #[test]
+    fn same_files_compares_every_name_and_byte() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_same_files_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let body: Vec<u8> = (0..1_000_000u32).map(|i| (i % 251) as u8).collect();
+        let put = |d: &std::path::Path, n: &str, bytes: &[u8]| std::fs::write(d.join(n), bytes).unwrap();
+        for d in [&a, &b] {
+            put(d, "vec", &body);
+            put(d, "post", b"short");
+        }
+        assert!(super::same_files(&a, &b).unwrap());
+        let mut last = body.clone();
+        *last.last_mut().unwrap() ^= 1;
+        put(&b, "vec", &last);
+        assert!(!super::same_files(&a, &b).unwrap());
+        put(&b, "vec", &[&body[..], b"x"].concat());
+        assert!(!super::same_files(&a, &b).unwrap());
+        put(&b, "vec", &body);
+        put(&b, "extra", b"");
+        assert!(!super::same_files(&a, &b).unwrap());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// An index records each file's hash in this form: the same hex under every sha1 release.
