@@ -243,7 +243,8 @@ def test_the_tools_take_turns_within_each_repetition(monkeypatch):
     monkeypatch.setattr(C, "peak_rss_mb", lambda *a, **k: 1.0)
     monkeypatch.setattr(C, "corpus_stats", lambda d: {"bytes": 1})
     rows = C.bench_text_search(tools, {"c": "/nowhere"}, 4, False)
-    timed = order[3:]  # after one answer-checking run per tool
+    assert order[3:6] == ["/s", "/rg", "/g"]  # one untimed warm-up run per tool after the answer-checking runs
+    timed = order[6:]
     assert [timed[i:i + 3] for i in range(0, 12, 3)] == [["/s", "/rg", "/g"], ["/rg", "/g", "/s"], ["/g", "/s", "/rg"], ["/s", "/rg", "/g"]]
     assert all(r["agrees"] and len(r["wall_ms"]) == 4 for r in rows)
 

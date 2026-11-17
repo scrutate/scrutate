@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shlex
 import statistics
@@ -83,7 +84,10 @@ STOP_NOTE = ("- Stop rule (`leaderboard.py`, on by default; the Haybittle-Peto b
              "above, whatever the load did between the blocks.")
 
 # method notes the page states once, above the sections that use them
-LEGEND = ("- Engine A tables: medians in ms (runs in parentheses when fewer than the full count); `wrong` = answer differs from "
+LEGEND = ("- Engine A tables: medians in ms, each with its 95% interval in brackets (order statistics of the tool's own runs, "
+          "distribution-free; shown where the runs are enough for 95%, 6 or more), runs in parentheses when fewer than the full "
+          "count; `rank` is scrutate's place by median among the tools with a correct answer, lowest first; each benchmark "
+          "links to the raw result file it comes from. `wrong` = answer differs from "
           "the reference (disqualified), `n/a` = the tool cannot express the query or filter, `timeout` = did not finish. The "
           "`scrutate --index` column (Engine B's text index, another category) is published but never ranked.")
 CPU_TESTED = ("- CPU time (user + system seconds) and peak memory (resident set) come from the same runs as the wall time and are "
@@ -100,6 +104,31 @@ CPU_UNTESTED = ("- CPU time and peak memory tables without a status give medians
 
 METRICS = {"cpu": "CPU time", "rss": "peak memory"}
 MODES = ["default", "-j1"]
+
+
+def median_ci(xs, level=0.95):
+    """The distribution-free interval of the median of `xs`: the order statistics x(k), x(n-k+1) with
+    the largest k whose binomial coverage is at least `level`; None when no k reaches it."""
+    n = len(xs)
+    cdf, best = 0.0, None
+    for k in range(1, n // 2 + 1):
+        cdf += math.comb(n, k - 1) / 2**n  # P(Binomial(n, 1/2) <= k - 1)
+        if 1 - 2 * cdf < level:
+            break
+        best = k
+    if best is None:
+        return None
+    s = sorted(xs)
+    return s[best - 1], s[n - best]
+
+
+def stale_line(check):
+    """The competitors a run recorded that are not the latest stable release, as the page names them."""
+    stale = (check or {}).get("stale")
+    if not stale:
+        return []
+    return [f"- Not the latest stable release (`bench/competitors/latest.json`, checked {check['checked']}): "
+            + "; ".join(f"{s['tool']} `{s['recorded']}`, latest stable `{s['latest']}`" for s in stale) + "."]
 
 
 def count_line(statuses):
@@ -212,7 +241,7 @@ def prepare(cmd: str) -> str:
     return f" (prepare: `{cmd}`)"
 
 
-def engine_a(data, label, note=()):
+def engine_a(data, label, note=(), raw=None):
     env = data["environment"]
     out = []
     out.append(f"## Engine A and structural search: {label}\n")
@@ -238,6 +267,7 @@ def engine_a(data, label, note=()):
     out.append(f"- 1-minute load average before each tool's runs, and once at the end of each benchmark: median {statistics.median(loads):.1f}, max {max(loads):.1f} on "
                f"{env.get('cpus')} logical CPUs.")
     out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t not in ("scrutate --index", "scrutate base", "scrutate -j1")) + ".")
+    out += stale_line(env.get("version_check"))
     if env.get("scrutate_sha256"):
         out.append(f"- scrutate binary measured: SHA-256 `{env['scrutate_sha256']}`.")
     out.append("")
@@ -248,9 +278,9 @@ def engine_a(data, label, note=()):
                 f"{mode} mode " + count_line([r["metrics"][key][mode]["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
     # results from before bench/walkread.c have no floor to show
     walk = any("walkread" in r for r in data["benchmarks"].values())
-    head = "| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files" + (" | walk and read" if walk else "") + " | ratio vs best (95% CI) | status |"
+    head = "| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files" + (" | walk and read" if walk else "") + " | rank | ratio vs best (95% CI) | status |"
     out.append(head)
-    out.append("|" + "---|" * (len(TOOLS) + 5 + walk))
+    out.append("|" + "---|" * (len(TOOLS) + 6 + walk))
     for bid, r in data["benchmarks"].items():
         cells = []
         for t in TOOLS:
@@ -263,8 +293,13 @@ def engine_a(data, label, note=()):
                 n = x.get("n", 0)
                 v = ms(x.get("median"))
                 cells.append(f"**{v}**" if t == r.get("best_competitor") or (t == "scrutate" and r["status"] == "PASS") else v)
+                ci = median_ci(x.get("times") or [])
+                if ci:
+                    cells[-1] += f" [{ms(ci[0])}, {ms(ci[1])}]"
                 if n and n < r.get("runs", data["settings"]["runs"]):
                     cells[-1] += f" ({n})"
+        ok = {t: r["tools"][t]["median"] for t in TOOLS if r["tools"].get(t, {}).get("status") == "ok" and r["tools"][t].get("median") is not None}
+        rank = f"{1 + sum(v < ok['scrutate'] for t, v in ok.items() if t != 'scrutate')} of {len(ok)}" if "scrutate" in ok else "-"
         xi = r["tools"].get("scrutate --index", {})
         idx = ms(xi.get("median")) if xi.get("status") == "ok" else xi.get("status", "")
         ratio = f"{r['ratio']:.3f} [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]{level(r)} vs {r['best_competitor']}" if "ratio" in r else r.get("why", "")
@@ -276,7 +311,8 @@ def engine_a(data, label, note=()):
         if r.get("resident") is not None and r["resident"] < 0.95:
             flag += f" ({r['resident']:.0%} of the files in the page cache)"
         floor = f" | {walk_floor(r)}" if walk else ""
-        out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))}{floor} | {ratio} | {r['status']}{flag} |")
+        name = f"[{bid}]({raw})" if raw else bid
+        out.append(f"| {name} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))}{floor} | {rank} | {ratio} | {r['status']}{flag} |")
     out.append("")
     for bid, r in data["benchmarks"].items():
         n = r["reference"].get("files_not_compared")
@@ -359,11 +395,13 @@ def throughput_runs(st: dict) -> int:
     return st.get("throughput_runs", 3)
 
 
-def indexed(data, label, note=()):
+def indexed(data, label, note=(), raw=None):
     others = [t for t in data["tools"] if t != "scrutate"]
     out = [f"## Engine B: indexed search against {' and '.join(others)}: {label}\n", *note]
     env = data["environment"]
-    out.append(f"- Hardware: {hardware(env)}, {env.get('cpus')} logical CPUs; {env['platform']}. Corpus: `{os.path.basename(data['corpus'])}`.")
+    tree = data.get("corpus_manifest", {}).get("tree_sha256")
+    out.append(f"- Hardware: {hardware(env)}, {env.get('cpus')} logical CPUs; {env['platform']}. Corpus: `{os.path.basename(data['corpus'])}`"
+               + (f", tree SHA-256 `{tree}`" if tree else "") + ".")
     out += machine_line(env)
     if data.get("load"):
         out.append(f"- 1-minute load average before each tool's runs: median {statistics.median(data['load']):.1f}, max {max(data['load']):.1f} on "
@@ -371,7 +409,14 @@ def indexed(data, label, note=()):
     st = data["settings"]
     out.append(f"- Method: {st['index_runs']} full index builds and {st['index_runs']} incremental updates (100 files edited) per tool; "
                f"{st['runs']} runs of each of {st['queries']} queries, round-robin across tools, each in a fresh process; "
-               f"{st['concurrency']} concurrent clients for {st['seconds']:.0f} s, {throughput_runs(st)} times, for throughput.")
+               f"{st['concurrency']} concurrent clients for {st['seconds']:.0f} s, {throughput_runs(st)} times, for throughput"
+               + (f"; {st['warmup']} untimed warm-up run of every query by every tool before the latency runs" if st.get("warmup") else "")
+               + ". Timed by `bench/indexed.py`'s own loop (`os.wait4`, not hyperfine); a row under 30 runs per tool is measured, not ranked.")
+    flagged = [f"{t} {x[k]['outliers']} in {k}" for t, x in data["tools"].items() for k in ("index", "update", "latency", "throughput")
+               if x.get(k, {}).get("outliers")]
+    if any("outliers" in x.get("latency", {}) for x in data["tools"].values()):
+        out.append("- Outliers (modified z-score from the median above 3.5; counted, never dropped): " + ("; ".join(flagged) if flagged else "none") + ".")
+    out += stale_line(data.get("version_check"))
     out.append("- Versions: " + "; ".join(f"{t}: `{v['version']}`" for t, v in data["tools"].items()) + ".\n")
     out.append("| Metric | " + " | ".join(data["tools"]) + " |")
     out.append("|---|" + "---|" * len(data["tools"]))
@@ -398,11 +443,12 @@ def indexed(data, label, note=()):
     out.append("")
     if "comparison" in data:
         out.append("| Comparison (scrutate / best other) | ratio | 95% CI | status |\n|---|---|---|---|")
-        for k, v in settle(data["comparison"], data["tools"]).items():
+        for k, v in settle(data["comparison"], data["tools"], data.get("settings")).items():
             ci = f"{v['ci95'][0]:.3f} to {v['ci95'][1]:.3f}" if "ci95" in v else "-" if "ratio" not in v else "(deterministic)"
             vs = f" (vs {v['best']})" if "best" in v else ""
             ratio = f"{v['ratio']:.3f}" if "ratio" in v else "-"
-            out.append(f"| {k}{vs} | {ratio} | {ci} | {v['status']}{': ' + v['why'] if v.get('why') else ''} |")
+            name = f"[{k}]({raw})" if raw else k
+            out.append(f"| {name}{vs} | {ratio} | {ci} | {v['status']}{': ' + v['why'] if v.get('why') else ''} |")
         out.append("")
     wrong = [(e["q"]["pats"], t, x) for e in data.get("queries", []) for t, x in e["tools"].items() if not x["valid"]]
     if wrong:
@@ -476,10 +522,12 @@ def main() -> int:
     if any("metrics" not in r for r in rows):
         lines.append(CPU_UNTESTED)
     lines.append("")
+    # each row links to its raw file from docs/, where the page is published (a --check run writes it elsewhere)
+    raw = lambda p: os.path.relpath(os.path.abspath(p), os.path.join(root, "docs")).replace(os.sep, "/")
     for p, d in zip(a.engine_a, datas):
-        lines += engine_a(d, f"{section_label(d, p)}, {d['settings']['cache']} cache", superseded_note(d, p, bare))
+        lines += engine_a(d, f"{section_label(d, p)}, {d['settings']['cache']} cache", superseded_note(d, p, bare), raw(p))
     for p, d in zip(a.indexed, indexed_datas):
-        lines += indexed(d, section_label(d, p), superseded_note(d, p, bare))
+        lines += indexed(d, section_label(d, p), superseded_note(d, p, bare), raw(p))
     with open(a.out, "w") as f:
         f.write("\n".join(lines) + "\n")
     print(f"wrote {a.out}", file=sys.stderr)

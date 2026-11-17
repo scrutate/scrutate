@@ -60,6 +60,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "competitors"))
+import latest  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
@@ -115,6 +118,18 @@ def version(tool):
         return out[0] if out else None
     except Exception:
         return None
+
+
+def outliers(xs) -> int:
+    """How many of the runs `xs` are outliers by the modified z-score (Iglewicz and Hoaglin 1993):
+    0.6745 * |x - median| / MAD above 3.5. They are counted and reported, never dropped."""
+    if not xs:
+        return 0
+    med = statistics.median(xs)
+    mad = statistics.median(abs(x - med) for x in xs)
+    if mad == 0:
+        return sum(x != med for x in xs)
+    return sum(0.6745 * abs(x - med) / mad > 3.5 for x in xs)
 
 
 # ------------------------------------------------------------------------- the suite
@@ -944,6 +959,7 @@ def environment(data_dir="."):
             env["cpu"] = next((l.split(":", 1)[1].strip() for l in stdout_of(["lscpu"]).splitlines() if l.startswith("Model name:")), env["cpu"])
     env.update(machine_facts(data_dir))
     env["tools"] = {t: version(t) for t in BIN}
+    env["version_check"] = latest.run_check(env["tools"])
     env["scrutate_sha256"] = hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest()
     if SCRUTATE_BASE:
         env["scrutate_base_sha256"] = hashlib.sha256(open(SCRUTATE_BASE, "rb").read()).hexdigest()

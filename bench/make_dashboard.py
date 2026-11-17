@@ -57,7 +57,7 @@ def load_runs(results):
         env = d.get("environment", {})
         if name.startswith("indexed"):
             kind = "indexed"
-            items = settle(d.get("comparison", {}), d.get("tools", {}))
+            items = settle(d.get("comparison", {}), d.get("tools", {}), d.get("settings"))
         else:
             kind = f"leaderboard, {d.get('settings', {}).get('cache', '?')} cache"
             items = d.get("benchmarks", {})

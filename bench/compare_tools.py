@@ -7,9 +7,10 @@ For every (corpus, query, tool) the harness
   1. runs the command once and records the lines it matched (all tools must print the same paths
      and line numbers, or the row is flagged: a benchmark of a tool that returns different results
      is not a benchmark);
-  2. runs it N more times (default 30), warm cache, the tools taken in turn within each repetition,
-     taking the median and minimum wall time, CPU time (user+sys) and peak RSS from the child's
-     rusage (os.wait4);
+  2. runs it once more untimed (a warm-up), then N more times (default 30), warm cache, the tools
+     taken in turn within each repetition, taking the median and minimum wall time, CPU time
+     (user+sys) and peak RSS from the child's rusage (os.wait4), and counting the runs far from the
+     median (leaderboard.outliers: flagged, not dropped);
   3. optionally drops the page cache (root only) and measures one cold run.
 Startup cost is measured on a directory with one file; concurrency as K simultaneous processes, each with
 its own output file checked against the reference count, N rounds per cell.
@@ -32,7 +33,8 @@ import sys
 import tempfile
 import time
 
-from leaderboard import LINE, stdout_of, drop_scrutate_settings, machine_facts
+from leaderboard import LINE, stdout_of, drop_scrutate_settings, machine_facts, outliers
+import latest  # noqa: E402  (bench/competitors, on the path leaderboard.py sets)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
@@ -458,6 +460,8 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                 answers[tool] = answer_of(q["mode"], first["out"])
                 row = {"corpus": cname, "query": q["name"], "tool": tool, "status": "ok", "matches": count_lines(q["mode"], first["out"]), "cmd": shown(cmd)}
                 timed_ok.append((tool, cmd, exe, row, [], []))
+            for tool, cmd, exe, row, walls, cpus in timed_ok:
+                timed_rusage(cmd, cdir, executable=exe)  # warm-up, untimed
             for rep in range(n_runs):
                 k = rep % len(timed_ok) if timed_ok else 0
                 for tool, cmd, exe, row, walls, cpus in timed_ok[k:] + timed_ok[:k]:
@@ -466,6 +470,7 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                     cpus.append(r["cpu"])
             for tool, cmd, exe, row, walls, cpus in timed_ok:
                 row.update({"wall_median_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls), "wall_ms": [1000 * w for w in walls],
+                            "outliers": outliers(walls),
                             "cpu_median_s": statistics.median(cpus), "maxrss_mb": peak_rss_mb(cmd, cdir, exe)})
                 if cold:
                     if drop_caches():
@@ -710,7 +715,8 @@ def main() -> int:
     # phases kept from the file would stand under this binary's hash
     if res and res.get("environment", {}).get("scrutate_sha256") != env["scrutate_sha256"]:
         raise SystemExit(f"{out} holds phases that another scrutate binary measured: move the file away, or run every phase")
-    res.update({"environment": env, "corpora": {k: corpus_stats(v) for k, v in corpora.items()}, "runs": a.runs})
+    res.update({"environment": env, "corpora": {k: corpus_stats(v) for k, v in corpora.items()}, "runs": a.runs,
+                "version_check": latest.run_check({k: v.get("version") for k, v in tools.items() if v.get("exe")})})
     if "text" in phases:
         # how `agrees` was decided: by the lines printed (path and line number), not by their count
         res["agreement"] = "lines"

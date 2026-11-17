@@ -50,13 +50,13 @@ def test_the_readme_counts_are_the_leaderboards_pass_counts():
     assert D.readme_count_problems(readme, board) == []
     planted = D.readme_count_problems(readme.replace("all 37 warm-cache", "all 99 warm-cache"), board)
     assert len(planted) == 1 and "says 99" in planted[0] and "has 37 PASS of 37" in planted[0], planted
-    words = D.readme_count_problems(readme.replace("leading all seven indexed", "leading all nine indexed"), board)
-    assert len(words) == 1 and "says 9" in words[0] and "has 7 PASS of 7" in words[0], words
+    words = D.readme_count_problems(readme.replace("leading all two indexed", "leading all nine indexed"), board)
+    assert len(words) == 1 and "says 9" in words[0] and "has 2 PASS of 2" in words[0], words
 
 
 def test_a_reworded_count_sentence_fails_rather_than_drop_out():
     readme, board = page("README.md"), page("docs/LEADERBOARD.md")
-    problems = D.readme_count_problems(readme.replace("leads Zoekt and livegrep on all 7 indexed metrics", "leads Zoekt and livegrep everywhere"), board)
+    problems = D.readme_count_problems(readme.replace("leads Zoekt and livegrep on all 2 indexed metrics", "leads Zoekt and livegrep everywhere"), board)
     assert len(problems) == 1 and problems[0].startswith("README.md: no sentence matches"), problems
 
 

@@ -18,6 +18,7 @@ The tables read a result file filed as superseded (an earlier build). They are r
 
 - Machine: Apple M3 Pro, 11 logical cores, 19.3 GB RAM, macOS-27.2.1-arm64-arm-64bit
 - Runs per cell: 6 for text search (3 on the massive corpus), 3 for structural search, 18 for startup; warm cache unless noted; median wall time of the whole process (start to exit); CPU time from each child's `wait4` rusage, peak RSS from one more run under `/usr/bin/time -l` on macOS or from VmHWM sampled on Linux.
+- Timing: `bench/compare_tools.py`'s own loop (`os.wait4`, not hyperfine). This run predates its warm-up run and outlier count: the answer-checking run before the timed runs was its only untimed run.
 - Tools (absolute paths; shell aliases bypassed):
   - scrutate: `scrutate 0.1.0`
   - ripgrep: `ripgrep 15.2.0`
@@ -175,4 +176,4 @@ No competitor here builds a persistent index, so these numbers have no compariso
 
 - 11 logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; grep, ack and ag search one file at a time.
 - The corpora are Python only: byte-level search cost does not depend on the language, but structural search and indexing figures do.
-- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (at least 20 runs per tool, 30 unless every verdict holds at the first look (its published rows took 30, from a run before that rule); confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.
+- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (30 runs per tool: its published runs take every run; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.
