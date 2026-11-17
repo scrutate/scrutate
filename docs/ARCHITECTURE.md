@@ -382,8 +382,8 @@ NFC with final sigma folded.
   callees, call counts, a file's imports and every import, the counts `check` and `stats` print).
   Each question keeps the order its callers read. A name's lookups (`symbol`, `named`,
   `definitions`, `defines`, `named_of_kinds`, `symbols_named` and their kin), a file's (`outline`,
-  `symbols_in`, `window_at`, `imports_of`, `has_file`), `callers_of`, `callees_of` and the
-  writes of an update use `prepare_cached`, so their statements are cached on the connection;
+  `symbols_in`, `window_at`, `imports_of`, `has_file`), `callers_of`, `callees_of`, `insert` and
+  `drop_file` use `prepare_cached`, so their statements are cached on the connection;
   `chunk`, `chunk_at`, the questions over a list of ids (`chunks`, `places`, `texts`), `bodies`,
   `chunk_ids_in`, `symbols_of_kinds`, `ids_named`, `definers`, `imports`, `call_edges`,
   `call_counts`, `constants` and the counts `check` and `stats` print are prepared at each call. A test damages the
