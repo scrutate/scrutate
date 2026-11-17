@@ -681,6 +681,13 @@ pub(crate) fn skipped(skip: &[String], name: &str) -> bool {
     own_dir_name(name).is_some() || skip.iter().any(|s| s == name)
 }
 
+/// `rel` lies in a skipped directory, or is named as this program's own or git's: the skip list
+/// names directories, so a file called `build` or `node_modules` is not left out for its name.
+pub(crate) fn in_skipped(skip: &[String], rel: &str) -> bool {
+    let (dirs, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+    own_dir_name(name).is_some() || !dirs.is_empty() && dirs.split('/').any(|n| skipped(skip, n))
+}
+
 /// Most names `exclude_dirs` of a repository's `.scrutate.toml` adds; the rest are not read.
 const MAX_CONFIG_EXCLUDES: usize = 1000;
 
@@ -749,16 +756,22 @@ pub fn skipped_dirs(root: &Path) -> Vec<String> {
 /// The files an Engine A search of the repository covers, walked by the code index's rules: the
 /// ignore files, hidden files included, none of the skipped directories.
 pub fn repository_files(root: &Path) -> crate::instant::Files {
-    // a name, never a pattern: `*` in a repository's exclude_dirs must not hide every file
+    // a name, never a pattern: `*` in a repository's exclude_dirs must not hide every file; the
+    // trailing `/` leaves out directories of that name, not files, except git's and this program's
     let globs = skip_dirs(root).into_iter().map(|d| {
-        d.chars().fold("!".to_string(), |mut g, c| {
+        let own = own_dir_name(&d).is_some();
+        let mut g = d.chars().fold("!".to_string(), |mut g, c| {
             if "*?[]{}".contains(c) {
                 g.extend(['[', c, ']']);
             } else {
                 g.push(c);
             }
             g
-        })
+        });
+        if !own {
+            g.push('/');
+        }
+        g
     });
     crate::instant::Files { hidden: true, globs: globs.collect(), skip_own_dirs: true, ..crate::instant::Files::walk(vec![root.to_path_buf()]) }
 }
@@ -848,7 +861,7 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
             }
             let Ok(rel) = e.path().strip_prefix(root) else { return ignore::WalkState::Continue };
             let path = slashed(rel);
-            let repo = !path.split('/').any(|n| skipped(&walk.skip, n));
+            let repo = !in_skipped(&walk.skip, &path);
             let code = repo && e.file_name() != ".git" && is_indexable(&path);
             let text = rules.as_ref().is_some_and(|r| !left_out(r, rel, false));
             if repo || text {
@@ -991,7 +1004,7 @@ impl CodeWalk {
     }
 
     fn indexable(&self, rel: &str) -> bool {
-        is_indexable(rel) && !rel.split('/').any(|n| skipped(&self.skip, n))
+        is_indexable(rel) && !in_skipped(&self.skip, rel)
     }
 }
 

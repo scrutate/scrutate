@@ -376,7 +376,8 @@ The code index holds every file the ignore rules let through, hidden files inclu
 - cache and tool directories by name (`node_modules`, `__pycache__`, `.venv`, `.mypy_cache`,
   `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`); `build`, `dist`, `target` and `venv`
   only outside a git repository, since inside one the ignore files decide (a `target/` that
-  `.gitignore` does not list is indexed);
+  `.gitignore` does not list is indexed); a file of one of these names, such as a `build`
+  script, is indexed;
 - data, generated and binary files by extension (`.lock`, `.sum`, `.csv`, `.log`, `.min.js`,
   `.map`, archives, media) and lock files by name (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`,

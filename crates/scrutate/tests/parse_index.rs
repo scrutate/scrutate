@@ -457,6 +457,14 @@ fn inside_git_the_ignore_rules_decide_for_build_dist_target_and_venv() {
 }
 
 #[test]
+fn a_file_named_as_a_skipped_directory_is_indexed() {
+    let script = "#!/usr/bin/env python3\ndef compile_all_targets():\n    pass\n";
+    let files = [("build", script), ("tools/node_modules", script), ("node_modules/m/i.js", "function m() {}\n"), ("a.py", "def a():\n    pass\n")];
+    let plain = tree("named_like_skipped", &files);
+    assert_eq!(scrutate::files::list_files(&plain), vec!["a.py", "build", "tools/node_modules"]);
+}
+
+#[test]
 fn calls_inside_rust_macro_arguments_are_calls() {
     let src = r#"fn f() {
     println!("{}", a::b(x), y.m(z));
