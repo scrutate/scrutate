@@ -1291,9 +1291,29 @@ def platform_problems(install, readiness):
     return [f"docs/RELEASE_READINESS.md: the verdict does not name {p}, which docs/INSTALL.md supports" for p in rows if p not in named]
 
 
+def wheel_problems(install, release):
+    """Each supported platform's row of INSTALL.md names the wheel of every kind release.yml builds:
+    the table once left out the abi3t wheel the release added."""
+    kinds = re.search(r"^\s+kind: \[([^\]]*)\]", release, re.M)
+    rows = re.findall(r"^\| ([^|(]+?) (?:\([^|]*\) )?\|[^|]*\| ([^|]*) \| \*\*supported\*\* \|", install, re.M)
+    if not kinds or not rows:
+        return ["docs/INSTALL.md or .github/workflows/release.yml: no platform table or no wheel matrix to compare"]
+    tags = {"abi3": "cp39-abi3", "free-threaded": "cp314t", "abi3t": "abi3t"}
+    out = []
+    for kind in (k.strip() for k in kinds.group(1).split(",")):
+        if kind not in tags:
+            out.append(f"tools/gen_doc_assets.py: no wheel tag known for release.yml's kind `{kind}`")
+            continue
+        out += [f"docs/INSTALL.md: the {p} row names no `{tags[kind]}` wheel, which release.yml builds" for p, wheels in rows if tags[kind] not in wheels]
+    return out
+
+
 def check_platforms(problems):
     with open(os.path.join(ROOT, "docs", "INSTALL.md"), encoding="utf-8") as f, open(os.path.join(ROOT, "docs", "RELEASE_READINESS.md"), encoding="utf-8") as g:
-        problems.extend(platform_problems(f.read(), g.read()))
+        install = f.read()
+        problems.extend(platform_problems(install, g.read()))
+    with open(os.path.join(ROOT, ".github", "workflows", "release.yml"), encoding="utf-8") as r:
+        problems.extend(wheel_problems(install, r.read()))
 
 
 def changelog_bullets(text):
