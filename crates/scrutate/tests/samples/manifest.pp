@@ -5,6 +5,7 @@ class webserver (
   package { 'nginx':
     ensure => installed,
   }
+  notice("docroot ${docroot}")
 }
 
 define webserver::vhost (

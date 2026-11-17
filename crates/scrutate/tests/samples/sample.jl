@@ -1,4 +1,5 @@
 module Demo
+using LinearAlgebra
 # A point.
 struct Point
     x::Int

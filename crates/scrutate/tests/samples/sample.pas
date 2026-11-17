@@ -16,6 +16,7 @@ begin
 end;
 function TGreeter.Greet(const Name: string): string;
 begin
+  Add(1, 2);
   Result := 'hi ' + Name;
 end;
 end.

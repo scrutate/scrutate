@@ -1202,6 +1202,11 @@ incompatible index by itself, and that is never breaking.
   read (`no such directory`), and so does every call after it, with or without `--watch`. The
   reader whose index the failed rebuild had closed went back to the pool, and handing it back
   panicked (`the index was not reopened after a rebuild`), so the call never answered.
+- docs/LANGUAGES.md's Calls and Imports columns are now checked by `cargo test`, as its tier text
+  said: `tests/samples.rs` fails when a language that declares call edges or imports has a sample
+  with none, and the 22 samples (two of them extra-langs) that lacked one now hold a call or an
+  import. The Docstrings column is named Body docstrings, since every grammar keeps the comment
+  above a definition as its documentation ([Languages](docs/LANGUAGES.md)).
 
 ## [0.1.0] - 2026-11-11
 

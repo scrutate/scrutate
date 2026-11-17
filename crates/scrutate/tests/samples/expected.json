@@ -481,6 +481,10 @@
     [
       "function",
       "greet"
+    ],
+    [
+      "function",
+      "twice"
     ]
   ],
   "sample.erb": [

@@ -16,3 +16,19 @@ begin
   end process;
   led <= state;
 end architecture rtl;
+
+package util is
+  function double(x : integer) return integer;
+end package util;
+
+package body util is
+  function double(x : integer) return integer is
+  begin
+    return x * 2;
+  end function double;
+
+  function quad(x : integer) return integer is
+  begin
+    return double(double(x));
+  end function quad;
+end package body util;

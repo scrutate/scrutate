@@ -1,4 +1,5 @@
 # Ruby sample
+require 'json'
 module Billing
   class Invoice
     # Total of all lines.
