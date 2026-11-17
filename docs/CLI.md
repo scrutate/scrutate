@@ -521,7 +521,7 @@ refers to. One inside a longer name of its file's language is no occurrence and 
      parameter or local of that name hides everything else within its own scope (a lambda's
      parameter inside the lambda, a block-scoped name inside its block). A name bound by a
      pattern hides only in its own branch (Rust `if let`, `while let` and a `match` arm), and a Python
-     `case` capture for the rest of its function, as Python binds it; a `catch` binding and a Go `:=` in an `if`, `for`, `switch` or type switch only in
+     `case` capture in its whole function, before the `match` too; a `catch` binding and a Go `:=` in an `if`, `for`, `switch` or type switch only in
      that statement; a Python parameter only in the function body (defaults and annotations are
      outside it); a `let` or `for` not in its own value; an import inside a function only in that
      function; the name of a JavaScript function, generator or class expression (`var h = function
@@ -658,8 +658,9 @@ function, `let` and `const` to their block. Imports of modules outside the repos
 - occurrences in comments and strings;
 - in a language the resolver does not read, or a file whose syntax tree is more than 2,000
   levels deep, a use whose name has more than one definition in the language family and none in
-  its own file (`by name, with other definitions of the name`), or that is part of a longer name
-  the index holds (`not resolved in this language`, `nested too deeply to read` in a deep file;
+  its own file (`by name, with other definitions of the name`), or with no definition in the language
+  family, or that is part of a longer name the index holds (`not resolved in this language`,
+  `nested too deeply to read` in a deep file;
   `get-user` where a definition has that name; Lua's `width-margin` is a use of `width`); a use with one such
   definition, or one in its own file, is tied to it by name and marked `(by name)` (`by name:
   nested too deeply to read` for a deep file; `via` in JSON), as `callers` and `callees` read it;
@@ -902,8 +903,8 @@ name is found by its import path only. A dependency's `internal` package answers
 path (the dependency's own code imports it), never by its name, which the repository cannot
 import; `testdata`, `vendor` and another module's directories are no package. The answer keeps to
 that directory and the ones under it. The rest is looked up as `symbol` and `read` look up a name, then
-by its last part (`de::Deserialize` finds `Deserialize`). In a Go module or a Python package, the
-definitions in the package's own directory come first (a Go package is the directory at its
+by its last part (`de::Deserialize` finds `Deserialize`). In a Go module or a Python package from the
+store (not one a path names), the definitions in the package's own directory come first (a Go package is the directory at its
 import path: `yaml.Marshal` lists sigs.k8s.io/yaml's root `yaml.go` before its vendored
 `goyaml.v2` and `goyaml.v3`); in each part a definition whose qualified name is the name as asked comes first, so
 `assert.Equal` is testify's function and `assert.Assertions.Equal` its method, as in Python
@@ -1091,8 +1092,8 @@ same root: `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `outline`, `de
 root it does its own work) and the ranked part of `find`. Not `impact`, since git runs in the
 command's own environment, nor `files`, which needs no index. The files that changed are looked
 at first, as for a tool call (every file when the watch cannot vouch for fewer), and the output is the same bytes and exit code a fresh process gives. The meeting point is a socket file on Unix,
-`.scrutate/session.sock` (owner only; no network port), removed when the server exits or its root
-moves to another tree, and a named pipe on Windows, `\\.\pipe\scrutate-session-<hash of the user
+`.scrutate/session.sock` (owner only; no network port), removed when the server exits or its root's
+path comes to resolve to another directory (a link pointed elsewhere), and a named pipe on Windows, `\\.\pipe\scrutate-session-<hash of the user
 and root>` (owner only, local callers only), which goes away with the server, or when it stops
 listening because its root moved to another tree, and leaves no file. A
 command never starts a server. When anything about the server differs from how the command would
@@ -1157,8 +1158,8 @@ servers on one root, the first offers the socket.
   snippets, and at most two thirds where it is already only places and names (similar code, an
   outline of long names) (`tests/concise.rs`). The command line has no concise form.
 - Arguments: a wrong type, or a negative number where a count is taken, is a tool error naming the
-  argument (`k must be a non-negative integer`; `read_code`'s `start` and `end` take any integer, a
-  `start` below 1 reading from line 1, and `duplicates`' `threshold` any number), as is a required
+  argument (`k must be a non-negative integer`; `read_code`'s `start` takes any integer, one below 1
+  reading from line 1, and an `end` before `start` is an error, and `duplicates`' `threshold` any number), as is a required
   argument left out (`missing required
   argument name`; `read_code` without either says `missing path or symbol` and what each takes),
   and JSON `null` is the same as leaving an argument out.
@@ -1242,13 +1243,14 @@ Per tool:
   updates is not counted, and a call that reads no files sends none.
 - Protocol: a client that opens with `initialize` is served revisions 2024-11-05, 2025-03-26,
   2025-06-18 and 2025-11-25. A request naming its version in `_meta`
-  (`io.modelcontextprotocol/protocolVersion`) is served by revision 2026-07-28, which has no
-  handshake: `server/discover` describes the server, every result carries `resultType`, lists
-  carry `ttlMs` and `cacheScope`, and another version in `_meta` gets error -32022 and the
-  supported one. Both eras work on the same pipe. An `initialize` with a missing or unknown
+  (`io.modelcontextprotocol/protocolVersion`, a string) is served by revision 2026-07-28, which has
+  no handshake: `server/discover` describes the server, every result carries `resultType`, lists
+  carry `ttlMs` and `cacheScope`, and another string version in `_meta` gets error -32022 and the
+  supported one. A version that is not a string is served as the handshake era, and so is
+  `initialize` whatever its `_meta` says. Both eras work on the same pipe. An `initialize` with a missing or unknown
   `protocolVersion` is answered with 2025-11-25.
-- JSON-RPC: a batch (an array of messages) gets one array. A line that is not valid JSON, or not
-  UTF-8, gets error -32700, and the server goes on reading. A message that is not an object, an
+- JSON-RPC: a batch (an array of messages) gets one array. A blank line is skipped. A line that is
+  not valid JSON, or not UTF-8, gets error -32700, and the server goes on reading. A message that is not an object, an
   empty array and a request without `method` get -32600; an unknown method -32601; an unknown
   tool or a `tools/call` without `name` -32602. A message without `id` (a notification) is never
   answered; only `notifications/cancelled` does anything. A client's response (a `result` or
@@ -1352,8 +1354,8 @@ the Engine B index:
 | `workspace/symbol` | symbols the query matches as `symbol`'s near matches do: the name itself, then prefix, humps and contains matches; an empty query lists every name, shorter first; each folder's after the one before, at most 200 in all; a file under a folder opened inside another (a nested repository) is listed once, from the deepest folder that answered, as a document request goes to it |
 | `textDocument/documentSymbol` | the `outline` of the file, nested (methods under their class); a definition that starts on the first or last line of another and is not named inside it is its sibling, its range starting at its name (the index keeps lines, not columns) |
 
-It advertises only these four, plus full text sync and workspace folders with change
-notifications. Open documents are read from the editor's
+It advertises only these four, plus full text sync, workspace folders with change
+notifications and `positionEncoding: utf-16`. Open documents are read from the editor's
 text, so an unsaved line still finds the word under the cursor; locations in other files come
 from disk. `didSave` updates the index incrementally in a background thread, so requests keep
 being answered; before a request the index is scanned for changes, at most a second apart and closer when a scan
@@ -1660,7 +1662,7 @@ agent's file at the top of the current repository (the directory that holds `.gi
 |---|---|---|---|---|---|
 | `claude` | `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set), top-level `mcpServers`; through `claude mcp add-json scrutate JSON --scope user` when `claude` is on `PATH` | `.mcp.json` | `{"type": "stdio", "command": ..., "args": [...]}` | `~/.claude/CLAUDE.md` (`$CLAUDE_CONFIG_DIR/CLAUDE.md` when set); `CLAUDE.md` | the Grep hook and the Bash hook, below |
 | `codex` | `$CODEX_HOME/config.toml` (default `~/.codex`) | none: an error | `[mcp_servers.scrutate]` with `command` and `args` | `$CODEX_HOME/AGENTS.md` | the Bash hook in `$CODEX_HOME/hooks.json`, below |
-| `opencode` | `opencode.jsonc` or `opencode.json` in `$XDG_CONFIG_HOME/opencode` (default `~/.config/opencode`): the first that exists, else a new `opencode.json` | the same names at the top | `mcp.scrutate` = `{"type": "local", "command": [...], "enabled": true}`; in a file whose `mcp` already holds `servers`, `mcp.servers.scrutate` without `enabled` | `~/.config/opencode/AGENTS.md` (`$XDG_CONFIG_HOME/opencode/AGENTS.md` when set); `AGENTS.md` | a note: opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands |
+| `opencode` | `opencode.jsonc` or `opencode.json` in `$XDG_CONFIG_HOME/opencode` (default `~/.config/opencode`): the first that exists, else a new `opencode.json` | the same names at the top | `mcp.scrutate` = `{"type": "local", "command": [...], "enabled": true}`; in a file whose `mcp` already holds `servers`, `mcp.servers.scrutate` without `enabled` | `~/.config/opencode/AGENTS.md` (`$XDG_CONFIG_HOME/opencode/AGENTS.md` when it is set to an absolute path); `AGENTS.md` | a note: opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands |
 | `cursor` | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` | none (Cursor keeps a user's rules in its settings); `AGENTS.md` | a note: cursor-agent has a `preToolUse` hook, but its search tool takes other arguments and answers in another form |
 | `gemini` | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` | `~/.gemini/GEMINI.md`; `GEMINI.md` | a note: Gemini CLI has a `BeforeTool` hook, but its search tool takes other arguments and answers in another form |
 
@@ -1791,8 +1793,8 @@ The exit code is 1 when no call was counted. A small answer costs the header lin
 would have sent (a negative saving); the saving comes from long answers the byte bound cuts.
 The searches `hook run` answered are counted too (`"via": "bash"`, `grep_bytes` the bytes of the
 program's output it read: the whole output, but for a search the byte bound cut only up to and
-including the line that did not fit, so such a search saves that line's bytes less the 62-byte cut
-note) and also shown apart: the line `of which shell searches (hook run): ...` and
+including the line that did not fit, so when nothing is redacted such a search saves that line's
+bytes less the 62-byte cut note; redaction changes the lines' length and adds its closing line) and also shown apart: the line `of which shell searches (hook run): ...` and
 `"shell"` in the JSON.
 
 `hook bash` is the hook of the shell tool: Claude Code's Bash and Codex's shell. It reads the
