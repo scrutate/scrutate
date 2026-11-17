@@ -1207,6 +1207,10 @@ incompatible index by itself, and that is never breaking.
   `scope: "deps"` read a file outside the repository and wrote over one outside the cache,
   emptying it when the two met. Separators are made `/` before the check, which drops the entry
   ([Security](docs/SECURITY.md#dependency-source)).
+- A Rust `#[path = "impls/h.rs"] mod helper;` names `src/impls/h.rs`: `helper::compute()` in the
+  declaring file resolves there, `deps` shows the file and `rdeps` of it lists the declaration.
+  The attribute was not read, so the call was unresolved and `callees` listed every `compute` in
+  the crate ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 

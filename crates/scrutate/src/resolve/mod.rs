@@ -714,6 +714,7 @@ pub struct Resolver<'a> {
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
     go_imports: Option<HashMap<String, String>>,
+    rust_path_files: Option<Vec<String>>,
     /// by directory: the config found there, or that there is none
     ts: HashMap<String, Option<Rc<js::TsPaths>>>,
     js_packages: Option<HashMap<String, Vec<Rc<js::JsPackage>>>>,
@@ -1304,6 +1305,7 @@ impl<'a> Resolver<'a> {
             crates: None,
             go_dirs: None,
             go_imports: None,
+            rust_path_files: None,
             ts: HashMap::new(),
             js_packages: None,
             nest: 0,
