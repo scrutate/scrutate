@@ -145,8 +145,8 @@ bash bench/run_macos.sh   # refuses changes no commit holds, then builds the bin
   95% claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20
   runs and changed no verdict; a look after one block flipped 5, since one block has no interleaving
   (that replay's output is not committed). R-14.10 in docs/TRACEABILITY.md defines a #1 over at
-  least 20 runs per tool, 30 when a verdict does not hold at the first look, with the run count
-  recorded per row. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
+  least 30 runs per tool, with the run count recorded per row: LEADERBOARD.md shows a row that
+  stopped at 20 as measured, not ranked, so the stop rule serves CI's gate. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
   needs every block of both binaries, and the publish scripts (`bench/run_macos.sh`,
   `bench/competitors/linux_bench.sh`) pass `--no-stop-early`, so a published row takes all 30 runs.
 - Cold runs evict only the corpus files' pages on macOS (`bench/evict.c`, `msync` with

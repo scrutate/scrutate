@@ -7,7 +7,6 @@ import os
 import subprocess
 import sys
 
-import pytest
 
 BENCH = os.path.join(os.path.dirname(__file__), "..", "..", "bench")
 sys.path.insert(0, BENCH)
@@ -159,6 +158,29 @@ def test_each_engine_a_row_has_scrutate_s_rank_each_tool_s_interval_and_its_raw_
     assert cells["rank"] == "2 of 4"
     # 30 runs: the order-statistic interval of the median; 3 runs are too few for a 95% interval
     assert cells["scrutate"].startswith("10.0 [") and cells["ack"] == "500 (3)"
+
+
+def test_an_engine_a_verdict_under_thirty_runs_is_measured_not_counted():
+    # a committed row cut to 20 runs per tool, as leaderboard.py's stop rule can leave one
+    path = os.path.join(BENCH, "results", "macos-arm64", "superseded", "leaderboard-warm-9aa0.json")
+    with open(path) as f:
+        d = json.load(f)
+    bid, r = next(iter(d["benchmarks"].items()))
+    assert r["status"] == "PASS"
+    r["runs"] = 20
+    for x in r["tools"].values():
+        if x.get("times"):
+            x["times"], x["n"] = x["times"][:20], 20
+    second = dict(d["benchmarks"][list(d["benchmarks"])[1]])
+    d["benchmarks"] = {bid: r, "full": second}
+    lines = ML.engine_a(d, "label")
+    row = next(l for l in lines if l.startswith(f"| {bid} "))
+    assert row.endswith("| measured: 20 runs per tool, under the 30 a verdict needs |"), row
+    counts = next(l for l in lines if l.startswith("Status counts, wall time:"))
+    assert counts == f"Status counts, wall time: **{second['status']}** 1 (of 1); 1 measured, under 30 runs per tool.\n"
+    sys.path.insert(0, os.path.join(BENCH, "..", "tools"))
+    import gen_doc_assets as D
+    assert D.pass_counts(lines) == ((1, 1) if second["status"] == "PASS" else (0, 1))
 
 
 def test_the_median_interval_covers_at_least_95_percent():

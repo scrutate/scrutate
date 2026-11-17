@@ -104,7 +104,9 @@ a type macro and matches nothing, which the first comparison mistook for ast-gre
 On the Linux kernel tree (95,578 files, 1.6 GB) on the development Mac, against Zoekt at commit
 `a5a933bc` built with `go install` as its README says (docs/LEADERBOARD.md, Engine B section; raw
 data in `bench/results/macos-arm64/superseded/indexed-9aa0.json`). Both tools answered all 20
-queries as an independent reference did.
+queries as an independent reference did. Index size and memory per query are ranked (PASS); the
+timed rows rest on fewer than the 30 runs per tool a verdict needs (5 builds, 20 runs per query,
+3 throughput runs), so they are measured, not ranked.
 
 | Measure | Scrutate | Zoekt |
 |---|---|---|
@@ -112,9 +114,9 @@ queries as an independent reference did.
 | index on disk | 440 MB | 4,238 MB (0.10x) |
 | peak memory while building | 1,078 MB | 1,631 MB |
 | after editing 100 files | 0.16 s (the text index updates in place) | 129 s (`zoekt-index`, its directory indexer, rebuilds the whole index; the corpus is a plain directory, so its git indexer was left out) |
-| query latency, 20 queries x 20 runs, each a fresh process (all PASS) | p50 20.4 ms, p95 57.2 ms, p99 98.8 ms | 54.4 ms, 161 ms, 785 ms |
+| query latency, 20 queries x 20 runs, each a fresh process (measured) | p50 20.4 ms, p95 57.2 ms, p99 98.8 ms | 54.4 ms, 161 ms, 785 ms |
 | memory per query | 12 MB | 277 MB |
-| throughput, 11 clients at once | 37 queries per second (1.20x, PASS) | 31 queries per second |
+| throughput, 11 clients at once | 37 queries per second (1.20x, measured) | 31 queries per second |
 
 The p95 interval, 0.06 to 0.77, is wide because each tool's slowest query sits right at the 95th
 percentile. The index is smaller and quicker to build because it stores trigram postings and no
@@ -124,8 +126,9 @@ the contents and can answer without the tree. Scrutate offers only the first mod
 
 In the Linux VM, on the same tree and 20 queries with every answer checked, against Zoekt and
 livegrep (revision `923d5ad7`, built with Bazel as its README says; its `codesearch` server holds
-the index and a minimal gRPC client prints each answer), Scrutate is ahead on all 7 metrics
-compared; the incremental update is n/a, as both rivals rebuild
+the index and a minimal gRPC client prints each answer), Scrutate leads on both metrics ranked,
+index size and memory to answer a query; the timed ones are measured, not ranked, for the same
+reason, and the incremental update is n/a, as both rivals rebuild
 (`bench/results/linux-aarch64/superseded/indexed-261e.json`).
 
 | Metric | Scrutate | Zoekt | livegrep |

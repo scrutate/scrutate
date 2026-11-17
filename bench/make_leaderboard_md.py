@@ -16,7 +16,7 @@ import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from indexed import settle  # noqa: E402
+from indexed import MIN_RUNS, settle  # noqa: E402
 
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
@@ -81,7 +81,8 @@ STOP_NOTE = ("- Stop rule (`leaderboard.py`, on by default; the Haybittle-Peto b
              "and memory verdicts are all PASS, FAIL or n/a at alpha 0.001 after its second block, with no tool's block medians 25% "
              "apart, stops there with 20 runs and shows its 99.9% interval. Every other row takes all its runs and is judged at "
              "alpha 0.049, a 95.1% interval. The alphas sum to 0.05 (Bonferroni), so either interval clearing 1 meets the 95% claim "
-             "above, whatever the load did between the blocks.")
+             "above, whatever the load did between the blocks. A row that stopped at 20 runs reads measured here: a published "
+             "verdict needs 30 runs per tool.")
 
 # method notes the page states once, above the sections that use them
 LEGEND = ("- Engine A tables: medians in ms, each with its 95% interval in brackets (order statistics of the tool's own runs, "
@@ -132,10 +133,25 @@ def stale_line(check):
 
 
 def count_line(statuses):
+    """The verdicts by status; measured rows, which rank nothing, are counted apart."""
+    measured = statuses.count("measured")
+    statuses = [s for s in statuses if s != "measured"]
     counts = {}
     for s in statuses:
         counts[s] = counts.get(s, 0) + 1
-    return ", ".join(f"**{k}** {v}" for k, v in sorted(counts.items())) + f" (of {len(statuses)})"
+    line = ", ".join(f"**{k}** {v}" for k, v in sorted(counts.items())) + f" (of {len(statuses)})"
+    return line + (f"; {measured} measured, under {MIN_RUNS} runs per tool" if measured else "")
+
+
+def published(r):
+    """An Engine A row as the page gives it: a verdict on fewer than MIN_RUNS runs of scrutate or of
+    its best competitor is measured, not ranked (`was` keeps the verdict)."""
+    best = r.get("best_competitor")
+    if r["status"] in ("PASS", "FAIL", "PARTIAL", "BLOCKED") and best:
+        n = min(r["tools"].get("scrutate", {}).get("n", 0), r["tools"].get(best, {}).get("n", 0))
+        if n < MIN_RUNS:
+            return {**r, "status": "measured", "was": r["status"], "measured": f"{n} runs per tool, under the {MIN_RUNS} a verdict needs"}
+    return r
 
 
 def metric_value(key, v):
@@ -242,6 +258,7 @@ def prepare(cmd: str) -> str:
 
 
 def engine_a(data, label, note=(), raw=None):
+    data = {**data, "benchmarks": {bid: published(r) for bid, r in data["benchmarks"].items()}}
     env = data["environment"]
     out = []
     out.append(f"## Engine A and structural search: {label}\n")
@@ -312,7 +329,7 @@ def engine_a(data, label, note=(), raw=None):
             flag += f" ({r['resident']:.0%} of the files in the page cache)"
         floor = f" | {walk_floor(r)}" if walk else ""
         name = f"[{bid}]({raw})" if raw else bid
-        out.append(f"| {name} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))}{floor} | {rank} | {ratio} | {r['status']}{flag} |")
+        out.append(f"| {name} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))}{floor} | {rank} | {ratio} | {r['status']}{': ' + r['measured'] if r.get('measured') else ''}{flag} |")
     out.append("")
     for bid, r in data["benchmarks"].items():
         n = r["reference"].get("files_not_compared")
@@ -325,7 +342,8 @@ def engine_a(data, label, note=(), raw=None):
     if cached:
         out.append(f"- {', '.join(f'**{b}**' for b in cached)}: {STRUCTURAL_CACHED}")
     out.append("")
-    fails = [(bid, r) for bid, r in data["benchmarks"].items() if r["status"] == "FAIL"]
+    # a competitor ahead is named whether or not the row had runs enough for a verdict
+    fails = [(bid, r) for bid, r in data["benchmarks"].items() if r.get("was", r["status"]) == "FAIL"]
     if fails:
         out.append("### Where a competitor is ahead (FAIL), with the measured gap and the plan\n")
         for bid, r in fails:

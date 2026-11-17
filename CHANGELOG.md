@@ -423,7 +423,8 @@ incompatible index by itself, and that is never breaking.
 - The benchmark harness publishes a verdict only on 30 runs per tool. `bench/indexed.py` takes
   30 query runs and 30 throughput runs by default, and a comparison under 30 (its 5 index builds,
   or a committed result's 20 query runs) is shown as measured, not ranked, so docs/LEADERBOARD.md
-  and README.md now rank the indexed results on index size and query memory only. The publish
+  and README.md now rank the indexed results on index size and query memory only; an Engine A row
+  whose scrutate or best competitor has fewer than 30 runs reads measured as well. The publish
   scripts take every run (`--no-stop-early`), and `bench/run_macos.sh` refuses a tree with changes
   no commit holds and builds the binary from it. `indexed.py` records the corpus's tree checksum,
   `indexed.py` and `compare_tools.py` make one untimed warm-up run per tool and count outliers,

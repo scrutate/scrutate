@@ -1191,10 +1191,10 @@ README_COUNTS = [
     (r"warm-cache benchmarks and all (\w+) cold-cache ones", "## Engine A and structural search: macos-arm64, cold cache"),
     (r"Engine A is significantly fastest on all (\w+) Linux-tree benchmarks", "## Engine A and structural search: linux-aarch64, warm cache"),
     (r"Linux-tree benchmarks and all (\w+) cold-cache ones", "## Engine A and structural search: linux-aarch64, cold cache"),
-    (r"leading all (\w+) indexed metrics", "## Engine B: indexed search against zoekt: macos-arm64"),
-    (r"leads Zoekt and livegrep on all (\w+) indexed metrics", "## Engine B: indexed search against zoekt and livegrep: linux-aarch64"),
+    (r"It leads on (\w+) indexed metrics", "## Engine B: indexed search against zoekt: macos-arm64"),
+    (r"leads Zoekt and livegrep on (\w+) indexed metrics", "## Engine B: indexed search against zoekt and livegrep: linux-aarch64"),
 ]
-WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())} | {"both": 2}
 
 
 def section(md, heading):
