@@ -962,9 +962,9 @@ fn die_with_us_windows(child: Option<&std::process::Child>) -> Option<*mut std::
 }
 
 /// The first `name` in a directory of PATH given as an absolute path that is not inside the
-/// current directory or its git work tree: never the current directory, a relative entry, a
-/// repository's own `bin` (a `.envrc` can put one on PATH) or the directory of scrutate itself,
-/// which a plain `Command::new` searches on Windows.
+/// current directory or its git work tree: never the current directory, a relative entry or a
+/// repository's own `bin` (a `.envrc` can put one on PATH). The directory of scrutate itself is
+/// searched only when PATH names it (a plain `Command::new` on Windows searches it first either way).
 fn on_path(name: &str) -> Option<std::path::PathBuf> {
     let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let here = std::env::current_dir().ok().and_then(|d| std::fs::canonicalize(d).ok());
