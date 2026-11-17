@@ -1289,6 +1289,9 @@ incompatible index by itself, and that is never breaking.
   declaring file resolves there, `deps` shows the file and `rdeps` of it lists the declaration.
   The attribute was not read, so the call was unresolved and `callees` listed every `compute` in
   the crate ([CLI](docs/CLI.md#refs)).
+- `setup --help` names the hooks `--hook` adds: those that answer the agent's search tools with
+  scrutate, Grep and Bash for Claude Code and Bash for Codex. It named only Claude Code's Grep
+  hook.
 
 ## [0.1.0] - 2026-11-11
 

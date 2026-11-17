@@ -9,7 +9,7 @@
 
 <!-- End of head. -->
 
-**Verdict: 0.1.0 is a verified first release for developer use on the six platforms INSTALL.md
+**Verdict: 0.1.0, not yet tagged or released, is verified as a first release for developer use on the six platforms INSTALL.md
 supports (macOS arm64, macOS x86_64, Linux aarch64, Linux x86_64, Windows x86_64 and Windows
 ARM64). It is not declared production-ready for mission-critical environments**, whose criteria
 are not all met (below). Still unproven until the release workflow has run once: the release
