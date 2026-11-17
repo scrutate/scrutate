@@ -24,7 +24,7 @@ pub struct Options {
     pub project: bool,
     pub uninstall: bool,
     pub dry_run: bool,
-    /// also the Grep hook (Claude Code only); `uninstall` takes it out whether asked or not
+    /// also the search hooks (Claude Code: Grep and Bash; Codex: Bash); `uninstall` takes them out whether asked or not
     pub hook: bool,
     /// also a block in the agent's instruction file; `uninstall` takes it out whether asked or not
     pub instructions: bool,
@@ -334,7 +334,7 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
             };
             steps.extend(json_entry(&path, keys, &entry, o)?);
             if o.hook {
-                steps.push(Step::Note("opencode's hooks are JavaScript plugins (tool.execute.before), not commands; scrutate's hook answers Claude Code's Grep only, so no hook was installed".into()));
+                steps.push(Step::Note("opencode's hooks are JavaScript plugins (tool.execute.before), not commands; scrutate's hooks serve Claude Code and Codex only, so no hook was installed".into()));
             }
         }
         Agent::Cursor => {
@@ -342,7 +342,7 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
             let entry = obj(vec![("command", J::S(bin.clone())), ("args", strings(&args))]);
             steps.extend(json_entry(&path, &["mcpServers", NAME], &entry, o)?);
             if o.hook {
-                steps.push(Step::Note("cursor-agent has a preToolUse hook, but its search tool takes other arguments and answers in another form; scrutate's hook answers Claude Code's Grep only, so no hook was installed".into()));
+                steps.push(Step::Note("cursor-agent has a preToolUse hook, but its search tool takes other arguments and answers in another form; scrutate's hooks serve Claude Code and Codex only, so no hook was installed".into()));
             }
         }
         Agent::Gemini => {
@@ -356,7 +356,7 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
                 ));
             }
             if o.hook {
-                steps.push(Step::Note("Gemini CLI has a BeforeTool hook, but its search tool takes other arguments and answers in another form; scrutate's hook answers Claude Code's Grep only, so no hook was installed".into()));
+                steps.push(Step::Note("Gemini CLI has a BeforeTool hook, but its search tool takes other arguments and answers in another form; scrutate's hooks serve Claude Code and Codex only, so no hook was installed".into()));
             }
         }
     }

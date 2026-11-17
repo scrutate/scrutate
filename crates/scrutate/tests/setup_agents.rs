@@ -324,6 +324,7 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
         let (code, out, _) = s.setup(&[agent, "--hook", "--dry-run"]);
         assert_eq!(code, 0);
         assert!(out.contains("no hook was installed"), "{agent}: {out}");
+        assert!(out.contains("scrutate's hooks serve Claude Code and Codex only"), "{agent}: {out}");
     }
     let (_, out, _) = s.setup(&["gemini", "--dry-run"]);
     assert!(out.contains("trust"), "{out}");

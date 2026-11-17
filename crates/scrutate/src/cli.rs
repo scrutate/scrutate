@@ -863,7 +863,7 @@ pub enum Cmd {
         /// print each file it would change and the change; write nothing
         #[arg(long)]
         dry_run: bool,
-        /// also the hook that answers Claude Code's Grep with scrutate's search
+        /// also the hooks that answer the agent's search tools with scrutate (Claude Code: Grep and Bash; Codex: Bash)
         #[arg(long)]
         hook: bool,
         /// also a short block in the agent's instruction file (CLAUDE.md, AGENTS.md, GEMINI.md)

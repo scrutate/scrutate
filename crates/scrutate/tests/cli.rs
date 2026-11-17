@@ -3410,3 +3410,10 @@ fn no_color_help_says_an_empty_no_color_turns_colour_off_too() {
         assert!(out.contains("NO_COLOR is set, empty too"), "{args:?}: {out}");
     }
 }
+
+#[test]
+fn setup_hook_help_names_the_hooks_each_agent_gets() {
+    let (code, out, _) = run_in(&std::env::temp_dir(), &["setup", "--help"], &[]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Claude Code: Grep and Bash; Codex: Bash"), "{out}");
+}
