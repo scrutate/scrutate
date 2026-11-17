@@ -1044,7 +1044,13 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
             }
         };
         let public = match redact {
-            _ if at_end => Some(false),
+            _ if at_end => {
+                // a public body held with no END after it is key material
+                if redact {
+                    r.end_stream();
+                }
+                Some(false)
+            }
             false => None,
             true => match r.hold(&String::from_utf8_lossy(&line)) {
                 crate::secrets::Hold::Line => {

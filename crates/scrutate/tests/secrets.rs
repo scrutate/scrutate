@@ -70,6 +70,26 @@ fn der_lines(seed: &mut u64, n: usize) -> Vec<String> {
     base64(&der).as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect()
 }
 
+/// The base64 lines, 64 to a line, of a certificate's shape: a SEQUENCE of a SEQUENCE of `n`
+/// random bytes, a SEQUENCE (the signature's algorithm) and a BIT STRING (the signature).
+#[cfg(unix)]
+fn certificate_lines(seed: &mut u64, n: usize) -> Vec<String> {
+    const SHA256_RSA: [u8; 15] = [0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00];
+    let mut random = |k: usize| -> Vec<u8> {
+        (0..k)
+            .map(|_| {
+                *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (*seed >> 33) as u8
+            })
+            .collect()
+    };
+    let long = |tag: u8, content: Vec<u8>| [vec![tag, 0x82, (content.len() >> 8) as u8, content.len() as u8], content].concat();
+    let signed = long(0x30, random(n));
+    let signature = long(0x03, [vec![0x00], random(256)].concat());
+    let der = long(0x30, [signed, SHA256_RSA.to_vec(), signature].concat());
+    base64(&der).as_bytes().chunks(64).map(|l| String::from_utf8(l.to_vec()).unwrap()).collect()
+}
+
 /// (kind, file, line holding the secret, the secret): three of each kind.
 fn planted() -> Vec<(&'static str, &'static str, String, String)> {
     let mut seed = 7u64;
@@ -798,24 +818,26 @@ fn a_public_body_whose_end_is_not_shown_leaves_the_base64_after_it_marked_throug
             .unwrap();
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
-    for (case, public_pem) in [
-        ("public key", pem("PUBLIC KEY", "", "\n", &public)),
-        ("CRLF public key", pem("PUBLIC KEY", "", "\r\n", &public)),
-        ("spaces after BEGIN", pem("PUBLIC KEY", "   ", "\n", &public)),
-        ("certificate", pem("CERTIFICATE", "", "\n", &public)),
+    let certificate = certificate_lines(seed, 400);
+    for (case, public, public_pem) in [
+        ("public key", &public, pem("PUBLIC KEY", "", "\n", &public)),
+        ("CRLF public key", &public, pem("PUBLIC KEY", "", "\r\n", &public)),
+        ("spaces after BEGIN", &public, pem("PUBLIC KEY", "   ", "\n", &public)),
+        ("certificate", &certificate, pem("CERTIFICATE", "", "\n", &certificate)),
     ] {
         let root = base.join(case.replace(' ', "_"));
         fs::create_dir_all(root.join(".git")).unwrap();
         fs::write(root.join("a.pem"), &public_pem).unwrap();
         fs::write(root.join("b.pem"), pem(&format!("{} KEY", "PRIVATE"), "", "\n", &private)).unwrap();
-        // as many raw as with the private key alone (a short last line is no key-material)
+        // no more raw than with the private key alone (where a short last line is no key-material;
+        // after a public body that ends without its END, its base64 lines are all marked)
         let raw = |files: &[&str]| {
             let out = hook(&root, &[&["grep", "-h", "-v", "-e", "END", "-e", "PRIVATE"][..], files].concat());
             (private.iter().filter(|l| out.contains(l.as_str())).count(), out)
         };
         let ((alone, _), (after, out)) = (raw(&["b.pem"]), raw(&["a.pem", "b.pem"]));
         assert!(alone <= 1, "the private key alone: {alone} raw");
-        assert_eq!(after, alone, "{case}: {after} of {} private body lines raw:\n{out}", private.len());
+        assert!(after <= alone, "{case}: {after} of {} private body lines raw:\n{out}", private.len());
         // the public key whole, its END shown, is left as written
         let out = hook(&root, &["grep", "-h", "", "a.pem"]);
         assert!(public.iter().all(|l| out.contains(l.as_str())), "{case} alone:\n{out}");
