@@ -2385,11 +2385,24 @@ impl Redacting {
         let mut text = String::from_utf8_lossy(&raw).into_owned();
         if self.json {
             if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let was = v["text"].clone();
+                let line = v.as_object_mut().and_then(|o| o.remove("text"));
                 self.r.redact_json(&mut v);
-                // the spans count bytes of the text as the file has it
-                if v["text"] != was {
-                    v.as_object_mut().map(|o| o.remove("spans"));
+                if let Some(mut line) = line {
+                    if let serde_json::Value::String(t) = &mut line {
+                        let (redacted, marks) = self.r.redact(t);
+                        if let std::borrow::Cow::Owned(redacted) = redacted {
+                            // the spans count bytes of the text as the file has it; the column
+                            // moves with the markers
+                            v.as_object_mut().map(|o| o.remove("spans"));
+                            if let Some(c) = v["column"].as_u64().filter(|&c| c > 0) {
+                                v["column"] = (crate::secrets::redacted_at(c as usize - 1, &marks) + 1).into();
+                            }
+                            *t = redacted;
+                        }
+                    } else {
+                        self.r.redact_json(&mut line);
+                    }
+                    v["text"] = line;
                 }
                 text = v.to_string();
             }
