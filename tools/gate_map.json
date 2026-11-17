@@ -794,5 +794,21 @@
  "jetbrains.yml:lsp4ij:83906fca59": {
   "step": "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "scorecard.yml:analysis:f0e64ebade": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "scorecard.yml:analysis:0bc099f467": {
+  "step": "ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "scorecard.yml:analysis:ec8f326a2e": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "scorecard.yml:analysis:76ca1d4c0c": {
+  "step": "github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
  }
 }
