@@ -64,9 +64,16 @@ impl Rules for Rust {
         if mods.is_empty() || !(segs[0] == "self" || ups > 0) {
             return r.walk_qualified(path, fi, lang, q, node, name, line);
         }
+        // modules written on one line share their row: the name and the enclosing modules tell them apart
         let module = |m: Node| {
             let row = m.start_position().row as i64 + 1;
-            fi.defs.iter().find(|d| d.kind == "module" && d.start == row).map(|d| d.id)
+            let names: Vec<&str> = std::iter::successors(Some(m), |n| n.parent())
+                .filter(|n| n.kind() == "mod_item")
+                .filter_map(|n| n.child_by_field_name("name").map(|x| text(x, &fi.src)))
+                .collect();
+            let chain = names.iter().rev().copied().collect::<Vec<_>>().join(".");
+            let at_row = || fi.defs.iter().filter(|d| d.kind == "module" && d.start == row);
+            at_row().find(|d| d.qualname == chain || d.qualname.ends_with(&format!(".{chain}"))).or_else(|| at_row().next()).map(|d| d.id)
         };
         let rest = &segs[if ups == 0 { 1 } else { ups }..];
         let mut cur = match mods.get(ups) {

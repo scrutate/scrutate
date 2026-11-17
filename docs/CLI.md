@@ -189,7 +189,7 @@ refuses `-P` and the `pcre2` mode (`grep_code`) with
 compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and `.Z` through the system's
 tools, as ripgrep does. Limits:
 
-- an archive or compressed file stops at 8 GiB expanded or a million members;
+- an archive or compressed file stops with a warning at 8 GiB expanded or past a million members;
 - a member or compressed file stops with a warning at a line longer than 64 MiB (not with `-U`,
   which holds the whole member);
 - a tar member whose GNU long name or PAX path is over 64 KiB is skipped with a warning; other
@@ -1572,7 +1572,7 @@ definitions = [
   regular expression (Rust `regex` syntax) matched against one line at a time. All the patterns
   of every table share the size limits of one `grep` pattern (20 MB compiled, 10 MB of lazy DFA),
   split evenly, so a table of many large patterns is an error at the pattern that is over. The first group is the name, so a pattern needs one. The first pattern that matches a
-  line wins; comment lines never define.
+  line wins; comment lines, and every line inside a block comment, never define.
 
 Files with those extensions are parsed as the heuristic tier parses a file
 ([LANGUAGES](LANGUAGES.md)): a definition runs to the line before the next definition at the

@@ -1307,6 +1307,12 @@ incompatible index by itself, and that is never breaking.
   in `a/use.go`, or `a.Exported()` from another package, tied to a namesake in `a/a_test.go`, the
   first file of the directory by name, so `refs`, `callers`, `impact` and `dead` missed the real
   callers ([CLI](docs/CLI.md#refs)).
+- `grep -z` on an archive of more than a million members warns and exits 2, as the 8 GiB stop
+  does: it stopped there in silence and exited 1. Rust `self::` in an inline module written on
+  the same line as the module around it is that module: the resolver took the first module of
+  the line. PHP `NEW self()`, `NEW static()` and `NEW parent()` are uses of the constructor in
+  `refs`, as `new self()` was. In a custom language, no line inside a block comment defines,
+  even one that does not start with the opener ([CLI](docs/CLI.md#custom-languages)).
 
 ## [0.1.0] - 2026-11-11
 

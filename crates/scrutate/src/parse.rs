@@ -2389,7 +2389,7 @@ fn comment_top(lines: &[&str], floor: usize, mut at: usize, m: &Marks) -> usize 
 
 /// Keyword-introduced definitions for languages without a grammar (or whose grammar found nothing).
 pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
-    line_chunks(source, &heuristic_marks(path), heuristic_def, starts_item, clean_comment)
+    line_chunks(source, &heuristic_marks(path), |_, l| heuristic_def(l), starts_item, clean_comment)
 }
 
 /// Whether `line` opens an item by its first word, named or not (`let () =`, `def _`): the keyword
@@ -2416,7 +2416,28 @@ pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
         };
         raw.split('\n').map(strip).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
     };
-    line_chunks(source, &marks, |l| if is_marked(l, &marks) { None } else { lang.definition(l) }, |_| false, doc)
+    let inside = inside_blocks(&split_lines(source), open, close);
+    line_chunks(source, &marks, |i, l| if inside[i] || is_marked(l, &marks) { None } else { lang.definition(l) }, |_| false, doc)
+}
+
+/// Whether each line starts inside a block comment that an earlier line opened and has not closed.
+fn inside_blocks(lines: &[&str], open: &str, close: &str) -> Vec<bool> {
+    let mut out = vec![false; lines.len()];
+    if open.is_empty() || close.is_empty() {
+        return out;
+    }
+    let mut in_block = false;
+    for (i, line) in lines.iter().enumerate() {
+        out[i] = in_block;
+        let mut rest = *line;
+        loop {
+            let (mark, next) = if in_block { (close, false) } else { (open, true) };
+            let Some(p) = rest.find(mark) else { break };
+            rest = &rest[p + mark.len()..];
+            in_block = next;
+        }
+    }
+    out
 }
 
 /// Chunks of the lines `def_of` names a definition: each block ends before the next definition
@@ -2426,14 +2447,14 @@ pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
 fn line_chunks(
     source: &str,
     marks: &Marks,
-    def_of: impl Fn(&str) -> Option<(&'static str, String)>,
+    def_of: impl Fn(usize, &str) -> Option<(&'static str, String)>,
     starts_item: impl Fn(&str) -> bool,
     doc_of: impl Fn(&str) -> String,
 ) -> Vec<Chunk> {
     let lines = split_lines(source);
     let mut defs: Vec<(usize, &'static str, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        if let Some((kind, name)) = def_of(line) {
+        if let Some((kind, name)) = def_of(i, line) {
             defs.push((i, kind, name));
         }
     }
