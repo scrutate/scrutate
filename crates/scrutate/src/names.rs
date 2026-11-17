@@ -23,11 +23,12 @@ pub struct Dependency {
     pub resolved: Option<String>,
 }
 
-/// Whether the occurrence of `word` reads as making an instance: a call, `.new`, or `new` before it.
-fn instantiates(o: &Occurrence, word: &str) -> bool {
+/// Whether the occurrence of `word` reads as making an instance: a call, `.new`, or `new` before
+/// it, in any case where the language's keywords ignore case (`any_case`, PHP's `NEW static()`).
+fn instantiates(o: &Occurrence, word: &str, any_case: bool) -> bool {
     let after = o.text.get(o.at + word.len()..).unwrap_or("").trim_start();
     let before = o.text.get(..o.at).unwrap_or("").trim_end();
-    after.starts_with('(') || after.starts_with(".new") || before.ends_with("new")
+    after.starts_with('(') || after.starts_with(".new") || before.ends_with("new") || any_case && before.to_ascii_lowercase().ends_with("new")
 }
 
 /// (importing file, line, module as written)
@@ -430,8 +431,9 @@ impl<'a> Names<'a> {
                 truncated = true;
                 break;
             }
+            let any_case = self.langs.folds(&class.path, "class");
             for word in spelled {
-                let made = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if id == class.id) && instantiates(o, &word);
+                let made = |o: &Occurrence| matches!(o.resolution, Ok((id, _)) if id == class.id) && instantiates(o, &word, any_case);
                 // a narrowed read kept only its own occurrences: the class's are read again
                 let of_class: Vec<Occurrence> = if word == bare.as_str() && kinds.is_none() {
                     occurrences.iter().filter(|o| made(o)).map(|o| o.retied(ctor)).collect()
@@ -530,7 +532,8 @@ impl<'a> Names<'a> {
         if let Some(found) = self.instantiations.get(&key) {
             return Ok(std::rc::Rc::clone(found));
         }
-        let found: Vec<Occurrence> = self.references(word, max_results)?.occurrences.into_iter().filter(|o| instantiates(o, word)).collect();
+        let found: Vec<Occurrence> =
+            self.references(word, max_results)?.occurrences.into_iter().filter(|o| instantiates(o, word, self.langs.folds(&o.path, "class"))).collect();
         let found = std::rc::Rc::new(found);
         // the entry, its key and the `Rc`, and each occurrence's buffers by capacity; a line's text
         // is shared by its uses and counted for each

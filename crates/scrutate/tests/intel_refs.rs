@@ -2144,6 +2144,16 @@ fn php_new_self_static_and_parent_are_calls_of_the_class() {
 }
 
 #[test]
+fn php_new_in_any_case_with_self_static_or_parent_uses_the_constructor() {
+    let php = "<?php\nclass K\n{\n    public function __construct() {}\n    public static function a() { return NEW static(); }\n    public static function b() { return NEW self(); }\n}\nclass L extends K\n{\n    public static function d() { return New parent(); }\n}\n";
+    let r = Repo::new("php_new_case", &[("a.php", php)]);
+    let v = r.json(&["refs", "__construct", "--json"]);
+    let mut lines: Vec<u64> = v["definitions"][0]["references"].as_array().unwrap().iter().map(|o| o["line"].as_u64().unwrap()).collect();
+    lines.sort();
+    assert_eq!(lines, [4, 5, 6, 10], "{v}");
+}
+
+#[test]
 fn a_call_on_an_element_or_a_returned_value_follows_the_declared_type() {
     let go_store = "package main\n\ntype Store struct{}\n\nfunc (s Store) Save() int {\n\treturn 1\n}\n";
     let go_use = "package main\n\nfunc run(f func() Store) int {\n\treturn f().Save()\n}\n\nfunc run2(m map[string]Store) int {\n\treturn m[\"a\"].Save()\n}\n\nfunc run3(xs []Store) int {\n\treturn xs[0].Save()\n}\n";

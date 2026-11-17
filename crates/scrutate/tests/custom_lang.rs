@@ -117,6 +117,19 @@ fn a_language_from_the_repository_s_table_is_indexed_searched_and_listed() {
 }
 
 #[test]
+fn no_line_inside_a_block_comment_defines() {
+    let t = Tree::new("block_comment");
+    t.write(".scrutate.toml", TABLE);
+    t.write("c.myl", "fn real(x)\n  x\nend\n\n{-\nfn alsonot(y)\n  y\n-}\nfn after(z)\n  z\nend\n");
+    let (code, out, err) = t.run(&["symbol", "alsonot"]);
+    assert_eq!(code, 1, "a definition inside a block comment: {out}{err}");
+    for (name, at) in [("real", "c.myl:1-"), ("after", "c.myl:9-")] {
+        let (code, out, err) = t.run(&["symbol", name]);
+        assert!(code == 0 && out.contains(at), "{name}: {out}{err}");
+    }
+}
+
+#[test]
 fn a_change_of_the_table_reparses_the_files_of_its_language() {
     let t = Tree::new("change");
     t.write(".scrutate.toml", TABLE);

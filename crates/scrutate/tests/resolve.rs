@@ -592,3 +592,17 @@ fn javascript_this_in_a_method_under_a_quoted_key_is_the_object_literal() {
     );
     assert_eq!(r.refs_of("put", "a.js:8"), ["a.js:3", "a.js:6", "a.js:8"]);
 }
+
+#[test]
+fn rust_self_in_an_inline_module_written_on_one_line_is_that_module() {
+    let r = Repo::new(
+        "rs_one_line_mods",
+        &[
+            ("Cargo.toml", "[package]\nname = \"ol\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("src/lib.rs", "mod outer { pub fn of() {} mod inn { fn g() { super::of(); self::h(); } fn h() {} } }\n"),
+        ],
+    );
+    // both modules start on line 1: `self::` is `inn`, `super::` is `outer`
+    assert!(r.reasons("h", "src/lib.rs").is_empty() && r.reasons("of", "src/lib.rs").is_empty());
+    assert_eq!(r.refs_of("h", "src/lib.rs:1"), ["src/lib.rs:1", "src/lib.rs:1"]);
+}
