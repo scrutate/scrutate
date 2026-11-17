@@ -420,6 +420,11 @@ incompatible index by itself, and that is never breaking.
   name`, and `missing to` for `call_path`), `missing path or symbol` names what each takes, and
   `path outside repo` says to give a path relative to the root. `batch` reports the same text
   ([CLI](docs/CLI.md#serve-mcp)).
+- `grep` without `--max-results` counts a file's matches in the file's own search and adds them
+  to the shared total once per file, where every matching line added to it, and the counters every
+  search thread adds to each sit on a cache line of their own. On many-core x86 the threads had
+  waited on each other for those lines when a search prints many lines. The counts printed do not
+  change.
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are

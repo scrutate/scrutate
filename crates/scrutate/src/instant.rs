@@ -1773,6 +1773,8 @@ struct Collector<'a> {
     count_each: bool,
     /// those matches in the group `matched` was given, counted there against the whole buffer
     each: Option<u64>,
+    /// matches not yet added to `stats_matches` (see `count_match`)
+    pending: u64,
 }
 
 /// Offsets into `line` (a match may run on into the line end left out of it) as offsets into
@@ -2002,7 +2004,7 @@ impl Collector<'_> {
             if self.report == Report::Files && self.matched {
                 return Ok(true);
             }
-            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            let n = self.count_match();
             if self.over_limit(n) {
                 return Ok(false);
             }
@@ -2019,12 +2021,12 @@ impl Collector<'_> {
         }
         if self.convert && self.binary_at.is_some() {
             // as ripgrep: a match past a NUL byte ends the output, `finish` writes the note
-            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            let n = self.count_match();
             self.matched |= !self.over_limit(n);
             return Ok(false);
         }
         if let Some(p) = self.plain {
-            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            let n = self.count_match();
             if self.over_limit(n) {
                 return Ok(false);
             }
@@ -2055,7 +2057,7 @@ impl Collector<'_> {
             return Ok(true);
         }
         let Text::Here(line) = text else { return Err(std::io::Error::other("a line not in memory has no hit")) };
-        let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+        let n = self.count_match();
         if self.over_limit(n) {
             return Ok(false);
         }
@@ -2122,6 +2124,18 @@ impl Collector<'_> {
 
     /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
     /// first, so this one is not reported, nor counted.
+    /// Counts a match: with `max_results` its number over all threads, which the cap needs as it
+    /// happens; without, 0, and the file's matches are added together in `flush`, since an add per
+    /// matching line from every thread kept the counter's cache line moving between cores.
+    fn count_match(&mut self) -> u64 {
+        if self.max_results.is_some() {
+            self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1
+        } else {
+            self.pending += 1;
+            0
+        }
+    }
+
     fn over_limit(&self, n: u64) -> bool {
         let over = self.max_results.is_some_and(|max| n > max);
         if over {
@@ -2139,6 +2153,9 @@ impl Collector<'_> {
         }
     }
     fn flush(&mut self) {
+        if self.pending > 0 {
+            self.stats_matches.fetch_add(std::mem::take(&mut self.pending), Ordering::Relaxed);
+        }
         if let (Some(p), false, false) = (self.plain, self.hold, self.out.is_empty()) {
             p.write(&self.out, std::mem::take(&mut self.first), self.stop);
             self.out.clear();
@@ -2363,16 +2380,29 @@ fn searchable(e: &ignore::DirEntry) -> bool {
     e.file_type().is_some_and(|t| t.is_file() || (e.depth() == 0 && !t.is_dir() && !e.path().is_dir()))
 }
 
+/// A counter on a cache line of its own: every search thread adds to these, and counters sharing
+/// a line made the threads wait on each other on many-core x86.
+#[derive(Default)]
+#[repr(align(128))]
+struct Padded(AtomicU64);
+
+impl std::ops::Deref for Padded {
+    type Target = AtomicU64;
+    fn deref(&self) -> &AtomicU64 {
+        &self.0
+    }
+}
+
 #[derive(Default)]
 struct Counters {
-    files_searched: AtomicU64,
+    files_searched: Padded,
     /// small files opened and read in one call
-    small_reads: AtomicU64,
+    small_reads: Padded,
     /// of those, the reads that took as long as a disk read (`COLD_READ_NS` or more)
-    slow_reads: AtomicU64,
-    files_matched: AtomicU64,
-    matches: AtomicU64,
-    bytes: AtomicU64,
+    slow_reads: Padded,
+    files_matched: Padded,
+    matches: Padded,
+    bytes: Padded,
     errors: AtomicU64,
     failures: Mutex<Vec<String>>,
     /// directories below a root that are on a kernel pseudo filesystem (`met_dir`), and whether
@@ -2510,6 +2540,7 @@ impl<'a> Run<'a> {
             numbered: o.line_numbers,
             count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
             each: None,
+            pending: 0,
         }
     }
 }
@@ -4073,7 +4104,7 @@ mod tests {
                             drop(tx);
                             sink.flush().unwrap();
                             let hits: Vec<String> = rx.into_iter().flatten().map(|r| format!("{r:?}")).collect();
-                            let stats = (c.files_matched.into_inner(), c.matches.into_inner(), c.errors.into_inner());
+                            let stats = (c.files_matched.0.into_inner(), c.matches.0.into_inner(), c.errors.into_inner());
                             let got = (out.0.lock().unwrap().clone(), hits, stats);
                             (got, ONE_LINE.with(|c| c.get()))
                         };
