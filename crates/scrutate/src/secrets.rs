@@ -1522,6 +1522,15 @@ impl FileLines {
     }
 }
 
+/// The file at `path` when it is a regular file: a device or a FIFO a printed line names is never
+/// opened (`/dev/zero` reads forever, a FIFO blocks in open).
+pub(crate) fn open_regular(path: &str) -> Option<std::fs::File> {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return None;
+    }
+    std::fs::File::open(path).ok().filter(|f| f.metadata().is_ok_and(|m| m.is_file()))
+}
+
 impl KeyFiles {
     /// Line `n` (from 1) of the file at `path` redacted, when it is a line of a private key's
     /// body, with how many redactions; `open` gives the file the first time it is asked for.

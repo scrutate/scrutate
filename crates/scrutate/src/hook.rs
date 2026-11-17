@@ -155,7 +155,7 @@ fn key_lines(items: &mut [Item]) -> usize {
             if !crate::secrets::could_be_key_line(&i.text) {
                 return 0;
             }
-            let Some((line, k)) = keys.line(path, *n, || std::fs::File::open(&**path).ok()) else { return 0 };
+            let Some((line, k)) = keys.line(path, *n, || crate::secrets::open_regular(path)) else { return 0 };
             i.text = line.to_string();
             k
         })

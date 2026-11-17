@@ -1873,7 +1873,8 @@ back. `rg --sort` takes a value where `scrutate grep --sort` is a flag: `--sort 
 and `-c` in ways a translation could not match exactly. Secrets are redacted unless
 `SCRUTATE_REDACT=off` (see below), with the closing line that counts them, also when a pipe takes
 the output (`--piped`): a `cut` after it sees `[redacted:KIND]`. The output streams through line by line
-(a line longer than 1 MiB in pieces, each redacted), so memory stays bounded. With no pipe after
+(a line longer than 1 MiB in pieces, each redacted and cut where no secret crosses the cut), so
+memory stays bounded. With no pipe after
 it, it stops at the MCP tools' bound (24,000 bytes, `SCRUTATE_MAX_BYTES`) with whole lines, reads
 the rest of the program's output without sending it (so `hook stats` counts the whole), and adds
 `[scrutate] output cut here: narrow the search, or pass a path`, exiting 0 as the search had

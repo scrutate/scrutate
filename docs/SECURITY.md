@@ -408,7 +408,8 @@ writes before it (`    7  `, `a.py:3:`, `a.py-4-`). What a page cannot see is re
 answer first: a structural search capture as its whole source line reads it, so a value alone
 (`"key-..."`) is found by the name its line gives it; a line of a private key's body as its whole
 file reads it, at any size and in UTF-16 too, wherever `read_code` (from the middle of a file),
-`grep_code`, `references`, the Grep hook or `hook run` (by the file and line grep names) show it,
+`grep_code`, `references`, the Grep hook or `hook run` (by the file and line grep names, a regular
+file only: a device or a FIFO a printed line names is not opened) show it,
 armour on the page or not, reading only the files of what the page can show and each only as far
 as its last line shown. Every line of a private key's body in a file the text index holds is also
 recorded there by its hash, so whatever shows that line has it redacted by its text alone, with or
@@ -416,7 +417,10 @@ without its file, its line number or its armour (`grep -r` and `rg` through `hoo
 name with a colon); and a line too long for `references` to show whole before the window
 around a use is cut from it, so the window never shows a value without its name. The Grep hook
 writes its lines through `hook::redacted`; `hook run` redacts what the search program prints, line
-by line as it streams (with colour off, and refusing an `rg` with `--replace` or `--json`, which
+by line as it streams (a line over 1 MiB in pieces, each cut at least 64 KiB before the piece's
+end and 4 KiB before any match of a rule near the cut, so a secret and the name before it are never
+split; a match crossing the cut
+that runs past 4 MiB goes out as its marker and the rest of its line is withheld; with colour off, and refusing an `rg` with `--replace` or `--json`, which
 rewrite a line before the redactor can see a secret in it whole), and leaves `.scrutate/` out of a `grep` or `rg` it runs: the index and the
 `tsquery` cache hold the repository's text in binary records, where a secret runs straight into
 the next field's bytes (`...ScEknc4\0\0`) and no detector can see where it ends. `hook run` decides before the search runs, by file identity (`files::IndexFiles`), so the

@@ -1185,6 +1185,13 @@ incompatible index by itself, and that is never breaking.
   out negative. `hook run` now reads the rest unsent instead of ending the program, and its
   closing line counts only the redactions in the lines sent; it counted the line that did not
   fit too ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `hook run` no longer lets a secret out whole across the 1 MiB cut of a long line: each piece
+  was redacted on its own, so a token crossing the cut matched no rule and both halves went out
+  back to back. A piece is now cut at least 64 KiB before its end and 4 KiB before any match of
+  a rule near the cut, and the rest is redacted with the next piece; a match crossing the cut that
+  runs past 4 MiB goes out as its marker with the rest of its line withheld. The key-line read
+  back of `hook run` and the Grep hook opens only a regular file: a printed line naming
+  `/dev/zero` spun forever and one naming a FIFO blocked ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 
