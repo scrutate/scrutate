@@ -420,6 +420,10 @@ incompatible index by itself, and that is never breaking.
   name`, and `missing to` for `call_path`), `missing path or symbol` names what each takes, and
   `path outside repo` says to give a path relative to the root. `batch` reports the same text
   ([CLI](docs/CLI.md#serve-mcp)).
+- CI builds the test binaries at opt-level 3 without cross-crate LTO and with 16 codegen units, as
+  `tools/ci_gate.sh` does; the binary is still linked with the release profile (fat LTO, one
+  unit). The two write-then-read session tests run 200 loops, 1000 with `SCRUTATE_TEST_STRESS`
+  set ([Contributing](CONTRIBUTING.md#quality-gates-all-must-pass-before-a-change-is-merged)).
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are

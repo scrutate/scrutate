@@ -3055,6 +3055,11 @@ mod tests {
         (root, s)
     }
 
+    /// Write-then-read loops of the two barrier tests: 1000 with SCRUTATE_TEST_STRESS set.
+    fn barrier_loops() -> usize {
+        if std::env::var_os("SCRUTATE_TEST_STRESS").is_some() { 1000 } else { 200 }
+    }
+
     #[test]
     fn a_file_written_just_before_a_call_is_in_its_answer_every_time() {
         // no safety walk lands in the run: a second file looked at is a second look
@@ -3062,7 +3067,7 @@ mod tests {
         s.notes().unwrap().set_order_proves(crate::watch::ORDER_PROVES);
         // the cookie's change set where its order proves, else (macOS) the kqueue's
         let looked = 1;
-        for i in 0..1000 {
+        for i in 0..barrier_loops() {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");
@@ -3600,7 +3605,7 @@ mod tests {
         assert!(notes.kq_in_place_now());
         // the first read after the kqueue is in place looks at the tree
         let _ = s.run_scanned(&Op::Symbol { name: "nothing".into(), limit: 1, exact: true }).unwrap();
-        for i in 0..1000 {
+        for i in 0..barrier_loops() {
             std::fs::write(root.join("src/d0/w.py"), format!("def written_{i}():\n    return {i}\n")).unwrap();
             let (st, a) = s.run_scanned(&Op::Symbol { name: format!("written_{i}"), limit: 1, exact: true }).unwrap();
             assert!(a.is_ok_and(|a| !a.is_empty()), "write {i} missed");

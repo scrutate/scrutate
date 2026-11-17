@@ -55,8 +55,14 @@ jobs:
       - name: ripgrep 15.2.0 for the tests that compare with it
         run: bash tools/ci_ripgrep.sh
       # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
-      # every test file runs, so one failure does not hide the next; the vendored walker's own too
+      # every test file runs, so one failure does not hide the next; the vendored walker's own too.
+      # The tests build at opt-level 3 without cross-crate LTO and with 16 codegen units: fat LTO
+      # with one unit relinks each test binary whole and took most of the macOS Intel job's 75
+      # minutes (ThinLTO saved little). The build after them links the binary as it ships.
       - run: cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
       - run: cargo build --release -p scrutate --locked
       # release.yml's second link on glibc Linux: the ordered names come first in the text, and
       # minor page faults at start (median of 7) without and with the order
@@ -290,6 +296,9 @@ jobs:
       - name: ripgrep 15.2.0 for the tests that compare with it
         run: bash tools/ci_ripgrep.sh
       - run: cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
       # LANGUAGES.md marks the grammars a default build lacks, so it needs that build beside the
       # extra-langs one the tests above left in target/release
       - name: LANGUAGES.md is what the two builds give

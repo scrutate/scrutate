@@ -51,6 +51,7 @@ docs/                   architecture, security, benchmarks, traceability, ...
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
 cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features; the tests that run or compare with rg skip without it, and fail without it when SCRUTATE_TEST_NEEDS_RG is set (CI, tools/ci_ripgrep.sh)
+SCRUTATE_TEST_STRESS=1 cargo test --release -p scrutate --lib a_file_written_just_before_a_call   # the session's write-then-read tests at 1000 loops (200 by default)
 cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
 bash tools/ci_gate.sh [--quick]                   # CI's Linux checks on a box set up by its ci_setup.sh (on the box, not in this repository); tools/gate_map.json names what covers each CI step
 python3 tools/gate_parity.py                      # every step of the six workflows, run: and uses:, is in that map, keyed by what decides how it runs (PyYAML from python[test])
