@@ -1079,7 +1079,7 @@ that list.
 `tsquery --rewrite` (`rewrite.rs`) shares the query's checks and walk with `tsquery`
 (`intel::compile_query`, `intel::query_files`) but not the cache, since a write must rest on the
 bytes it read. `rewrite::plan` reads and parses each file once, takes per match the `@match`
-capture or the widest one, fills the template from the captures' original text, keeps the
+capture or else the one that starts first (the longest of those, then the first written), fills the template from the captures' original text, keeps the
 outermost of overlapping matches, and checks that the text parses where it changes, before and
 after. `Plan::diff` prints the hunks from the known edit positions (no line diff is computed), and
 `Plan::write` writes each file whole to a temporary file beside it and renames it over the original
