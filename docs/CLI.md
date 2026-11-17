@@ -323,7 +323,7 @@ while files change.
 | `outline FILE` | Symbols of a file in source order. `--json` gives each with `kind`, `name`, `qualname`, `start` and `end`. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. Imports resolve as in `refs`: Rust `crate::`, `self::` and `super::` paths and `mod` declarations (`deps` lists a `mod` line too), Go imports through `go.mod`, also from a module in a subdirectory, Python `from . import b`, TypeScript `./lib/c.js` to `c.ts` and `./types` to `types.d.ts`. `deps` gives one line per file a statement names. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. When nothing resolves to the target but some imports could not be resolved, `rdeps` says so: `no import resolves to X, but N imports could not be resolved and may name it`. It counts a relative import whose path is the target without its extension, the target or its directory, and, in a file that is not JavaScript or TypeScript, a bare import with a part spelled as the target's module name (`b` for `a/b.py` or `a/b/__init__.py`). A Java import resolves through the files' package declarations, in any source root (`src/main/java` included): a class import to the class's file, `a.b.*` to the package's files, a static import to its class's file. A PHP `use` resolves to the file that defines the class or function it names, in the namespace it names. An import is recorded as its statement writes it. JavaScript and TypeScript: the module of `import`, of `export ... from` and of `import x = require()`, and the argument of a `require` or `import()` call when it is a string or a template string without `${}`; an exported declaration is no import. PHP: `require` and `include` with either quote, and `use`, plain, `function` or grouped (`use Foo\{A, B}` gives `Foo\A` and `Foo\B`). R: `library`, `require`, `requireNamespace` and `source`. Julia: each module of a `using` or `import` list, the module before a colon, and `include`. Ruby and Lua: `require` and its kin without a receiver, with a literal argument. Kotlin and C#: the imported name, not its alias. Objective-C `@import` and QML imports are recorded too. `--json`: `deps` gives each import's `line`, `module` and `resolved` (the file, or `null`); `rdeps` each importer's `path`, `line` and `module`. |
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). A constant has no vector: `similar` on one is an error that says so. `--json` gives each with `path`, `start`, `end`, `kind`, `qualname`, `cosine` and `jaccard`. |
-| `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. A function is compared only when its body (the lines below the signature line) has at least `--min-tokens` tokens (default 30): the pieces of its identifiers split at `_` and case changes, of two letters or more, with numbers and common English and language keywords left out, so `v1 = compute_1(x, 1)` counts one. `exact` is the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. Any other `near` pair has at least `--threshold` (default 0.75) of the two bodies' three-token runs in common (Jaccard). `--threshold 1` prints the exact groups only. Near pairs are found by sampling, through MinHash buckets: at the default threshold practically every near pair is found; at `--threshold 0.5` about two in three of the pairs at that similarity are, and the answer says so. A bucket counts the copies of one body once, so a near copy of code copied many times is found and shown against its first copy (`(one of 64 exact copies)`, `copies` in `--json`). A bucket of more than 64 bodies is not compared pair by pair: the answer says how many functions fell in one, and that a near pair among them that shares no other bucket is not in this answer. Groups come largest first, then most alike, each with its members by path and line, so any index of the same tree gives the same answer; at most 50 groups, or `--limit`, cut in that order. `--json` gives each group's `kind` (`exact` or `near`), `similarity`, `tokens`, `copies` and `members`, each member an array `[path, qualname, start, end]`. |
+| `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. A function is compared only when its body (the lines below the signature line) has at least `--min-tokens` tokens (default 30): the pieces of its identifiers split at `_` and case changes, of two letters or more, with numbers and common English and language keywords left out, so `v1 = compute_1(x, 1)` counts one. `exact` is the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. Any other `near` pair has at least `--threshold` (default 0.75) of the two bodies' three-token runs in common (Jaccard). `--threshold 1` prints the exact groups only. Near pairs are found by sampling, through MinHash buckets: at the default threshold practically every near pair is found; at `--threshold 0.5` about two in three of the pairs at that similarity are, and the answer says so. A bucket counts the copies of one body once, so a near copy of code copied many times is found and shown against its first copy (`(one of 64 exact copies)`, `copies` in `--json`). A bucket of more than 64 bodies is not compared pair by pair: the answer says how many functions fell in one, and that a near pair among them that shares no other bucket is not in this answer. Groups come largest first, then most alike, each with its members by path and line, so any index of the same tree gives the same answer; at most 50 groups, or `--limit`, cut in that order. `--json` gives each group's `kind` (`exact` or `near`), `similarity`, `tokens` and `members`, each member an array `[path, qualname, start, end]`, and for a near pair one of whose members stands for an exact group, `copies`: how many copies each member stands for, in member order. |
 | `impact [--base REV] [--staged] [--depth N]` | What a change touches: the definitions the git diff changes, the callers that reach them up to `N` steps away (default 3) with their distances, and the test files to run (see below). |
 | `review --base REV [--head REV] [--format markdown\|json\|gitlab] [--depth N] [--link URL]` | A pull request report: `impact` between two commits and the duplicates the head adds, as a PR comment, JSON or a GitLab Code Quality report (see below). |
 | `files QUERY [--limit N]` | Paths of the repository ranked for a short query that may be misspelt (`srch.rs` finds `search.rs`), files read lately first among equals; no index needed (see below). |
@@ -450,8 +450,8 @@ the rest speak of "over 1 MB" alone, which is what a smaller copy would fix: a l
 glob or file it is given names a left-out file (`big.py is not in the index (over 1 MB): read it
 by lines, or search it with grep`, and for a file that is not text the reason alone); `dupes`, `dead` and `map` always, as they claim the whole
 repository. `refs` labels an occurrence in such a file `in a file that is not indexed (over 1 MB)`
-and keeps it among the unresolved; `impact` and `review` list a changed one as `big.py [file]
-(edited; not indexed: over 1 MB)`. A repository with no left-out file gets every answer as before.
+and keeps it among the unresolved; `impact` lists a changed one as `big.py  [file]
+(edited; not indexed: over 1 MB)`, and `review` as ``- `big.py` (edited; not indexed: over 1 MB)``. A repository with no left-out file gets every answer as before.
 
 ### `refs`
 ```
@@ -462,7 +462,8 @@ refers to. One inside a longer name of its file's language is no occurrence and 
 `foo` in Haskell's `foo'`, `init` in JavaScript's `$init`, `valid` in Ruby's `valid?`, `foo` in Emacs Lisp, Scheme, Racket or Common Lisp `foo-bar` (a Lisp name runs to the next delimiter; a Common Lisp `pkg:foo` is `foo`). For Python, JavaScript, TypeScript, Rust and Go the rules are, in order:
 
 1. The name of a definition, or the name in an import statement, is that definition (or what
-   the import resolves to).
+   the import resolves to). In a Go declaration of several names (`var X, Y int`, `const A, B =
+   1, 2`) only the first is tied so; a later one is unresolved, `not found`.
 2. A qualified occurrence (`obj.N`, `a::b::N`, `pkg.N`) is looked up in what the qualifier names:
    - a module bound by an import (`import x`, `import * as x`, `use crate::a`, a Go import), or a
      module path (`crate::`, `self::`, `super::`, a workspace crate, a Rust child module);
@@ -519,8 +520,8 @@ refers to. One inside a longer name of its file's language is no occurrence and 
    - a definition nested in an enclosing function (or directly in an enclosing class body). A
      parameter or local of that name hides everything else within its own scope (a lambda's
      parameter inside the lambda, a block-scoped name inside its block). A name bound by a
-     pattern hides only in its own branch (Rust `if let`, `while let` and a `match` arm, a Python
-     `case`); a `catch` binding and a Go `:=` in an `if`, `for`, `switch` or type switch only in
+     pattern hides only in its own branch (Rust `if let`, `while let` and a `match` arm), and a Python
+     `case` capture for the rest of its function, as Python binds it; a `catch` binding and a Go `:=` in an `if`, `for`, `switch` or type switch only in
      that statement; a Python parameter only in the function body (defaults and annotations are
      outside it); a `let` or `for` not in its own value; an import inside a function only in that
      function; the name of a JavaScript function, generator or class expression (`var h = function
@@ -613,8 +614,8 @@ C and C++ have rules of their own:
   enumerator of an unscoped enum is in the scope of its enum.
 - `a::b::f` is the definition of that qualified name, else one inside a namespace of that name.
 - A function or method declaration (`int add(int, int);` in a header) stands for the definition
-  of its name with a body: the only one, else the one in the file named like the declaring one
-  (`util.h` and `util.c`); with several and none of that name the use is undecided.
+  of its name with a body: the only one, else the one at the declaring file's path with another
+  extension (`inc/util.h` and `inc/util.c`, not `lib/util.c`); with several and none of that name the use is undecided.
 - Undecided: a call on a value (`s.area()`, `p->next()`), whose type is not followed, and a
   member of a class whose base is not in the repository. A field read on a value is `field or
   key`. Include paths of the build (`-I`, `compile_commands.json`) are not read.
@@ -630,8 +631,8 @@ C# has rules of its own too:
 - `x.M()` goes through the type of `x`: a local's declared type or what it is built from
   (`var c = new Circle()`), a parameter's, a field's or a property's type; a call takes the
   method's declared return type. `this` is the class around, `base` its bases.
-- Undecided: `x?.M()`, a value of an untyped lambda parameter, and a member of a class whose base
-  could not be found. Fields and enum members are `field or key`, a part of a namespace is
+- Undecided: `x?.M()` and a member of a class whose base could not be found. A call on a value of
+  an untyped lambda parameter is `external`. Fields and enum members are `field or key`, a part of a namespace is
   `namespace`.
 
 Import paths resolve to repository files:
@@ -655,11 +656,11 @@ function, `let` and `const` to their block. Imports of modules outside the repos
 `external`; a package name no repository `package.json` declares is outside. Unresolved:
 
 - occurrences in comments and strings;
-- in a language the resolver does not read (`not resolved in this language`) or a file whose
-  syntax tree is more than 2,000 levels deep (`nested too deeply to read`), a use whose name has
-  more than one definition in the language family and none in its own file, or that is part of a
-  longer name the index holds (`get-user` where a definition has that name; Lua's `width-margin`
-  is a use of `width`); a use with one such
+- in a language the resolver does not read, or a file whose syntax tree is more than 2,000
+  levels deep, a use whose name has more than one definition in the language family and none in
+  its own file (`by name, with other definitions of the name`), or that is part of a longer name
+  the index holds (`not resolved in this language`, `nested too deeply to read` in a deep file;
+  `get-user` where a definition has that name; Lua's `width-margin` is a use of `width`); a use with one such
   definition, or one in its own file, is tied to it by name and marked `(by name)` (`by name:
   nested too deeply to read` for a deep file; `via` in JSON), as `callers` and `callees` read it;
 - a file without a grammar (`no grammar`): the index holds none of its calls;
@@ -676,10 +677,11 @@ The output lists each definition with its references, then the unresolved occurr
 reason. `--def PATH[:LINE]` keeps one definition of `NAME`: the one in `PATH`, or the one
 containing `LINE` when the file has several; no such definition is an error. A qualified name
 (`Stack::push`, `Stack.push`) keeps the definitions `symbol` finds for it, as `--def` keeps one,
-and one that names none keeps no occurrence: the answer has only its counts and unresolved uses
-(exit 1 when it has none). `--textual` skips
+and one that names none keeps no occurrence: the answer has only its counts and unresolved uses,
+and with no unresolved use it is `(no results)` (the counts in `--json` alone) with exit code 1. `--textual` skips
 resolution: definitions, callers and every occurrence grouped by enclosing symbol (it never
-misses anything, and works without an index). Both search the files the MCP `grep_code` tool
+misses anything; it reads definitions, callers and enclosing symbols from the index, which it
+builds first as any lookup does). Both search the files the MCP `grep_code` tool
 searches: hidden files included, the directories the index skips left out. With `--json`, the
 document has `name`, `definitions` (each with its `path`, `start`, `end`, `kind` and `qualname`,
 `"outside_filter": true` for one the filters leave out, and a `references` list: `path`, `line`,
@@ -687,8 +689,8 @@ document has `name`, `definitions` (each with its `path`, `start`, `end`, `kind`
 `unresolved` list (`path`, `line`, `column`, `text`, `cut`, `reason`). `--textual --json` is shaped
 otherwise: `name`, `definitions` (`id`, `path`, `start`, `end`, `kind`, `qualname`), `callers`
 (definitions as under Conventions), `references` (one group per enclosing symbol: `symbol`, the definition
-or `null`, `path`, `lines` of `line`, `column` and `text`, and `note` for a file a NUL byte
-stopped) and `truncated`. `--def`, a qualified name and `--kind` still
+or `null`, `path`, `lines` of `line`, `column` (always 0 here) and `text`, and `note` for a file a NUL
+byte stopped) and `truncated`. `--def`, a qualified name and `--kind` still
 resolve every occurrence they read: the unresolved ones are listed, at most `--max-results` of
 them, with `unresolved_count` counting every one the read saw (an unresolved use may be a use of
 the definition asked for), and `--def` or a qualified name ends with `(N other occurrences resolve
@@ -761,7 +763,8 @@ three sections, a fourth when the change has findings and a fifth, `notes`, when
 
 Items sort by distance, path and line, the same every run. A file with no definitions to name
 gets a line under `notes`: a binary file, a submodule (its commits are not read), a file the
-index leaves out. A file moved to a path the index's rules leave out (a directory `.ignore` or
+index's rules leave out; a text file over 1 MB is listed under `changed` instead, as
+`path  [file]  (edited; not indexed: over 1 MB)`. A file moved to a path the index's rules leave out (a directory `.ignore` or
 `.gitignore` names) reads as deleted, its definitions and callers as `git rm` of it gives. A file
 renamed within the index gets `renamed from OLD`, and a definition of it
 whose callers still name the old path (`from lib.util import helper` after `lib/util.py` became
@@ -771,8 +774,8 @@ importers still resolve is not listed. The first 1000 definitions of renamed fil
 checked so (each costs a lookup of its name's call sites); past that a note says how many were
 not (`unchecked` in JSON). `--json` gives the envelope, its `result` with `against`, `base` (the commit
 compared with), `staged`, `depth`, `changed` (each with `id`, `path`, `start` and `end`, `null`
-for a whole file, `kind`, `qualname`, `status`, and `not_indexed` for a file the index leaves
-out), `callers` (each with
+for a whole file, `kind`, `qualname`, `status`, and `not_indexed` (`over 1 MB`) for a text file
+over 1 MB), `callers` (each with
 `distance`, `via`, the location of what it calls, `undecided` and `calls_deleted`), `tests` (`path`, `distance`, `via`), `notes` (each with `path`, `note` and, for a
 rename, `renamed_from`, the old path, and on the note of definitions past the first 1000,
 `unchecked`, how many), `findings` (each with `kind`, `severity`, `path`, `start`,
@@ -815,7 +818,7 @@ counts, and a section for each part with items: `Changed definitions`,
 `Callers, up to N steps away` (each with its distance), `Tests to run`, `New duplicates` and
 `Notes`. Locations are paths from the repository root; with `--link URL` each links to
 `URL/PATH#Lstart-Lend` (the Action passes `https://github.com/OWNER/REPO/blob/COMMIT`). The body
-is cut at whole lines before 65,536 characters, GitHub's comment limit, with a last line that
+is cut at whole lines before 65,536 bytes (GitHub's comment limit is 65,536 characters), with a last line that
 says so and names the command that prints the whole report, the same comparison with `--format json`
 (with `--head` when the head is not `HEAD` and `--depth` when it is not the default), each name
 in a code span; a line saying the walk stopped is kept inside the limit. `--format json` is the envelope: `impact`'s `result`, `findings` included, with `head`,
@@ -960,13 +963,16 @@ repository's index never holds a dependency's files. Answers are redacted as the
 `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `read`, `outline`, `deps`, `rdeps`,
 `similar`, `dupes`, `impact`, `dead` and the ranked search of `search` and `find` are operations
 (`ops.rs`). The CLI, the MCP server, `batch`, the Python bindings and the language server run the
-same code, with the same check of the files an answer cites, the same recovery from a damaged
-index, the same defaults (search `k` 8, callers 30, callees 40, call path depth 10, references
-200, duplicates 50, structural search 1000) and the same text or JSON. An empty answer has exit
+same code, with the same check of the files an answer cites and the same recovery from a damaged
+index. All but the language server also share the defaults (search `k` 8, callers 30, callees 40,
+call path depth 10, references 200, duplicates 50, structural search 1000) and the text or JSON;
+the language server reads up to 5000 references and 50 definitions and answers in the protocol's
+form. An empty answer has exit
 code 1; `outline`, `deps`, `rdeps`, `similar` and `dupes` then print nothing on standard output
 and one sentence on standard error. When `symbol`, `callers`, `callees`, `dupes`, `tsquery`,
 `read_code symbol`, `duplicates` or `structural_search` stops at its limit with more left, a last
-line says so and names the argument that raises it
+line says so and, but for `read_code symbol` (its 20 is fixed: the line says to pass a path or a
+location), names the argument that raises it
 (`(stopped at 30 results: raise limit to see more)`): the MCP argument `limit`, and `--limit` for
 `symbol`, `callers`, `callees`, `dupes` and `tsquery`. A filtered `symbol` stopped at its bound of
 near matches ends with `(100,000 near matches were read before the filter: narrow the name)`
@@ -1017,8 +1023,8 @@ Both forms are redacted, `detailed` and `concise`, before the budget pages them,
 never cuts a secret in two, and a structural search capture as its whole line reads it. A path
 that holds a secret is redacted too. The Grep hook and `lsp` answer the same way. The CLI and the
 Python bindings print what the files hold; `SCRUTATE_REDACT=on` redacts every CLI answer that
-prints file text, in text and `--json` (as values, the closing line on stderr), and leaves file
-names and counts as they are: `grep` with or without `--index` line by line with colour off (a
+prints file text, in text and `--json` (as values, the closing line on stderr), and a path that
+holds a secret in any answer, `files` included; counts stay as they are: `grep` with or without `--index` line by line with colour off (a
 `--json` record whose text was redacted loses its `spans`), `search` with `--also` too, `read`,
 `symbol`, `refs`, `callers`, `callees`, `similar`, `dupes`, `impact`, `review` in its three
 formats, `tsquery` and the diff of `tsquery --rewrite` (which then no longer applies to a redacted
@@ -1075,7 +1081,7 @@ gone, or a named file is new and a scan would index it, those files alone are in
 the answer computed again, once. A change in a file the answer does not cite or name waits for
 the next scan. At the end of its input (EOF) the server answers the calls in flight, lets a
 running index build finish, and exits. So a client killed during the first build leaves the
-server running until that build is committed (about 40 s on 20,000 files); a server started on
+server running until that build is committed; a server started on
 the same root meanwhile is not held up by it, and answers from that build when it is done, where
 stopping it would leave the next server to build from the start.
 
@@ -1084,8 +1090,7 @@ same root: `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `outline`, `de
 `read`, `similar`, `dupes`, `dead`, `search` (of this repository alone: with `--also` another
 root it does its own work) and the ranked part of `find`. Not `impact`, since git runs in the
 command's own environment, nor `files`, which needs no index. The files that changed are looked
-at first, as for a tool call (every file when the watch cannot vouch for fewer), and the output is the same bytes and exit code a fresh process gives (about 12 ms in
-place of 28 ms on a copy of this repository). The meeting point is a socket file on Unix,
+at first, as for a tool call (every file when the watch cannot vouch for fewer), and the output is the same bytes and exit code a fresh process gives. The meeting point is a socket file on Unix,
 `.scrutate/session.sock` (owner only; no network port), removed when the server exits or its root
 moves to another tree, and a named pipe on Windows, `\\.\pipe\scrutate-session-<hash of the user
 and root>` (owner only, local callers only), which goes away with the server, or when it stops
@@ -1148,11 +1153,13 @@ servers on one root, the first offers the socket.
   | `find_files` | the paths in rank order, with a directory line each time the directory changes |
   | `reindex` | the same line |
 
-  A concise answer over 1 KB is at most half of the detailed one where that carries code or
+  Where the detailed answer is over 1 KB, the concise one is at most half of it where it carries code or
   snippets, and at most two thirds where it is already only places and names (similar code, an
   outline of long names) (`tests/concise.rs`). The command line has no concise form.
-- Arguments: a wrong type or a negative number is a tool error naming the argument
-  (`k must be a non-negative integer`), as is a required argument left out (`missing required
+- Arguments: a wrong type, or a negative number where a count is taken, is a tool error naming the
+  argument (`k must be a non-negative integer`; `read_code`'s `start` and `end` take any integer, a
+  `start` below 1 reading from line 1, and `duplicates`' `threshold` any number), as is a required
+  argument left out (`missing required
   argument name`; `read_code` without either says `missing path or symbol` and what each takes),
   and JSON `null` is the same as leaving an argument out.
   An error quotes at most 200 characters of an argument. Every path argument may be written `./x`
@@ -1165,7 +1172,7 @@ Per tool:
 
 | Tool | Arguments and answer |
 |---|---|
-| `grep_code` | An Engine A search of the files the index holds. Hidden files such as `.github/` are searched (with a text index, its trigrams say which of the files it holds as they are now can match, and the other files are read; the answer is the same. Which files are there and as they are now comes from a look at the tree; a server whose watch runs keeps that look up to date with the files each change set names, one `stat` each, so a call walks nothing, and it looks again when the watch cannot vouch for every file, as on macOS while no kqueue is in place); ignored files, `.git/` and the directories the index skips by name (`node_modules` and the like) are not. (`scrutate grep` skips hidden files unless `--hidden`, and reads those directories unless an ignore file excludes them.) The pattern is a regex unless `mode` names another (`literal`, `identifier`, `fuzzy` and `fuzzy_regex` within `max_edits` edits, default 1, or `pcre2`), as `grep -F`, `--ident`, `--fuzzy`, `--fuzzy-regex` and `-P` do; `case` is `sensitive` (the default), `insensitive` or `smart`, and `word` keeps whole words. `path` keeps one file or directory of the repository (answers still name files from the root; one that leaves the repository is refused, and one that leaves it and comes back by its parts, `../repo/src`, is read from the root as `src`, as every tool's path is) and `globs` keeps the files they match, as `grep -g` (`!` excludes); neither brings back a directory the index skips. Matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it, and the answer says so. A capped answer holds the first matches in path order, so the same call gives the same lines every time and a second page neither repeats nor skips one; `references` does the same, over the same files. A file whose search a NUL byte stopped after a match ends its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an error. `max_results` is at most 5,000: a larger number is lowered to it, and the answer ends with a line that says so (`capped` in the structured answer). |
+| `grep_code` | An Engine A search of the files the index holds. Hidden files such as `.github/` are searched (with a text index, its trigrams say which of the files it holds as they are now can match, and the other files are read; the answer is the same. Which files are there and as they are now comes from a look at the tree; a server whose watch runs keeps that look up to date with the files each change set names, one `stat` each, so a call walks nothing, and it looks again when the watch cannot vouch for every file, as on macOS while no kqueue is in place); ignored files, `.git/` and the directories the index skips by name (`node_modules` and the like) are not. (`scrutate grep` skips hidden files unless `--hidden`, and reads those directories unless an ignore file excludes them.) The pattern is a regex unless `mode` names another (`literal`, `identifier`, `fuzzy` and `fuzzy_regex` within `max_edits` edits, default 1, or `pcre2`), as `grep -F`, `--ident`, `--fuzzy`, `--fuzzy-regex` and `-P` do; `case` is `sensitive` (the default), `insensitive` or `smart`, and `word` keeps whole words. `path` keeps one file or directory of the repository (answers still name files from the root; one that leaves the repository is refused, and one that leaves it and comes back by its parts, `../repo/src`, is read from the root as `src`, as every tool's path is) and `globs` keeps the files they match, as `grep -g` (`!` excludes); `globs` brings back no directory the index skips, but a `path` that names one (`node_modules`, `.git`) searches it. Matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it, and the answer says so. A capped answer holds the first matches in path order, so the same call gives the same lines every time and a second page neither repeats nor skips one; `references` does the same, over the same files. A file whose search a NUL byte stopped after a match ends its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an error. `max_results` is at most 5,000: a larger number is lowered to it, and the answer ends with a line that says so (`capped` in the structured answer). |
 | `search_code` | Takes at most 10 `alt_queries`; a cancelled search stops between them. `search_code`, `find_symbol` and `references` take the filters `globs`, `types`, `langs` and `kinds` (see Filters above), except `find_symbol` with `scope: "deps"` ([`--deps`](#--deps-a-dependency-at-its-locked-version)). A cancelled `grep_code` or `references` stops between files. |
 | `read_code` | Reads a line range of a file (`path`, `start`, `end`), or with `symbol` a whole definition: a name, `Class.method` or a location. A name with several definitions returns each (up to 20), and `path` keeps those in that file, narrowing before that limit, so a file's definition is found however many other files define the name. A definition longer than 400 lines shows its first 400 and closes with `(the definition goes on to line N: read_code path=P start=S)`. With `end`, every line up to `end` is read; without it, 400 lines. The answer closes with `(lines A-B of N in P: read_code path=P start=B+1 for more)` while lines are left. An empty file answers `P is empty`, a `start` past the end `P has N lines: start=S is past the end`; an `end` before `start` and a path that is not a regular file are errors. A file is read through a 64 KB buffer, with at most 1 MB of line text (a longer line is cut and says so): a file of at most 1 MB is read to its end to count its lines, a larger one only as far as the last line asked for. A file with a NUL byte in its first 8 KB is refused; a definition read with `symbol` goes through the same reader, so it fails as its file's read would. A path that leaves the repository by its own parts answers `path outside repo: give a path relative to the repository root, or an absolute one under it` (`grep_code` with such a `path` too) with no file looked at, and a link that leaves it answers as a missing file does. An absolute path is one under the root as `config --json` prints it or as the server was given it; any other spelling of the same directory (through a link) counts as outside. A file over 1 MB not read to its end closes with `of P, more lines follow` in place of the line count, and the JSON `file_lines` is `null`. With `symbol`, `history` (an integer, default 0, at most 50) is `read --history`: each definition's JSON gains `history`, a list of `{commit, date, subject}` (with `cut` on a shallow clone's oldest commit), and `history_note` where it has none or stopped short; the answer gains `history_note` when no definition has one and `history_more`, the definitions past the first 10. With `scope: "deps"`, `symbol` is `PACKAGE.NAME`, a definition of a dependency ([`--deps`](#--deps-a-dependency-at-its-locked-version)); `path`, `start`, `end` and `history` do not apply. |
 | `references` | Ends with a closing line when `max_results` cut the search (at most 5,000: a larger number is lowered to it, and the answer ends with a line that says so, `capped` in the structured answer), answers `(no results)` when nothing is found, and refuses an empty name. |
@@ -1366,14 +1373,15 @@ whenever that set changes, and once per left-out file the first time a request n
 document's symbols, or a definition or references from a position in it); an answer itself is
 the protocol's, empty where it found nothing. Columns are UTF-16 code
 units, as the protocol requires. The exit code is 0 after `shutdown` (then `exit` or the end of input), 1 otherwise.
-Logs go to stderr.
+Log messages go to the editor (`window/logMessage`); the index in use and a failed index update
+after a save go to stderr, and a refusal to open the index to both.
 
 ### `watch`
 ```
 scrutate watch [PATH]
 ```
 Sets up the watch on `PATH` (default `--root`), then updates the index once, so a change made
-during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
+during that first update is seen, prints `[scrutate] watching` and the resolved path on stderr, and waits for filesystem
 events. While another process writes the index, an update waits for it (up to 10 minutes), the
 first one too; Ctrl-C stops `watch` at once, also during that wait for the code index's or the
 text index's lock, with exit code 130, and
@@ -1437,8 +1445,8 @@ a link (a deploy's `current`) is followed the same way when the link is pointed 
 directory, also through a moment when it names nothing; on Windows a junction is resolved the same
 way, which no test covers there; `serve --watch` and the
 watch of the MCP server, the language server and the Python bindings do the same, each opened
-by the path as given (the MCP server's `--root`, the editor's folder). When their root moves to
-another tree, `serve` removes its session socket in the old tree (on Windows it stops listening
+by the path as given (the MCP server's `--root`, the editor's folder). When their root's path comes to
+resolve to another directory (a link pointed elsewhere), `serve` removes its session socket in the old tree (on Windows it stops listening
 on the old tree's pipe and frees its name once the calls in flight end) and answers no caller of that tree, so a command line
 call made there does its own work and a `serve` started there can offer its own session. Other processes can read and update the same index meanwhile; the indexes' own
 locks order the writers, and stopping the process mid-update leaves the previous state in place.
@@ -1469,7 +1477,7 @@ a `not-` or `any-` form, an optional capture) leaves every file parsed.
 ### `tsquery --rewrite`
 `scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE [--write]` replaces each match of the
 query with TEMPLATE. The replaced text is the capture named `@match`; a match without one
-replaces its widest capture (the first written on a tie). In the template `$NAME` is the text of
+replaces the capture that starts first, the longest of those, then the first written. In the template `$NAME` is the text of
 capture `@NAME`, `${NAME}` the same before a letter or for a name with characters other than
 letters, digits and `_`, and `$$` a dollar. A capture with several nodes gives the text from its
 first node to its last; one the match does not hold gives nothing. A template naming a capture
@@ -1548,11 +1556,12 @@ definitions = [
 
 Files with those extensions are parsed as the heuristic tier parses a file
 ([LANGUAGES](LANGUAGES.md)): a definition runs to the line before the next definition at the
-same or a shallower indentation, without its trailing blank and comment lines, at most 200
-lines (40 for a `class`, `struct`, `enum`, `impl`, `interface`, `trait`, `type` or `module`),
+same or a shallower indentation, or before the first later line of code shallower than it or
+item at its indentation, whichever comes first, without its trailing blank and comment lines; the text kept for it is cut at
+200 lines (40 for a `class`, `struct`, `enum`, `impl`, `interface`, `trait`, `type` or `module`),
 and the comment right above it is its documentation, for the ranked search. Lines outside the
 definitions are windows. `symbol`, `outline`, `search` and `find` answer from them,
-`grep --type mylang` (and `--type-list`, and the `type` of `grep_code`) knows the extensions,
+`grep --type mylang` (and `--type-list`) knows the extensions,
 and `languages` lists the language. There are no call edges or imports, so `callers` and `deps`
 find nothing in these files.
 
@@ -1576,7 +1585,7 @@ root.
 |---|---|
 | `SCRUTATE_REDACT` | `off` returns secrets as the files hold them in the MCP tools, the Grep hook, `hook run` and `lsp`, which redact them by default ([serve](#serve-mcp)); `on` redacts every CLI answer that prints file text too ([serve](#serve-mcp)); an empty value keeps the default, and any other value (`0`, `OFF`) keeps it and says so on stderr |
 | `SCRUTATE_HOOK_BASH` | `off` (or `0`, `false`, `no`, in any case): `hook bash` rewrites nothing, so every shell command runs as written ([setup](#setup-and-the-grep-hook)); any other value, empty, `f` and `n` too, leaves it on |
-| `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none`; a model whose tables do not agree in size is refused with an error |
+| `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file; a model whose tables do not agree in size is refused with an error |
 | `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's, or whose trees do not fit their arrays, makes `search` fail |
 | `SCRUTATE_PROFILE` | print indexing phase timings |
 | `SCRUTATE_DIAGNOSTICS` | `json`: errors as JSON records |
@@ -1605,8 +1614,9 @@ parse a file it reads only for its imports and definitions. An index an earlier 
 another schema is rebuilt from scratch, every table made again, by the next command that updates
 it. In a linked
 git work tree (`git worktree add`), a new index starts as a copy of the main checkout's, and
-content new to the work tree is looked up in the main checkout's store; nothing of the main
-checkout is written (docs/SECURITY.md).
+content new to the work tree is looked up in the main checkout's store; the main checkout's
+database is only read, though SQLite creates its `index.db-wal` and `index.db-shm` there when
+they are missing (docs/SECURITY.md).
 
 If a newer scrutate built `.scrutate/`, this version reads the index without updating it (one
 stderr line says so), or refuses it with exit 2 when it cannot read it;
@@ -1648,9 +1658,9 @@ agent's file at the top of the current repository (the directory that holds `.gi
 
 | Agent | User file | `--project` | Entry | `--instructions` file (user; `--project`) | `--hook` |
 |---|---|---|---|---|---|
-| `claude` | `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set), top-level `mcpServers`; through `claude mcp add-json scrutate JSON --scope user` when `claude` is on `PATH` | `.mcp.json` | `{"type": "stdio", "command": ..., "args": [...]}` | `~/.claude/CLAUDE.md`; `CLAUDE.md` | the Grep hook and the Bash hook, below |
+| `claude` | `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set), top-level `mcpServers`; through `claude mcp add-json scrutate JSON --scope user` when `claude` is on `PATH` | `.mcp.json` | `{"type": "stdio", "command": ..., "args": [...]}` | `~/.claude/CLAUDE.md` (`$CLAUDE_CONFIG_DIR/CLAUDE.md` when set); `CLAUDE.md` | the Grep hook and the Bash hook, below |
 | `codex` | `$CODEX_HOME/config.toml` (default `~/.codex`) | none: an error | `[mcp_servers.scrutate]` with `command` and `args` | `$CODEX_HOME/AGENTS.md` | the Bash hook in `$CODEX_HOME/hooks.json`, below |
-| `opencode` | `opencode.jsonc` or `opencode.json` in `$XDG_CONFIG_HOME/opencode` (default `~/.config/opencode`): the first that exists, else a new `opencode.json` | the same names at the top | `mcp.scrutate` = `{"type": "local", "command": [...], "enabled": true}`; in a file whose `mcp` already holds `servers`, `mcp.servers.scrutate` without `enabled` | `~/.config/opencode/AGENTS.md`; `AGENTS.md` | a note: opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands |
+| `opencode` | `opencode.jsonc` or `opencode.json` in `$XDG_CONFIG_HOME/opencode` (default `~/.config/opencode`): the first that exists, else a new `opencode.json` | the same names at the top | `mcp.scrutate` = `{"type": "local", "command": [...], "enabled": true}`; in a file whose `mcp` already holds `servers`, `mcp.servers.scrutate` without `enabled` | `~/.config/opencode/AGENTS.md` (`$XDG_CONFIG_HOME/opencode/AGENTS.md` when set); `AGENTS.md` | a note: opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands |
 | `cursor` | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` | none (Cursor keeps a user's rules in its settings); `AGENTS.md` | a note: cursor-agent has a `preToolUse` hook, but its search tool takes other arguments and answers in another form |
 | `gemini` | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` | `~/.gemini/GEMINI.md`; `GEMINI.md` | a note: Gemini CLI has a `BeforeTool` hook, but its search tool takes other arguments and answers in another form |
 
@@ -1703,7 +1713,8 @@ hook runs only where Claude Code's Grep tool is enabled: never under a setup tha
 or a `--tools` list without it (`claude -p --tools Grep` runs it).
 
 `--instructions` appends a short block telling the agent to use scrutate's tools, between
-`<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a blank line, to the instruction
+`<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a line break (a blank line when the
+file ends in one; a new or empty file holds the block alone), to the instruction
 file in the table (the `--project` file at the top). A marker counts only as a line of its own
 (ended by LF or CRLF), so a sentence that quotes one is the user's text; a begin line with no end line makes setup stop
 and change nothing. Without the option `setup` reads and writes no instruction file;
@@ -1713,25 +1724,28 @@ and change nothing. Without the option `setup` reads and writes no instruction f
 Grep call (`hook_event_name`, `tool_name`, `tool_input`, `cwd`, `session_id`) and answers with
 Engine A's matches for the arguments Grep passes ripgrep: `--hidden`, `--glob '!.git'` and the
 other version control directories, `--max-columns 500`, `-U --multiline-dotall` for `multiline`,
-`-i`, `-A`, `-B`, `-C` or `context`, `type`, and `glob` split at whitespace and at commas outside
+`-i`, `-A`, `-B`, `-C` or `context`, `type`, and `glob` split at whitespace and, in a word with no `{...}`, at commas outside
 braces. The answer is worded as Grep words it:
 
 | Case | Wording |
 |---|---|
 | lines | `path:N:text` for a match, `path-N-text` for a context line, `--` between groups when context was asked, no number for `-n: false`, no path when the path searched is a file |
 | paths | from the session's directory; on Windows with `\`, the session's directory matched without case (as Node's `path.relative` does), and the file's real path with its case on disk |
-| long lines | `[Omitted long matching line]` for a line longer than 500 characters |
+| long lines | `[Omitted long matching line]` for a matching line, `[Omitted long context line]` for a context line, longer than 500 UTF-16 code units |
 | `files_with_matches` | `Found N files` and the paths, newest first as Grep sorts them |
 | `count` | the counts and `Found N total occurrences across M files.` |
 
 Matches come in path order. Grep's paging applies (`head_limit`, 250 lines when not given and
-none for 0, and `offset`, with Grep's `[Showing results with pagination = ...]`), then the MCP
+none for 0, and `offset`, shown as Grep shows them: `[Showing results with pagination = ...]` after
+the lines, `Found N files limit: L, offset: O` for files, `with pagination = ...` after a count's
+`Found` line), then the MCP
 tools' bound: at most 24,000 bytes (`SCRUTATE_MAX_BYTES`, held between 1,000 and 1,000,000),
 whole lines, ending with `(N more lines not shown: call Grep again with offset=K, or narrow the request)`
-when it cut. It prints
+(`files` in place of `lines` in the `files_with_matches` and `count` modes) when it cut. It prints
 `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Grep result:\n..."}}`,
 and Claude Code gives the model the reason in place of Grep's result. The header line
-`Grep result:` is the whole cost of an uncut answer: 13 bytes more than Grep's own result. In
+`Grep result:` is the whole cost of an uncut answer with nothing redacted: 13 bytes more than Grep's
+own result; a redaction adds its closing line. In
 Claude Code 2.1.323's own code, a hook reason from the user's settings files reaches the model
 whole; another hook's is cut at 2,000 characters.
 
@@ -1776,8 +1790,9 @@ for `all sessions`; `--json` prints
 The exit code is 1 when no call was counted. A small answer costs the header line more than Grep
 would have sent (a negative saving); the saving comes from long answers the byte bound cuts.
 The searches `hook run` answered are counted too (`"via": "bash"`, `grep_bytes` the bytes of the
-program's output it read: the whole output, but only up to the cut for a search the byte bound
-cut, so such a search shows a negative saving) and also shown apart: the line `of which shell searches (hook run): ...` and
+program's output it read: the whole output, but for a search the byte bound cut only up to and
+including the line that did not fit, so such a search saves that line's bytes less the 62-byte cut
+note) and also shown apart: the line `of which shell searches (hook run): ...` and
 `"shell"` in the JSON.
 
 `hook bash` is the hook of the shell tool: Claude Code's Bash and Codex's shell. It reads the
@@ -1834,12 +1849,12 @@ an index directory, or the walk reaches an index file or directory by identity (
 a hard link under another name, a nested repository's), the search exits 2 with a line naming
 the path and why (for a hard link, the index file it is and that removing the hard link, by its
 path, lets the search run), and nothing runs. A walk past 1,000,000 entries or 5 seconds stops, and the
-search exits 2 with a line asking for narrower paths (the Linux tree's 96,000 entries take about
-0.13 s). A `grep` also gets `--exclude-dir=.scrutate` first and an `rg` `--glob=!.scrutate` and
+search exits 2 with a line asking for narrower paths. A `grep` also gets `--exclude-dir=.scrutate` first and an `rg` `--glob=!.scrutate` and
 `--iglob=!.scrutate` after its own flags (rg weighs every `--iglob` after every `--glob`), so the
 search skips the directory the walk skipped. Colour is always off: the search's own `--color`,
-`--colour` and `--colors` are dropped and `--color=never` added, since escape codes around a
-match would cut a secret in two. An `rg` with `--replace` (`-r`) or `--json` exits 2 and runs
+`--colour` and `--colors` are dropped, and `--color=never` is added when `rg` or `grep` itself runs
+(an `rg` that `scrutate grep` answers writes to a pipe, which gets no colour), since escape codes
+around a match would cut a secret in two. An `rg` with `--replace` (`-r`) or `--json` exits 2 and runs
 nothing: both rewrite each line before scrutate can find a secret in it (`scrutate grep --json`
 gives JSON with secrets redacted). An `rg` with `--stats` exits 2 and runs nothing too: rg prints
 its statistics on standard output, and `scrutate grep`, which answers an `rg`, prints its own
