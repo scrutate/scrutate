@@ -979,6 +979,45 @@ fn on_path(name: &str) -> Option<std::path::PathBuf> {
 /// The most bytes of one line read at a time.
 const PIECE: usize = 1 << 20;
 
+/// The bytes at the end of a piece of a longer line held back and redacted with the next piece:
+/// far over the longest match of a rule with a bound (about 1 KB).
+const TAIL: usize = 64 << 10;
+
+/// The bytes before a secret carried with it: over the longest name or keyword a rule reads
+/// before the secret itself (`Authorization: Bearer`, `password = "`).
+const CONTEXT: usize = 4 << 10;
+
+/// A match a piece's cut would split, carried to the next piece while shorter than this; one
+/// longer is sent as its marker and the rest of its line withheld.
+const CARRY_MAX: usize = 4 << 20;
+
+/// Where `w`, a piece of a line that goes on, may be cut: at least `TAIL` bytes before its end,
+/// on an ASCII byte, and `CONTEXT` before any secret the rules find across that point, with its
+/// kind.
+fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
+    let mut c = w.len().saturating_sub(TAIL);
+    while c > 0 && w[c] >= 0x80 {
+        c -= 1;
+    }
+    // each byte that is not UTF-8 as one character, so the spans' offsets are `w`'s
+    let mut text = String::with_capacity(w.len());
+    for chunk in w.utf8_chunks() {
+        text.push_str(chunk.valid());
+        text.extend(std::iter::repeat_n('\x7f', chunk.invalid().len()));
+    }
+    let spans = crate::secrets::spans(&text);
+    let mut kind = None;
+    // a secret near the cut goes to the next piece whole, with the name before it its rule reads
+    while let Some(&(a, _, k)) = spans.iter().find(|&&(a, b, _)| a.saturating_sub(CONTEXT) < c && c < b) {
+        c = a.saturating_sub(CONTEXT);
+        while c > 0 && w[c] >= 0x80 {
+            c -= 1;
+        }
+        kind = Some(k);
+    }
+    (c, kind)
+}
+
 /// `line` as it goes out, redacted: a key's body line grep shows without its armour is read back
 /// from its file; `public`, a line of a public body `Redactor::hold` released.
 fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, line: &[u8], public: bool) -> Vec<u8> {
@@ -992,7 +1031,7 @@ fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, 
     let (prefix, rest) = crate::secrets::split_line(&t);
     if crate::secrets::could_be_key_line(rest)
         && let Some((path, n)) = crate::secrets::grep_place(prefix)
-        && let Some((key, k)) = keys.line(path, n, || std::fs::File::open(path).ok())
+        && let Some((key, k)) = keys.line(path, n, || crate::secrets::open_regular(path))
     {
         let end = if rest.ends_with('\n') { "\n" } else { "" };
         t = format!("{prefix}{key}{end}");
@@ -1004,10 +1043,11 @@ fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, 
     if exact || marks > 0 || t != text { t.into_bytes() } else { line.to_vec() }
 }
 
-/// Streams the child's standard output to ours, line by line, with secrets redacted. With a
+/// Streams the child's standard output to ours, line by line, with secrets redacted (a line over
+/// `PIECE` in pieces cut by `piece_end`, so a secret is never split). With a
 /// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
-/// the child wrote that were read, the bytes sent)
-fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize) {
+/// the child wrote that were read, the bytes sent, whether it was cut)
+fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize, bool) {
     use std::io::BufRead;
     let out = child.stdout.take().expect("a piped stdout");
     let mut reader = std::io::BufReader::new(out);
@@ -1020,9 +1060,13 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     // a line of a key's body grep shows without its armour, read back from its file
     let mut keys = crate::secrets::KeyFiles::default();
     let (mut read, mut sent, mut cut) = (0usize, 0usize, false);
+    // the redactions in the lines sent: a line that did not fit is not shown
+    let mut redacted = 0;
     // the lines of a public key's or a certificate's body, until its END shows they are one
     let mut held: Vec<Vec<u8>> = Vec::new();
     let mut line = Vec::new();
+    // the rest of a long line's last piece, redacted with the next one
+    let mut carry: Vec<u8> = Vec::new();
     let mut send = |shown: &[u8], sent: &mut usize| {
         if room.is_some_and(|room| *sent + shown.len() > room) {
             return Err(true);
@@ -1034,15 +1078,39 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let mut done = false;
     while !done {
         line.clear();
+        line.append(&mut carry);
         // a line longer than this (a minified file, a device with no line ends) comes in pieces,
         // each redacted, so memory stays bounded
-        let at_end = match (&mut reader).take(PIECE as u64).read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => true,
+        let (at_end, more) = match (&mut reader).take(PIECE as u64).read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => (line.is_empty(), false),
             Ok(n) => {
                 read += n;
-                false
+                (false, n == PIECE && !line.ends_with(b"\n"))
             }
         };
+        // a marker sent for a match too long to carry
+        let mut extra = 0;
+        if redact && more {
+            let (c, kind) = piece_end(&line);
+            carry = line.split_off(c);
+            if let Some(kind) = kind.filter(|_| carry.len() > CARRY_MAX) {
+                carry.clear();
+                line.extend_from_slice(format!("[redacted:{kind}]\n").as_bytes());
+                *r.counts.entry(kind).or_default() += 1;
+                extra = 1;
+                let mut rest = Vec::new();
+                while let Ok(n @ 1..) = (&mut reader).take(PIECE as u64).read_until(b'\n', &mut rest) {
+                    read += n;
+                    if rest.ends_with(b"\n") {
+                        break;
+                    }
+                    rest.clear();
+                }
+            }
+            if line.is_empty() {
+                continue;
+            }
+        }
         let public = match redact {
             _ if at_end => {
                 // a public body held with no END after it is key material
@@ -1060,18 +1128,29 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
                 crate::secrets::Hold::Release { public } => Some(public),
             },
         };
-        let mut out: Vec<Vec<u8>> = Vec::new();
+        // each line with the redactions it made
+        let mut out: Vec<(Vec<u8>, usize)> = Vec::new();
+        let mut show = |r: &mut crate::secrets::Redactor, l: &[u8], public: bool| {
+            let before = r.total();
+            let o = shown(r, &mut keys, l, public);
+            (o, r.total() - before)
+        };
         if let Some(public) = public {
-            out.extend(held.drain(..).map(|h| shown(&mut r, &mut keys, &h, public)));
+            out.extend(held.drain(..).map(|h| show(&mut r, &h, public)));
         }
         if at_end {
             done = true;
         } else {
-            out.push(if redact { shown(&mut r, &mut keys, &line, false) } else { line.clone() });
+            out.push(if redact {
+                let (o, n) = show(&mut r, &line, false);
+                (o, n + extra)
+            } else {
+                (line.clone(), 0)
+            });
         }
-        for o in &out {
+        for (o, n) in &out {
             match send(o, &mut sent) {
-                Ok(()) => {}
+                Ok(()) => redacted += n,
                 Err(over) => {
                     // the reader is gone or the budget is spent: left running, the program fills
                     // the pipe and the wait below never ends
@@ -1088,14 +1167,14 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         let _ = so.write_all(note.as_bytes());
         sent += note.len();
     }
-    if let Some(note) = r.note() {
+    if let Some(note) = crate::secrets::note(redacted) {
         let _ = writeln!(so, "{note}");
         sent += note.len() + 1;
     }
     let _ = so.flush();
     let status = child.wait().ok().and_then(|s| s.code());
     // a cut search had matches, as the program would have said
-    (if cut { 0 } else { status.unwrap_or(2) }, read, sent)
+    (if cut { 0 } else { status.unwrap_or(2) }, read, sent, cut)
 }
 
 /// `scrutate hook run [--session ID] [--piped] -- PROGRAM ARGS...`: the search a rewritten
@@ -1183,8 +1262,8 @@ pub fn run_main(args: &[String]) -> i32 {
         die_with_us_windows(Some(&child));
     }
     let budget = std::env::var("SCRUTATE_MAX_BYTES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(crate::ops::AGENT_BYTES, |n| n.clamp(1_000, 1_000_000));
-    let (code, read, sent) = stream(child, (!piped).then_some(budget));
-    let _ = crate::hook::count_bash(&session, read, sent);
+    let (code, read, sent, cut) = stream(child, (!piped).then_some(budget));
+    let _ = crate::hook::count_bash(&session, read, sent, cut);
     code
 }
 

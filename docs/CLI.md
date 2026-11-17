@@ -1806,13 +1806,14 @@ Grep does) and `sent_bytes` the size of the reason sent. The text form gives one
 session, in the order the sessions began,
 `session ID: N calls, Grep would have returned A bytes, scrutate sent B (C saved)`, then the same
 for `all sessions`; `--json` prints
-`{"counter": PATH, "sessions": [{"session", "calls", "grep_bytes", "sent_bytes", "saved_bytes"}], "total": {...}}`.
+`{"counter": PATH, "sessions": [{"session", "calls", "grep_bytes", "sent_bytes", "saved_bytes", "cut_calls"}], "total": {...}}`.
 The exit code is 1 when no call was counted. A small answer costs the header line more than Grep
 would have sent (a negative saving); the saving comes from long answers the byte bound cuts.
 The searches `hook run` answered are counted too (`"via": "bash"`, `grep_bytes` the bytes of the
-program's output it read: the whole output, but for a search the byte bound cut only up to and
-including the line that did not fit, so when nothing is redacted such a search saves that line's
-bytes less the 62-byte cut note; redaction changes the lines' length and adds its closing line) and also shown apart: the line `of which shell searches (hook run): ...` and
+program's output it read: the whole output, but for a search the byte bound cut only what was read
+before the program was ended. Such a row has `"cut": true` and is counted apart, `cut_calls` in
+the JSON and the line `of which cut at the byte bound: N`, and its saving is at least the figure
+shown, never below 0) and also shown apart: the line `of which shell searches (hook run): ...` and
 `"shell"` in the JSON.
 
 `hook bash` is the hook of the shell tool: Claude Code's Bash and Codex's shell. It reads the
@@ -1893,10 +1894,12 @@ back. `rg --sort` takes a value where `scrutate grep --sort` is a flag: `--sort 
 and `-c` in ways a translation could not match exactly. Secrets are redacted unless
 `SCRUTATE_REDACT=off` (see below), with the closing line that counts them, also when a pipe takes
 the output (`--piped`): a `cut` after it sees `[redacted:KIND]`. The output streams through line by line
-(a line longer than 1 MiB in pieces, each redacted), so memory stays bounded. With no pipe after
+(a line longer than 1 MiB in pieces, each redacted and cut where no secret crosses the cut), so
+memory stays bounded. With no pipe after
 it, it stops at the MCP tools' bound (24,000 bytes, `SCRUTATE_MAX_BYTES`) with whole lines, ends
-the program and adds `[scrutate] output cut here: narrow the search, or pass a path`, exiting 0
-as the search had matches; a piped search is never cut, so `wc`, `sort` or `cut` after it compute
+the program and adds
+`[scrutate] output cut here: narrow the search, or pass a path`, exiting 0 as the search had
+matches; the closing line counts the redactions in the lines sent; a piped search is never cut, so `wc`, `sort` or `cut` after it compute
 what they would have. Standard error and the exit code are otherwise the program's. It has no
 timer of its own: the agent's command timeout governs, as it would without the hook, and when
 that ends `hook run`, by any signal, the program ends with it (on Unix a watcher the program's

@@ -1269,6 +1269,18 @@ incompatible index by itself, and that is never breaking.
 - A symbolic link to the index directory that a search does not follow gets no stderr note, and
   `check` does not list it; the note called it a hard link, and `rg` prints nothing there.
 - `--no-color`'s help says an empty `NO_COLOR` turns colour off too, as it does.
+- `hook stats` no longer shows a negative saving for a search `hook run` cut at the byte bound:
+  such a search counts only the bytes read before the program was ended, so its row now has
+  `"cut": true`, is counted apart (`cut_calls`, `of which cut at the byte bound: N`) and saves at
+  least 0. `hook run`'s closing line counts only the redactions in the lines sent; it counted
+  the line that did not fit too ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `hook run` no longer lets a secret out whole across the 1 MiB cut of a long line: each piece
+  was redacted on its own, so a token crossing the cut matched no rule and both halves went out
+  back to back. A piece is now cut at least 64 KiB before its end and 4 KiB before any match of
+  a rule near the cut, and the rest is redacted with the next piece; a match crossing the cut that
+  runs past 4 MiB goes out as its marker with the rest of its line withheld. The key-line read
+  back of `hook run` and the Grep hook opens only a regular file: a printed line naming
+  `/dev/zero` spun forever and one naming a FIFO blocked ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 
