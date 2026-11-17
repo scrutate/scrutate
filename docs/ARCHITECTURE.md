@@ -257,7 +257,8 @@ adds:
   bounded channel (4 waiting at most) in the order they filled, so a search thread never waits on
   a write system call; a smaller output starts no thread. While a search thread held the sink for
   a write, every thread that finished a file slept behind it, and on Linux x86 the writes added to
-  the search's time (`return` in the Linux tree: 0.12 s to /dev/null, 0.23 s to a file).
+  the search's time (`return` in the Linux tree on an Intel Xeon 8488C VM, 32 vCPU: 0.12 s to
+  /dev/null, 0.24 s to a file; with the writing thread 0.11 s to a file, ripgrep 0.18 s).
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
   (`--json`, schema version 1, record types in [CLI](CLI.md#conventions)). Flags: [CLI
   reference](CLI.md#engine-a-grep-alias-g).

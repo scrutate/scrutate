@@ -452,7 +452,8 @@ incompatible index by itself, and that is never breaking.
 - Plain `grep` output past its first 64 KiB is written by a thread of its own, fed full 64 KiB
   buffers in the order they filled, so no search thread waits on a write. While one search thread
   held the output for a write, the others slept behind it, and on Linux x86 the writes added to the
-  search's time (`return` in the Linux tree: 0.12 s to /dev/null, 0.23 s to a file). A smaller
+  search's time. `return` in the Linux tree on an Intel Xeon 8488C VM (32 vCPU) now takes 0.111 s
+  to a file (was 0.238 s; ripgrep 0.183 s) and 0.152 s through a pipe (was 0.392 s). A smaller
   output starts no thread; a write error still stops the search and is reported once
   ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 
