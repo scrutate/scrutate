@@ -440,10 +440,20 @@ incompatible index by itself, and that is never breaking.
   `bench/competitors/latest.json`, warning on an older one. Each LEADERBOARD.md row now gives
   every tool's 95% interval, scrutate's rank and a link to its raw result file
   ([Leaderboard](docs/LEADERBOARD.md)).
+<<<<<<< HEAD
 - CI builds the test binaries at opt-level 3 without cross-crate LTO and with 16 codegen units, as
   `tools/ci_gate.sh` does; the binary is still linked with the release profile (fat LTO, one
   unit). The two write-then-read session tests run 200 loops, 1000 with `SCRUTATE_TEST_STRESS`
   set ([Contributing](CONTRIBUTING.md#quality-gates-all-must-pass-before-a-change-is-merged)).
+=======
+- `grep` holds a file of one long line under 64 MiB once: a file whose first 64 KiB hold no line
+  break and no NUL byte is read whole, or in two passes for a plain `-F` literal, where the stream
+  reader grew its buffer to up to three times the line. A 60 MiB line takes 68.5 MB with a regex
+  (150.5 before; GNU grep 235.4, ripgrep 151.2) and 5.4 MB with a literal (149.1), and is
+  searched faster (48 to 37 ms with a regex). `--json` writes a match record from the line itself,
+  not from a copy: 129.9 MB for that line where it took 275.0 (ripgrep 151.1), and 92 to 63 ms
+  ([Roadmap](docs/ROADMAP.md)).
+>>>>>>> db54177a (grep holds a one-line file under the split size once, and --json writes a line record without a copy)
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are

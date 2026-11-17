@@ -2599,9 +2599,9 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
             Record::Count { .. } | Record::File { .. } => return Ok(()),
         };
         if out.json {
-            let rec = serde_json::json!({"type": if context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
-                "column": h.column, "text": h.text, "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
-            writeln!(w, "{}", with_path_bytes(rec, h.raw_path()))?;
+            // an io::Error again, so a closed pipe stops the search quietly
+            serde_json::to_writer(&mut *w, &LineRecord::of(h, context)).map_err(std::io::Error::from)?;
+            writeln!(w)?;
             return Ok(());
         }
         if groups {
@@ -2777,6 +2777,44 @@ fn grep_path<'p>(path: &'p str, bytes: Option<&'p [u8]>, terminal: bool) -> std:
 }
 
 /// A JSON record of `grep` that names a file whose path is not UTF-8: its bytes beside the text.
+/// A `match` or `context` record of `grep --json`, borrowing its line: a `serde_json::Value` would
+/// hold one more copy of it (63 MB more for a 60 MiB line). Fields in the order a `Value` writes
+/// them, by name.
+#[derive(serde::Serialize)]
+struct LineRecord<'a> {
+    column: u64,
+    line: u64,
+    path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_bytes: Option<&'a [u8]>,
+    schema: u32,
+    spans: Vec<Span>,
+    text: &'a str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+#[derive(serde::Serialize)]
+struct Span {
+    end: usize,
+    start: usize,
+}
+
+impl<'a> LineRecord<'a> {
+    fn of(h: &'a instant::Line, context: bool) -> Self {
+        LineRecord {
+            column: h.column,
+            line: h.line,
+            path: &h.path,
+            path_bytes: h.raw_path(),
+            schema: SCHEMA,
+            spans: h.spans.iter().map(|&(start, end)| Span { end, start }).collect(),
+            text: &h.text,
+            kind: if context { "context" } else { "match" },
+        }
+    }
+}
+
 fn with_path_bytes(mut rec: serde_json::Value, bytes: Option<&[u8]>) -> serde_json::Value {
     if let Some(b) = bytes {
         rec["path_bytes"] = b.into();
@@ -3171,6 +3209,25 @@ pub fn main_exit() {
 mod tests {
     use clap::Parser;
     use proptest::prelude::*;
+
+    /// A `grep --json` line record is the bytes the `serde_json::Value` it replaced wrote.
+    #[test]
+    fn a_json_line_record_writes_what_a_value_wrote() {
+        use crate::instant::{Line, Raw};
+        let raw = Raw { path: Some(b"d\xffir/a\"b.rs".to_vec().into()), text: None };
+        for (raw, text, spans) in
+            [(None, "plain \"quoted\" \\ text \u{1F600} \t", vec![(0, 5), (7, 13)]), (Some(std::sync::Arc::new(raw)), "ctrl \u{1}\u{7f} é", vec![])]
+        {
+            let h = Line { path: std::sync::Arc::from("d\u{FFFD}ir/a\"b.rs"), raw, line: 42, column: 7, text: text.into(), spans };
+            for context in [false, true] {
+                let rec = serde_json::json!({"type": if context { "context" } else { "match" }, "schema": super::SCHEMA, "path": h.path,
+                    "line": h.line, "column": h.column, "text": h.text,
+                    "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
+                let was = super::with_path_bytes(rec, h.raw_path()).to_string();
+                assert_eq!(serde_json::to_string(&super::LineRecord::of(&h, context)).unwrap(), was);
+            }
+        }
+    }
 
     /// `/tmp` and `/var/tmp` stop the climb whatever `TMPDIR` says: on macOS it never names them.
     #[cfg(unix)]

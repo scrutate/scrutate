@@ -129,12 +129,29 @@ development Mac and are not recorded in the repository.
   On a large tree the rest is mostly allocator memory freed and kept (per-CPU magazines:
   `MallocMaxMagazines=1` in the environment takes 1.1 MB off the Linux tree; a process cannot set
   it for itself), the ignore matchers (1.2 MB there) and whole directories read at once. A
-  one-line file is held whole (103 MB for 100 MB) for a regex, `-i`, `-w`, `--json` or color; a
-  plain `-F` literal with plain output or `-c` reads it in two passes and holds 3 to 5 MB. Under
-  the 64 MiB split size such a file still goes through the stream reader, whose buffer grows to
-  the line; the two passes could serve it. The default mode holds ordered output on one large file
-  with many matches (23 MB); 2 MB ranges in place of 8 MB halve that for 2.4 to 3.5% more
-  instructions, not taken.
+  file whose first 64 KiB hold no line break and no NUL byte is read as one line at any size:
+  held whole for a regex, `-i`, `-w`, `--json` or color (68.5 MB for a 60 MiB line with a
+  regex), and in two passes for a plain `-F` literal with plain output or `-c` (5.4 MB). Under
+  the 64 MiB split size it went through the stream reader, whose buffer grows to three times
+  64 KiB until it holds the line (150.5 MB; GNU grep 235.4, ripgrep 151.2). `--json` holds the
+  line once more for its record (129.9 MB; ripgrep 151.1), where it held it twice (275.0) before
+  the record was written from the line itself. The default mode holds ordered output on one
+  large file with many matches (23 MB); 2 MB ranges in place of 8 MB halve that for 2.4 to 3.5%
+  more instructions, not taken.
+- Peak memory against GNU grep on Linux, where the leaderboard's `rss` rows put scrutate at 3.9
+  to 4.6 times GNU grep (Graviton4, cold: 4.3 by default, 3.9 with `-j1`; x86_64, warm: about 4.6 by default). Measured on a 32-vCPU x86_64 box (a test build, the largest
+  `/proc/PID/smaps` snapshot of a search of this repository): `-j1` peaks at 11.3 MB, GNU grep at
+  2.5 MB. libc is 1.6 MB of both, and the heap and thread stacks are 0.5 MB of `-j1` (3.7 MB on
+  32 threads). The rest is the executable's own pages: 6.1 MB of its 16.6 MB of code, and 2.3 MB
+  read-only, most of it the 1.06 MB of relocations (`.rela.dyn`) the loader reads at start and the
+  0.6 MB of pointers they fix (`.data.rel.ro`), which a position-independent executable has.
+  GNU grep touches 0.1 MB of its own. What is left to try, each measured before it is taken:
+  packed relative relocations (`-z pack-relative-relocs`), which keep relative relocations as a
+  bitmap, for the musl builds only (the glibc build promises glibc 2.34; they need 2.36); a
+  non-PIE musl build, whose loader then fixes no pointers; and the code pages of a build linked
+  in the release's function order, which `linux_bench.sh` builds and this measurement did not.
+  Fewer threads or smaller buffers save at most 0.5 MB a thread at four times the time (`-j1`
+  2.29 s against 0.56 s on macOS), so they are not taken. Until then the row stays FAIL.
 - The function order on glibc Linux, measured. Of 5.8 MB resident at the start of a small search
   before it, 3.5 MB was the executable's text, spread over 85 MB with the kernel mapping 64 KB
   around each fault; 0.5 MB is data relocated at load. The release build now links the macOS

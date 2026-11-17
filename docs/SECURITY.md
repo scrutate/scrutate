@@ -858,7 +858,7 @@ link to a file outside the package and a package directory that is a link out of
     the temporary directory;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
-    (`tests/intel_refs.rs`, its CPU time) with arguments they own, `std::env::set_var` in
+    (`tests/intel_refs.rs`, its CPU time; `tests/one_line_memory.rs`, its peak resident size) with arguments they own, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
     `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
@@ -896,6 +896,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 2 |
   | `crates/scrutate/tests/lazy_bind.rs` | 12 |
+  | `crates/scrutate/tests/one_line_memory.rs` | 2 |
   | `crates/scrutate/tests/parse_index.rs` | 2 |
   | `crates/scrutate/tests/robustness.rs` | 2 |
   | `crates/scrutate/tests/running.rs` | 2 |
