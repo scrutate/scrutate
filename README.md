@@ -293,6 +293,10 @@ answers on every query type with 50 queries or more but one, which ties
 **Code checks.** `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no
 vulnerabilities; an SBOM is generated.
 
+**Reporting a vulnerability.** Report it privately through the repository's Security tab, "Report a
+vulnerability" (<https://github.com/scrutate/scrutate/security/advisories/new>), never in a
+public issue ([docs/SECURITY.md](docs/SECURITY.md#reporting)).
+
 <p align="center"><img src="docs/assets/strip-documentation.svg" width="100%" alt=""></p>
 
 ## Documentation

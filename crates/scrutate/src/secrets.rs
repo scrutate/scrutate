@@ -173,26 +173,18 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         rule(
             "github-token",
             "gitleaks github-pat, github-oauth, github-app-token, github-refresh-token",
-            r"\b((?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36})\b",
+            r"((?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36})",
             1,
             3.0,
             &["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
             any,
         ),
-        rule("github-fine-grained-token", "gitleaks github-fine-grained-pat", r"\b(github_pat_[0-9A-Za-z_]{82})\b", 1, 3.0, &["github_pat_"], any),
-        rule(
-            "gitlab-token",
-            "gitleaks gitlab-pat, gitlab-pat-routable",
-            r"\b(glpat-[0-9A-Za-z_-]{20,300}(?:\.[0-9a-z]{9})?)(?:[^0-9A-Za-z_.-]|$)",
-            1,
-            3.0,
-            &["glpat-"],
-            any,
-        ),
+        rule("github-fine-grained-token", "gitleaks github-fine-grained-pat", r"(github_pat_[0-9A-Za-z_]{82})", 1, 3.0, &["github_pat_"], any),
+        rule("gitlab-token", "gitleaks gitlab-pat, gitlab-pat-routable", r"(glpat-[0-9A-Za-z_-]{20,300}(?:\.[0-9a-z]{9})?)", 1, 3.0, &["glpat-"], any),
         rule(
             "slack-token",
             "gitleaks slack-bot-token, slack-user-token, slack-app-token, slack-config-*, slack-legacy-*",
-            r"\b(xoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*|xox[pe](?:-[0-9]{10,13}){3}-[a-zA-Z0-9-]{28,34}|xoxb-[0-9]{8,14}-[a-zA-Z0-9]{18,26}|(?i:xapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+)|(?i:xoxe\.xox[bp]-\d-[A-Z0-9]{163,166})|(?i:xoxe-\d-[A-Z0-9]{146})|xox[os]-\d+-\d+-\d+-[a-fA-F\d]+|xox[ar]-(?:\d-)?[0-9a-zA-Z]{8,48})",
+            r"(xoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*|xox[pe](?:-[0-9]{10,13}){3}-[a-zA-Z0-9-]{28,34}|xoxb-[0-9]{8,14}-[a-zA-Z0-9]{18,26}|(?i:xapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+)|(?i:xoxe\.xox[bp]-\d-[A-Z0-9]{163,166})|(?i:xoxe-\d-[A-Z0-9]{146})|xox[os]-\d+-\d+-\d+-[a-fA-F\d]+|xox[ar]-(?:\d-)?[0-9a-zA-Z]{8,48})",
             1,
             2.0,
             &["xoxb-", "xoxp-", "xoxe", "xapp-", "xoxa-", "xoxr-", "xoxo-", "xoxs-"],
@@ -238,7 +230,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             any,
         ),
         rule("npm-token", "gitleaks npm-access-token", r"\b(npm_[A-Za-z0-9]{36})\b", 1, 0.0, &["npm_"], any),
-        rule("pypi-token", "gitleaks pypi-upload-token (any index's prefix)", r"\b(pypi-[A-Za-z0-9_-]{85,1000})", 1, 3.0, &["pypi-"], any),
+        rule("pypi-token", "gitleaks pypi-upload-token (any index's prefix)", r"(pypi-[A-Za-z0-9_-]{85,1000})", 1, 3.0, &["pypi-"], any),
         rule(
             "jwt",
             "gitleaks jwt",
@@ -248,7 +240,7 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["ey"],
             any,
         ),
-        rule("twilio-api-key", "gitleaks twilio-api-key", r"\b(SK[0-9a-fA-F]{32})\b", 1, 3.0, &["sk"], any),
+        rule("twilio-api-key", "gitleaks twilio-api-key", r"(SK[0-9a-fA-F]{32})", 1, 3.0, &["sk"], any),
         rule(
             "sendgrid-api-key",
             "gitleaks sendgrid-api-token (SendGrid's 22.43 layout)",
@@ -1546,7 +1538,21 @@ pub(crate) fn open_regular(path: &str) -> Option<std::fs::File> {
     if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
         return None;
     }
-    std::fs::File::open(path).ok().filter(|f| f.metadata().is_ok_and(|m| m.is_file()))
+    opened_regular(path)
+}
+
+/// `path` opened without waiting, kept only when the handle is a regular file: a FIFO swapped in
+/// after the path was checked does not block the open. No `O_NOFOLLOW`: a key file reached
+/// through a link must still be read, or its body lines would go out unredacted.
+fn opened_regular(path: &str) -> Option<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    o.open(path).ok().filter(|f| f.metadata().is_ok_and(|m| m.is_file()))
 }
 
 impl KeyFiles {
@@ -1576,6 +1582,28 @@ impl KeyFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_swapped_in_after_the_path_was_checked_does_not_block_the_open() {
+        let dir = std::env::temp_dir().join(format!("scrutate_fifo_open_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("key.pem");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let path = fifo.to_str().unwrap().to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || tx.send(opened_regular(&p).is_some()).unwrap());
+        let got = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if got.is_err() {
+            // a writer end lets a blocked open return, so no thread is left behind
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::OpenOptions::new().write(true).custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32).open(&fifo);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got, Ok(false), "the open waited for a writer");
+    }
 
     /// `n` characters of `set`, the same for a seed every run: samples are built here, so no file
     /// of the repository holds a secret-shaped literal for a scanner to stop.
@@ -1662,6 +1690,21 @@ mod tests {
                 assert_eq!(&out[m.start..m.end], format!("[redacted:{}]", m.kind));
             }
         }
+    }
+
+    #[test]
+    fn a_token_glued_to_word_characters_is_redacted_where_gitleaks_finds_it() {
+        // gitleaks' rules for these kinds have no word boundary before the token (8.30.1)
+        let glued = ["github-token", "github-fine-grained-token", "gitlab-token", "slack-token", "pypi-token", "twilio-api-key"];
+        let mut seen = 0;
+        for (kind, _, secret) in samples().into_iter().filter(|(k, ..)| glued.contains(&&k[..])) {
+            seen += 1;
+            for line in [format!("x = q{secret} ;"), format!("x = {secret}q ;"), format!("x = q{secret}q ;")] {
+                let (out, _) = redact(&line);
+                assert!(!out.contains(&secret), "{kind}: {out}");
+            }
+        }
+        assert_eq!(seen, glued.len());
     }
 
     /// The base64 lines, 64 to a line, of a SubjectPublicKeyInfo of `n` bytes in all (at least 28),
