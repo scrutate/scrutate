@@ -54,12 +54,16 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// The base64 lines, 64 to a line, of one DER SEQUENCE of `n` bytes in all, its header included and
-/// its content random: a body read as one public element.
+/// The base64 lines, 64 to a line, of a SubjectPublicKeyInfo of `n` bytes in all (at least 28), its
+/// header included and its key bits random: a body read as one public key.
 #[cfg(unix)]
 fn der_lines(seed: &mut u64, n: usize) -> Vec<String> {
+    const RSA_ALGORITHM: [u8; 15] = [0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00];
+    let bits = n - 4 - RSA_ALGORITHM.len() - 4;
     let mut der = vec![0x30, 0x82, ((n - 4) >> 8) as u8, (n - 4) as u8];
-    der.extend((4..n).map(|_| {
+    der.extend(RSA_ALGORITHM);
+    der.extend([0x03, 0x82, (bits >> 8) as u8, bits as u8, 0x00]);
+    der.extend((1..bits).map(|_| {
         *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         (*seed >> 33) as u8
     }));

@@ -1172,6 +1172,10 @@ incompatible index by itself, and that is never breaking.
   The keyword run on into a different word (`tokenizer`, `secretary`), or followed by a part such
   as `label`, `header`, `hint`, `cache` or `path`, spares the value; every other name with the
   keyword (`password_prod`, `token_eu`, `secret_value`, `secretkey`, `tokenvalue`) still hides it.
+- A private key's body under a `PUBLIC KEY` label, with its END, is redacted: any SEQUENCE of the
+  right length was shown as a public key. The body must now be a SubjectPublicKeyInfo or a PKCS#1
+  RSAPublicKey; a PKCS#1 or PKCS#8 private key there is marked line by line, its short last line
+  too ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 

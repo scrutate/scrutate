@@ -546,7 +546,10 @@ that ends its line opens it, and the first line that is not base64 ends it. Such
 as written only when an END line of the same label comes later in the same answer and the body
 is then exactly the one DER element its first bytes give the length of; `hook run` holds at most
 64 lines (8 KiB) of it for that END. A body under a public key label is shown only when it is a
-DER public key; any other body is marked: one that is no DER element, one longer than that hold,
+DER public key: a SubjectPublicKeyInfo (a SEQUENCE holding a SEQUENCE and a BIT STRING and
+nothing else) or a PKCS#1 RSAPublicKey (a SEQUENCE of two INTEGERs and nothing else). Any other
+whole element there, such as a PKCS#1 or PKCS#8 private key, is marked line by line, its short
+last line included; any other body is marked: one that is no DER element, one longer than that hold,
 one that runs past its element's length, or one shown without its own END line, since base64
 after it may be another file's private key. An OpenPGP public key block and an RFC 4716 SSH2
 public key are marked as any key material, since nothing here proves their bodies public);
