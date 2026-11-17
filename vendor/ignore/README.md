@@ -16,8 +16,8 @@ The eleven changes from upstream:
 4. A parallel walk can start more threads while it runs (`WalkBuilder::grow_threads`).
 5. The global git excludes file is read only when a walk meets a repository
    (`IgnoreInner::git_global`).
-6. A walk of `.` takes the current directory it was given instead of looking it up again
-   (`WalkBuilder::process_current_dir`).
+6. On Unix, a walk of `.` takes the current directory it was given instead of looking it up again
+   (`WalkBuilder::process_current_dir`); elsewhere it still canonicalizes the path.
 7. A walker thread that is paused sleeps a thirty-second of the time it has been paused, 50 us to
    1 ms (`pause`).
 8. The rare error of a queued entry is boxed, so an entry is 96 bytes (`DirEntry.err`).

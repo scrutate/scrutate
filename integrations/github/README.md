@@ -86,10 +86,11 @@ the first one that starts with the marker `<!-- scrutate-review -->` and was wri
 with a person's token in `github-token`, by that person), or else posts a new one. It never fails
 the job: outside a pull request, without the base commit, when `review` fails or when GitHub
 refuses the call (a pull request from a fork gets a read-only token), it prints a warning and the
-step passes. Each value it uses (pull request number, base commit, repository name) comes through
-the step's environment, is checked against its shape (a number, a commit id, `owner/name`) and is
-used only in quotes, so no input reaches a shell. `actionlint` and `zizmor --persona pedantic`
-report nothing on the action. On the workflow above, pedantic `zizmor` asks only for what any
+step passes. Each value it uses (pull request number, base commit, repository name, server URL)
+comes through the step's environment and is used only in quotes, so no input reaches a shell;
+the first three are also checked against their shape (a number, a commit id, `owner/name`).
+`zizmor --persona pedantic` reports nothing on the action, and `actionlint` nothing on this
+repository's workflows. On the workflow above, pedantic `zizmor` asks only for what any
 workflow needs: actions pinned by commit (as this repository pins its own), a job `name` and a
 `concurrency` group.
 

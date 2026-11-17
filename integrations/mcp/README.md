@@ -18,7 +18,8 @@ no handshake (`server/discover`, a protocol version in every request's `_meta`).
 ([edits](../../docs/CLI.md#serve---allow-edits-and-edit_symbol)).
 
 The index refreshes itself before a call (scans at most a second apart by default, or
-`--refresh-interval S`), and a call waits up to 20 seconds for a first index build. Every tool
+`--refresh-interval S`). A call without a `progressToken` waits up to 20 seconds for a first
+index build; one with a token waits for the build and reports progress. Every tool
 except `reindex` and `edit_symbol` is marked read-only and local, so clients that ask before a
 write do not ask. Answers are cut at whole items to 24,000 bytes by default (`max_bytes`,
 `offset`, or `serve --max-bytes` for another default), and every tool but `edit_symbol` takes
@@ -42,7 +43,10 @@ Every tool, argument, limit and protocol detail is in the
 
 ## Client configuration
 
-`scrutate setup` writes the entry into the agent's own file and keeps every other line:
+`scrutate setup` writes the entry into the agent's own file and keeps every other line, byte for
+byte, in every file it writes itself. Claude Code's user file is the exception when `claude` is
+on `PATH`: the entry goes through `claude mcp add-json` and `claude mcp remove`, and Claude Code
+writes that whole file itself.
 
 ```sh
 scrutate setup claude      # ~/.claude.json, through `claude mcp add-json` when claude is installed
@@ -51,7 +55,7 @@ scrutate setup opencode    # ~/.config/opencode/opencode.json (or .jsonc)
 scrutate setup cursor      # ~/.cursor/mcp.json
 scrutate setup gemini      # ~/.gemini/settings.json
 scrutate setup cursor --project            # the repository's .cursor/mcp.json (.mcp.json for Claude Code)
-scrutate setup claude --uninstall          # takes out what setup added (hook included), byte for byte
+scrutate setup claude --uninstall          # takes out what setup added (hook included)
 ```
 
 The entry runs `scrutate` by its absolute path with `serve`, so it serves the repository the

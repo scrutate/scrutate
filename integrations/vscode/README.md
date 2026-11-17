@@ -21,7 +21,7 @@ own repository's index; the extension's own commands use the first folder.
 
 Commands (Command Palette): **Scrutate: Search**, **Grep**, **Go to symbol definition**,
 **Who calls this?**, **References**, **Update index**. Results open in a Quick Pick that jumps to
-the location.
+the location; **Update index** shows a message with what the update did.
 
 Build: `npm install` here (`npm run check` type-checks `extension.js`), then
 `npx @vscode/vsce package --no-rewrite-relative-links` and *Extensions → Install from VSIX*. vsce
