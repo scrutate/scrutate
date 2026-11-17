@@ -580,15 +580,21 @@ fn counted_run(r: &Repo, args: &[&str], redact: &str) -> (String, serde_json::Va
 }
 
 #[test]
-fn a_cut_search_counts_the_programs_whole_output() {
+fn a_cut_search_ends_at_the_bound_and_is_counted_apart() {
     let r = Repo::new("cut_count");
     let lines: String = (0..200_000).map(|i| format!("foo line {i}\n")).collect();
     r.write("big.txt", &lines);
     let (out, s) = counted_run(&r, &["grep", "foo", "big.txt"], "off");
     assert!(out.ends_with("narrow the search, or pass a path\n"), "{out}");
-    assert_eq!(s["shell"]["grep_bytes"].as_u64(), Some(lines.len() as u64), "{s}");
+    // the program is ended at the bound: what was read before it is far short of its output
+    let grep = s["shell"]["grep_bytes"].as_u64().unwrap();
+    assert!(grep < lines.len() as u64 / 2, "{s}");
     assert_eq!(s["shell"]["sent_bytes"].as_u64(), Some(out.len() as u64), "{s}");
-    assert!(s["shell"]["saved_bytes"].as_i64().unwrap() > 0, "{s}");
+    assert_eq!((s["shell"]["cut_calls"].as_u64(), s["total"]["cut_calls"].as_u64()), (Some(1), Some(1)), "{s}");
+    assert_eq!(s["sessions"][0]["cut_calls"].as_u64(), Some(1), "{s}");
+    assert_eq!(s["shell"]["saved_bytes"].as_i64(), Some(0), "a cut search never shows a negative saving: {s}");
+    let row = std::fs::read_to_string(s["counter"].as_str().unwrap()).unwrap();
+    assert!(row.contains("\"cut\":true"), "{row}");
 }
 
 #[test]

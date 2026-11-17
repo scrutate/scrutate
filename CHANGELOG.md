@@ -1180,11 +1180,11 @@ incompatible index by itself, and that is never breaking.
   under those labels, a cut one or one without its END too, is marked line by line, its short
   last line included, and a body line's trailing `+` no longer drops it to the ordinary rules
   ([Security](docs/SECURITY.md)).
-- `hook stats` counts a search `hook run` cut at the byte bound by the program's whole output:
-  it counted only the bytes read before the cut, so the saving of exactly those searches came
-  out negative. `hook run` now reads the rest unsent instead of ending the program, and its
-  closing line counts only the redactions in the lines sent; it counted the line that did not
-  fit too ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
+- `hook stats` no longer shows a negative saving for a search `hook run` cut at the byte bound:
+  such a search counts only the bytes read before the program was ended, so its row now has
+  `"cut": true`, is counted apart (`cut_calls`, `of which cut at the byte bound: N`) and saves at
+  least 0. `hook run`'s closing line counts only the redactions in the lines sent; it counted
+  the line that did not fit too ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - `hook run` no longer lets a secret out whole across the 1 MiB cut of a long line: each piece
   was redacted on its own, so a token crossing the cut matched no rule and both halves went out
   back to back. A piece is now cut at least 64 KiB before its end and 4 KiB before any match of

@@ -1045,9 +1045,9 @@ fn shown(r: &mut crate::secrets::Redactor, keys: &mut crate::secrets::KeyFiles, 
 
 /// Streams the child's standard output to ours, line by line, with secrets redacted (a line over
 /// `PIECE` in pieces cut by `piece_end`, so a secret is never split). With a
-/// `room`, it stops sending at that many bytes, says so, and reads the rest unsent so the count
-/// is the whole output. -> (the exit code, the bytes the child wrote that were read, the bytes sent)
-fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize) {
+/// `room`, it stops at that many bytes, kills the child and says so. -> (the exit code, the bytes
+/// the child wrote that were read, the bytes sent, whether it was cut)
+fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, usize, bool) {
     use std::io::BufRead;
     let out = child.stdout.take().expect("a piped stdout");
     let mut reader = std::io::BufReader::new(out);
@@ -1151,18 +1151,11 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
         for (o, n) in &out {
             match send(o, &mut sent) {
                 Ok(()) => redacted += n,
-                Err(true) => {
-                    // the budget is spent: the rest is read unsent, so the count is the program's
-                    // whole output and it never blocks on a full pipe
-                    read += std::io::copy(&mut reader, &mut std::io::sink()).map_or(0, |n| n as usize);
-                    cut = true;
-                    done = true;
-                    break;
-                }
-                Err(false) => {
-                    // the reader is gone: left running, the program fills the pipe and the wait
-                    // below never ends
+                Err(over) => {
+                    // the reader is gone or the budget is spent: left running, the program fills
+                    // the pipe and the wait below never ends
                     let _ = child.kill();
+                    cut = over;
                     done = true;
                     break;
                 }
@@ -1181,7 +1174,7 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let _ = so.flush();
     let status = child.wait().ok().and_then(|s| s.code());
     // a cut search had matches, as the program would have said
-    (if cut { 0 } else { status.unwrap_or(2) }, read, sent)
+    (if cut { 0 } else { status.unwrap_or(2) }, read, sent, cut)
 }
 
 /// `scrutate hook run [--session ID] [--piped] -- PROGRAM ARGS...`: the search a rewritten
@@ -1269,8 +1262,8 @@ pub fn run_main(args: &[String]) -> i32 {
         die_with_us_windows(Some(&child));
     }
     let budget = std::env::var("SCRUTATE_MAX_BYTES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(crate::ops::AGENT_BYTES, |n| n.clamp(1_000, 1_000_000));
-    let (code, read, sent) = stream(child, (!piped).then_some(budget));
-    let _ = crate::hook::count_bash(&session, read, sent);
+    let (code, read, sent, cut) = stream(child, (!piped).then_some(budget));
+    let _ = crate::hook::count_bash(&session, read, sent, cut);
     code
 }
 
