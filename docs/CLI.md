@@ -544,7 +544,11 @@ to its end, where `grep` stops at the NUL, and one with a NUL there is binary an
    - a name an import binds (`from x import N`, `import {N} from './x'`, `use a::N`, `require`, also
      `const N = require('./x').N`, `const {N} = await import('./x')` and TypeScript
      `import m = require('./x')`);
-   - in Go, a top-level definition of another file of the same package directory;
+   - in Go, a top-level definition of another file of the same package directory with the same
+     package clause (`package a_test` is another package), where a `_test.go` file is seen only
+     from a test file; an import sees the package's files without its `_test.go` files, except the
+     package's own external test (`package a_test` beside it), whose import also sees the
+     `_test.go` files of `package a` (the `export_test.go` pattern);
    - wildcard imports (`from x import *`, `export * from`, `use a::*`, Go dot imports).
 
 Inside a Rust macro's arguments, which are tokens to the grammar, a name after `.` is a field,

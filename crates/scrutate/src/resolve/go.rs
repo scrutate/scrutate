@@ -13,15 +13,21 @@ impl Rules for Go {
         go_bindings(n, src, out)
     }
 
+    // the files of the directory with the same package clause (`package a_test` is another
+    // package), and the `_test.go` ones only for a test file: other code does not see them
     fn package_files(r: &mut Resolver, path: &str) -> Vec<String> {
-        let dir = dir_of(path).to_string();
-        r.go_dir(&dir)
+        let own = r.go_package(path);
+        let test = path.ends_with("_test.go");
+        let mut out = r.go_dir(dir_of(path));
+        // a file whose clause cannot be read is kept: a half-written file hides nothing
+        out.retain(|f| (test || !f.ends_with("_test.go")) && (own.is_none() || f == path || r.go_package(f).is_none_or(|p| Some(p) == own)));
+        out
     }
 
     // a method is declared outside its type, in any file of the package: its receiver names the type
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let owner = strip_generics(qualname);
-        for f in r.go_dir(dir_of(path)) {
+        for f in Self::package_files(r, path) {
             let gf = r.file(&f);
             let Some(tree) = gf.tree() else { continue };
             let root = tree.root_node();
@@ -68,14 +74,20 @@ impl Rules for Go {
         r.bound_module(path, fi, Lang::Go, segs)
     }
 
-    fn module_files(r: &mut Resolver, _from: &str, module: &str) -> Option<Vec<String>> {
+    fn module_files(r: &mut Resolver, from: &str, module: &str) -> Option<Vec<String>> {
         let best = if r.go_imports().is_empty() {
             // no go.mod: a GOPATH tree, where the import path ends with the directory
             r.go_dirs().keys().filter(|d| !d.is_empty() && (module == d.as_str() || module.ends_with(&format!("/{d}")))).max_by_key(|d| d.len())?.clone()
         } else {
             r.go_imports().get(module)?.clone()
         };
-        Some(r.go_dir(&best))
+        // an import sees the package without its tests, but the package's external test sees the
+        // package's own test files too (export_test.go)
+        let mut files = r.go_dir(&best);
+        let own = files.iter().find(|f| !f.ends_with("_test.go")).cloned().and_then(|f| r.go_package(&f));
+        let external_test = from.ends_with("_test.go") && dir_of(from) == best && own.is_some();
+        files.retain(|f| !f.ends_with("_test.go") || (external_test && r.go_package(f) == own));
+        Some(files)
     }
 
     fn import_files(r: &mut Resolver, from: &str, _fi: &FileInfo, _line: i64, module: &str) -> Option<Vec<String>> {
@@ -148,6 +160,39 @@ impl Resolver<'_> {
     fn go_dir(&mut self, dir: &str) -> Vec<String> {
         self.go_dirs().get(dir).cloned().unwrap_or_default()
     }
+
+    /// The name in the package clause of the Go file `f`, read from its text: no file is parsed for it.
+    fn go_package(&mut self, f: &str) -> Option<String> {
+        package_clause(&self.file(f).src).map(str::to_string)
+    }
+}
+
+/// The package name of Go source `src`: the identifier after the `package` keyword that comes first
+/// after comments and white space, or None when the file does not start with a clause.
+fn package_clause(src: &str) -> Option<&str> {
+    let s = skip_comments(src.trim_start_matches('\u{feff}'))?;
+    let rest = s.strip_prefix("package")?;
+    // the keyword ends at white space or a comment: `packages` is an identifier
+    if !(rest.starts_with(char::is_whitespace) || rest.starts_with("/*")) {
+        return None;
+    }
+    let name = skip_comments(rest)?;
+    let end = name.find(|c: char| !crate::ident::is_continue(c)).unwrap_or(name.len());
+    (end > 0 && name.starts_with(crate::ident::is_start)).then(|| &name[..end])
+}
+
+/// `s` from its first character that is neither white space nor in a comment.
+fn skip_comments(mut s: &str) -> Option<&str> {
+    loop {
+        s = s.trim_start();
+        if let Some(rest) = s.strip_prefix("//") {
+            s = rest.find('\n').map_or("", |i| &rest[i..]);
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = &rest[rest.find("*/")? + 2..];
+        } else {
+            return Some(s);
+        }
+    }
 }
 
 fn go_module_path(go_mod: &str) -> Option<String> {
@@ -156,4 +201,20 @@ fn go_module_path(go_mod: &str) -> Option<String> {
         .find_map(|l| l.trim().strip_prefix("module").filter(|r| r.starts_with(char::is_whitespace)))
         .map(|m| m.split("//").next().unwrap_or("").trim().trim_matches('"').to_string())
         .filter(|m| !m.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::package_clause;
+
+    #[test]
+    fn the_package_clause_is_read_past_comments_and_build_constraints() {
+        assert_eq!(package_clause("package a\n"), Some("a"));
+        assert_eq!(package_clause("\u{feff}// Copyright\n\n//go:build linux\n\n/* doc */ package a_test // x\n"), Some("a_test"));
+        assert_eq!(package_clause("package/* odd */ main\n"), Some("main"));
+        assert_eq!(package_clause("packages a\n"), None);
+        assert_eq!(package_clause("func f() {}\npackage a\n"), None);
+        assert_eq!(package_clause("/* never closed package a"), None);
+        assert_eq!(package_clause(""), None);
+    }
 }
