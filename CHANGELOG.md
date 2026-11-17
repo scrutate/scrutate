@@ -1151,6 +1151,12 @@ incompatible index by itself, and that is never breaking.
   it, and code (a ternary, `@user.field`, a method chain ending in `!`, an image digest) and an
   address (`git@github.com:acme/secrets.git`, `vault@prod:8200`) are left as written.
   docs/SECURITY.md says what ends a value and what is not covered.
+- Redaction shows a value with `@`, `~` or `!` after a name that holds `password`, `secret` or
+  `token` but is no secret: `tokenizer: bert-base@v2.1`, `token.cache.dir=~/.cache/tokens`,
+  `secret_header = X-Secret-Header@v1` and `password_label = Enter@your@password` were redacted.
+  The keyword inside a longer word, or followed by a part such as `label`, `header`, `hint`,
+  `cache` or `path`, spares the value; every other name with the keyword (`password_prod`,
+  `token_eu`, `secret_value`) still hides it.
 
 ## [0.1.0] - 2026-11-11
 
