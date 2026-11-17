@@ -39,6 +39,9 @@ WORK = os.environ.get("SCRUTATE_WORK", os.path.join(HERE, "..", "..", "work"))
 
 # --------------------------------------------------------------------------- tool discovery
 def find(name: str) -> str | None:
+    if platform.system() == "Linux":
+        # the Linux harness puts its own builds of the latest releases first on PATH
+        return shutil.which(name)
     for cand in [f"/usr/bin/{name}", f"/usr/local/bin/{name}", f"/opt/homebrew/bin/{name}"]:
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand

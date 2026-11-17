@@ -162,6 +162,10 @@ bench/results/linux-aarch64/superseded/README.md). Run `bench/competitors/linux_
 `bench/competitors/linux_indexed.sh`; the commands are in their headers. Colima shares only the
 home directory with containers. The first script checks each tool it downloads against a SHA-256
 in the script: a new tool version needs its new hash there, from the tool's own release page.
+It builds GNU grep and git from their latest release sources, since Debian's are older, and
+records the commit `/src` is at in `/bench/scrutate/BUILT_FROM`; both scripts refuse to run when
+`/src` has moved to another commit since (`bench/competitors/built_from.sh`). `linux_indexed.sh`
+takes its idle threshold from `INDEXED_MAX_LOAD` (default: the CPU count).
 The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux x86_64 runs on a
 dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,
 without `SCRUTATE_PREBUILT`), and can run at the same time as the macOS chain.

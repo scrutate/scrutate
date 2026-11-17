@@ -144,6 +144,7 @@ def test_the_benchmarks_page_gives_each_results_file_a_section(tmp_path):
     assert page.count("## Machine: linux-x86_64, bare metal") == 1 and page.count("## Machine: linux-aarch64, bare metal") == 1
     assert page.count("### Environment") == 2 and "\n## Environment" not in page
     assert "- Machine: virtualization `none` (systemd-detect-virt), kernel 6.8.0-1021-aws" in page
+    assert page.count("Each competitor is the first found on PATH") == 2 and "system's git here" not in page
 
 
 def test_the_benchmarks_page_from_one_file_is_as_before(tmp_path):

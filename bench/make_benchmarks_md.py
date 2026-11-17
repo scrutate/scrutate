@@ -99,8 +99,12 @@ def section(d, results):
             w(f"  - {LABEL.get(k, k)}: `{v['version']}`{note}")
         else:
             w(f"  - {LABEL.get(k, k)}: **not available on this machine** (not benchmarked)")
-    w("  - Each competitor is the first found in `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, so `git grep` is the "
-      "system's git here; docs/LEADERBOARD.md's harness takes `/opt/homebrew/bin` first.")
+    if env["platform"].startswith("Linux"):
+        w("  - Each competitor is the first found on PATH, where `bench/competitors/linux_bench.sh` puts its builds of the "
+          "latest releases first, as docs/LEADERBOARD.md's harness does.")
+    else:
+        w("  - Each competitor is the first found in `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, so `git grep` is the "
+          "system's git here; docs/LEADERBOARD.md's harness takes `/opt/homebrew/bin` first.")
     w("")
     w("## Corpora\n")
     w("| Corpus | Files | Lines | Size |")
