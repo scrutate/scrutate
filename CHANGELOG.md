@@ -1335,6 +1335,10 @@ incompatible index by itself, and that is never breaking.
   lot (`/tmp` or the home directory, watched for its `.ignore` and `.rgignore`): each other entry
   made or removed there counted as a change, so busy siblings filled the 10,000-event bound and
   every read walked the tree ([Architecture](docs/ARCHITECTURE.md)).
+- On Windows with `XDG_STATE_HOME` set, the Grep hook's counter (`hook-grep.jsonl`) goes there,
+  beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
+  directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
+  `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
 
 ## [0.1.0] - 2026-11-11
 

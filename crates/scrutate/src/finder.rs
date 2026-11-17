@@ -84,12 +84,23 @@ pub fn visited(root: &Path, paths: &[&str]) {
     let _ = state.save(&file);
 }
 
-/// `$XDG_STATE_HOME/scrutate/frecency.json`, else under `~/.local/state/scrutate/` (on Windows
-/// `%LOCALAPPDATA%\scrutate\`). None when no such directory is named.
+/// `frecency.json` in the state directory (`state_dir_in`).
 pub fn state_file() -> Option<PathBuf> {
-    let var = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
-    let base = var("XDG_STATE_HOME").or_else(|| if cfg!(windows) { var("LOCALAPPDATA") } else { var("HOME").map(|h| h.join(".local").join("state")) })?;
-    Some(base.join("scrutate").join(STATE_FILE))
+    state_file_in(cfg!(windows), |k| std::env::var_os(k))
+}
+
+/// `state_file` on Windows or not, with the environment `env`.
+pub(crate) fn state_file_in(windows: bool, env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    state_dir_in(windows, env).map(|d| d.join(STATE_FILE))
+}
+
+/// The directory of scrutate's state files (this frecency and the Grep hook's counter):
+/// `$XDG_STATE_HOME/scrutate` on every system, else `~/.local/state/scrutate` (on Windows
+/// `%LOCALAPPDATA%\scrutate`); a relative or empty value names none. None when nothing does.
+pub(crate) fn state_dir_in(windows: bool, env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let var = |k: &str| env(k).map(PathBuf::from).filter(|p| p.is_absolute());
+    let base = var("XDG_STATE_HOME").or_else(|| if windows { var("LOCALAPPDATA") } else { var("HOME").map(|h| h.join(".local").join("state")) })?;
+    Some(base.join("scrutate"))
 }
 
 /// tier (exact basename, basename, path), quality, frecency, length, path

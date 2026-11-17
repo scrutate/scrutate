@@ -1620,7 +1620,7 @@ does not parse does.
 | `SCRUTATE_DIAGNOSTICS` | `json`: errors as JSON records |
 | `SCRUTATE_CACHE_DIR` | where `--deps` keeps its copies of dependencies, in place of the user cache ([`--deps`](#--deps-a-dependency-at-its-locked-version)); `CARGO_HOME`, `GOMODCACHE` and `GOPATH` name the stores it reads |
 | `NO_COLOR` | any value, empty too |
-| `XDG_STATE_HOME` | where `files` keeps its frecency, see `files` above |
+| `XDG_STATE_HOME` | where `files` keeps its frecency and the Grep hook its counter, on every system when it is an absolute path, see `files` above |
 
 On/off variables but `SCRUTATE_REDACT` and `SCRUTATE_HOOK_BASH` follow the rule under
 Conventions.

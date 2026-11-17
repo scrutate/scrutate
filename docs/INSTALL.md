@@ -161,9 +161,9 @@ pip uninstall scrutate                                                     # the
 ```
 Scrutate writes nothing else: no services, no registry keys. Outside the repositories you indexed
 it writes only your configuration, the agent files `scrutate setup` edits, its state
-directory (`$XDG_STATE_HOME/scrutate/`, else `~/.local/state/scrutate/`, on Windows
-`%LOCALAPPDATA%\scrutate\`, where `frecency.json` still goes under `$XDG_STATE_HOME` when that is
-set) with `frecency.json` and `hook-grep.jsonl`, and its cache of dependency sources for
+directory (`$XDG_STATE_HOME/scrutate/` on every system when that is an absolute path, else
+`~/.local/state/scrutate/`, on Windows `%LOCALAPPDATA%\scrutate\`) with `frecency.json` and
+`hook-grep.jsonl`, and its cache of dependency sources for
 `symbol --deps`, `read --deps` and `scope: "deps"` (`$SCRUTATE_CACHE_DIR`, else
 on Windows `%LOCALAPPDATA%\scrutate\`, else `$XDG_CACHE_HOME/scrutate/`, on macOS
 `~/Library/Caches/scrutate/`, else `~/.cache/scrutate/`).
