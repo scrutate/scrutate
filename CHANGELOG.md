@@ -1307,6 +1307,14 @@ incompatible index by itself, and that is never breaking.
 - A `grep --json` record whose text was redacted gives its `column` in bytes of the redacted
   text: it kept the column of the line as the file has it, so a match after a secret pointed
   inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
+- `grep` writes each line to a terminal as it is found, as ripgrep does: matches read from a pipe
+  (`tail -f log | scrutate grep ERROR`) waited for 512 of them or the end of the input, and plain
+  output for 64 KiB or a millisecond's hold. A pipe or a file still gets its lines in batches
+  ([CLI](docs/CLI.md#conventions)).
+- `grep -U -c --max-results N` stops at N matches: a merged group counted once against the cap but
+  added all its matches to the file's count (`--max-results 1` printed 3 for three matches), and
+  `--stats` and the JSON summary counted the groups. Each match now counts in all three, as
+  `--sort` and ripgrep count it.
 
 ## [0.1.0] - 2026-11-11
 

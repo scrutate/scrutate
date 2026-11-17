@@ -1442,6 +1442,7 @@ pub fn run() -> Result<i32> {
                             && !(search_zip && crate::archive::Kind::of(&paths[0].to_string_lossy()).is_some_and(|k| k.has_members())))),
                 line_numbers: !no_line_number,
                 as_indexed: false,
+                line_buffered: false,
             };
             let mut f = Files {
                 hidden,
@@ -2535,7 +2536,9 @@ fn indexed_candidates(root: &Path, q: &Query, update: bool, under: Option<&str>)
 }
 
 /// `f.paths` holds the roots as given; with `--index` the search reads the indexed candidates.
-fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
+fn grep_command(mut q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
+    // as ripgrep: on a terminal each line leaves as it is found (`tail -f log | scrutate grep X`)
+    q.line_buffered = out.page.is_none() && std::io::stdout().is_terminal();
     let cancel = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&cancel));
     // Ctrl-C also ends `--update`'s wait for another process's lock
@@ -2548,7 +2551,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     }
     let colour = !redact && color_choice(out.no_color) != ColorChoice::Never;
     let plain = !redact && !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
-    let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
+    let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout()))).line_buffered(q.line_buffered)));
     if out.indexed {
         let (root, files) = match indexed_candidates(&out.root, &q, out.update, out.under.as_deref()) {
             Err(_) if cancel.load(Ordering::Relaxed) => return Ok(130),
@@ -2572,6 +2575,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let mut counts: Vec<Record> = Vec::new();
     // with --sort the search already hands the lines over in order
     let defer = out.count || out.files_with_matches || out.symbols;
+    let line_buffered = q.line_buffered;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
     let groups = q.before > 0 || q.after > 0;
@@ -2642,7 +2646,8 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
             if defer {
                 collected.push(r);
             } else {
-                if let Err(e) = emit(&r, &mut w)
+                let emitted = emit(&r, &mut w).and_then(|_| if line_buffered { w.flush().map_err(Into::into) } else { Ok(()) });
+                if let Err(e) = emitted
                     && broken_pipe(&e)
                 {
                     pipe_closed = true;

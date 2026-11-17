@@ -140,6 +140,9 @@ pub struct Query {
     /// a walked file with no NUL byte in its first 4 KiB is read to its end as text, as the code
     /// index reads it; off, as ripgrep reads it, which stops at the read that meets a NUL
     pub as_indexed: bool,
+    /// standard output is a terminal: each line leaves as it is found, as ripgrep's line buffering
+    /// gives it there, where elsewhere lines leave in batches
+    pub line_buffered: bool,
 }
 
 impl Default for Query {
@@ -160,6 +163,7 @@ impl Default for Query {
             with_filename: true,
             line_numbers: true,
             as_indexed: false,
+            line_buffered: false,
         }
     }
 }
@@ -1560,6 +1564,8 @@ pub struct PlainSink {
     failed: Arc<Mutex<Option<std::io::Error>>>,
     /// a file searched with context lines has written output (later files start with `--`)
     grouped: AtomicBool,
+    /// on a terminal: what is written leaves at once, with no hold
+    line: bool,
 }
 
 /// The longest output waits for more to leave with it, unless no thread starts a file meanwhile.
@@ -1577,7 +1583,14 @@ impl PlainSink {
             broken,
             failed,
             grouped: AtomicBool::new(false),
+            line: false,
         }
+    }
+
+    /// With `on` (standard output is a terminal), every write leaves at once.
+    pub fn line_buffered(mut self, on: bool) -> PlainSink {
+        self.line = on;
+        self
     }
 
     fn waited(&self) -> Option<u64> {
@@ -1595,8 +1608,11 @@ impl PlainSink {
         }
         let res = match self.out.lock() {
             Ok(mut w) => f(&mut *w).and_then(|_| {
-                if let Some(now) = self.waited().filter(|_| !w.buf.is_empty()) {
-                    self.left.store(now, Ordering::Relaxed);
+                let waited = self.waited();
+                if (self.line || waited.is_some()) && !w.buf.is_empty() {
+                    if let Some(now) = waited {
+                        self.left.store(now, Ordering::Relaxed);
+                    }
                     w.flush()?;
                 }
                 self.holding.store(!w.buf.is_empty(), Ordering::Relaxed);
@@ -1912,6 +1928,8 @@ struct Collector<'a> {
     each: Option<u64>,
     /// matches not yet added to `stats_matches` (see `count_match`)
     pending: u64,
+    /// `Query::line_buffered`
+    line_buffered: bool,
 }
 
 /// Offsets into `line` (a match may run on into the line end left out of it) as offsets into
@@ -2141,14 +2159,15 @@ impl Collector<'_> {
             if self.report == Report::Files && self.matched {
                 return Ok(true);
             }
-            let n = self.count_match();
-            if self.over_limit(n) {
+            // as ripgrep: merged matches that span lines count one by one, against the cap too
+            let k = self.each.take().unwrap_or(1);
+            let (kept, last) = self.count_matches(k);
+            if kept == 0 {
                 return Ok(false);
             }
             self.matched = true;
-            // as ripgrep: merged matches that span lines count one by one
-            self.file_count += self.each.take().unwrap_or(1);
-            if self.max_results.is_some_and(|max| n >= max) {
+            self.file_count += kept;
+            if last {
                 self.stop.set();
                 return Ok(false);
             }
@@ -2184,10 +2203,7 @@ impl Collector<'_> {
                     read?;
                 }
             }
-            if self.out.len() >= 1 << 16 && !self.hold && !self.whole_groups {
-                p.write(&self.out, std::mem::take(&mut self.first), self.stop);
-                self.out.clear();
-            }
+            self.hand_over_plain(p, 1 << 16);
             if self.max_results.is_some_and(|max| n >= max) {
                 return Ok(self.last_match());
             }
@@ -2244,6 +2260,9 @@ impl Collector<'_> {
             let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             let number = if self.numbered { number.unwrap_or(0) + self.line_base } else { 0 };
             format_plain(&mut self.out, name, number, line, !matched);
+            if let Some(p) = self.plain {
+                self.hand_over_plain(p, usize::MAX);
+            }
             return Ok(more);
         }
         let text = lossy(line);
@@ -2259,8 +2278,6 @@ impl Collector<'_> {
         Ok(more)
     }
 
-    /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
-    /// first, so this one is not reported, nor counted.
     /// Counts a match: with `max_results` its number over all threads, which the cap needs as it
     /// happens; without, 0, and the file's matches are added together in `flush`, since an add per
     /// matching line from every thread kept the counter's cache line moving between cores.
@@ -2273,6 +2290,37 @@ impl Collector<'_> {
         }
     }
 
+    /// Counts `k` matches at once (a `-U -c` group): how many of them `max_results` leaves, and
+    /// whether they reach it. A thread that finds the cap already reached takes its add back.
+    fn count_matches(&mut self, k: u64) -> (u64, bool) {
+        let Some(max) = self.max_results else {
+            self.pending += k;
+            return (k, false);
+        };
+        let before = self.stats_matches.fetch_add(k, Ordering::Relaxed);
+        if before >= max {
+            self.stats_matches.fetch_sub(k, Ordering::Relaxed);
+            self.stop.set();
+            return (0, true);
+        }
+        let kept = k.min(max - before);
+        if kept < k {
+            self.stats_matches.fetch_sub(k - kept, Ordering::Relaxed);
+        }
+        (kept, before + kept >= max)
+    }
+
+    /// Hands the plain lines held over to the sink once they reach `at` bytes, or at once on a
+    /// terminal; a range of a split file and a context group on several threads wait their turn.
+    fn hand_over_plain(&mut self, p: &PlainSink, at: usize) {
+        if (self.out.len() >= at || self.line_buffered) && !self.hold && !self.whole_groups && !self.out.is_empty() {
+            p.write(&self.out, std::mem::take(&mut self.first), self.stop);
+            self.out.clear();
+        }
+    }
+
+    /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
+    /// first, so this one is not reported, nor counted.
     fn over_limit(&self, n: u64) -> bool {
         let over = self.max_results.is_some_and(|max| n > max);
         if over {
@@ -2285,7 +2333,7 @@ impl Collector<'_> {
     fn push(&mut self, h: Record) {
         self.broke = false;
         self.batch.push(h);
-        if self.batch.len() >= 512 {
+        if self.line_buffered || self.batch.len() >= 512 {
             self.flush();
         }
     }
@@ -2678,6 +2726,7 @@ impl<'a> Run<'a> {
             count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
             each: None,
             pending: 0,
+            line_buffered: o.line_buffered,
         }
     }
 }
