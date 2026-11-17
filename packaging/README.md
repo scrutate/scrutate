@@ -49,14 +49,14 @@ the script then had (`hello.py:1:def greet():`), uninstall, binary gone. The scr
 the test uses `rpm -i --nosignature`. x86_64 packages were not built.
 
 **crates.io**: `cargo publish --dry-run -p scrutate-ignore -p scrutate` packages and verifies both
-crates, the second against the first through Cargo's temporary local registry; no log of that run
-is kept. `scrutate-ignore` (`vendor/ignore`, a modified copy of `ignore`) is 22 files, 83 KiB
-compressed; `scrutate` is 79 files (counted from its `include` list) and an estimated 7.8 MiB
-compressed, of which the int8 semantic model is most (crates.io refuses over 10 MB).
+crates, the second against the first through Cargo's temporary local registry
+(`bench/results/platforms/packages/cargo-package.log`). `scrutate-ignore` (`vendor/ignore`, a
+modified copy of `ignore`) is 22 files, 83 KiB compressed; `scrutate` is 79 files (counted from
+its `include` list) and 7.8 MiB compressed (8,181,927 bytes), of which the int8 semantic model is
+most (crates.io refuses over 10 MB).
 The `scrutate` package holds `src/`, `data/`, `models/`, `build.rs`, `startup.order`, the README and
 the two licence files; its tests and their sample trees stay in the repository, so Cargo says it
-ignores each test target. The earlier log `cargo-package.log` is from before the models moved into
-the crate and before the walker had its own name. Nothing was published.
+ignores each test target. Nothing was published.
 
 ## At release time
 

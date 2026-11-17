@@ -1,182 +1,150 @@
-   Packaging scrutate v0.1.0 (<repo>/crates/scrutate)
+$ cargo package -p scrutate-ignore -p scrutate --locked
+   Packaging scrutate-ignore v0.4.34 (<repo>/vendor/ignore)
     Updating crates.io index
-    Packaged 112 files, 624.2KiB (164.4KiB compressed)
-   Verifying scrutate v0.1.0 (<repo>/crates/scrutate)
-   Compiling find-msvc-tools v0.1.15
-   Compiling shlex v2.0.1
-   Compiling tree-sitter-language v0.1.9
-   Compiling cc v1.11.1
-   Compiling proc-macro2 v1.0.107
-   Compiling quote v1.0.47
-   Compiling unicode-ident v1.0.27
-   Compiling memchr v2.8.3
-   Compiling equivalent v1.0.3
-   Compiling hashbrown v0.17.1
-   Compiling zmij v1.0.23
-   Compiling syn v3.0.9
-   Compiling aho-corasick v1.1.5
-   Compiling regex-syntax v0.8.11
-   Compiling serde_core v1.0.229
-   Compiling regex-automata v0.4.18
-   Compiling itoa v1.0.18
-   Compiling serde_json v1.0.154
-   Compiling indexmap v2.14.2
-   Compiling foldhash v0.2.0
-   Compiling version_check v0.9.5
-   Compiling generic-array v0.14.7
+    Packaged 22 files, 363.2KiB (82.7KiB compressed)
+   Packaging scrutate v0.1.0 (<repo>/crates/scrutate)
+warning: ignoring test `artifacts` as `tests/artifacts.rs` is not included in the published package
+warning: ignoring test `cli` as `tests/cli.rs` is not included in the published package
+warning: ignoring test `concise` as `tests/concise.rs` is not included in the published package
+warning: ignoring test `custom_lang` as `tests/custom_lang.rs` is not included in the published package
+warning: ignoring test `dead` as `tests/dead.rs` is not included in the published package
+warning: ignoring test `edit_layouts` as `tests/edit_layouts.rs` is not included in the published package
+warning: ignoring test `edits` as `tests/edits.rs` is not included in the published package
+warning: ignoring test `files` as `tests/files.rs` is not included in the published package
+warning: ignoring test `filters` as `tests/filters.rs` is not included in the published package
+warning: ignoring test `fuzzy_spans` as `tests/fuzzy_spans.rs` is not included in the published package
+warning: ignoring test `git_spawns` as `tests/git_spawns.rs` is not included in the published package
+warning: ignoring test `grep_cli` as `tests/grep_cli.rs` is not included in the published package
+warning: ignoring test `grep_hook` as `tests/grep_hook.rs` is not included in the published package
+warning: ignoring test `history` as `tests/history.rs` is not included in the published package
+warning: ignoring test `impact` as `tests/impact.rs` is not included in the published package
+warning: ignoring test `incremental` as `tests/incremental.rs` is not included in the published package
+warning: ignoring test `index_history` as `tests/index_history.rs` is not included in the published package
+warning: ignoring test `index_quota` as `tests/index_quota.rs` is not included in the published package
+warning: ignoring test `index_recovery` as `tests/index_recovery.rs` is not included in the published package
+warning: ignoring test `intel_refs` as `tests/intel_refs.rs` is not included in the published package
+warning: ignoring test `lazy_bind` as `tests/lazy_bind.rs` is not included in the published package
+warning: ignoring test `limit_filters` as `tests/limit_filters.rs` is not included in the published package
+warning: ignoring test `lsp` as `tests/lsp.rs` is not included in the published package
+warning: ignoring test `maps` as `tests/maps.rs` is not included in the published package
+warning: ignoring test `mcp_protocol` as `tests/mcp_protocol.rs` is not included in the published package
+warning: ignoring test `mcp_tools` as `tests/mcp_tools.rs` is not included in the published package
+warning: ignoring test `memory_given_back` as `tests/memory_given_back.rs` is not included in the published package
+warning: ignoring test `models` as `tests/models.rs` is not included in the published package
+warning: ignoring test `not_indexed` as `tests/not_indexed.rs` is not included in the published package
+warning: ignoring test `packages` as `tests/packages.rs` is not included in the published package
+warning: ignoring test `parse_index` as `tests/parse_index.rs` is not included in the published package
+warning: ignoring test `parsed_memory` as `tests/parsed_memory.rs` is not included in the published package
+warning: ignoring test `parsed_memory_by_grammar` as `tests/parsed_memory_by_grammar.rs` is not included in the published package
+warning: ignoring test `properties` as `tests/properties.rs` is not included in the published package
+warning: ignoring test `ranking_pins` as `tests/ranking_pins.rs` is not included in the published package
+warning: ignoring test `resolve` as `tests/resolve.rs` is not included in the published package
+warning: ignoring test `resolve_java` as `tests/resolve_java.rs` is not included in the published package
+warning: ignoring test `resolve_php` as `tests/resolve_php.rs` is not included in the published package
+warning: ignoring test `review` as `tests/review.rs` is not included in the published package
+warning: ignoring test `rewrite` as `tests/rewrite.rs` is not included in the published package
+warning: ignoring test `robustness` as `tests/robustness.rs` is not included in the published package
+warning: ignoring test `running` as `tests/running.rs` is not included in the published package
+warning: ignoring test `samples` as `tests/samples.rs` is not included in the published package
+warning: ignoring test `samples_extra` as `tests/samples_extra.rs` is not included in the published package
+warning: ignoring test `secrets` as `tests/secrets.rs` is not included in the published package
+warning: ignoring test `session` as `tests/session.rs` is not included in the published package
+warning: ignoring test `setup_agents` as `tests/setup_agents.rs` is not included in the published package
+warning: ignoring test `shell_hook` as `tests/shell_hook.rs` is not included in the published package
+warning: ignoring test `statics` as `tests/statics.rs` is not included in the published package
+warning: ignoring test `symbol_order` as `tests/symbol_order.rs` is not included in the published package
+warning: ignoring test `text_index` as `tests/text_index.rs` is not included in the published package
+warning: ignoring test `training_rows` as `tests/training_rows.rs` is not included in the published package
+warning: ignoring test `unicode_text` as `tests/unicode_text.rs` is not included in the published package
+warning: ignoring test `watch_files` as `tests/watch_files.rs` is not included in the published package
+    Updating crates.io index
+    Packaged 79 files, 10.8MiB (7.8MiB compressed)
+   Verifying scrutate-ignore v0.4.34 (<repo>/vendor/ignore)
    Compiling crossbeam-utils v0.8.23
-   Compiling serde v1.0.229
-   Compiling rustversion v1.0.23
-   Compiling cfg-if v1.0.5
-   Compiling tree-sitter v0.26.13
-   Compiling serde_derive v1.0.229
-   Compiling libc v0.2.191
-   Compiling typenum v1.20.1
-   Compiling crossbeam-epoch v0.9.21
-   Compiling utf8parse v0.2.2
-   Compiling crossbeam-deque v0.8.8
-   Compiling anstyle-parse v1.0.0
-   Compiling encoding_rs v0.8.44
+   Compiling regex-syntax v0.8.11
    Compiling bstr v1.13.1
-   Compiling anstyle-query v1.1.5
-   Compiling log v0.4.35
-   Compiling vcpkg v0.2.15
-   Compiling is_terminal_polyfill v1.70.2
-   Compiling colorchoice v1.0.5
-   Compiling pkg-config v0.3.34
-   Compiling anstyle v1.0.14
-   Compiling anstream v1.0.0
-   Compiling libsqlite3-sys v0.35.0
-   Compiling block-buffer v0.10.4
-   Compiling crypto-common v0.1.7
-   Compiling regex v1.13.1
-   Compiling syn v2.0.119
-   Compiling zerocopy v0.8.63
-   Compiling multiversion_no_op v1.0.0
-   Compiling heck v0.5.0
-   Compiling clap_lex v1.1.1
-   Compiling crc32fast v1.5.4
-   Compiling foldhash v0.1.5
-   Compiling rayon-core v1.13.0
-   Compiling streaming-iterator v0.1.9
-   Compiling simdutf8 v0.1.5
-   Compiling autocfg v1.5.1
-   Compiling subtle v2.6.1
-   Compiling scopeguard v1.2.0
-   Compiling strsim v0.11.1
-   Compiling matrixmultiply v0.3.11
-   Compiling clap_builder v4.6.7
-   Compiling zerocopy-derive v0.8.63
-   Compiling digest v0.10.7
-   Compiling hashbrown v0.15.5
-   Compiling clap_derive v4.6.7
-   Compiling toml_datetime v0.6.11
-   Compiling serde_spanned v0.6.9
-   Compiling tree-sitter-md v0.5.4
-   Compiling tree-sitter-cpp v0.23.4
-   Compiling tree-sitter-matlab v1.3.3
-   Compiling tree-sitter-commonlisp v0.4.1
-   Compiling tree-sitter-make v1.1.1
-   Compiling tree-sitter-cmake v0.7.6
-   Compiling tree-sitter-lua v0.5.0
-   Compiling tree-sitter-c-sharp v0.23.5
-   Compiling tree-sitter-kotlin-ng v1.1.0
-   Compiling tree-sitter-c v0.24.2
-   Compiling tree-sitter-zig v1.1.2
-   Compiling tree-sitter-bicep v1.1.0
-   Compiling tree-sitter-yaml v0.7.2
-   Compiling tree-sitter-bash v0.25.1
-   Compiling tree-sitter-xml v0.7.0
-   Compiling tree-sitter-asm v0.24.0
-   Compiling tree-sitter-vim v0.4.0
-   Compiling tree-sitter-ada v0.9.2
-   Compiling tree-sitter-typescript v0.23.2
-   Compiling tree-sitter-toml-ng v0.7.0
-   Compiling tree-sitter-swift v0.7.4
-   Compiling tree-sitter-starlark v1.3.0
-   Compiling tree-sitter-julia v0.23.1
-   Compiling tree-sitter-jsonnet v0.0.1
-   Compiling tree-sitter-json v0.24.8
-   Compiling tree-sitter-javascript v0.25.0
-   Compiling tree-sitter-java v0.23.5
-   Compiling tree-sitter-ini v1.4.0
-   Compiling tree-sitter-html v0.23.2
-   Compiling tree-sitter-hcl v1.1.0
-   Compiling tree-sitter-haskell v0.24.1
-   Compiling tree-sitter-solidity v1.2.13
-   Compiling tree-sitter-groovy v0.1.2
-   Compiling tree-sitter-scheme v0.25.0
-   Compiling tree-sitter-scala v0.26.9
-   Compiling tree-sitter-rust v0.24.2
-   Compiling tree-sitter-ruby v0.23.1
-   Compiling tree-sitter-rst v0.2.0
-   Compiling tree-sitter-graphql v0.3.0
-   Compiling tree-sitter-racket v0.25.0
-   Compiling tree-sitter-go v0.25.0
-   Compiling tree-sitter-r v1.3.0
-   Compiling tree-sitter-glsl v0.2.0
-   Compiling tree-sitter-python v0.25.0
-   Compiling tree-sitter-gleam v1.0.0
-   Compiling tree-sitter-puppet v1.3.0
-   Compiling tree-sitter-fish v3.6.0
-   Compiling tree-sitter-erlang v0.21.0
-   Compiling tree-sitter-elm v5.9.4
-   Compiling tree-sitter-elixir v0.3.5
-   Compiling tree-sitter-elisp v1.7.2
-   Compiling tree-sitter-dart v0.3.0
-   Compiling tree-sitter-css v0.25.0
-   Compiling tree-sitter-prisma v0.2.2
-   Compiling tree-sitter-powershell v0.26.6
-   Compiling tree-sitter-php v0.25.1
-   Compiling tree-sitter-pascal v0.10.2
-   Compiling tree-sitter-objc v3.0.2
-   Compiling tree-sitter-nix v0.3.0
-   Compiling grep-matcher v0.1.9
-   Compiling simd-adler32 v0.3.10
-   Compiling winnow v0.7.15
-   Compiling adler2 v2.0.1
-   Compiling same-file v1.0.6
-   Compiling anyhow v1.0.104
-   Compiling walkdir v2.5.0
-   Compiling miniz_oxide v0.9.1
-   Compiling toml_edit v0.22.27
-   Compiling clap v4.6.7
-   Compiling hashlink v0.10.0
-   Compiling encoding_rs_io v0.1.8
+   Compiling regex-automata v0.4.18
+   Compiling crossbeam-epoch v0.9.21
+   Compiling crossbeam-deque v0.8.8
    Compiling globset v0.4.21
-   Compiling cpufeatures v0.2.17
-   Compiling memmap2 v0.9.12
-   Compiling fallible-iterator v0.3.0
-   Compiling either v1.19.0
-   Compiling smallvec v1.16.5
-   Compiling bitflags v2.13.2
-   Compiling rawpointer v0.2.1
-   Compiling fallible-streaming-iterator v0.1.9
-   Compiling rusqlite v0.37.0
-   Compiling rayon v1.12.0
-   Compiling half v2.7.1
-   Compiling grep-searcher v0.1.17
-   Compiling ignore v0.4.34
-   Compiling sha1 v0.10.7
-   Compiling flate2 v1.1.11
-   Compiling clap_complete v4.6.11
-   Compiling toml v0.8.23
-   Compiling grep-regex v0.1.14
-   Compiling blake2 v0.10.6
-   Compiling rust-stemmers v1.2.0
-   Compiling termcolor v1.4.1
-   Compiling scrutate v0.1.0 (<repo>/target/package/scrutate-0.1.0)
-error: couldn't read `<repo>/target/package/scrutate-0.1.0/../../models/semantic.npz`: No such file or directory (os error 2)
-  --> src/lib.rs:32:30
-   |
-32 | static SEMANTIC_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/semantic.npz"));
-   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-error: couldn't read `<repo>/target/package/scrutate-0.1.0/../../models/ranker.npz`: No such file or directory (os error 2)
-  --> src/lib.rs:33:28
-   |
-33 | static RANKER_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/ranker.npz"));
-   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-error: could not compile `scrutate` (lib) due to 2 previous errors
-error: failed to verify package tarball
+   Compiling scrutate-ignore v0.4.34 (<target>/package/scrutate-ignore-0.4.34)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.87s
+   Verifying scrutate v0.1.0 (<repo>/crates/scrutate)
+    Updating crates.io index
+   Unpacking scrutate-ignore v0.4.34 (registry `<target>/package/tmp-registry`)
+   Compiling scrutate v0.1.0 (<target>/package/scrutate-0.1.0)
+   Compiling scrutate-ignore v0.4.34
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.04s
+$ cargo publish --dry-run --locked -p scrutate-ignore -p scrutate
+    Updating crates.io index
+   Packaging scrutate-ignore v0.4.34 (<repo>/vendor/ignore)
+    Updating crates.io index
+    Packaged 22 files, 363.2KiB (82.7KiB compressed)
+   Packaging scrutate v0.1.0 (<repo>/crates/scrutate)
+warning: ignoring test `artifacts` as `tests/artifacts.rs` is not included in the published package
+warning: ignoring test `cli` as `tests/cli.rs` is not included in the published package
+warning: ignoring test `concise` as `tests/concise.rs` is not included in the published package
+warning: ignoring test `custom_lang` as `tests/custom_lang.rs` is not included in the published package
+warning: ignoring test `dead` as `tests/dead.rs` is not included in the published package
+warning: ignoring test `edit_layouts` as `tests/edit_layouts.rs` is not included in the published package
+warning: ignoring test `edits` as `tests/edits.rs` is not included in the published package
+warning: ignoring test `files` as `tests/files.rs` is not included in the published package
+warning: ignoring test `filters` as `tests/filters.rs` is not included in the published package
+warning: ignoring test `fuzzy_spans` as `tests/fuzzy_spans.rs` is not included in the published package
+warning: ignoring test `git_spawns` as `tests/git_spawns.rs` is not included in the published package
+warning: ignoring test `grep_cli` as `tests/grep_cli.rs` is not included in the published package
+warning: ignoring test `grep_hook` as `tests/grep_hook.rs` is not included in the published package
+warning: ignoring test `history` as `tests/history.rs` is not included in the published package
+warning: ignoring test `impact` as `tests/impact.rs` is not included in the published package
+warning: ignoring test `incremental` as `tests/incremental.rs` is not included in the published package
+warning: ignoring test `index_history` as `tests/index_history.rs` is not included in the published package
+warning: ignoring test `index_quota` as `tests/index_quota.rs` is not included in the published package
+warning: ignoring test `index_recovery` as `tests/index_recovery.rs` is not included in the published package
+warning: ignoring test `intel_refs` as `tests/intel_refs.rs` is not included in the published package
+warning: ignoring test `lazy_bind` as `tests/lazy_bind.rs` is not included in the published package
+warning: ignoring test `limit_filters` as `tests/limit_filters.rs` is not included in the published package
+warning: ignoring test `lsp` as `tests/lsp.rs` is not included in the published package
+warning: ignoring test `maps` as `tests/maps.rs` is not included in the published package
+warning: ignoring test `mcp_protocol` as `tests/mcp_protocol.rs` is not included in the published package
+warning: ignoring test `mcp_tools` as `tests/mcp_tools.rs` is not included in the published package
+warning: ignoring test `memory_given_back` as `tests/memory_given_back.rs` is not included in the published package
+warning: ignoring test `models` as `tests/models.rs` is not included in the published package
+warning: ignoring test `not_indexed` as `tests/not_indexed.rs` is not included in the published package
+warning: ignoring test `packages` as `tests/packages.rs` is not included in the published package
+warning: ignoring test `parse_index` as `tests/parse_index.rs` is not included in the published package
+warning: ignoring test `parsed_memory` as `tests/parsed_memory.rs` is not included in the published package
+warning: ignoring test `parsed_memory_by_grammar` as `tests/parsed_memory_by_grammar.rs` is not included in the published package
+warning: ignoring test `properties` as `tests/properties.rs` is not included in the published package
+warning: ignoring test `ranking_pins` as `tests/ranking_pins.rs` is not included in the published package
+warning: ignoring test `resolve` as `tests/resolve.rs` is not included in the published package
+warning: ignoring test `resolve_java` as `tests/resolve_java.rs` is not included in the published package
+warning: ignoring test `resolve_php` as `tests/resolve_php.rs` is not included in the published package
+warning: ignoring test `review` as `tests/review.rs` is not included in the published package
+warning: ignoring test `rewrite` as `tests/rewrite.rs` is not included in the published package
+warning: ignoring test `robustness` as `tests/robustness.rs` is not included in the published package
+warning: ignoring test `running` as `tests/running.rs` is not included in the published package
+warning: ignoring test `samples` as `tests/samples.rs` is not included in the published package
+warning: ignoring test `samples_extra` as `tests/samples_extra.rs` is not included in the published package
+warning: ignoring test `secrets` as `tests/secrets.rs` is not included in the published package
+warning: ignoring test `session` as `tests/session.rs` is not included in the published package
+warning: ignoring test `setup_agents` as `tests/setup_agents.rs` is not included in the published package
+warning: ignoring test `shell_hook` as `tests/shell_hook.rs` is not included in the published package
+warning: ignoring test `statics` as `tests/statics.rs` is not included in the published package
+warning: ignoring test `symbol_order` as `tests/symbol_order.rs` is not included in the published package
+warning: ignoring test `text_index` as `tests/text_index.rs` is not included in the published package
+warning: ignoring test `training_rows` as `tests/training_rows.rs` is not included in the published package
+warning: ignoring test `unicode_text` as `tests/unicode_text.rs` is not included in the published package
+warning: ignoring test `watch_files` as `tests/watch_files.rs` is not included in the published package
+    Updating crates.io index
+    Packaged 79 files, 10.8MiB (7.8MiB compressed)
+   Verifying scrutate-ignore v0.4.34 (<repo>/vendor/ignore)
+   Compiling scrutate-ignore v0.4.34 (<target>/package/scrutate-ignore-0.4.34)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.08s
+   Verifying scrutate v0.1.0 (<repo>/crates/scrutate)
+    Updating crates.io index
+   Compiling scrutate v0.1.0 (<target>/package/scrutate-0.1.0)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.57s
+   Uploading scrutate-ignore v0.4.34 (<repo>/vendor/ignore)
+warning: aborting upload due to dry run
+   Uploading scrutate v0.1.0 (<repo>/crates/scrutate)
+warning: aborting upload due to dry run

@@ -76,9 +76,9 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   packaging/README.md).
 - `cargo install scrutate` from crates.io: `scrutate-ignore`, then `scrutate` with the int8 model;
   the upload needs the owner's crates.io account at the release ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
-  No `cargo publish --dry-run` of the current layout is recorded: the one log,
-  `bench/results/platforms/packages/cargo-package.log`, is of an older layout and failed to verify
-  the package.
+  `cargo publish --dry-run -p scrutate-ignore -p scrutate` passes on this layout: both packages
+  verify, `scrutate` against `scrutate-ignore` built from its own package, and `scrutate` is 7.8 MiB
+  compressed, under crates.io's 10 MiB (`bench/results/platforms/packages/cargo-package.log`).
 - A comment on GitLab merge requests (R-12.16; on GitHub the Action's `comment: true` posts
   `scrutate review` on a pull request, and the GitLab template saves it as a Code Quality report),
   and weekly benchmark runs for the dashboard (R-4.5).
