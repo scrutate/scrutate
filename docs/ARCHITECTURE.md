@@ -620,9 +620,11 @@ its end; UTF-16 files and files unreadable at index time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per
-generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges all but the
-largest by a streaming k-way merge, so the small segments a watch adds do not rewrite the whole
-index; more than 30% dead documents merges all of them. A merge checks the segments it reads
+generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges the
+smallest ones by a streaming k-way merge: enough of them to leave four, then each next larger one
+while it is at most four times the size of those taken (sizes in posting bytes), so the small
+segments a watch adds do not rewrite the large ones a build left; more than 30% dead documents
+merges all of them. A merge checks the segments it reads
 first, and a damaged one rebuilds the index. A file over 64 MB is read in 1 MB pieces, never
 mapped: a mapped file another process shortens ends the reader with SIGBUS. A manifest that is not
 valid JSON (a crash can leave it empty) is rebuilt by the next update like a damaged segment, and a

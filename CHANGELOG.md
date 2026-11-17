@@ -1292,6 +1292,12 @@ incompatible index by itself, and that is never breaking.
 - `setup --help` names the hooks `--hook` adds: those that answer the agent's search tools with
   scrutate, Grep and Bash for Claude Code and Bash for Codex. It named only Claude Code's Grep
   hook.
+- A one-file `index --text` no longer writes a large part of the text index again every third
+  update. With more than four segments only the largest stayed out of the merge, so a build of
+  more than one batch had its second segment rewritten with the small ones each time: on a
+  1,500-file tree, 11 one-file updates wrote 80 MB. The merge now takes the smallest segments, and
+  a larger one only once those taken reach a quarter of its size; the same updates wrote 5 MB
+  ([Architecture](docs/ARCHITECTURE.md)).
 
 ## [0.1.0] - 2026-11-11
 
