@@ -27,7 +27,7 @@ Every PASS refers to a test, benchmark or audit output here.
 | Literal and regex search | **met**: linear-time regex with size limits |
 | Machine-readable output | **met**: JSON Lines (schema 1) from `grep`, one JSON envelope (schema 2) from the index commands, JSON error records |
 | Functioning, tested code-intelligence foundation | **met**: 61 + 13 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
-| Automated tests | **met**: in docs/TEST_RESULTS.md, Rust tests (the count per test binary of `cargo test -p scrutate`), Python tests, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing; in CI (`ci.yml`), the pinned ranking features (`tests/ranking_pins.rs` in `cargo test`), the ranking quality floor (`bench/quality.py`) and the bindings tests on four interpreters per platform (3.13, 3.14t, 3.15, 3.15t) |
+| Automated tests | **met**: in docs/TEST_RESULTS.md, Rust tests (the count per test binary of `cargo test -p scrutate`), Python tests, 200 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing; in CI (`ci.yml`), the pinned ranking features (`tests/ranking_pins.rs` in `cargo test`), the ranking quality floor (`bench/quality.py`) and the bindings tests on four interpreters per platform (3.13, 3.14t, 3.15, 3.15t) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
 | Verified builds for declared supported platforms | **met on all six**: three built and tested here, three on GitHub's runners (INSTALL.md) |
 | Security assessment | **met as a self-assessment** with fuzzing; no independent audit |
