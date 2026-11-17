@@ -241,6 +241,14 @@ incompatible index by itself, and that is never breaking.
   A run refuses a scrutate binary built from another commit than the harness it runs
   (`bench/competitors/built_from.sh`), and `linux_indexed.sh` takes its idle threshold from
   `INDEXED_MAX_LOAD`.
+- `bench/yardstick.py` never times a query whose answer it cannot check, waits for an idle machine
+  before each query and records its load, gives p99 beside p50 and p95, compares each rival with
+  every scrutate form timed on the query (a resident server against `scrutate grep --index` too),
+  and bootstraps its intervals at 10,000 resamples where it took 2,000. The W3 queries for the
+  Linux tree are committed (`bench/yardstick_queries/w3-linux.json`), and
+  `bench/make_yardstick_md.py` writes a marked section of docs/COMPETITIVE.md from the result
+  files it names, which `tools/gen_doc_assets.py --check` checks
+  ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,

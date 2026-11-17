@@ -152,6 +152,14 @@ servers on one index of the Linux tree, asked in turn, 20 rounds); its runs on a
 and on the Apple M3 Pro, on a 24,866-file part of that tree, which the kqueue can watch, made
 those calls faster, but their result files are not committed either.
 
+`bench/make_yardstick_md.py` writes the yardstick results committed under `bench/results/` between
+the two markers below, each rival against each scrutate form with its 95% interval; none is
+committed yet.
+
+<!-- yardstick: begin -->
+<!-- inputs:  -->
+<!-- yardstick: end -->
+
 ## 4. Against "nothing": the code-intelligence engine
 
 No measured tool has a code-intelligence index, so this part has no competitor:
