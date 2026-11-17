@@ -2920,10 +2920,8 @@ impl Items<'_> {
                 let (path, rel, named) = files.get(i)?;
                 #[cfg(test)]
                 {
-                    let pause = tests::PAUSE_TAKEN.lock().unwrap().clone();
-                    if let Some((name, pause)) = pause
-                        && path.file_name() == Some(name.as_os_str())
-                    {
+                    let pause = tests::PAUSE_TAKEN.lock().unwrap().iter().find(|(name, _)| path.file_name() == Some(name.as_os_str())).map(|(_, p)| *p);
+                    if let Some(pause) = pause {
                         std::thread::sleep(pause);
                     }
                 }
@@ -3254,7 +3252,8 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
 /// with each of its records, then with `None` at its end. A file is searched while those before
 /// it are handed over, holding at most `FILE_BATCHES` batches, and at most `FILES_AHEAD_PER_THREAD`
 /// files per thread are taken past the one handed over; a file a stop leaves unstarted is handed
-/// over with no record when it was taken, else not at all.
+/// over with no record when it was taken, else not at all. After a stop no later file is handed
+/// over, so what was is a start of the whole answer.
 #[cfg(not(target_os = "wasi"))]
 fn schedule_in_order(files: &[(PathBuf, Arc<str>, bool)], stop_at: Option<u64>, s: &Common, each: &mut dyn FnMut(usize, Option<Record>)) {
     let (p, c) = (s.p, s.c);
@@ -3270,6 +3269,10 @@ fn schedule_in_order(files: &[(PathBuf, Arc<str>, bool)], stop_at: Option<u64>, 
         drop(tx);
         let _opened = Opened(&window);
         let take = |i: usize| slots[i].lock().unwrap_or_else(|p| p.into_inner()).take();
+        // a stop may have cut the file just handed over short: the files after it are drained,
+        // so every slot closes, but handed over no more, so what was handed over is a start of
+        // the whole answer
+        let mut cut = false;
         for i in 0..files.len() {
             // files are taken in order: one never taken once every thread has ended is the end
             let Some(file) = (loop {
@@ -3285,9 +3288,14 @@ fn schedule_in_order(files: &[(PathBuf, Arc<str>, bool)], stop_at: Option<u64>, 
             for batch in file {
                 #[cfg(test)]
                 c.queued.fetch_sub(1, Ordering::Relaxed);
-                batch.into_iter().for_each(|r| each(i, Some(r)));
+                if !cut {
+                    batch.into_iter().for_each(|r| each(i, Some(r)));
+                }
             }
-            each(i, None);
+            if !cut {
+                each(i, None);
+            }
+            cut |= s.stop.is_set();
             window.hand(i + 1);
         }
         #[cfg(not(test))]
@@ -3627,10 +3635,26 @@ mod tests {
         pub(super) static MOST_QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
-    /// A file of a list, by name, whose taker pauses this long after taking it and before the
-    /// window: the threads of a search are not the test's, so this is shared, and a name of one
-    /// test's own keeps the others out of it.
-    pub(super) static PAUSE_TAKEN: Mutex<Option<(std::ffi::OsString, std::time::Duration)>> = Mutex::new(None);
+    /// Files of a list, by name, whose taker pauses this long after taking one and before the
+    /// window: the threads of a search are not the test's, so this is shared, and a name of each
+    /// test's own keeps the others out of its entry.
+    pub(super) static PAUSE_TAKEN: Mutex<Vec<(std::ffi::OsString, std::time::Duration)>> = Mutex::new(Vec::new());
+
+    /// Pauses the taker of the file `name` while this is alive.
+    struct Paused(std::ffi::OsString);
+
+    impl Paused {
+        fn new(name: &str, pause: std::time::Duration) -> Paused {
+            PAUSE_TAKEN.lock().unwrap().push((name.into(), pause));
+            Paused(name.into())
+        }
+    }
+
+    impl Drop for Paused {
+        fn drop(&mut self) {
+            PAUSE_TAKEN.lock().unwrap_or_else(|p| p.into_inner()).retain(|(n, _)| *n != self.0);
+        }
+    }
 
     fn query(text: &str, mode: Mode) -> Query {
         Query { pattern: Pattern { text: text.into(), mode, ..Pattern::default() }, ..Query::default() }
@@ -3811,7 +3835,7 @@ mod tests {
             let name = if i == 3 { paused.clone() } else { format!("{i:02}.txt") };
             std::fs::write(root.join(name), "abc e\n").unwrap();
         }
-        *PAUSE_TAKEN.lock().unwrap() = Some((paused.into(), std::time::Duration::from_millis(300)));
+        let pause = Paused::new(&paused, std::time::Duration::from_millis(300));
         let cancel = Arc::new(AtomicBool::new(false));
         let (done_tx, done) = mpsc::channel();
         let (dir, stop) = (root.clone(), Arc::clone(&cancel));
@@ -3823,8 +3847,44 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(150));
         cancel.store(true, Ordering::Relaxed);
         let ended = done.recv_timeout(std::time::Duration::from_secs(10));
-        *PAUSE_TAKEN.lock().unwrap() = None;
+        drop(pause);
         assert_eq!(ended, Ok(true), "the search did not end after the cancel");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// What a search in path order hands over before a stop is a start of what it hands over
+    /// whole: no file searched ahead is handed over past the one the stop cut short.
+    #[test]
+    fn records_in_path_order_cut_by_a_stop_are_a_start_of_the_whole_answer() {
+        let root = std::env::temp_dir().join(format!("scrutate_sorted_prefix_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let paused = format!("00_slow_{}.txt", std::process::id());
+        for i in 0..20 {
+            let name = if i == 0 { paused.clone() } else { format!("{i:02}.txt") };
+            std::fs::write(root.join(name), "abc e\n").unwrap();
+        }
+        let run = |cancel: Arc<AtomicBool>| {
+            let o = Query { first_in_path_order: true, ..query("e", Mode::Literal) };
+            let f = Files { threads: 2, ..Files::walk(vec![root.clone()]) };
+            let mut got = Vec::new();
+            search(&o, &f, cancel, Output::Records(&mut |r| got.push(r.path().to_string()))).unwrap();
+            got
+        };
+        let whole = run(Arc::default());
+        assert_eq!(whole.len(), 20, "{whole:?}");
+        let pause = Paused::new(&paused, std::time::Duration::from_millis(300));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&cancel);
+        let cut = std::thread::scope(|sc| {
+            sc.spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                stop.store(true, Ordering::Relaxed);
+            });
+            run(cancel)
+        });
+        drop(pause);
+        assert!(whole.starts_with(&cut), "{cut:?} is not a start of {whole:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
