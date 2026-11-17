@@ -991,14 +991,21 @@ const CONTEXT: usize = 4 << 10;
 /// longer is sent as its marker and the rest of its line withheld.
 const CARRY_MAX: usize = 4 << 20;
 
-/// Where `w`, a piece of a line that goes on, may be cut: at least `TAIL` bytes before its end,
-/// on an ASCII byte, and `CONTEXT` before any secret the rules find across that point, with its
-/// kind.
-fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
-    let mut c = w.len().saturating_sub(TAIL);
-    while c > 0 && w[c] >= 0x80 {
+/// `c`, or up to 3 bytes before it where `w` holds a character there, so the cut splits none.
+fn char_start(w: &[u8], mut c: usize) -> usize {
+    let floor = c.saturating_sub(3);
+    while c > floor && w.get(c).is_some_and(|&b| b & 0xC0 == 0x80) {
         c -= 1;
     }
+    c
+}
+
+/// Where `w`, a piece of a line that goes on, may be cut: at least `TAIL` bytes before its end,
+/// on a character's start, and `CONTEXT` before any secret the rules find across that point, with
+/// its kind.
+fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
+    let last = char_start(w, w.len().saturating_sub(TAIL));
+    let mut c = last;
     // each byte that is not UTF-8 as one character, so the spans' offsets are `w`'s
     let mut text = String::with_capacity(w.len());
     for chunk in w.utf8_chunks() {
@@ -1006,16 +1013,52 @@ fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
         text.extend(std::iter::repeat_n('\x7f', chunk.invalid().len()));
     }
     let spans = crate::secrets::spans(&text);
+    let crossing = |c: usize| spans.iter().find(|&&(a, b, _)| a.saturating_sub(CONTEXT) < c && c < b).copied();
     let mut kind = None;
     // a secret near the cut goes to the next piece whole, with the name before it its rule reads
-    while let Some(&(a, _, k)) = spans.iter().find(|&&(a, b, _)| a.saturating_sub(CONTEXT) < c && c < b) {
-        c = a.saturating_sub(CONTEXT);
-        while c > 0 && w[c] >= 0x80 {
-            c -= 1;
+    while let Some((a, _, k)) = crossing(c) {
+        if kind.is_some()
+            && let Some(x) = cut_between(w, &text, &spans, last)
+        {
+            return (x, Some(k));
         }
+        c = char_start(w, a.saturating_sub(CONTEXT));
         kind = Some(k);
     }
     (c, kind)
+}
+
+/// For secrets too close together to cut `CONTEXT` before one without splitting another: a cut
+/// at most `c` in a gap between two of them, where the rules find each secret of `w` on one side
+/// or the other; none when a few tries find no such cut.
+fn cut_between(w: &[u8], text: &str, spans: &[(usize, usize, &'static str)], c: usize) -> Option<usize> {
+    // spans come sorted by start, one inside another merged: the last to start at or before `a`
+    // is the only one that can hold it
+    let holds = |side: &[(usize, usize, &str)], a: usize, b: usize| side[..side.partition_point(|s| s.0 <= a)].last().is_some_and(|s| b <= s.1);
+    let found = |x: usize| {
+        let (left, right) = (crate::secrets::spans(&text[..x]), crate::secrets::spans(&text[x..]));
+        spans.iter().all(|&(a, b, _)| (b <= x && holds(&left, a, b)) || (a >= x && holds(&right, a - x, b - x)))
+    };
+    let mut tries = 0;
+    for pair in spans.windows(2).rev() {
+        let (end, next) = (pair[0].1, pair[1].0);
+        if next <= end || end >= c {
+            continue;
+        }
+        for x in [end + 1, end + (next - end) / 2] {
+            let x = char_start(w, x.min(c));
+            if x > end && text.is_char_boundary(x) {
+                if found(x) {
+                    return Some(x);
+                }
+                tries += 1;
+                if tries == 6 {
+                    return None;
+                }
+            }
+        }
+    }
+    None
 }
 
 /// `line` as it goes out, redacted: a key's body line grep shows without its armour is read back
