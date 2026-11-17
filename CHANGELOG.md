@@ -1183,6 +1183,11 @@ incompatible index by itself, and that is never breaking.
 - On Windows the dependency cache of `--deps` and `scope: "deps"` stays under `%LOCALAPPDATA%`
   when `XDG_CACHE_HOME` is set: an `XDG_CACHE_HOME` from MSYS or Git Bash moved it to a place no
   check covered ([Security](docs/SECURITY.md#dependency-source)).
+- A path in a Python `RECORD` written with backslashes (`pkg\..\..\x`) no longer reaches
+  outside `site-packages` on Unix: its `..` parts passed the check as one name, so `--deps` and
+  `scope: "deps"` read a file outside the repository and wrote over one outside the cache,
+  emptying it when the two met. Separators are made `/` before the check, which drops the entry
+  ([Security](docs/SECURITY.md#dependency-source)).
 
 ## [0.1.0] - 2026-11-11
 

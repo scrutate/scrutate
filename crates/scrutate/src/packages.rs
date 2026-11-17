@@ -430,8 +430,9 @@ fn dists(root: &Path) -> Vec<Dist> {
             let files = record
                 .lines()
                 .filter_map(|l| if let Some(q) = l.strip_prefix('"') { q.split('"').next() } else { l.split(',').next() })
-                .filter(|f| !f.is_empty() && Path::new(f).components().all(|c| matches!(c, Component::Normal(_))))
+                // Separators are made `/` before the check: on Unix `a\..\..` is one Normal part.
                 .map(|f| f.replace('\\', "/"))
+                .filter(|f| !f.is_empty() && Path::new(f).components().all(|c| matches!(c, Component::Normal(_))))
                 .collect();
             out.push(Dist { name: name.to_string(), version: version.to_string(), site: site.clone(), files });
         }
