@@ -138,16 +138,20 @@ development Mac and are not recorded in the repository.
   cost on macOS for every tool; `bench/corpora.py` now copies them (APFS clones). `openat`
   through the directory's descriptor does not lower the floor: 13.3 µs a file against 12.4 µs by
   path.
-- Linux on dedicated hardware: every Linux number in `bench/results/` comes from a 5-CPU VM on the development Mac,
-  on a virtual disk on its SSD. Two values fitted there need checking on NVMe and network
+- Linux on dedicated hardware: every Linux leaderboard run (`bench/results/linux-aarch64/`)
+  comes from a VM on the development Mac (5 CPUs; 8 for the `*-6602` run), on a virtual disk on its SSD. The x86_64
+  server runs COMPETITIVE.md quotes have no committed result, and `bench/results/final.json`, an
+  early run of 2026-11-08 on a 2-core x86_64 Xeon, is used by no document. Two values fitted on
+  the VM need checking on NVMe and network
   disks: the read time that counts as a disk read (30 µs) and the most threads for a cold tree
   (64). A cold tree there also costs about 90 MB on 64 threads against 16 MB warm (`-j` bounds
   both).
 - Windows: nothing is measured. It takes the macOS values (threads: the cores, at most 12; cold:
   twice the cores, at most 24; a disk read: 75 µs) from the `OTHER` row in
   `crates/scrutate/src/policy.rs`, where a measured row goes.
-- Benchmark leadership on dedicated idle hardware (R-14.11): every number comes from a developer
-  laptop shared with other work, and Linux x86_64 has no committed run; in the last macOS run six of 37 warm
+- Benchmark leadership on dedicated idle hardware (R-14.11): every leaderboard number comes from a
+  developer laptop shared with other work, and no leaderboard run is on Linux x86_64; in the last
+  macOS run six of 37 warm
   rows were measured twice for that reason. An x86_64 run emulated on this laptop was dropped:
   gcc crashes building the grammar sources there, so it would
   time the emulator. A run of `bench/run_macos.sh` and
@@ -179,7 +183,8 @@ development Mac and are not recorded in the repository.
 - Windows and Intel macOS are tested on GitHub's runners only ([Install](INSTALL.md) has the
   runners and the Unix-only tests): `release.yml` builds their archives, but no release has
   run yet, so none has been installed on a machine or benchmarked there.
-- No committed benchmark has run on x86_64 Linux or on dedicated idle hardware (R-14.11 above).
+- No leaderboard benchmark has run on x86_64 Linux, and none on dedicated idle hardware (R-14.11
+  above).
 - The release binaries carry no platform code signature: no Apple notarization, no Windows
   Authenticode. The integrity check is the Sigstore attestation and `SHA256SUMS`;
   [Install](INSTALL.md#unsigned-binaries-on-macos-and-windows) has the Gatekeeper and SmartScreen
