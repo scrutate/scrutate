@@ -22,7 +22,7 @@ Every PASS refers to a test, benchmark or audit output here.
 |---|---|
 | Functional universal instant search | **met**: Engine A, differential agreement with ripgrep; every leaderboard answer matches an independent reference |
 | Unknown-language generic search | **met**: every readable file, no configuration |
-| Reliable filesystem traversal | **met**: ignore rules, symlink loops, dangling links, permissions, long and unicode names, case-colliding checkouts, SMB shares |
+| Reliable filesystem traversal | **met**: ignore rules, symlink loops, dangling links, permissions, long and unicode names, SMB shares |
 | Ignore rules and advanced filtering | **met** |
 | Literal and regex search | **met**: linear-time regex with size limits |
 | Machine-readable output | **met**: JSON Lines (schema 1) from `grep`, one JSON envelope (schema 2) from the index commands, JSON error records |
@@ -62,11 +62,11 @@ Status words as in docs/TRACEABILITY.md.
 
 | ID | What is missing | Status | What closes it |
 |---|---|---|---|
-| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64, Intel macOS, Windows x64 and Windows ARM64 have no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
+| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has only an early `bench/compare_tools.py` run (`bench/results/final.json`, 2026-11-08, a 2-core Xeon VM) and no leaderboard run, Intel macOS, Windows x64 and Windows ARM64 have no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push), and `benchmarks.yml` one on a pull request (43823369090); `benchmarks.yml` runs on `main` and `release.yml` runs on a runner; for `release.yml` before the tag, a dry run (`gh workflow run release.yml --ref main -f dry_run=true`, docs/RELEASING.md section 7) |
 | R-12.17 | Signed releases and published packages | PARTIAL | one run of the release workflow's Sigstore steps (a dry run first), then the owner's PyPI, Marketplace and Open VSX setup, the tap and bucket repositories and the winget pull request |
-| R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
+| R-6.15, R-12.16 | The GitLab and Bitbucket templates run on gitlab.com and bitbucket.org (CI runs them in local emulators) | PARTIAL | a pipeline run of each template on gitlab.com and on bitbucket.org |
 
 ## Defects found and fixed while preparing this release
 
@@ -75,7 +75,7 @@ Status words as in docs/TRACEABILITY.md.
 - Broken symbol rules for D, LLVM IR, AutoHotkey, VHDL architectures and OCaml modules, found by
   writing their samples.
 - Tests that silently needed a `git` or `kill` binary, which minimal Linux images lack.
-- About 1.5 ms of start-up loading Foundation and libobjc through the `ctrlc` crate.
+- Start-up time spent loading Foundation and libobjc through the `ctrlc` crate.
 - A file given as the search root printed with an empty path (`:1:text`, or `one.txt/` next to a
   second root).
 - A GIL-release test that could not show its claim: every line matched, so the time went into
@@ -87,7 +87,7 @@ Status words as in docs/TRACEABILITY.md.
   (RUSTSEC-2026-0459, [SECURITY](SECURITY.md#controls-and-evidence)).
 - In the benchmark harness: ast-grep parsed a pattern as a C type macro, so the Linux structural
   benchmark compared Scrutate with a tool that matched nothing; git's case-insensitive ignore
-  matching hid 1,343 files from a reference (every tool disagreed with it); a reference using
+  matching hid files from a reference (every tool disagreed with it); a reference using
   Python's backtracking regex on the backtracking-trap benchmark never finished; a
   musl/glibc comparison compared the JSON summary's run time, and unordered output.
 

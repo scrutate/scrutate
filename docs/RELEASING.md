@@ -80,20 +80,20 @@ that raises it fails there. README.md and docs/INSTALL.md name it too.
 | `MODEL_REVISION` | the embedded semantic model changes |
 | the text index `FORMAT` | its files change |
 
-0.1.0 ships with content revision 13: builds with earlier rules were in use before the release,
-and their indexes must not keep the chunks, symbols and tokens those rules made (revision 3 joins
-Japanese shinjitai to the Han fold, and adds Java fields as symbols; revision 4 makes a Pascal
-statement that is a name alone a call; revision 5 reads a Free Pascal `.pp` unit as Pascal;
-revision 6 reads a C++ header with a Doxygen `@class` as C++; revision 7 names the definition
-after `let rec`, `let inline` and the like in the keyword tier; revision 8 takes only OCaml's and
-F#'s own words after `let` for modifiers, so `let data x y` binds `data`; revision 9 makes a
-JavaScript or TypeScript quoted key that holds a function, `"get": function () {}`, a method;
-revision 10 makes the clauses of a Haskell function one definition; revision 11 takes a name's
-characters by Unicode's identifier rule, so a call of `हिन्दी()` is recorded; revision 12 does
-the same in the line-by-line definitions of languages without a grammar and in GNU make's
-`$(call NAME)`; revision 13 in R's names, so `ärger.neu` is one).
-`tools/gen_doc_assets.py --check` fails when this number differs from `CONTENT_REVISION`. The four only go up: a binary leaves an index of a higher number
-alone, so two versions on one checkout never rebuild it in turn
+0.1.0 ships with content revision 13: builds with earlier rules were in use before the release, and
+their indexes must not keep the chunks, symbols and tokens those rules made (revision 3 joins
+Japanese shinjitai to the Han fold, and Java fields became symbols under the same number; revision 4
+makes a Pascal statement that is a name alone a call; revision 5 reads a Free Pascal `.pp` unit as
+Pascal; revision 6 reads a C++ header with a Doxygen `@class` as C++; revision 7 names the
+definition after `let rec`, `let inline` and the like in the keyword tier; revision 8 takes only
+OCaml's and F#'s own words after `let` for modifiers, so `let data x y` binds `data`; revision 9
+makes a JavaScript or TypeScript quoted key that holds a function, `"get": function () {}`, a
+method; revision 10 makes the clauses of a Haskell function one definition; revision 11 takes a
+name's characters by Unicode's identifier rule, so a call of `हिन्दी()` is recorded; revision 12
+does the same in the line-by-line definitions of languages without a grammar and in GNU make's
+`$(call NAME)`; revision 13 in R's names, so `ärger.neu` is one). `tools/gen_doc_assets.py --check`
+fails when this number differs from `CONTENT_REVISION`. The four only go up: a binary leaves an
+index of a higher number alone, so two versions on one checkout never rebuild it in turn
 ([Architecture](ARCHITECTURE.md#storage-indexrs-lexrs)).
 
 ## 2. Benchmarks on the release binary
@@ -113,8 +113,8 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
 - Before the build, on Apple silicon: `python3 tools/order_file.py --check` reports the share of
   names in `crates/scrutate/startup.order` the release links still have. Under 80 %, or after a
   toolchain or `Cargo.lock` change, write it again (`python3 tools/order_file.py --dirs
-  ~/.cache/scrutate-bench/corpora/startup ~/.cache/scrutate-bench/corpora/ripgrep`, about 15
-  minutes: two release links, each run under lldb from Xcode's command line tools) and commit it.
+  ~/.cache/scrutate-bench/corpora/startup ~/.cache/scrutate-bench/corpora/ripgrep`: two release
+  links, each run under lldb from Xcode's command line tools) and commit it.
   On some machines a process started under lldb hangs; the tool gives up on a search after a
   minute and says so: run it again. A stale file only costs pages at start, never the build.
 - On glibc Linux the same file orders the functions, with nothing to commit. Rust names carry a
@@ -130,22 +130,24 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   does, so its hash is the ordered binary's. The musl builds link with GNU ld and stay unordered.
   `bench/competitors/linux_bench.sh` builds the same way, so the Linux benchmarks measure the
   ordered binary (the cross-built x86_64 one it is handed with `SCRUTATE_PREBUILT` is unordered).
-- A just-built executable starts about 0.2 ms slower than the same file an hour later. The chain
+- A just-built executable starts slower than the same file later (no committed result holds the
+  size of the gap). The chain
   waits for that first: `bench/wait_aged.py` times `scrutate --version` every 2 minutes against a
   fresh copy of the binary (a new file, so slow) and goes on once the binary starts faster than
   the copy in two rounds in a row with a steady median, or after an hour. The chain log records
   each round.
-- `bench/leaderboard.py` stops a row after its second block, at 20 runs (`--no-stop-early` turns it off), when its
-  wall-time verdict and its four CPU and memory verdicts (default and `-j1`) are all PASS, FAIL
-  or n/a at alpha 0.001 and no tool's block medians differ by more than 25%. Every other row
-  takes all 30 runs and is judged at alpha 0.049. This is the Haybittle-Peto boundary (Haybittle
-  1971, Peto et al. 1976), with the last look lowered so the alphas sum to 0.05 by Bonferroni
-  whatever the load did between blocks: a 99.9% or 95.1% interval that clears 1 meets a 95%
-  claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20 runs
-  and changed no verdict; a look after one block flipped 5, since one block has no interleaving.
-  R-14.10 in docs/TRACEABILITY.md defines a #1 over at least 20 runs per tool, 30 when a verdict
-  does not hold at the first look, with the run count recorded per row. `SCRUTATE_BASE_BIN` turns
-  it off, because the regression gate's block ratio needs every block of both binaries.
+- - `bench/leaderboard.py` stops a row after its second block, at 20 runs (`--no-stop-early` turns
+  it off), when its wall-time verdict and its four CPU and memory verdicts (default and `-j1`) are
+  all PASS, FAIL or n/a at alpha 0.001 and no tool's block medians differ by more than 25%. Every
+  other row takes all 30 runs and is judged at alpha 0.049. This is the Haybittle-Peto boundary
+  (Haybittle 1971, Peto et al. 1976), with the last look lowered so the alphas sum to 0.05 by
+  Bonferroni whatever the load did between blocks: a 99.9% or 95.1% interval that clears 1 meets a
+  95% claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20
+  runs and changed no verdict; a look after one block flipped 5, since one block has no interleaving
+  (that replay's output is not committed). R-14.10 in docs/TRACEABILITY.md defines a #1 over at
+  least 20 runs per tool, 30 when a verdict does not hold at the first look, with the run count
+  recorded per row. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
+  needs every block of both binaries.
 - Cold runs evict only the corpus files' pages on macOS (`bench/evict.c`, `msync` with
   `MS_INVALIDATE`, no root); Linux drops the whole page cache with `drop_caches`.
 - No `cargo test` or `cargo build` until the chain ends: both can replace the binary.
@@ -153,9 +155,10 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
 - Close the browser and the editor. With 18 GB the page cache cannot hold the LLVM tree beside
   them, and a warm run stops being warm (the harness records it as `resident`).
 
-Linux aarch64, about 1.5 hours, in a Colima VM with one virtual CPU per performance core
-(`colima start --cpu 5 --memory 12`; with 8, three run on efficiency cores and every tool's
-medians move by 10 to 30%). Run `bench/competitors/linux_bench.sh`, then
+Linux aarch64, in a Colima VM with one virtual CPU per performance core
+(`colima start --cpu 5 --memory 12`; with 8, three run on efficiency cores, and a tool's three
+block medians differed by 3% to 158% warm and 3% to 264% cold in such a run,
+bench/results/linux-aarch64/superseded/README.md). Run `bench/competitors/linux_bench.sh`, then
 `bench/competitors/linux_indexed.sh`; the commands are in their headers. Colima shares only the
 home directory with containers. The first script checks each tool it downloads against a SHA-256
 in the script: a new tool version needs its new hash there, from the tool's own release page.
@@ -192,7 +195,8 @@ Then read the results:
   on Mondays and by hand. It builds the change and its base once (the pull request's merge base;
   by hand, the `base` input; on Mondays the last `v*` tag, else `HEAD~1`). The wall-time job runs
   the leaderboard as above on the corpora a runner measures in time (`ripgrep/`, `rgbuilt/`,
-  `patho/`, `binheavy/`, `smallfiles/`, `bigfile/`, `startup/`), without competitors, with
+  `patho/`, `binheavy/`, `smallfiles/`, `bigfile/`, `startup/`), with no competitor installed
+  (the runner's grep and git grep are still timed), with
   `--max-load "$(nproc)" --max-wait 30`: both binaries share every block, so load slows both
   alike. The instruction job runs every benchmark of the suite, `linux/` and `llvm/` included,
   once per binary under Valgrind's cachegrind (`bench/instructions.py`): text searches with
@@ -205,7 +209,7 @@ Then read the results:
   gives it on review: each entry names the base it was measured against, its limit, reason, date
   and audit ID, and applies only while the run's base is that commit, so it lapses when the base
   moves on. The counts are "highly reproducible" (Valgrind's manual),
-  where wall time on shared runners varies by 2.66% run to run, so 1% catches what the wall-time
+  where wall time on shared runners varies from run to run, so 1% catches what the wall-time
   gate's 10% cannot. A pull request that changes nothing under `crates/`, `vendor/`, `bench/`,
   the Cargo files, `.cargo/`, `rust-toolchain.toml` or the workflow passes without measuring.
   The check to require on `main` is `benchmark gate`, which reads every job's result.
@@ -361,17 +365,19 @@ gh workflow run release.yml --ref main -f dry_run=true
 gh run watch "$(gh run list --workflow release.yml -L 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-It takes the version from `crates/scrutate/Cargo.toml` and runs every job but `pypi`,
-`marketplace` and `openvsx`, which run on a tag only; `ci.yml` and `security.yml` run too. Its sign-and-publish job stops at the notes step while `## [Unreleased]`
-holds entries, as a tag would (step 1): on `main` before the fold, that is the expected end of a
-dry run, not a broken pipeline. The sign-and-publish job runs in the `rehearsal` environment: it attests every
-file (real, public attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
-`refs/tags/v0.1.0` rejects them), makes a draft release `rehearsal-<run id>` with every file,
-checks that the draft holds one asset per file it was given and that `gh attestation verify` passes on `SHA256SUMS` for this
-workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag if one
-exists. The files stay as the run's artifacts for 7 days.
+It takes the version from `crates/scrutate/Cargo.toml` and runs every job but `pypi`, `marketplace`
+and `openvsx`, which run on a tag only; `ci.yml` and `security.yml` run too. Its sign-and-publish
+job stops at the notes step while `## [Unreleased]` holds entries, as a tag would (step 1): on
+`main` before the fold, that is the expected end of a dry run, not a broken pipeline. The
+sign-and-publish job runs in the `rehearsal` environment: it attests every archive, package, wheel,
+the extension and `SHA256SUMS`, and binds the SBOM to the archives (real, public attestations that
+name `main` and a `workflow_dispatch`, so a verifier pinned to `refs/tags/v0.1.0` rejects them),
+makes a draft release `rehearsal-<run id>` with every file, checks that the draft holds one asset
+per file it was given and that `gh attestation verify` passes on `SHA256SUMS` for this workflow and
+ref, and then deletes the draft. A draft makes no tag; the job deletes the tag if one exists. The
+files stay as the run's artifacts for 7 days.
 
-The repository is on GitHub, public, `main` only. Run 43013926055 of `ci.yml` (on `9384c18`) is
+The repository is on GitHub, public. Run 43013926055 of `ci.yml` (on `9384c18`) is
 the first green one; all 12 jobs of a push passed (the table is that run's jobs; `ci.yml` has
 more since):
 
@@ -382,7 +388,8 @@ more since):
 | others | fuzz regressions; the Python reference, bindings, parity and differential job (now training code, bindings, differential and ranking quality); advisories (now `security.yml`'s `deny`); editor integrations |
 
 The dependency review runs on pull requests only. The workflows pass `actionlint` and `zizmor`,
-and the Linux jobs of `ci.yml` pass in a container (`tools/ci_rehearsal.sh`).
+and `tools/ci_rehearsal.sh` runs the Linux jobs of `ci.yml` in a container (its log is not
+committed).
 
 Before the first tag, set in the repository settings:
 
@@ -433,8 +440,8 @@ reads `abi3.abi3t` as two tags, and checks only the platform tag; a dry run's Te
 settles it.
 
 R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055. R-6.12 stays
-PARTIAL until `release.yml` and `benchmarks.yml` have run on a runner: flip it from the recorded
-runs, not before.
+PARTIAL until `benchmarks.yml` has a green run on `main` (it has passed on pull requests, run
+43823369090) and `release.yml` has run on a runner: flip it from the recorded runs, not before.
 
 `.github/FUNDING.yml` lists GitHub Sponsors and Buy Me a Coffee, both under `crisnahine`, and
 shows the Sponsor button. The "Sponsor and hire" section of README.md links the same two pages; a

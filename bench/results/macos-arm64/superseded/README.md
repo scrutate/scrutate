@@ -29,15 +29,15 @@ structural benchmarks, which the harness then called without `--json`.
 A newer run goes in the directory above as `leaderboard-warm.json`, `leaderboard-cold.json`,
 `indexed.json` and `compare.json`, and the documents are then generated from those.
 
-`indexed-eeab.json` and `compare-eeab.json` were measured with the same `eeab24663509...` binary (the latter before
-the harness measured peak memory on macOS).
+`indexed-eeab.json` was measured with the same `eeab24663509...` binary; `compare-eeab.json` records
+no binary hash and was measured before the harness measured peak memory on macOS.
 `leaderboard-warm-a82a.json` is the last run (it stopped at `ripgrep/structural`, where the
 tree-sitter reference failed, so 36 of 37 rows) before regexes were built with `^` and `$` as line
-anchors (without that, patterns using them were matched one line at a time) and before the structural
-benchmarks compared the same query in both tools.
+anchors (without that, patterns using them were matched one line at a time) and before the
+structural benchmarks compared the same query in both tools.
 
 The `fb5c` files are a complete run of the binary before the parallel walker's idle wait was
-shortened (vendored `ignore`); the current files repeat every step with the release binary.
+shortened (vendored `ignore`); the runs below repeat every step with later binaries.
 
 `*-fb3b` is the run of the first 0.1.0 build. Its `linux` and `linux-nodot` corpora shared files
 through hard links, which doubles the cost of opening a file on macOS for every tool, and its
@@ -55,6 +55,6 @@ stopped to work on the tie.
 
 `*-9aa0` is a complete run (37 of 37 warm, 5 of 5 cold and every indexed metric PASS) of the build
 before the MCP server served revision 2026-07-28 and `refs` followed the types of variables and
-TypeScript path aliases. Engine A was the same code. Six of its warm rows were measured twice
+TypeScript path aliases. Six of its warm rows were measured twice
 because other work on the laptop disturbed them; `llvm/case-insensitive` was measured the second
 time with the LLVM tree no longer in the page cache.

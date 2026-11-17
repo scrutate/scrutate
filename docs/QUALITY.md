@@ -12,8 +12,10 @@
 <!-- End of head. -->
 
 How good the answers are, apart from how fast. The numbers come from `bench/retrain_ranker.sh`
-(its `eval` and `compare` stages; logs `eval.log`, `eval_python.log` and `compare.log` of run
-`f3`, 2026-11-12) on packages never used to train the semantic model or fit the ranker.
+(its `eval` and `compare` stages, run `f3`, 2026-11-12) on packages never used to train the
+semantic model or fit the ranker. The logs of that run (`eval.log`, `eval_python.log`,
+`compare.log`) are not committed, and no other file in the repository holds the tables' figures;
+only the floor of `bench/quality.py` has a committed source (`bench/quality/floor.json`).
 
 Two sets are held out, of different weight:
 
@@ -26,10 +28,12 @@ Two sets are held out, of different weight:
   tune, fit or test, and no ranker has run on it. It is evaluated once, with the shipped ranker,
   after the last engine change ([The sealed group](#the-sealed-group)).
 
-The numbers hold for the shipped binary. Their rows came from a Python reference engine matching
-the binary's candidates, features and scores bit for bit, checked by `bench/parity.py`
-on networkx, the engine's own sources and 21 repositories (the script went with the reference
-engine; commit `57b5c9cc` is the last that has it). That mirror ended
+The numbers come from the binary of run `f3`, before the semantic model's word tables went to int8
+(`b7f71537`, 2026-11-14) and before ties were ordered by path and line (`2cfa63c0`, 2026-11-16); the
+tables have not been rerun since. Their rows came from a Python reference engine matching the
+binary's candidates, features and scores bit for bit, checked by `bench/parity.py` on networkx, the
+engine's own sources and 21 repositories (the script went with the reference engine; commit
+`57b5c9cc` is the last that has it). That mirror ended
 ([Architecture](ARCHITECTURE.md#retrieval-and-ranking-searchrs-semanticrs-rankrs) says why); before
 it went, both ways gave the same benchmark files, rows and ranker, byte for byte. Now
 `bench/gen_features.py` indexes each package with the binary and keeps what `batch --features`
@@ -42,7 +46,7 @@ candidate, feature and score of six queries on a small tree with the bundled mod
 a feature move in its last digit, but not whether ranking got better or worse, and covers five
 small files: not every language or scan path, not the clustered vector scan of large segments.
 
-`bench/quality.py`, in CI and the release gates, sees a loss of 0.02 or more on its own corpus,
+`bench/quality.py`, in CI and the release gates, sees a loss of more than 0.02 on its own corpus,
 not a feature drifting in its fourth digit. Neither guard sees a small loss on code unlike this
 repository's (another language, a large tree); the tables below, rerun with
 `bench/retrain_ranker.sh`, do. `bench/quality.py --make` writes the corpus and the queries
@@ -54,8 +58,6 @@ together, so only the engine moves the measure, never an edit to the repository'
 | queries | the 1,183 committed queries of `bench/quality/queries.json` (the five types below, at most 150 per type and target kind, made from those doc comments), run through the binary |
 | fails when | MRR@10 or hit@5 is under the floor in `bench/quality/floor.json`, the measured value less 0.02 |
 | the floor file records | the measured values (MRR@10 0.5873, hit@5 0.6636 on 2026-11-13), the commit, the vector model's signature, the ranker's hash |
-| the linear blend alone (no ranker), same queries | MRR@10 0.4977, hit@5 0.6323: under both floors |
-| a run | about 8 s |
 
 ## Protocol
 
@@ -63,7 +65,7 @@ together, so only the engine moves the measure, never an edit to the repository'
 - The answer is a function or method, or a documented type (class, struct, enum, trait,
   interface, type alias). Type queries are drawn after a package's function queries from their own
   random stream, so adding them moved no function query. An impl block or constructor does not
-  answer a type query. Every table gives function and type answers apart.
+  answer a type query. The Python and other-language tables give function and type answers apart.
 - The indexed copy lacks that definition's documentation (**variant A**: every docstring in the
   package removed, an undocumented code base; **variant B**: only each docstring's first sentence
   removed), so the answer text is not in the index.
@@ -197,6 +199,10 @@ Function answers lost 0.031 on doc and 0.035 on kw (variant A); type answers wen
 never found to found about as well as functions. The mean over every query rose from 0.566 to
 0.656.
 
+The cross-validation and type-weight figures below come from `bench/train_ranker.py cv` on DEV
+(`CV=1` in `bench/retrain_ranker.sh`) and from `bench/retrain_ranker.sh` runs with
+`TYPE_WEIGHT` 0.1, 0.3, 0.5 and 1; their output is not committed either.
+
 Where function rows lose: in cross-validation on DEV, of 33 308 function doc and kw queries, the
 function-only weighting ranks the answer first and equal weighting does not in 1 771, the reverse
 in 667. Above the answer then stands another type (44 %), another function (25 %), the class or
@@ -238,9 +244,10 @@ change, goes here.
 - Six languages. The semantic model was trained on Python only, the ranker fitted on Python and
   the five other languages above. Other languages get the lexical layer's quality plus what the
   ranker and the code-word vectors generalise.
-- No comparison with other code-search products: no other benchmarked tool ranks by meaning, and
-  public code-search benchmarks (e.g. natural-language-to-code retrieval sets) use other
-  protocols. Absolute MRR does not compare across protocols.
+- - No comparison with other code-search products is published here: `bench/yardstick.py --quality
+  N` runs these queries on ck, grepai and claude-context (its W8 workload), but no result of it is
+  committed, and public code-search benchmarks (e.g. natural-language-to-code retrieval sets) use
+  other protocols. Absolute MRR does not compare across protocols.
 - A constant is found through the window holding its line, never as its own result, so no row
   measures constants.
 
@@ -252,7 +259,8 @@ with an earlier ranker (v7) when the change went in, reruns the protocol before 
 fresh benchmark (`bench/make_bench.py` on networkx 3.4.2, mcp 1.30.0 and rich 15.0.0, then
 `bench/gen_features.py` and `bench/train_ranker.py eval` with the shipped models, not retrained).
 Package versions differ from the v7 run, so n and absolute values differ from the tables above;
-only the difference matters.
+only the difference matters. No output of these schema 13 checks (the tables, recall, sizes,
+latency and parity counts of this section, and the zstd trial) is committed.
 
 Learned ranker MRR@10, float16 → int8:
 
@@ -306,18 +314,20 @@ samples) and a dictionary to version in the index.
 
 ## Semantic model and ranker
 
-- Semantic model (`crates/scrutate/models/semantic.npz`, 7.6 MB): a code-word model with two views per chunk
-  (description: name + signature + docs; implementation: body), 256 dimensions, trained in numpy
-  (`bench/train_semantic.py`) with an InfoNCE contrastive objective over (query, description),
-  (query, implementation) and (description, implementation) pairs with 20 % word dropout. On DEV
-  its semantic-only doc MRR rose from 0.247 (the previous PLS-SVD model) to 0.427.
-- Its two word tables are stored as int8 codes with one float32 scale per row (symmetric, value =
+- - Semantic model (`crates/scrutate/models/semantic.npz`, 7.6 MB): a code-word model with two views
+  per chunk (description: name + signature + docs; implementation: body), 256 dimensions, trained in
+  numpy (`bench/train_semantic.py`) with an InfoNCE contrastive objective over (query, description),
+  (query, implementation) and (description, implementation) pairs with 20 % word dropout. On DEV its
+  semantic-only doc MRR rose from 0.247 (the previous PLS-SVD model) to 0.427, in a run whose output
+  is not committed.
+- - Its two word tables are stored as int8 codes with one float32 scale per row (symmetric, value =
   code × max|row| / 127, rounded half to even, as the index's vectors), in place of float16: the
-  file went from 14.6 MB to 7.6 MB, so the crate fits crates.io's 10 MB limit. `bench/quality.py`
-  on a release build, float16 → int8: MRR@10 0.5873 → 0.5874, hit@5 0.6636 → 0.6653 (floor
-  0.5673 and 0.6436); by type, doc function 0.3941 → 0.3955, kw type 0.0769 → 0.0764, name
-  function 0.8623 → 0.8618, the rest within 0.0004. The ranking pins moved in the six `sem_`
-  features and nine scores, with no change of order.
+  file went from 14.6 MB to 7.6 MB, so the crate fits crates.io's 10 MB limit. `bench/quality.py` on
+  a release build, float16 → int8 (the float16 values and the floors are those of
+  `bench/quality/floor.json`; the int8 run, at `b7f71537`, is not committed): MRR@10 0.5873 →
+  0.5874, hit@5 0.6636 → 0.6653 (floor 0.5673 and 0.6436); by type, doc function 0.3941 → 0.3955, kw
+  type 0.0769 → 0.0764, name function 0.8623 → 0.8618, the rest within 0.0004. The ranking pins
+  moved in the six `sem_` features and nine scores, with no change of order.
 - Training data: the 37 Python packages in `bench/groups.py` (27 to pretrain the semantic model,
   7 to tune and fit the ranker, 3 held out for the test). The model files keep word statistics,
   vocabulary tables and projections, not source text. Licences as declared on PyPI, and of the
@@ -333,15 +343,17 @@ samples) and a dictionary to version in the index.
   | MIT or Apache-2.0 | | rayon |
   | MPL-2.0 | pikepdf | |
 
-- Ranker (`crates/scrutate/models/ranker.npz`, 86 KB): LightGBM LambdaRank over 48 features, exported to arrays;
-  numpy and LightGBM predictions agree to 3.5e-8. Fitted on the 7 Python DEV packages and the 16
-  `CODE_DEV` repositories of `bench/groups.py` (tokio, clap, chrono, grpc-go, zap, cobra,
-  commons-lang, gson, javapoet, guava, commander, axios, immutable-js, eslint, three.js, vue
-  core; MIT, Apache-2.0, or both), function and type answers weighted alike (`TYPE_WEIGHT=1`).
-  `bench/retrain_ranker.sh` installs a new ranker only when on TEST no row of 50 queries or more
-  falls below BM25 beyond its interval and no variant's mean over every query is below the
-  previous ranker's. Top features by gain: lexical ratio, rank and z-score, name coverage, A-view
-  semantic z-score, query length, name ratio, the name spelled as typed.
+- - Ranker (`crates/scrutate/models/ranker.npz`, 86 KB): LightGBM LambdaRank over 48 features,
+  exported to arrays; numpy and LightGBM predictions agree to 3.5e-8 (printed by the fit; its log is
+  not committed). Fitted on the 7 Python DEV packages and the 16 `CODE_DEV` repositories of
+  `bench/groups.py` (tokio, clap, chrono, grpc-go, zap, cobra, commons-lang, gson, javapoet, guava,
+  commander, axios, immutable-js, eslint, three.js, vue core; MIT, Apache-2.0, or both), function
+  and type answers weighted alike (`TYPE_WEIGHT=1`). `bench/retrain_ranker.sh` installs a new ranker
+  only when on TEST, for all languages together and for each one, no row of 50 queries or more falls
+  below BM25 beyond its interval and no variant's mean over every query falls below the previous
+  ranker's beyond its interval. Top features by gain, in the same uncommitted fit log: lexical
+  ratio, rank and z-score, name coverage, A-view semantic z-score, query length, name ratio, the
+  name spelled as typed.
 
 ## Agent eval
 
