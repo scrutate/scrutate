@@ -584,9 +584,10 @@ a line that is not base64 ends one. Placeholders (`${VAR}`, `{{ x }}`, `<value>`
 writes them and identifiers in one case (`NL80211_AUTHTYPE_SAE`) are left alone, and after a
 password, secret or token name `generic-secret` also leaves a chain of names of letters through
 `?.` or `!.` (`this.form?.value?.password`) or after `@` (Razor's `@Model.Password`), and `~/`
-followed by letters, digits, `_`, `.`, `-` and `/` alone (`~/.aws/credentials`,
-`~/keys2/prod9.pem`): a chain with a digit or another symbol in it, or words joined by dots alone
-(a passphrase), is still read as a secret; hex values are kept as secrets.
+and a path of letters, digits, `_`, `.`, `-` and `/` alone whose first segment starts with a dot
+or is followed by another (`~/.aws/credentials`, `~/keys2/prod9.pem`): a chain with a digit or
+another symbol in it, words joined by dots alone (a passphrase), and `~/` and one segment
+(`~/Prod2024key`) are still read as secrets; hex values are kept as secrets.
 
 `tools/secret_redactions.py ROOT` gives the numbers. On Linux at c52356211790 (43,843,823 lines)
 it redacts 199 strings (`generic-secret` 128, `key-material` 32, `password` 1, `url-password` 1,

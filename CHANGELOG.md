@@ -434,9 +434,10 @@ incompatible index by itself, and that is never breaking.
 - Redaction leaves code and home paths after a password, secret or token name as written:
   `password: this.form?.value?.password`, `token: ctx.auth!.accessToken`, Razor's
   `password: @Model.Password` and `secret_file: ~/.aws/credentials` were redacted. Only a chain of
-  letter names with `?.` or `!.` in it, `@` before a dotted chain of letter names, and `~/` with
-  path characters alone after it are spared; a chain with a digit or another symbol, and words
-  joined by dots alone, are redacted as before.
+  letter names with `?.` or `!.` in it, `@` before a dotted chain of letter names, and `~/` and a
+  path of path characters whose first segment starts with a dot or is followed by another are
+  spared; a chain with a digit or another symbol, words joined by dots alone, and `~/` and one
+  segment (`~/Prod2024key`) are redacted as before.
 - `xml-secret` leaves a deploy-time placeholder as written, so the variable it names stays
   readable: Octopus `#{db.password}`, token replacement `@@DB_PASSWORD@@`, a bracketed
   `[ClientSecret]` and Razor's `@Model.Password`. Only those closed forms of names alone are

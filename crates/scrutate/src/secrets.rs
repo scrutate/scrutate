@@ -496,9 +496,12 @@ fn names_a_secret(name: &str) -> bool {
     })
 }
 
-/// Names of letters joined by `.`, `?.` or `!.`, with Razor's `@` before them, or `~/` and a path:
-/// no digit or other symbol, so a password shaped so is still taken for one.
-static CODE_OR_HOME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:@?[A-Za-z_]+(?:[?!]?\.[A-Za-z_]+)+|~/[\w./-]+)$").unwrap());
+/// Names of letters joined by `.`, `?.` or `!.`, with Razor's `@` before them: no digit or other
+/// symbol, so a password shaped so is still taken for one. Or `~/` and a path of path characters
+/// that a dotted first segment or a second segment shows is one (`~/.ssh/id_rsa`,
+/// `~/keys2/prod9.pem`); `~/` and one segment (`~/Prod2024key`) may be a password.
+static CODE_OR_HOME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:@?[A-Za-z_]+(?:[?!]?\.[A-Za-z_]+)+|~/(?:\.[\w.-]+(?:/[\w./-]*)?|[\w.-]+/[\w./-]+))$").unwrap());
 
 /// Code a `:` or `,` follows: a Ruby instance variable's field (`@user.auth_token2`), a method
 /// chain that ends in `!` or `?` (`Rails.application.credentials.dig!`), an image's digest
@@ -2177,11 +2180,17 @@ mod tests {
             "password: @Model.Password",
             "token: ~/.config/gh/hosts.yml",
             "secret_file: ~/.aws/credentials",
+            "password: ~/.ssh/id_rsa",
+            "password_file: ~/.config/app2/key.pem",
+            "secret_file: ~/keys2/prod9.pem",
         ] {
             assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
         }
         let (a, b, c) = (fake(121, ALNUM, 5), fake(122, ALNUM, 4), fake(123, ALNUM, 4));
         for (name, value) in [
+            // `~/` and one segment is no path a value names: a password shaped so is one
+            ("password: ", "~/Prod2024key".to_string()),
+            ("token: ", format!("~/{a}{b}{c}")),
             ("password: ", format!("~{a}@{b}!{c}")),
             ("password: ", format!("~/{a}!{b}@{c}")),
             ("password: ", format!("@{a}!{b}#{c}")),
