@@ -334,6 +334,16 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
             &["passw", "pwd", "secret", "token", "apikey", "api_key", "api-key"],
             quoted,
         ),
+        // and such an element's whole text to its closing tag, a quote or a space in it
+        rule(
+            "xml-secret",
+            "scrutate",
+            r#"(?i)<(?:[\w.-]+:)?[\w.-]*(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key)>([^<\r\n]{8,})</"#,
+            1,
+            3.0,
+            &["passw", "pwd", "secret", "token", "apikey", "api_key", "api-key"],
+            element_text,
+        ),
         // a line of a key's base64 body read without its armour (a range that starts inside the
         // key, a search hit): base64 alone on its line, as wide as PEM writes it, near random
         rule("key-material", "scrutate", r#"(?m)(?:^|[\s:"'-])([A-Za-z0-9+/]{40,76}={0,2})["',]?[ \t]*$"#, 1, 4.5, &[], alone_on_its_line),
@@ -503,6 +513,13 @@ fn quoted(secret: &str, whole: &str, before: &str) -> bool {
         && !secret.contains("://")
         && !NUMBER.is_match(secret)
         && !IDENTIFIER.is_match(secret)
+}
+
+/// `quoted` of an element's whole text, but not a sentence (`Forgot your password?`, `Copy to
+/// clipboard`: a space, no digit and no symbol but punctuation) or an escaped `&lt;...&gt;`.
+fn element_text(secret: &str, whole: &str, before: &str) -> bool {
+    let prose = secret.contains(' ') && secret.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?;:'\"()-".contains(c));
+    !prose && !secret.trim_start().starts_with("&lt;") && quoted(secret, whole, before)
 }
 
 /// Base64 that is no checksum a lockfile writes (`h1:` in go.sum, `sha512-` in package-lock),
@@ -1004,6 +1021,8 @@ pub fn close(text: &mut String, n: usize) {
 /// Every detector: its kind and where its rule comes from (docs/SECURITY.md lists them).
 pub fn detectors() -> Vec<(&'static str, &'static str)> {
     let mut out: Vec<(&'static str, &'static str)> = RULES.iter().map(|r| (r.kind, r.source)).collect();
+    // a detector of two rules (xml-secret) is one
+    out.dedup();
     out.push(("private-key", "gitleaks private-key, secretlint-rule-privatekey (line by line between the armour)"));
     out
 }
@@ -1750,9 +1769,18 @@ mod tests {
             (format!("<add key='Stripe.SecretKey' value='{key}'/>"), &key),
             (format!("<clientSecret>{token}</clientSecret>"), &token),
             (format!("<ns:accessToken>{token}</ns:accessToken>"), &token),
+            // element text in a string, which a quote ends with no closing tag on the line
+            (format!("String xml = \"<password>{}\";", "Xq7rT2vW9yZ"), &"Xq7rT2vW9yZ".to_string()),
+            (format!("String xml = \"<password>{}\";", "Xq7rT2vW9"), &"Xq7rT2vW9".to_string()),
+            (format!("body = '<token>{}' +", "Xq7rT2vW9yZ"), &"Xq7rT2vW9yZ".to_string()),
         ] {
             let (out, marks) = redact(&line);
             assert!(!out.contains(secret.as_str()) && marks.iter().any(|m| m.kind == "xml-secret"), "{line} -> {out}");
+        }
+        // an element's text holds a quote or a space as any other character, up to `</`
+        for text in [format!("{pw}\"x"), format!("{}'{}", &pw[..7], &pw[7..]), format!("{} {}", &pw[..4], &pw[4..])] {
+            let line = format!("<password>{text}</password>");
+            assert_eq!(redact(&line).0, "<password>[redacted:xml-secret]</password>", "{line}");
         }
         for line in [
             "<password/>",
@@ -1763,6 +1791,19 @@ mod tests {
             "<tokenizerClass>com.example.text.Tokenizer</tokenizerClass>",
             "<add key=\"CacheKey\" value=\"products-v2-2024\" />",
             "<passwordFile>conf/secrets/db.properties</passwordFile>",
+            // a sentence, and an escaped placeholder, as an element's text
+            "<password>your password</password>",
+            "<password>Enter password</password>",
+            "<password>Your password here</password>",
+            "<secret>my secret value</secret>",
+            "<apiKey>Your API key goes here</apiKey>",
+            "<token>See the documentation for details</token>",
+            "<ForgotPassword>Forgot your password?</ForgotPassword>",
+            "<ResetPassword>Reset your password</ResetPassword>",
+            "<CopyToken>Copy to clipboard</CopyToken>",
+            "<app-reset-password>Reset password now</app-reset-password>",
+            "<label-password>Your password</label-password>",
+            "<password>&lt;your password&gt;</password>",
         ] {
             assert!(redact(line).1.is_empty(), "{line} -> {}", redact(line).0);
         }
