@@ -163,9 +163,13 @@ fn tar<R: Read>(r: R, max_members: usize, each: &mut dyn FnMut(Option<&str>, &mu
     // the name and size the extension headers give the next member
     let mut name: Name = Ok(None);
     let mut size = None;
+    // extension headers (PAX, GNU long names) and directories are entries but no members: the
+    // headers are bounded on their own, so a tar of nothing else still ends
+    let max_headers = max_members.saturating_mul(4);
+    let mut members = 0;
     for (n, entry) in a.entries()?.raw(true).enumerate() {
-        if n >= max_members {
-            return Err(too_many(max_members));
+        if n >= max_headers {
+            return Err(std::io::Error::other(format!("more than {max_headers} tar headers; stopped")));
         }
         let mut e = entry?;
         let t = e.header().entry_type();
@@ -216,6 +220,10 @@ fn tar<R: Read>(r: R, max_members: usize, each: &mut dyn FnMut(Option<&str>, &mu
             Some(v) => String::from_utf8_lossy(&v).into_owned(),
             None => String::from_utf8_lossy(&e.header().path_bytes()).into_owned(),
         };
+        if members == max_members {
+            return Err(too_many(max_members));
+        }
+        members += 1;
         if !each(Some(&name), &mut e) {
             break;
         }
@@ -356,6 +364,49 @@ mod tests {
             // a stop asked for by the search is no error
             assert!(walk_upto(path, kind, 2, &mut |_, _| false, &mut |_| {}).is_ok(), "{kind:?}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_member_cap_counts_members_not_their_extension_headers() {
+        let dir = std::env::temp_dir().join(format!("scrutate_archive_pax_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = dir.join("pax.tar");
+        let mut b = tar::Builder::new(File::create(&t).unwrap());
+        for (name, body) in [("a.txt", "x\n"), ("b.txt", "x\n"), ("c.txt", "foo\n")] {
+            b.append_pax_extensions([("comment", &b"a PAX header of its own"[..])]).unwrap();
+            let mut h = tar::Header::new_ustar();
+            h.set_size(body.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, body.as_bytes()).unwrap();
+        }
+        b.finish().unwrap();
+        // three members, each behind a PAX header: six entries, three members
+        let mut seen = Vec::new();
+        walk_upto(
+            &t,
+            Kind::Tar,
+            3,
+            &mut |m, _| {
+                seen.push(m.unwrap().to_string());
+                true
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(seen, ["a.txt", "b.txt", "c.txt"]);
+        let e = walk_upto(&t, Kind::Tar, 2, &mut |_, _| true, &mut |_| {}).unwrap_err();
+        assert!(e.to_string().contains("more than 2 members"), "{e}");
+        // nothing but extension headers still ends
+        let h = dir.join("headers.tar");
+        let mut b = tar::Builder::new(File::create(&h).unwrap());
+        for _ in 0..10 {
+            b.append_pax_extensions([("comment", &b"no member follows"[..])]).unwrap();
+        }
+        b.finish().unwrap();
+        let e = walk_upto(&h, Kind::Tar, 2, &mut |_, _| true, &mut |_| {}).unwrap_err();
+        assert!(e.to_string().contains("headers"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

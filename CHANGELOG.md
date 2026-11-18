@@ -1342,6 +1342,10 @@ incompatible index by itself, and that is never breaking.
   beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
   directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
   `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
+- In a custom language, a block comment opener after the line comment mark (`// matches
+  lib/*.rs`) no longer opens a block that hides every later definition. `grep -z`'s million-member
+  cap on a tar counts members, not their PAX or long-name headers: a tar of 600,000 files with a
+  PAX header each stopped as "more than 1000000 members" ([CLI](docs/CLI.md#custom-languages)).
 
 ## [0.1.0] - 2026-11-11
 

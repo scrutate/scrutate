@@ -2416,12 +2416,14 @@ pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
         };
         raw.split('\n').map(strip).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
     };
-    let inside = inside_blocks(&split_lines(source), open, close);
+    let inside = inside_blocks(&split_lines(source), open, close, lang.line_comment.as_deref());
     line_chunks(source, &marks, |i, l| if inside[i] || is_marked(l, &marks) { None } else { lang.definition(l) }, |_| false, doc)
 }
 
 /// Whether each line starts inside a block comment that an earlier line opened and has not closed.
-fn inside_blocks(lines: &[&str], open: &str, close: &str) -> Vec<bool> {
+/// Outside a block, a line comment runs to the end of its line, so an opener after its mark opens
+/// nothing; an opener inside a string still opens a block.
+fn inside_blocks(lines: &[&str], open: &str, close: &str, line_comment: Option<&str>) -> Vec<bool> {
     let mut out = vec![false; lines.len()];
     if open.is_empty() || close.is_empty() {
         return out;
@@ -2431,10 +2433,18 @@ fn inside_blocks(lines: &[&str], open: &str, close: &str) -> Vec<bool> {
         out[i] = in_block;
         let mut rest = *line;
         loop {
-            let (mark, next) = if in_block { (close, false) } else { (open, true) };
-            let Some(p) = rest.find(mark) else { break };
-            rest = &rest[p + mark.len()..];
-            in_block = next;
+            if in_block {
+                let Some(p) = rest.find(close) else { break };
+                rest = &rest[p + close.len()..];
+                in_block = false;
+            } else {
+                let Some(p) = rest.find(open) else { break };
+                if line_comment.filter(|m| !m.is_empty()).and_then(|m| rest.find(m)).is_some_and(|c| c < p) {
+                    break;
+                }
+                rest = &rest[p + open.len()..];
+                in_block = true;
+            }
         }
     }
     out
