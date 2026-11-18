@@ -23,7 +23,12 @@ each indexed repository, which on Unix only its owner can enter (mode 0700). Out
 `$XDG_STATE_HOME/scrutate/`, the read counts `files` ranks by ([CLI](CLI.md#files)): each
 repository's canonical root and the paths of files read in it, with a count and a time. Nothing in
 it is run or opened: a path in it only ranks a file the walk already found. Delete it at any time
-to forget the counts. In a linked git work tree
+to forget the counts. Its directory, the state directory the Grep hook's counter shares, is made
+with mode 0700 on Unix; one another user owns is not used (one stderr line says so), and one of
+the user's own that others may write to is closed to them (0700) first. `frecency.json` is
+written to a new file under a random name, created only where nothing is, and renamed over the
+old, and the counter is opened without following a link at its path (`O_NOFOLLOW`; on Windows a
+link there is refused), so a link planted in the directory is never written through. In a linked git work tree
 scrutate also reads the index of the repository's main checkout (below).
 
 The assets: (1) the confidentiality of the source code, (2) the integrity of the machine running

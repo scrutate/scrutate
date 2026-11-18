@@ -1389,6 +1389,13 @@ incompatible index by itself, and that is never breaking.
   lib/*.rs`) no longer opens a block that hides every later definition. `grep -z`'s million-member
   cap on a tar counts members, not their PAX or long-name headers: a tar of 600,000 files with a
   PAX header each stopped as "more than 1000000 members" ([CLI](docs/CLI.md#custom-languages)).
+- A link planted in the state directory is no longer written through: `frecency.json`'s temporary
+  file had a name anyone could guess (the process id) and was opened through whatever was there,
+  and the Grep hook's counter was appended to through a link at its path. The temporary file now
+  has a random name and is created only where nothing is, the counter is opened without following
+  a link (`O_NOFOLLOW`; on Windows a link is refused), and a state directory another user owns is
+  not used while one others may write to is closed to them first, with one stderr line
+  ([Security](docs/SECURITY.md#threat-model)).
 
 ## [0.1.0] - 2026-11-11
 
