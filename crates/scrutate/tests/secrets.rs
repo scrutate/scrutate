@@ -1823,6 +1823,7 @@ const NO_TEXT: &[(&str, &str)] = &[
     ("checked", "a stamp of the last integrity check: counts, sizes and times"),
     ("text/lock", "empty: only its lock is used"),
     ("text/manifest.json", "the text index's format, generation and segment names"),
+    ("text/manifest.json.tmp", "the manifest while it is written, renamed over manifest.json"),
     ("text/*/live-*.bin", "a bitmap of the segment's live files"),
     ("text/*/paths.bin", "the indexed files' paths, which a listing of the tree shows too"),
 ];

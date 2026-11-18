@@ -799,7 +799,8 @@ fn a_long_line_of_secrets_close_together_is_sent_with_each_one_marked() {
     assert!(!out.contains(&token[..12]), "a token went out");
     assert_eq!(out.matches("{\"token\":\"[redacted:github-token]\"},").count(), n, "{} bytes out", out.len());
     assert!(out.contains("] done\n"), "the rest of the line is sent");
-    assert!(took < std::time::Duration::from_secs(20), "{took:?}");
+    // 29.6 s on a macOS Intel CI runner; the pieces' old cost here was minutes
+    assert!(took < std::time::Duration::from_secs(60), "{took:?}");
     if let Some(peak) = peak {
         assert!(peak < 256 << 20, "{} MiB at most", peak >> 20);
     }
