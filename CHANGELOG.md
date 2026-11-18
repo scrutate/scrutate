@@ -1444,6 +1444,16 @@ incompatible index by itself, and that is never breaking.
   each one, and every token goes out marked. That search makes two tries a piece and none for the
   rest of a line where they found no gap, so a one-line key of 6 MiB, whose rows the rules find
   close together, goes out in 0.4 s as before ([Security](docs/SECURITY.md)).
+- `tsquery --rewrite --write` and the MCP `edit_symbol` no longer lose, and report as written, a
+  line another process appends between the check that the file is unchanged and the rename over
+  it, nor an editor's save that renames a new file over it then. On Linux and macOS the file
+  checked stays open and the new text replaces it by an exchange of names, so the file taken out
+  is still there: a save by rename or a change of the file checked gets the name back and the
+  rewritten file is kept beside it under a free name (one already there is never in the way), so
+  a later write to it is not lost; when the rewritten text stays, a late write to the file no name
+  points to is carried over or kept beside it; the file and every side file are named in a warning
+  (exit 2). Windows checks nothing after the rename, and the docs say so
+  ([CLI](docs/CLI.md#tsquery---rewrite)).
 
 ## [0.1.0] - 2026-11-11
 
