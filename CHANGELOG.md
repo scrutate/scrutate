@@ -1378,6 +1378,13 @@ incompatible index by itself, and that is never breaking.
 - `grep --fuzzy` and `--fuzzy-regex` with `--json` or colour keep where each character of a
   matched line starts as one bit per byte, not eight bytes per character: a 64 MB line takes
   219 MB at peak instead of 723 MB, in the same time, with the same spans.
+- docs/INSTALL.md's platform table names the abi3t wheel (`cp315-abi3.abi3t`, CPython 3.15 and
+  free-threaded 3.15t) on every platform, as `release.yml` builds it and CI tests it (run
+  44069673980); `tools/gen_doc_assets.py --check` now fails a row that leaves out a wheel kind the
+  release builds. `bench/musl_vs_glibc.py` gave a worst musl/glibc ratio of x1.00 when musl was
+  faster on every search; it gives the largest ratio measured. `bench/musl_vs_glibc.sh` measures
+  the musl build against the glibc one on idle x86_64 hardware by the leaderboard's method; its
+  first result is pending ([Install](docs/INSTALL.md)).
 
 ## [0.1.0] - 2026-11-11
 

@@ -30,3 +30,17 @@ def test_a_verdict_that_names_a_platform_only_to_rule_it_out_fails():
         bad = good.replace("Windows x86_64 and Windows\nARM64", said, 1)
         assert bad != good
         assert G.platform_problems(install, bad) == ["docs/RELEASE_READINESS.md: the verdict does not name Windows ARM64, which docs/INSTALL.md supports"], said
+
+
+def test_every_platform_row_names_each_wheel_the_release_builds():
+    assert G.wheel_problems(read("docs/INSTALL.md"), read(".github/workflows/release.yml")) == []
+
+
+def test_a_row_without_the_abi3t_wheel_or_a_kind_with_no_tag_fails():
+    install, release = read("docs/INSTALL.md"), read(".github/workflows/release.yml")
+    row = next(line for line in install.split("\n") if line.startswith("| Windows ARM64 "))
+    bad = install.replace(row, row.replace("abi3t", "abi3"))
+    assert G.wheel_problems(bad, release) == ["docs/INSTALL.md: the Windows ARM64 row names no `abi3t` wheel, which release.yml builds"]
+    more = release.replace("kind: [abi3, free-threaded, abi3t]", "kind: [abi3, free-threaded, abi3t, pypy]")
+    assert more != release
+    assert G.wheel_problems(install, more) == ["tools/gen_doc_assets.py: no wheel tag known for release.yml's kind `pypy`"]
