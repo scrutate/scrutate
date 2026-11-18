@@ -129,7 +129,8 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 found, _ = lb.reference(corpus, lb.file_list(corpus, q.get("mode", "ignore")), q["grep"])
                 q = {**q, "expect": sorted(found), "exact": True}
             unchecked = not checkable(q)
-            load = lb.wait_idle(max_load, max_wait) if max_load is not None else lb.loadavg()
+            # a query that is not timed waits for no idle machine
+            load = lb.wait_idle(max_load, max_wait) if max_load is not None and not unchecked else lb.loadavg()
             live, mine = [], []
             for a in (a for a in adapters if serves(a, q)):
                 row = {"workload": w, "query": q["id"], "tool": a.name, "form": a.form, "load": load}
@@ -172,6 +173,9 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                         row.setdefault("times", []).append(time.perf_counter() - t0)
             for _, row in live:
                 if row.get("times"):
+                    # the wait ended at max_wait with the machine still busy: timed all the same, marked
+                    if max_load is not None and load > max_load:
+                        row["over_load"] = True
                     row["p50_ms"] = 1000 * statistics.median(row["times"])
                     for p in (95, 99):
                         row[f"p{p}_ms"] = 1000 * sorted(row["times"])[max(0, math.ceil(p / 100 * len(row["times"])) - 1)]

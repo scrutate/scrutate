@@ -65,3 +65,14 @@ def test_without_results_the_section_is_empty_and_competitive_md_is_what_the_scr
     assert D.regenerated_problems("docs/COMPETITIVE.md", text) == []
     edited = text.replace("<!-- inputs:  -->\n", "<!-- inputs:  -->\n| W3 | zoekt | 0.50 |\n")
     assert len(D.regenerated_problems("docs/COMPETITIVE.md", edited)) == 1
+
+
+def test_the_method_says_which_run_p99_is_and_a_row_over_the_load_limit_says_so(tmp_path):
+    import make_yardstick_md as YM
+    out, res = _result(tmp_path)
+    out["settings"] = {**out["settings"], "runs": 30}
+    out["rows"][0]["over_load"], out["rows"][0]["load"] = True, 3.5
+    text = "\n".join(YM.section(out, res))
+    assert "With 30 runs, p95 is the 29th fastest and p99 the 30th, the slowest" in text, text
+    row = next(line for line in text.split("\n") if line.startswith(f"| W4/point | {out['rows'][0]['tool']} |"))
+    assert "ok, timed at load 3.5, over the 1.2 limit" in row, row

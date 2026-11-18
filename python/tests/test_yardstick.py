@@ -242,3 +242,20 @@ def test_the_w5_query_files_are_callers_and_refs_queries_with_evidence():
         w5 = [q for q in qs if q["workload"] == "W5"]
         assert w5 and all(q["kind"] in ("refs", "callers") and q["expect"] for q in w5), corpus
         assert {q["id"] for q in w5} <= evidence, corpus
+
+
+def test_an_unchecked_query_waits_for_no_idle_machine(monkeypatch):
+    waits = []
+    monkeypatch.setattr(Y.lb, "wait_idle", lambda m, w: waits.append((m, w)) or 0.25)
+    monkeypatch.setattr(Y.lb, "loadavg", lambda: 0.5)
+    q = {"id": "W4/none", "workload": "W4", "args": {"name": "Point"}}
+    out = Y.measure([Fake("scrutate-mcp", RIGHT)], [q], runs=2, warmup=0, corpus="/c", work="/w", max_load=2.0, max_wait=60)
+    assert waits == [] and out["rows"][0]["load"] == 0.5 and out["rows"][0]["status"].startswith("unchecked")
+
+
+def test_a_row_timed_over_the_load_limit_is_marked(monkeypatch):
+    for load, marked in ((3.0, True), (1.0, False)):
+        monkeypatch.setattr(Y.lb, "wait_idle", lambda m, w, load=load: load)
+        out = Y.measure([Fake("scrutate-mcp", RIGHT)], [QUERY], runs=2, warmup=0, corpus="/c", work="/w", max_load=2.0, max_wait=60)
+        row = out["rows"][0]
+        assert row["status"] == "ok" and row.get("over_load", False) == marked, row
