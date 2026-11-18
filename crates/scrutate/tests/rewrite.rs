@@ -493,7 +493,8 @@ fn the_size_bound_reads_one_million_bytes_and_not_one_more() {
 
 /// A second process that appends to a file while `--write` runs never loses an appended line: a
 /// file changed before the check is left alone, and one changed between the check and the rename
-/// is put back. Unix only: Windows checks nothing after the rename.
+/// is put back. A line is kept when it is in the file or in a side file the warning names. Unix
+/// only: Windows checks nothing after the rename.
 #[cfg(unix)]
 #[test]
 fn a_write_never_lands_on_top_of_another_writers_change() {
@@ -515,7 +516,10 @@ fn a_write_never_lands_on_top_of_another_writers_change() {
         });
         let (code, _, err) = t.run(&["tsquery", "python", PRINT, "f.py", "--rewrite", "log$args", "--write"]);
         let appended = writer.join().unwrap();
-        let now = t.read("f.py");
+        let mut now = t.read("f.py");
+        for named in err.split_whitespace().filter(|w| w.contains(".kept")) {
+            now.push_str(&t.read(named.trim_end_matches([')', ',', ';'])));
+        }
         let lost: Vec<&String> = appended.iter().filter(|l| !now.lines().any(|n| n == l.as_str())).collect();
         assert!(lost.is_empty(), "round {round}: exit {code}, {err}: lost {lost:?}");
     }

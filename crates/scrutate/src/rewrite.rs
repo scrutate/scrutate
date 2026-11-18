@@ -292,7 +292,7 @@ impl Plan {
     /// Returns, per file in order, why it was left alone (`PATH: why, left alone`) or nothing.
     pub fn write(&self) -> Vec<Option<String>> {
         let line = |f: &FileChange, why: String| {
-            if why.starts_with(PUT_BACK) { format!("{}: {why}", f.shown) } else { format!("{}: {why}, left alone", f.shown) }
+            if why.starts_with(PUT_BACK) || why.contains(", left alone") { format!("{}: {why}", f.shown) } else { format!("{}: {why}, left alone", f.shown) }
         };
         self.files.iter().map(|f| write_one(&self.root, f).err().map(|why| line(f, why))).collect()
     }
@@ -635,8 +635,9 @@ fn carry(dir: &Dir, name: &std::ffi::OsStr, stray: &std::fs::File, mut known: Ve
 /// `name` without losing what another writer did to it meanwhile. Linux and macOS exchange the two
 /// names in one step (`RENAME_EXCHANGE`, `RENAME_SWAP`), so the file taken out of `name` is
 /// still at `tmp` to look at: when it is not `was` (a save by rename) or `was` changed, the names
-/// are exchanged back. Where the file system has no exchange, the name is checked to be `was`
-/// and renamed over. Either way the file no name points to any more is watched for late writes.
+/// are exchanged back and the file that came out of `name` is kept beside it under a free name.
+/// Where the file system has no exchange, the name is checked to be `was` and renamed over. When
+/// the new text stays, the file no name points to any more is watched for late writes.
 #[cfg(unix)]
 fn settle(dir: &Dir, name: &std::ffi::OsStr, tmp: &str, f: &FileChange, at: &mut dyn FnMut(Step)) -> std::io::Result<Option<String>> {
     use rustix::fs::{RenameFlags, renameat_with};
@@ -694,17 +695,13 @@ fn settle(dir: &Dir, name: &std::ffi::OsStr, tmp: &str, f: &FileChange, at: &mut
             if let Err(e) = renameat_with(&dir.0, tmp, &dir.0, name, RenameFlags::EXCHANGE) {
                 return Ok(Some(format!("changed while it was written, and the other writer's file could not be put back: it is {tmp} ({e})")));
             }
+            // what came out of the name is never removed: a writer that opened it meanwhile may still write to it
             let back = dir.open(tmp.as_ref(), false)?;
-            if same_file(&back, &ours)? {
-                dir.remove(tmp);
-            } else {
-                // the name changed hands again meanwhile: what came out of it is kept, under a free name
-                let at = keep_aside(dir, name, b"")?;
-                dir.rename(tmp, at.as_ref())?;
-                kept.push(at);
-            }
-            carry(dir, name, &ours, f.new.clone(), &mut kept)?;
-            Some(if replaced { "changed since it was read".to_string() } else { PUT_BACK.to_string() })
+            let at = keep_aside(dir, name, b"")?;
+            dir.rename(tmp, at.as_ref())?;
+            let what = if same_file(&back, &ours)? { "the rewritten text" } else { "a file saved over it meanwhile" };
+            let why = if replaced { "changed since it was read, left alone" } else { PUT_BACK };
+            Some(format!("{why}; {what} is in {at}"))
         }
     };
     Ok(match (why, kept.as_slice()) {
@@ -901,7 +898,9 @@ mod race {
             }
         });
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "print(x)\nprint(x)\nprint(x)\n# late\n");
-        assert!(why.as_ref().is_err_and(|w| w == "changed while it was written, put back as the other writer left it"), "{why:?}");
+        let kept = format!("a.py.scrutate-{}.0.kept", std::process::id());
+        assert_eq!(why, Err(format!("{PUT_BACK}; the rewritten text is in {kept}")));
+        assert_eq!(std::fs::read_to_string(path.with_file_name(kept)).unwrap(), "log(x)\nlog(x)\nlog(x)\n");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -917,9 +916,10 @@ mod race {
             }
         });
         let now = std::fs::read_to_string(&path).unwrap();
-        assert!(why.is_err(), "{why:?}");
-        assert!(now.starts_with("print(x)\nprint(x)\nprint(x)\n# to the old file\n"), "{now:?}");
-        assert!(now.contains("# to the new file\n"), "{now:?}");
+        assert_eq!(now, "print(x)\nprint(x)\nprint(x)\n# to the old file\n");
+        let kept = format!("a.py.scrutate-{}.0.kept", std::process::id());
+        assert_eq!(why, Err(format!("{PUT_BACK}; the rewritten text is in {kept}")));
+        assert_eq!(std::fs::read_to_string(path.with_file_name(kept)).unwrap(), "log(x)\nlog(x)\nlog(x)\n# to the new file\n");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -947,8 +947,9 @@ mod race {
                 std::fs::rename(&swp, &path).unwrap();
             }
         });
-        assert_eq!(why, Err("changed since it was read".to_string()));
-        assert_eq!(files_in(path.parent().unwrap()), [("a.py".to_string(), saved.to_string())]);
+        let kept = format!("a.py.scrutate-{}.0.kept", std::process::id());
+        assert_eq!(why, Err(format!("changed since it was read, left alone; the rewritten text is in {kept}")));
+        assert_eq!(files_in(path.parent().unwrap()), [("a.py".to_string(), saved.to_string()), (kept, "log(x)\nlog(x)\nlog(x)\n".to_string())]);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -971,10 +972,7 @@ mod race {
         assert_eq!(files.iter().find(|(n, _)| n == "a.py").map(|f| f.1.as_str()), Some("print(x)\nprint(x)\nprint(x)\n# late\n"), "{files:?}");
         let kept: Vec<_> = files.iter().filter(|(_, t)| t.contains("MIDDLE")).collect();
         assert_eq!(kept.len(), 1, "{files:?}");
-        assert!(
-            why.as_ref().is_err_and(|w| w.starts_with("changed while it was written, put back as the other writer left it") && w.contains(&kept[0].0)),
-            "{why:?}"
-        );
+        assert!(why.as_ref().is_err_and(|w| w.starts_with(PUT_BACK) && w.contains(&kept[0].0)), "{why:?}");
         assert_eq!(files.iter().filter(|(_, t)| t == "not this write's").count(), 2, "{files:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -992,7 +990,34 @@ mod race {
             }
         });
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "print(x)\nprint(x)\nprint(x)\n# late\n");
-        assert_eq!(why, Err("changed while it was written, put back as the other writer left it".to_string()));
+        let kept = format!("a.py.scrutate-{}.1.kept", std::process::id());
+        assert_eq!(why, Err(format!("{PUT_BACK}; the rewritten text is in {kept}")));
+        assert_eq!(std::fs::read_to_string(dir.join(kept)).unwrap(), "log(x)\nlog(x)\nlog(x)\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_line_written_long_after_a_put_back_to_the_rewritten_file_is_in_a_named_file() {
+        let (p, path) = planned("long_after");
+        let dir = path.parent().unwrap().to_path_buf();
+        let mut late = None;
+        let why = write_one_at(&p.root, &p.files[0], &mut |s| match s {
+            Step::BeforeRename => append(&path, "# late"),
+            Step::AfterRename => {
+                // opened while the name holds the rewritten text, written after any watch is over
+                let f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+                late = Some(std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    writeln!(&f, "# much later").unwrap();
+                }));
+            }
+        });
+        late.unwrap().join().unwrap();
+        let files = files_in(&dir);
+        assert_eq!(files.iter().find(|(n, _)| n == "a.py").map(|f| f.1.as_str()), Some("print(x)\nprint(x)\nprint(x)\n# late\n"), "{files:?}");
+        let kept: Vec<_> = files.iter().filter(|(_, t)| t.contains("# much later")).collect();
+        assert_eq!(kept.len(), 1, "{files:?}");
+        assert!(why.as_ref().is_err_and(|w| w.starts_with(PUT_BACK) && w.contains(&kept[0].0)), "{why:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
