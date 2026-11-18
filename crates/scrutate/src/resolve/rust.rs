@@ -246,7 +246,6 @@ fn rust_impl_of(r: &mut Resolver, s: &Symbol, id: i64) -> bool {
     matches!(r.type_leaf(&s.path, &fi, Lang::Rust, leaf, s.start), Ok((t, _)) if t == id)
 }
 
-/// Standard Rust types whose methods a call reaches through `Deref` to the type they hold.
 /// Whether field expression `f` is what a call calls, directly or through a turbofish (`x.m::<T>()`).
 fn rust_callee(f: Node) -> bool {
     let callee = match f.parent() {
@@ -280,6 +279,7 @@ fn rust_impl_of_wrapper(e: Node, src: &str) -> bool {
     t.starts_with('&') || RUST_DEREF.contains(&t.split('<').next().unwrap_or("").trim())
 }
 
+/// Standard Rust types whose methods a call reaches through `Deref` to the type they hold.
 const RUST_DEREF: &[&str] = &["Box", "Rc", "Arc", "Ref", "RefMut", "Cow", "MutexGuard", "RwLockReadGuard", "RwLockWriteGuard", "Pin", "ManuallyDrop"];
 
 /// Standard types that hold values of other types, so a method of one may return a repository type.
