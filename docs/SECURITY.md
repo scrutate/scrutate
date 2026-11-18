@@ -905,7 +905,8 @@ dependency in `tests/secrets.rs`.
     the temporary directory;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
-    (`tests/intel_refs.rs`, its CPU time; `tests/one_line_memory.rs`, its peak resident size), `getrusage(RUSAGE_CHILDREN)` into a zeroed `rusage`
+    (`tests/intel_refs.rs`, its CPU time; `tests/one_line_memory.rs`, its peak resident size;
+    `tests/shell_hook.rs`, a `hook run` child's peak memory, polled with `WNOHANG` into a zeroed `rusage`), `getrusage(RUSAGE_CHILDREN)` into a zeroed `rusage`
     (`tests/fuzzy_memory.rs`, its children's peak memory) with arguments they own, `posix_openpt`,
     `grantpt`, `unlockpt` and `ptsname` in two tests of `tests/grep_cli.rs` for a terminal their child
     writes to, the name read before the next call and the descriptor taken once into the `File` that
@@ -952,6 +953,7 @@ dependency in `tests/secrets.rs`.
   | `crates/scrutate/tests/one_line_memory.rs` | 2 |
   | `crates/scrutate/tests/parse_index.rs` | 2 |
   | `crates/scrutate/tests/robustness.rs` | 2 |
+  | `crates/scrutate/tests/shell_hook.rs` | 2 |
   | `crates/scrutate/tests/running.rs` | 2 |
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.

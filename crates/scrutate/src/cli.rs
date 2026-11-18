@@ -2788,7 +2788,6 @@ fn grep_path<'p>(path: &'p str, bytes: Option<&'p [u8]>, terminal: bool) -> std:
     }
 }
 
-/// A JSON record of `grep` that names a file whose path is not UTF-8: its bytes beside the text.
 /// A `match` or `context` record of `grep --json`, borrowing its line: a `serde_json::Value` would
 /// hold one more copy of it (63 MB more for a 60 MiB line). Fields in the order a `Value` writes
 /// them, by name.
@@ -2827,6 +2826,7 @@ impl<'a> LineRecord<'a> {
     }
 }
 
+/// A JSON record of `grep` that names a file whose path is not UTF-8: its bytes beside the text.
 fn with_path_bytes(mut rec: serde_json::Value, bytes: Option<&[u8]>) -> serde_json::Value {
     if let Some(b) = bytes {
         rec["path_bytes"] = b.into();
