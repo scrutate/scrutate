@@ -23,7 +23,12 @@ each indexed repository, which on Unix only its owner can enter (mode 0700). Out
 `$XDG_STATE_HOME/scrutate/`, the read counts `files` ranks by ([CLI](CLI.md#files)): each
 repository's canonical root and the paths of files read in it, with a count and a time. Nothing in
 it is run or opened: a path in it only ranks a file the walk already found. Delete it at any time
-to forget the counts. In a linked git work tree
+to forget the counts. Its directory, the state directory the Grep hook's counter shares, is made
+with mode 0700 on Unix; one another user owns is not used (one stderr line says so), and one of
+the user's own that others may write to is closed to them (0700) first. `frecency.json` is
+written to a new file under a random name, created only where nothing is, and renamed over the
+old, and the counter is opened without following a link at its path (`O_NOFOLLOW`; on Windows a
+link there is refused), so a link planted in the directory is never written through. In a linked git work tree
 scrutate also reads the index of the repository's main checkout (below).
 
 The assets: (1) the confidentiality of the source code, (2) the integrity of the machine running
@@ -61,12 +66,12 @@ the user starts with `serve --allow-edits`, write source files ([below](#the-str
 | Supply chain | 213 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0, BSL-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0) and OpenCC ver.1.4.2's `JPShinjitaiCharacters.txt` (Apache-2.0, pinned by SHA-256 in `tools/gen_han_fold.py`), `crates/scrutate/data/han_fold.txt`; `Cargo.lock` committed; `cargo audit` over the 255 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB of 1,509 advisories, updated 2026-11-15). The bundled SQLite is 3.54.1, from `libsqlite3-sys` 0.40.0 under `rusqlite` 0.43.0; it was first upgraded for RUSTSEC-2026-0459 at `rusqlite` 0.41 and `libsqlite3-sys` 0.39. `ignore` is vendored with eleven documented changes (`vendor/ignore`, listed in its README) and published as its own crate, `scrutate-ignore`, so a crate from crates.io builds with the same walker; the SBOM marks it as a modified copy of `ignore`. `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). `cargo deny check` runs on every push to main, every pull request, once a week and on the tagged commit before a release against `deny.toml`: an advisory (vulnerable, unmaintained, unsound or yanked), a licence outside the list above, a wildcard version, or a crate from a registry other than crates.io or from git fails it. | `cargo audit` over `Cargo.lock` (docs/TEST_RESULTS.md holds an earlier run); SBOM in release artifacts; `deny.toml` and the `deny` job of `.github/workflows/security.yml`. |
 | Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.100.0). Two clean builds in two build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, fresh containers, linux/arm64) produced the same SHA-256 on 2026-11-16 with `rustc 1.100.0 (0ef1bc386 2026-11-09)`: `a3a0549d...` (`bench/results/platforms/repro/`). The binary the Linux leaderboard measured, `261ed1a2...`, is the Rust 1.99.1 build from before the toolchain moved to 1.100.0, so it is not this hash; the benchmarks rerun on the release binary at release time (docs/RELEASING.md). Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
 | Signed releases | "Signed" means: every file on the release carries a SLSA build provenance attestation (`actions/attest`), signed through Sigstore with the workflow's OIDC identity and logged in Sigstore's public transparency log (SLSA v1.0 Build Level 2), and is listed in `SHA256SUMS`; the SBOM is attested to the archives. `gh attestation verify FILE --repo scrutate/scrutate --signer-workflow scrutate/scrutate/.github/workflows/release.yml --source-ref refs/tags/v0.1.0` checks a file ([Install](INSTALL.md#from-a-release-archive)). No platform code signature (see Known gaps). | `.github/workflows/release.yml`, **not yet executed**; no release has been signed yet. |
-| Workflows | Every action is pinned to a commit, checkout keeps no credentials, and each job gets only the permissions it names. `zizmor` 1.32.0 with `--persona pedantic` and its online audits checks `.github` on every push to main, every pull request, once a week and on the tagged commit before a release, and `actionlint` 1.7.12 with shellcheck on every `run:` script checks the workflows on the same runs; a finding fails the job. | the `zizmor` and `actionlint` jobs of `.github/workflows/security.yml`. |
+| Workflows | Every action is pinned to a commit, checkout keeps no credentials, and each job gets only the permissions it names. `zizmor` 1.32.0 with `--persona pedantic` and its online audits checks `.github` on every push to main, every pull request, once a week and on the tagged commit before a release, and `actionlint` 1.7.12 with shellcheck on every `run:` script checks the workflows on the same runs; a finding fails the job. OpenSSF Scorecard (ossf/scorecard-action 2.5.0) runs on every push to main and once a week, publishing its score to api.scorecard.dev and its findings to code scanning. CodeQL default setup is a repository setting the owner turns on, not a file. | the `zizmor` and `actionlint` jobs of `.github/workflows/security.yml`; the `analysis` job of `.github/workflows/scorecard.yml`. |
 | `unsafe` count | Each file's count of the `unsafe` keyword (line comments and plain string literals left out) must equal the table in the [`unsafe` inventory](#known-gaps-and-residual-risks), checked on every push to main, every pull request, once a week and on the tagged commit before a release, so a new `unsafe` cannot land without its line there. | `tools/unsafe_count.py`; the `unsafe` job of `.github/workflows/security.yml`. |
 | Secrets in the tree | No tracked file holds a secret: gitleaks 8.30.1 with its own rules, installed by the SHA-256 it publishes, reads the tree on every push to main, every pull request, once a week and on the tagged commit before a release, against `.gitleaks.toml` and no allow list: a line its rules flag that holds no secret carries `gitleaks:allow` with the reason, so no file is exempt as a whole (gitleaks 8.30.1 applies an allow list's paths alone, whatever its condition). `tools/gitleaks_config.py` fails the job and the gate unless the config holds `title` and `[extend] useDefault = true` alone, its keys read in any case as gitleaks reads them (a rule, a disabled rule, an allow list or an extended path can each narrow the scan), and when a `.gitleaksignore` is committed beside it. The gate also plants a token in `intel.rs` and in `secrets.rs` in a copy of the tree and requires gitleaks to find each. The tests run scrutate's own redactor over every tracked file too, so test samples are built at run time; a `format!` template that builds one (`sk-ant-api03-{}`) holds no secret, and neither scanner flags it. | the `gitleaks` job of `.github/workflows/security.yml`; `tools/gitleaks_config.py` and python/tests/test_gitleaks_config.py; tests/secrets.rs `no_tracked_file_holds_a_secret`. |
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. They found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. Every week each target fuzzes for 45 minutes from the corpus the last run kept, and a crash, timeout or out-of-memory input fails the run and is kept as an artifact. | `bench/results/fuzz/` (run logs), `.github/workflows/fuzz-weekly.yml`, `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
 | Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
-| Untrusted `.scrutate.toml` | The configuration file sets option defaults (booleans, numbers, sizes, globs, file type names), directory names to leave out and language tables (extensions and regex patterns); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. A repository's own file is read only as a regular file inside the root, at most 1 MB, through a link only to a file inside the root; any other stops the command with a line naming it. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
+| Untrusted `.scrutate.toml` | The configuration file sets option defaults (booleans, numbers, sizes, globs, file type names), directory names to leave out and language tables (extensions and regex patterns); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. A repository's own file, at its top or in a subdirectory, is read only as a regular file inside the repository (the nearest directory up holding `.git` or an index), at most 1 MB, through a link only to a file inside it, with no NUL byte in its first 4 KiB; any other stops the command with a line naming it and why. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
 | MCP server | Reads the repository and writes `.scrutate/` and the frecency file above, the package cache for `scope: "deps"`, and, only under `serve --allow-edits`, the file an `edit_symbol` call names ([Verified symbol edits](#verified-symbol-edits)); path arguments are confined. It takes requests on stdio, and offers its open index to command line calls of the same user through `.scrutate/session.sock` on Unix or a named pipe on Windows (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs` and its tests; `tests/mcp_protocol.rs`, `tests/mcp_tools.rs`, `tests/cli.rs`; the -32700 for a line that is not JSON and the 200-character quote (`fmt.rs`) are checked by reading the code. |
 | Python bindings | Engine behind a session (calls side by side, writes one at a time, a panic kept inside its call); `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
 
@@ -393,7 +398,9 @@ marker is not).
 ## Secrets in answers
 
 What an agent reads is secret-safe by default: the MCP tools, the Grep hook and `lsp` replace each
-secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour around it.
+secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour around it,
+in an answer and in what names files beside it (the MCP note and `pending` list of files an update
+has not reached yet, an MCP or `lsp` error, an `lsp` log message), since a file's name can hold one.
 A text page ends with `(N secrets redacted: SCRUTATE_REDACT=off shows them)`, N counting the
 redactions that page shows; the structured form carries `"redacted": {KIND: count}` for what it
 holds, which may be more items than the page. `SCRUTATE_REDACT=off` turns it off and `on` turns it
@@ -462,7 +469,8 @@ other text, so that path cannot be opened from the answer.
 
 The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,
 each regex run only on text holding one of its keywords (an Aho-Corasick pass; `key-material` has
-none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is read as `/`:
+none and runs on every text), with gitleaks' entropy thresholds except where the paragraph below the
+table says; JSON's `\/` is read as `/`:
 
 | Kind | Rule it comes from |
 |---|---|
@@ -501,9 +509,19 @@ none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is 
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
-Where a rule differs from its gitleaks v8.30.1 source, it marks more: `digitalocean-token` reads
-all three forms without regard to case (gitleaks only the refresh token), and `vault-token` takes
-a batch token above entropy 3.5 (gitleaks 4).
+Where a rule differs from its gitleaks v8.30.1 source, it marks more, never less:
+`aws-access-key-id` and `npm-token` keep no entropy threshold (gitleaks 3 and 2), and `npm-token`
+takes its prefix in any case, as gitleaks does; `slack-token` takes a bot token above entropy 2
+(gitleaks 3); `gitlab-token` takes a routable token above entropy 3 (gitleaks 4);
+`anthropic-api-key` takes any `api` or `admin` key of version `0N` with 90 to 128 characters
+(gitleaks `api03` and `admin01`, 93 exactly); `digitalocean-token` reads all three forms without
+regard to case (gitleaks only the refresh token); and `vault-token` takes a batch token above
+entropy 3.5 (gitleaks 4). A token glued to a word character (`qghp_...`, minified code) is marked
+where gitleaks' rule has no word boundary before it: `github-token`, `github-fine-grained-token`,
+`gitlab-token`, `slack-token`, `pypi-token`, `twilio-api-key` and `shopify-token`. Where gitleaks'
+rule starts at a word boundary (`aws-access-key-id`, `npm-token`, `stripe-key` and the others), a
+token glued after a letter is left as it is, by gitleaks too (checked with gitleaks 8.30.1 on the
+same lines).
 
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
@@ -858,9 +876,11 @@ link to a file outside the package and a package directory that is a link out of
     the temporary directory;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
-    (`tests/intel_refs.rs`, its CPU time) with arguments they own, `posix_openpt`, `grantpt`,
-    `unlockpt` and `ptsname` in two tests of `tests/grep_cli.rs` for a terminal their child writes to, the name
-    read before the next call and the descriptor taken once into the `File` that closes it, `std::env::set_var` in
+    (`tests/intel_refs.rs`, its CPU time), `getrusage(RUSAGE_CHILDREN)` into a zeroed `rusage`
+    (`tests/fuzzy_memory.rs`, its children's peak memory) with arguments they own, `posix_openpt`,
+    `grantpt`, `unlockpt` and `ptsname` in two tests of `tests/grep_cli.rs` for a terminal their child
+    writes to, the name read before the next call and the descriptor taken once into the `File` that
+    closes it, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
     `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
@@ -895,6 +915,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 28 |
   | `crates/scrutate/tests/cli.rs` | 2 |
+  | `crates/scrutate/tests/fuzzy_memory.rs` | 2 |
   | `crates/scrutate/tests/grep_cli.rs` | 8 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 2 |
@@ -945,5 +966,7 @@ link to a file outside the package and a package directory that is a link out of
 
 ## Reporting
 
-Report vulnerabilities privately to the maintainers (see README), not in public issues; include
-the version (`scrutate --version`), platform and a reproduction.
+Report vulnerabilities privately through the repository's Security tab, "Report a vulnerability"
+(<https://github.com/scrutate/scrutate/security/advisories/new>, GitHub's private vulnerability
+reporting), never in a public issue; it is the only channel. Include the version
+(`scrutate --version`), platform and a reproduction.

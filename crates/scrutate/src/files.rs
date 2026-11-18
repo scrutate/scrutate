@@ -742,9 +742,23 @@ pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
 /// The text of the root's own `.scrutate.toml`, read as other repository files are: after links
 /// are resolved, a regular file inside the root of at most 1,000,000 bytes.
 pub(crate) fn root_config_text(root: &Path) -> Option<String> {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let real = std::fs::canonicalize(root.join(".scrutate.toml")).ok()?;
-    crate::resolve::repo_text(&root, real.strip_prefix(&root).ok()?.to_str()?)
+    config_text(root, root).ok()
+}
+
+/// Why a `.scrutate.toml` was not read.
+pub(crate) enum ConfigUnread {
+    OutOfBounds,
+    NotText,
+}
+
+/// The text of `dir`'s `.scrutate.toml`, read as other repository files are: after links are
+/// resolved, a regular file inside `top` of at most 1,000,000 bytes, with no NUL in its first 4 KiB.
+pub(crate) fn config_text(dir: &Path, top: &Path) -> Result<String, ConfigUnread> {
+    let top = std::fs::canonicalize(top).unwrap_or_else(|_| top.to_path_buf());
+    let real = std::fs::canonicalize(dir.join(".scrutate.toml")).map_err(|_| ConfigUnread::OutOfBounds)?;
+    let rel = real.strip_prefix(&top).ok().and_then(|r| r.to_str()).ok_or(ConfigUnread::OutOfBounds)?;
+    let bytes = crate::resolve::repo_bytes(&top, rel).ok_or(ConfigUnread::OutOfBounds)?;
+    crate::index::decode_source(&bytes).map(|t| t.into_owned()).ok_or(ConfigUnread::NotText)
 }
 
 /// A comma-separated list of names; `\,` is a comma inside a name.

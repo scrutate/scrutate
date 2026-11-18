@@ -790,6 +790,13 @@ impl Notes {
                 }
                 if self.reshapes(e, n.walked.as_deref()) {
                     n.dirs += 1;
+                } else if let Some(w) = n.walked.as_deref()
+                    && !e.paths.iter().any(|p| inside(&self.0.root, p) || *p == self.0.root || w.sets_rules(&self.0.root, p))
+                {
+                    // another entry of a rule directory above the root (`/tmp`, the home
+                    // directory) changes nothing here, as `Burst::note` reads it: noted, it could
+                    // fill the change set and make every read walk
+                    return;
                 }
                 if n.events.len() >= MOST_NOTED {
                     n.lost("too many changes since the last read");

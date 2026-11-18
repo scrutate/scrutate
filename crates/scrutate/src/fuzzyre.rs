@@ -304,17 +304,11 @@ impl FuzzyRegex {
     /// character substituted, never inserted.
     pub fn spans(&self, line: &[u8]) -> Vec<(usize, usize)> {
         let rev = self.rev.as_deref().expect("a pattern built by new has its reverse");
-        let mut units = Vec::new();
-        let mut i = 0;
-        while i < line.len() {
-            units.push(i);
-            i += self.unit(line, i).1;
-        }
+        let units = crate::instant::UnitStarts::new(line.len(), |i| self.unit(line, i).1);
         let to_end = self.to_end();
         crate::instant::fuzzy_passes(line.len(), self.k, |c, from, to, out| {
-            let gap = &units[units.partition_point(|&u| u < from)..units.partition_point(|&u| u < to)];
             let mut at = from;
-            for s in rev.starts(line, gap, c) {
+            for s in rev.starts(line, &units, from, to, c) {
                 if s >= at
                     && let Some(e) = self.longest_from(line, s, to, c, &to_end)
                 {
@@ -325,13 +319,14 @@ impl FuzzyRegex {
         })
     }
 
-    /// Of a reversed pattern, over the units `gap` of `line`: every unit where a part within `c`
-    /// edits of the pattern (read forward) starts and ends inside the gap, left to right.
-    fn starts(&self, line: &[u8], gap: &[usize], c: usize) -> Vec<usize> {
+    /// Of a reversed pattern, over the units of `line` in `from..to`: every unit where a part
+    /// within `c` edits of the pattern (read forward) starts and ends inside that range, left to
+    /// right.
+    fn starts(&self, line: &[u8], units: &crate::instant::UnitStarts, from: usize, to: usize, c: usize) -> Vec<usize> {
         let mut r = self.init.clone();
         let mut next = vec![0u64; self.k + 1];
         let mut out = Vec::new();
-        for &u in gap.iter().rev() {
+        units.for_each_rev(from, to, |u| {
             let bc = self.unit(line, u).0;
             next[0] = self.step(r[0]) & bc;
             for j in 1..=self.k {
@@ -341,7 +336,7 @@ impl FuzzyRegex {
             if r[..=c].iter().any(|&x| x & self.last != 0) {
                 out.push(u);
             }
-        }
+        });
         out.reverse();
         out
     }

@@ -1,0 +1,542 @@
+[
+ {
+  "id": "W5/refs GraphMatcher.isomorphisms_iter",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "GraphMatcher.isomorphisms_iter",
+  "at": [
+   "networkx/algorithms/isomorphism/isomorphvf2.py",
+   300,
+   9
+  ],
+  "language": "python",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "networkx/algorithms/isomorphism/isomorphvf2.py",
+    295
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_common.py",
+    107
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    67
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    379
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    385
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    403
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_isomorphvf2.py",
+    418
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers ISMAGS.is_isomorphic",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "ISMAGS.is_isomorphic",
+  "at": [
+   "networkx/algorithms/isomorphism/ismags.py",
+   886,
+   9
+  ],
+  "language": "python",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "networkx/algorithms/isomorphism/tests/test_common.py",
+    "ismags_is_iso"
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "is_isomorphic"
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "test_digraph"
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "test_graph"
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "test_noncomparable_nodes"
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "test_self_isomorphism"
+   ],
+   [
+    "networkx/algorithms/isomorphism/tests/test_ismags.py",
+    "test_selfloop"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs degree_centrality",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "degree_centrality",
+  "at": [
+   "networkx/algorithms/centrality/degree_alg.py",
+   10,
+   5
+  ],
+  "language": "python",
+  "case": "reexport",
+  "expect": [
+   [
+    "examples/algorithms/plot_krackhardt_centrality.py",
+    20
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    51
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    57
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    63
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    80
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    137
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_degree_centrality.py",
+    142
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_group.py",
+    375
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers min_edge_cover",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "min_edge_cover",
+  "at": [
+   "networkx/algorithms/covering.py",
+   15,
+   5
+  ],
+  "language": "python",
+  "case": "reexport",
+  "expect": [
+   [
+    "networkx/algorithms/bipartite/covering.py",
+    "min_edge_cover"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_bipartite_explicit"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_complete_graph_even"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_complete_graph_odd"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_empty_graph"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_graph_single_edge"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_graph_two_edge_path"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_graph_with_isolated_v"
+   ],
+   [
+    "networkx/algorithms/tests/test_covering.py",
+    "test_graph_with_loop"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs approximate_current_flow_betweenness_centrality",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "approximate_current_flow_betweenness_centrality",
+  "at": [
+   "networkx/algorithms/centrality/current_flow_betweenness.py",
+   26,
+   5
+  ],
+  "language": "python",
+  "case": "reexport",
+  "expect": [
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    4
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    86
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    95
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    105
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    114
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    120
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    130
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    140
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    144
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    145
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    158
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    164
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    166
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    175
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    180
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    185
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    186
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    195
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    202
+   ],
+   [
+    "networkx/algorithms/centrality/tests/test_current_flow_betweenness_centrality.py",
+    252
+   ],
+   [
+    "networkx/tests/test_all_random_functions.py",
+    93
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs _raise_on_directed",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "_raise_on_directed",
+  "at": [
+   "networkx/generators/small.py",
+   45,
+   5
+  ],
+  "language": "python",
+  "case": "macro_or_template",
+  "expect": [
+   [
+    "networkx/generators/small.py",
+    147
+   ],
+   [
+    "networkx/generators/small.py",
+    181
+   ],
+   [
+    "networkx/generators/small.py",
+    226
+   ],
+   [
+    "networkx/generators/small.py",
+    304
+   ],
+   [
+    "networkx/generators/small.py",
+    493
+   ],
+   [
+    "networkx/generators/small.py",
+    524
+   ],
+   [
+    "networkx/generators/small.py",
+    554
+   ],
+   [
+    "networkx/generators/small.py",
+    601
+   ],
+   [
+    "networkx/generators/small.py",
+    681
+   ],
+   [
+    "networkx/generators/small.py",
+    744
+   ],
+   [
+    "networkx/generators/small.py",
+    875
+   ],
+   [
+    "networkx/generators/small.py",
+    959
+   ],
+   [
+    "networkx/generators/small.py",
+    1048
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs graphviz_layout",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "graphviz_layout",
+  "at": [
+   "networkx/drawing/nx_agraph.py",
+   234,
+   5
+  ],
+  "language": "python",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "examples/algorithms/plot_lca.py",
+    39
+   ],
+   [
+    "examples/drawing/plot_spring_layout.py",
+    67
+   ],
+   [
+    "examples/graphviz_layout/plot_atlas.py",
+    45
+   ],
+   [
+    "examples/graphviz_layout/plot_circular_tree.py",
+    13
+   ],
+   [
+    "examples/graphviz_layout/plot_decomposition.py",
+    25
+   ],
+   [
+    "examples/graphviz_layout/plot_decomposition.py",
+    38
+   ],
+   [
+    "examples/graphviz_layout/plot_giant_component.py",
+    37
+   ],
+   [
+    "examples/graphviz_layout/plot_lanl_routes.py",
+    53
+   ],
+   [
+    "networkx/drawing/tests/test_agraph.py",
+    192
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs _bidirectional_shortest_path",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "_bidirectional_shortest_path",
+  "at": [
+   "networkx/algorithms/simple_paths.py",
+   595,
+   5
+  ],
+  "language": "python",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "networkx/algorithms/simple_paths.py",
+    522
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    9
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    649
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    651
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    657
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    659
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    661
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    663
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    671
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    675
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    681
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    687
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    701
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    704
+   ],
+   [
+    "networkx/algorithms/tests/test_simple_paths.py",
+    711
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs DiGraph.has_successor",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "DiGraph.has_successor",
+  "at": [
+   "networkx/classes/digraph.py",
+   897,
+   9
+  ],
+  "language": "python",
+  "case": "dispatch",
+  "expect": [
+   [
+    "networkx/classes/tests/test_digraph.py",
+    14
+   ],
+   [
+    "networkx/classes/tests/test_digraph.py",
+    15
+   ],
+   [
+    "networkx/classes/tests/test_multidigraph.py",
+    171
+   ],
+   [
+    "networkx/classes/tests/test_multidigraph.py",
+    172
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers HistoricalTests.setup_class",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "HistoricalTests.setup_class",
+  "at": [
+   "networkx/classes/tests/historical_tests.py",
+   12,
+   9
+  ],
+  "language": "python",
+  "case": "dispatch",
+  "expect": [
+   [
+    "networkx/classes/tests/test_digraph_historical.py",
+    "setup_class"
+   ],
+   [
+    "networkx/classes/tests/test_graph_historical.py",
+    "setup_class"
+   ]
+  ],
+  "exact": true
+ }
+]

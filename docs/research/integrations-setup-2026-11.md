@@ -110,7 +110,9 @@ Repeat with the v0.11.7 tarball for the previous release. The asset name `nvim-m
 | External Tools import | The External Tools settings toolbar has Add, Remove, Edit, Up, Down and Copy ([External tools settings](https://www.jetbrains.com/help/idea/settings-tools-external-tools.html)). No import is described there or on [External tools](https://www.jetbrains.com/help/idea/configuring-third-party-tools.html). | `README.md:6-7`: "External Tools → Import the file `External Tools.xml`" | **Wrong.** The user finds no Import button. Fix: drop the import step and keep the by-hand table, or say where the XML goes in the IDE config directory once that is checked (see Not verified). |
 | Clickable output | Output filters use `$FILE_PATH$:$LINE$`, and "the tool must output absolute file paths" ([External tools settings](https://www.jetbrains.com/help/idea/settings-tools-external-tools.html)). | Filters in `External Tools.xml:8-12` and others; `README.md:17-18` says links are clickable; `search`, `symbol`, `callers` print repository-relative paths | **Wrong** for relative output. Fix: say links work only with absolute paths, or pass `$ProjectFileDir$` as the path argument where a command takes one (`grep ... "$Prompt$" "$ProjectFileDir$"`). |
 
-A template that would match the README's steps (`template.json`):
+The repository now ships one, `integrations/jetbrains/lsp4ij-template/`, which gives `patterns`
+without a `name` (LSP4IJ 0.21.0 maps a named file type as well, and no IDE file type has that
+name). The first sketch was (`template.json`):
 
 ```json
 {

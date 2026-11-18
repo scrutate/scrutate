@@ -28,7 +28,7 @@ def main() -> int:
     a = ap.parse_args()
     a.glibc, a.musl = os.path.abspath(a.glibc), os.path.abspath(a.musl)
     queries = [["grep", "-F", "fn ", "."], ["grep", r"\w+::\w+\(", "."], ["grep", "-F", "-c", "use ", "."], ["grep", "--ident", "parseFile", "."]]
-    worst = 1.0
+    worst = 0.0
     for q in queries:
         tg, tm, out_g, out_m = [], [], None, None
         for _ in range(a.runs):

@@ -10,7 +10,7 @@ set -euo pipefail
 step() { echo; echo "=== $* ==="; }
 export DEBIAN_FRONTEND=noninteractive CARGO_TERM_COLOR=never
 apt-get update -qq && apt-get install -y -qq curl build-essential git ripgrep sqlite3 musl-tools file xz-utils > /dev/null
-curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal > /dev/null 2>&1
+curl -sSf --retry 5 --retry-all-errors https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal > /dev/null 2>&1
 export PATH=$HOME/.cargo/bin:$PATH
 mkdir -p /work && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=./dist-linux --exclude=node_modules --exclude=./bench/results --exclude=.vscode-test -cf - . | tar -C /work -xf -
 cd /work
@@ -75,7 +75,7 @@ step "editors job: Neovim"
 cd /tmp
 a=x86_64 sum=474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87
 [ "$arch" = aarch64 ] && a=arm64 sum=8f1f64a0bdb97247034038c3823c6cbad5bdf9ecd5751b85494b71c3ee04c815
-curl -sSfL -o nvim.tar.gz "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-$a.tar.gz"
+curl -sSfL --retry 5 --retry-all-errors -o nvim.tar.gz "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-$a.tar.gz"
 echo "$sum  nvim.tar.gz" | sha256sum -c -
 tar xzf nvim.tar.gz
 bash /work/integrations/fixture.sh repo

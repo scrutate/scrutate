@@ -464,6 +464,28 @@ fn go_two_areas() {
 }
 
 #[test]
+fn go_a_test_package_is_not_part_of_the_package_it_tests() {
+    let r = Repo::new(
+        "go_test_pkg",
+        &[
+            ("go.mod", "module example.com/m\n\ngo 1.22\n"),
+            ("a/use.go", "package a\n\nfunc Use() int { return helper() + Exported() }\n"),
+            ("a/z.go", "package a\n\nfunc helper() int { return 1 }\n\nfunc Exported() int { return 2 }\n"),
+            ("a/a_test.go", "package a_test\n\nfunc helper() int { return 3 }\n\nfunc Exported() int { return 4 }\n"),
+            ("b/b.go", "package b\n\nimport \"example.com/m/a\"\n\nfunc B() int { return a.Exported() }\n"),
+            // export_test.go: package a's own test file, which an external test's import of a sees
+            ("a/export_test.go", "// Copyright\n\n//go:build !nope\n\n/* a block */ package a\n\nvar Helper = helper\n"),
+            ("a/ext_test.go", "package a_test\n\nimport \"example.com/m/a\"\n\nfunc TestH() int { return a.Helper() }\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("Helper", "a/export_test.go:7"), ["a/export_test.go:7", "a/ext_test.go:5"]);
+    assert_eq!(r.refs_of("helper", "a/z.go:3"), ["a/export_test.go:7", "a/use.go:3", "a/z.go:3"]);
+    assert_eq!(r.refs_of("helper", "a/a_test.go:3"), ["a/a_test.go:3"]);
+    assert_eq!(r.refs_of("Exported", "a/z.go:5"), ["a/use.go:3", "a/z.go:5", "b/b.go:5"]);
+    assert_eq!(r.callers("a/z.go:3"), ["Use"]);
+}
+
+#[test]
 fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
     let use_js = "import { helper } from './lib';\nfunction viaVar(flag) {\n  if (flag) {\n    var helper = other();\n  }\n  return helper();\n}\nfunction viaLet(flag) {\n  if (flag) {\n    let helper = other();\n  }\n  return helper();\n}\nfunction viaConst(flag) {\n  {\n    const helper = 3;\n  }\n  for (var i = 0; i < 1; i++) {\n    var other = helper();\n  }\n  return helper();\n}\n";
     let r = Repo::new("js_var", &[("lib.js", "export function helper() { return 1; }\n"), ("use.js", use_js)]);
@@ -482,6 +504,53 @@ fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
             ("use.js", 21, h)
         ])
     );
+}
+
+#[test]
+fn callers_json_marks_the_callers_the_resolver_could_not_decide() {
+    let r = Repo::new(
+        "callers_undecided",
+        &[(
+            "m.py",
+            "class A:\n    def run(self):\n        return 1\n\n\nclass B:\n    def run(self):\n        return 2\n\n\ndef go(x):\n    return x.run()\n\n\ndef make():\n    return A().run()\n",
+        )],
+    );
+    let v = r.json(&["callers", "A.run", "--json"]);
+    let flags: Vec<(&str, bool)> = v.as_array().unwrap().iter().map(|h| (h["name"].as_str().unwrap(), h["undecided"] == true)).collect();
+    assert_eq!(flags, [("make", false), ("go", true)], "{v}");
+}
+
+#[test]
+fn rust_a_field_read_is_no_use_of_a_method_of_that_name() {
+    let r = Repo::new(
+        "rs_field_not_method",
+        &[
+            ("Cargo.toml", "[package]\nname = \"fm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            (
+                "src/lib.rs",
+                "pub struct B {\n    follow: bool,\n}\nimpl B {\n    pub fn follow(&mut self, yes: bool) -> &mut B {\n        self.follow = yes;\n        self\n    }\n    pub fn get(&self) -> bool {\n        self.follow\n    }\n}\npub fn use_it(b: &mut B) {\n    b.follow(true);\n}\n",
+            ),
+        ],
+    );
+    // `self.follow` is the field (a method is never named without a call in Rust); `b.follow(true)` calls the method
+    assert_eq!(r.refs_of("follow", "src/lib.rs:5"), ["src/lib.rs:14", "src/lib.rs:5"]);
+}
+
+#[test]
+fn rust_a_deref_of_self_in_a_blanket_impl_is_not_the_enclosing_impl() {
+    let r = Repo::new(
+        "rs_deref_self",
+        &[
+            ("Cargo.toml", "[package]\nname = \"ds\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            (
+                "src/lib.rs",
+                "pub trait M {\n    fn find(&self) -> usize;\n}\nimpl<'a, T: M> M for &'a T {\n    fn find(&self) -> usize {\n        (*self).find()\n    }\n}\nimpl<T: M + ?Sized> M for Box<T> {\n    fn find(&self) -> usize {\n        (**self).find()\n    }\n}\npub struct R;\nimpl M for R {\n    fn find(&self) -> usize {\n        1\n    }\n}\n",
+            ),
+        ],
+    );
+    // `(*self)` and `(**self)` reach the wrapped value: never the impl the call is written in
+    assert_eq!(r.refs_of("find", "src/lib.rs:5"), ["src/lib.rs:5"]);
+    assert_eq!(r.refs_of("find", "src/lib.rs:10"), ["src/lib.rs:10"]);
 }
 
 #[test]
@@ -622,4 +691,18 @@ fn javascript_this_in_a_method_under_a_quoted_key_is_the_object_literal() {
         )],
     );
     assert_eq!(r.refs_of("put", "a.js:8"), ["a.js:3", "a.js:6", "a.js:8"]);
+}
+
+#[test]
+fn rust_self_in_an_inline_module_written_on_one_line_is_that_module() {
+    let r = Repo::new(
+        "rs_one_line_mods",
+        &[
+            ("Cargo.toml", "[package]\nname = \"ol\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("src/lib.rs", "mod outer { pub fn of() {} mod inn { fn g() { super::of(); self::h(); } fn h() {} } }\n"),
+        ],
+    );
+    // both modules start on line 1: `self::` is `inn`, `super::` is `outer`
+    assert!(r.reasons("h", "src/lib.rs").is_empty() && r.reasons("of", "src/lib.rs").is_empty());
+    assert_eq!(r.refs_of("h", "src/lib.rs:1"), ["src/lib.rs:1", "src/lib.rs:1"]);
 }

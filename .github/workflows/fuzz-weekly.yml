@@ -1,6 +1,7 @@
 # A long fuzzing run of every target in fuzz/fuzz_targets once a week (ci.yml only builds them and
 # replays fuzz/regressions). Each target fuzzes for 45 minutes on its own runner, from the corpus
 # the last run left; a crash, a timeout or an out-of-memory input fails the run and is uploaded.
+# The same run takes the session's write-then-read barrier tests to 1000 loops (ci.yml runs 200).
 name: fuzz-weekly
 on:
   schedule:
@@ -83,3 +84,25 @@ jobs:
           path: fuzz/artifacts/${{ matrix.target }}
           if-no-files-found: ignore
           retention-days: 90
+  barrier-stress:
+    name: barrier tests, 1000 loops (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux checks the inotify cookie, macOS the kqueue too
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      # without cross-crate LTO, as ci.yml's test steps build
+      - run: cargo test --release -p scrutate --lib --locked a_file_written_just_before_a_call
+        env:
+          SCRUTATE_TEST_STRESS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"

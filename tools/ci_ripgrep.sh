@@ -14,7 +14,9 @@ case "$RUNNER_OS-$RUNNER_ARCH" in
   *) echo "no pinned ripgrep for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
 esac
 cd "$RUNNER_TEMP"
-curl -sSfL -o "rg.$ext" "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$t.$ext"
+# schannel fails the download when it cannot reach the revocation server; the SHA-256 below checks the archive
+nr=; if [ "$RUNNER_OS" = Windows ]; then nr=--ssl-no-revoke; fi
+curl -sSfL --retry 5 --retry-all-errors ${nr:+"$nr"} -o "rg.$ext" "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$t.$ext"
 # macOS has shasum, not sha256sum
 if command -v sha256sum > /dev/null; then echo "$sum  rg.$ext" | sha256sum -c -; else echo "$sum  rg.$ext" | shasum -a 256 -c -; fi
 if [ "$ext" = zip ]; then unzip -q "rg.$ext"; else tar xzf "rg.$ext"; fi

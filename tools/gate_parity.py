@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The gate and CI cannot drift: every step of the six workflows (ci.yml, security.yml,
-benchmarks.yml, release.yml, fuzz-weekly.yml, jetbrains.yml), `run:` and `uses:` alike, and a job
+"""The gate and CI cannot drift: every step of the seven workflows (ci.yml, security.yml,
+benchmarks.yml, release.yml, fuzz-weekly.yml, jetbrains.yml, scorecard.yml), `run:` and `uses:` alike, and a job
 that calls another workflow, has an entry in tools/gate_map.json, keyed by workflow, job and a
 hash of what decides whether and how it runs: its command or action and inputs, its environment,
 shell, working directory, `if:` and `continue-on-error:`, the job's runner, matrix, `if:`,
@@ -23,7 +23,7 @@ import sys
 import yaml
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-WORKFLOWS = ("ci.yml", "security.yml", "benchmarks.yml", "release.yml", "fuzz-weekly.yml", "jetbrains.yml")
+WORKFLOWS = ("ci.yml", "security.yml", "benchmarks.yml", "release.yml", "fuzz-weekly.yml", "jetbrains.yml", "scorecard.yml")
 KINDS = ("gate:", "setup:", "ci-only:")
 
 

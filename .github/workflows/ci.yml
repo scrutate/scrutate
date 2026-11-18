@@ -270,7 +270,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: wasi-sdk, the C compiler for SQLite and the tree-sitter grammars
         run: |
-          curl -sSfL --retry 5 -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI_SDK.tar.gz"
+          curl -sSfL --retry 5 --retry-all-errors -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI_SDK.tar.gz"
           echo "$WASI_SDK_SHA256  /tmp/wasi-sdk.tar.gz" | sha256sum -c -
           tar -xzf /tmp/wasi-sdk.tar.gz -C "$RUNNER_TEMP"
           sdk="$RUNNER_TEMP/$WASI_SDK"
@@ -429,7 +429,9 @@ jobs:
           bin=$GITHUB_WORKSPACE/bin/scrutate
           if [ "$RUNNER_OS" = Windows ]; then bin=$bin.exe; exe=.exe; else chmod +x "$bin"; exe=; fi
           cd "$RUNNER_TEMP"
-          curl -sSfL --retry 5 -o "$a" "https://github.com/neovim/neovim/releases/download/$NVIM/$a"
+          # schannel fails the download when it cannot reach the revocation server; the SHA-256 below checks the archive
+          nr=; if [ "$RUNNER_OS" = Windows ]; then nr=--ssl-no-revoke; fi
+          curl -sSfL --retry 5 --retry-all-errors ${nr:+"$nr"} -o "$a" "https://github.com/neovim/neovim/releases/download/$NVIM/$a"
           if command -v sha256sum > /dev/null; then echo "$sum  $a" | sha256sum -c -; else echo "$sum  $a" | shasum -a 256 -c -; fi
           mkdir nvim
           if [ "$RUNNER_OS" = Windows ]; then unzip -q "$a" -d nvim; else tar xzf "$a" -C nvim; fi
@@ -519,7 +521,7 @@ jobs:
       - name: the template on a merge request that adds a duplicate, in debian:bookworm-slim
         run: |
           cd "$RUNNER_TEMP"
-          curl -sSfL --retry 5 -o gcl.tar.gz https://github.com/firecow/gitlab-ci-local/releases/download/4.77.1/gitlab-ci-local-linux-amd64.tar.gz
+          curl -sSfL --retry 5 --retry-all-errors -o gcl.tar.gz https://github.com/firecow/gitlab-ci-local/releases/download/4.77.1/gitlab-ci-local-linux-amd64.tar.gz
           echo "bdf795f48ea29a0d175db4637c643cb016cfc1e5c0c412fe024d1b871fc465d0  gcl.tar.gz" | sha256sum -c -
           tar xzf gcl.tar.gz
           ./gitlab-ci-local --version
@@ -566,7 +568,7 @@ jobs:
         run: |
           cd "$RUNNER_TEMP"
           w=bitbucket_pipeline_runner-0.6.4-py3-none-any.whl
-          curl -sSfL --retry 5 -o "$w" "https://files.pythonhosted.org/packages/py3/b/bitbucket-pipeline-runner/$w"
+          curl -sSfL --retry 5 --retry-all-errors -o "$w" "https://files.pythonhosted.org/packages/py3/b/bitbucket-pipeline-runner/$w"
           echo "614209d936fd9618485cc9a968529f17d7d509ec493cd0c68fb44c9c26268064  $w" | sha256sum -c -
           python -m venv pr
           pr/bin/pip install --quiet "./$w"

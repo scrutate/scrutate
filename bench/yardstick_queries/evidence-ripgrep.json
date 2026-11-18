@@ -1,0 +1,1526 @@
+[
+ {
+  "id": "W5/refs RegexMatcherBuilder.build_many",
+  "grep_hits": 10,
+  "uses": [
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 446,
+    "counts": false,
+    "reason": "builder is grep::pcre2::RegexMatcherBuilder (matcher_pcre2)"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 507,
+    "counts": true,
+    "reason": "builder is grep::regex::RegexMatcherBuilder (matcher_rust)"
+   },
+   {
+    "path": "crates/globset/src/lib.rs",
+    "line": 299,
+    "counts": false,
+    "reason": "regex_automata meta Regex::builder(), external crate"
+   },
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 46,
+    "counts": true,
+    "reason": "self is grep_regex RegexMatcherBuilder in build"
+   },
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 53,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 57,
+    "counts": false,
+    "reason": "self.config is grep_regex Config, calls Config::build_many"
+   },
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 96,
+    "counts": true,
+    "reason": "self is grep_regex RegexMatcherBuilder in build_literals"
+   },
+   {
+    "path": "crates/regex/src/config.rs",
+    "line": 75,
+    "counts": false,
+    "reason": "definition of Config::build_many, other type"
+   },
+   {
+    "path": "crates/pcre2/src/matcher.rs",
+    "line": 38,
+    "counts": false,
+    "reason": "self is grep_pcre2 RegexMatcherBuilder"
+   },
+   {
+    "path": "crates/pcre2/src/matcher.rs",
+    "line": 45,
+    "counts": false,
+    "reason": "definition of grep_pcre2 RegexMatcherBuilder::build_many"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs Sink.binary_data",
+  "grep_hits": 12,
+  "uses": [
+   {
+    "path": "crates/searcher/src/searcher/core.rs",
+    "line": 107,
+    "counts": false,
+    "reason": "definition of Core::binary_data, other type"
+   },
+   {
+    "path": "crates/searcher/src/searcher/core.rs",
+    "line": 111,
+    "counts": true,
+    "reason": "self.sink has type S: Sink, trait call"
+   },
+   {
+    "path": "crates/searcher/src/searcher/core.rs",
+    "line": 231,
+    "counts": false,
+    "reason": "self is Core, calls Core::binary_data"
+   },
+   {
+    "path": "crates/searcher/src/searcher/glue.rs",
+    "line": 71,
+    "counts": false,
+    "reason": "self.core is Core, calls Core::binary_data"
+   },
+   {
+    "path": "crates/searcher/src/sink.rs",
+    "line": 188,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/searcher/src/sink.rs",
+    "line": 255,
+    "counts": false,
+    "reason": "impl method definition for &mut S, not a use"
+   },
+   {
+    "path": "crates/searcher/src/sink.rs",
+    "line": 260,
+    "counts": true,
+    "reason": "(**self) is S: Sink in impl Sink for &mut S"
+   },
+   {
+    "path": "crates/searcher/src/sink.rs",
+    "line": 308,
+    "counts": false,
+    "reason": "impl method definition for Box<S>, not a use"
+   },
+   {
+    "path": "crates/searcher/src/sink.rs",
+    "line": 313,
+    "counts": true,
+    "reason": "(**self) is S: Sink in impl Sink for Box<S>"
+   },
+   {
+    "path": "crates/printer/src/standard.rs",
+    "line": 823,
+    "counts": false,
+    "reason": "impl method definition in StandardSink, not a use"
+   },
+   {
+    "path": "crates/printer/src/json.rs",
+    "line": 785,
+    "counts": false,
+    "reason": "impl method definition in JSONSink, not a use"
+   },
+   {
+    "path": "crates/printer/src/summary.rs",
+    "line": 679,
+    "counts": false,
+    "reason": "impl method definition in SummarySink, not a use"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs Matcher.shortest_match_at",
+  "grep_hits": 7,
+  "uses": [
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 471,
+    "counts": false,
+    "reason": "impl method definition for grep_regex RegexMatcher, not a use"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 981,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 992,
+    "counts": true,
+    "reason": "self: Self: Matcher in default is_match_at"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1014,
+    "counts": true,
+    "reason": "self: Self: Matcher in default shortest_match"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1036,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1354,
+    "counts": false,
+    "reason": "impl method definition for &M, not a use"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1359,
+    "counts": true,
+    "reason": "(*self) is M: Matcher in impl Matcher for &M"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs RegexMatcher.new_captures",
+  "grep_hits": 17,
+  "uses": [
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 78,
+    "counts": false,
+    "reason": "definition in grep_searcher testutil RegexMatcher, other type"
+   },
+   {
+    "path": "crates/printer/src/util.rs",
+    "line": 149,
+    "counts": false,
+    "reason": "matcher is generic M: Matcher, trait call, not this impl"
+   },
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 424,
+    "counts": false,
+    "reason": "definition in grep_regex RegexMatcher, other type"
+   },
+   {
+    "path": "crates/matcher/tests/util.rs",
+    "line": 39,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/matcher/tests/util.rs",
+    "line": 80,
+    "counts": false,
+    "reason": "definition of RegexMatcherNoCaps::new_captures"
+   },
+   {
+    "path": "crates/matcher/tests/test_matcher.rs",
+    "line": 89,
+    "counts": true,
+    "reason": "matcher = matcher(..) returns tests util RegexMatcher"
+   },
+   {
+    "path": "crates/matcher/tests/test_matcher.rs",
+    "line": 99,
+    "counts": true,
+    "reason": "matcher = matcher(..) returns tests util RegexMatcher"
+   },
+   {
+    "path": "crates/matcher/tests/test_matcher.rs",
+    "line": 133,
+    "counts": true,
+    "reason": "matcher = matcher(..) returns tests util RegexMatcher"
+   },
+   {
+    "path": "crates/matcher/tests/test_matcher.rs",
+    "line": 163,
+    "counts": false,
+    "reason": "matcher = matcher_no_caps(..) is RegexMatcherNoCaps"
+   },
+   {
+    "path": "crates/matcher/tests/test_matcher.rs",
+    "line": 203,
+    "counts": true,
+    "reason": "matcher = matcher(..) returns tests util RegexMatcher"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 536,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 537,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 543,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 583,
+    "counts": false,
+    "reason": "trait declaration Matcher::new_captures"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1147,
+    "counts": false,
+    "reason": "impl for &M definition"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1148,
+    "counts": false,
+    "reason": "(*self) is generic M, trait call"
+   },
+   {
+    "path": "crates/pcre2/src/matcher.rs",
+    "line": 331,
+    "counts": false,
+    "reason": "definition in grep_pcre2 RegexMatcher, other type"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs WalkBuilder.follow_links",
+  "grep_hits": 17,
+  "uses": [
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 888,
+    "counts": true,
+    "reason": "chained on &mut WalkBuilder returned by .max_depth()"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 493,
+    "counts": false,
+    "reason": "struct field"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 530,
+    "counts": false,
+    "reason": "field read in Debug impl"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 566,
+    "counts": false,
+    "reason": "field init"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 593,
+    "counts": false,
+    "reason": "local binding from field"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 605,
+    "counts": false,
+    "reason": "wd is walkdir::WalkDir, external method"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 663,
+    "counts": false,
+    "reason": "field init"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 710,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 711,
+    "counts": false,
+    "reason": "field assignment self.follow_links"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 1358,
+    "counts": false,
+    "reason": "struct field"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 1459,
+    "counts": false,
+    "reason": "field init"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 1681,
+    "counts": false,
+    "reason": "struct field"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 1822,
+    "counts": false,
+    "reason": "field read"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 2451,
+    "counts": true,
+    "reason": "builder is WalkBuilder::new(..)"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 2486,
+    "counts": true,
+    "reason": "builder is WalkBuilder::new(..)"
+   },
+   {
+    "path": "crates/ignore/src/walk.rs",
+    "line": 2519,
+    "counts": true,
+    "reason": "builder is WalkBuilder::new(..)"
+   },
+   {
+    "path": "tests/util.rs",
+    "line": 463,
+    "counts": false,
+    "reason": "chained on walkdir::WalkDir::new(..), external method"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers SearcherBuilder.heap_limit",
+  "grep_hits": 24,
+  "uses": [
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 168,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 196,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 224,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 457,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 461,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 806,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 959,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 986,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 987,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 995,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 996,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 1002,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 1019,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 1021,
+    "counts": false,
+    "reason": "Config field or local variable, not the method"
+   },
+   {
+    "path": "crates/searcher/src/searcher/mod.rs",
+    "line": 1056,
+    "counts": true,
+    "reason": "chained on SearcherBuilder::new()"
+   },
+   {
+    "path": "crates/searcher/src/searcher/glue.rs",
+    "line": 671,
+    "counts": true,
+    "reason": "chained on SearcherBuilder::new()"
+   },
+   {
+    "path": "crates/searcher/src/searcher/glue.rs",
+    "line": 692,
+    "counts": true,
+    "reason": "chained on .multi_line(true) result, &mut SearcherBuilder"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 548,
+    "counts": true,
+    "reason": "builder is SearcherBuilder clone"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 556,
+    "counts": true,
+    "reason": "builder is SearcherBuilder clone"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 634,
+    "counts": true,
+    "reason": "builder is SearcherBuilder clone"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 642,
+    "counts": true,
+    "reason": "builder is SearcherBuilder clone"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 666,
+    "counts": true,
+    "reason": "builder is SearcherBuilder clone"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 674,
+    "counts": true,
+    "reason": "builder is SearcherBuilder clone"
+   },
+   {
+    "path": "crates/printer/src/json.rs",
+    "line": 938,
+    "counts": true,
+    "reason": "chained on .binary_detection(..) result, &mut SearcherBuilder"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs sort_lines",
+  "grep_hits": 14,
+  "uses": [
+   {
+    "path": "tests/feature.rs",
+    "line": 2,
+    "counts": true,
+    "reason": "use crate::util::{.., sort_lines} import names D"
+   },
+   {
+    "path": "tests/feature.rs",
+    "line": 139,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/feature.rs",
+    "line": 149,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/feature.rs",
+    "line": 162,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/util.rs",
+    "line": 39,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "tests/regression.rs",
+    "line": 2,
+    "counts": true,
+    "reason": "use crate::util::{.., sort_lines} import names D"
+   },
+   {
+    "path": "tests/regression.rs",
+    "line": 124,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/regression.rs",
+    "line": 125,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/regression.rs",
+    "line": 924,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/misc.rs",
+    "line": 2,
+    "counts": true,
+    "reason": "use crate::util::{.., sort_lines} import names D"
+   },
+   {
+    "path": "tests/misc.rs",
+    "line": 97,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/misc.rs",
+    "line": 319,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/misc.rs",
+    "line": 939,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   },
+   {
+    "path": "tests/misc.rs",
+    "line": 1134,
+    "counts": true,
+    "reason": "call inside eqnice! inside rgtest! closure"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs TestCommand.pipe",
+  "grep_hits": 25,
+  "uses": [
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 714,
+    "counts": false,
+    "reason": "string literal (flag doc text)"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1107,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/main.rs",
+    "line": 47,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/main.rs",
+    "line": 128,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/main.rs",
+    "line": 205,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/main.rs",
+    "line": 251,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/main.rs",
+    "line": 318,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/messages.rs",
+    "line": 45,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/lib.rs",
+    "line": 163,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/process.rs",
+    "line": 175,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/process.rs",
+    "line": 233,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/process.rs",
+    "line": 235,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "CHANGELOG.md",
+    "line": 906,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "CHANGELOG.md",
+    "line": 1250,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "tests/feature.rs",
+    "line": 75,
+    "counts": true,
+    "reason": "chained on cmd.arg(..) result, &mut TestCommand"
+   },
+   {
+    "path": "tests/util.rs",
+    "line": 307,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "tests/regression.rs",
+    "line": 924,
+    "counts": true,
+    "reason": "chained on cmd.arg(..) result, &mut TestCommand"
+   },
+   {
+    "path": "tests/binary.rs",
+    "line": 194,
+    "counts": true,
+    "reason": "cmd is TestCommand (rgtest! closure arg)"
+   },
+   {
+    "path": "tests/multiline.rs",
+    "line": 100,
+    "counts": true,
+    "reason": "cmd is TestCommand (rgtest! closure arg)"
+   },
+   {
+    "path": "FAQ.md",
+    "line": 24,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "FAQ.md",
+    "line": 252,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "FAQ.md",
+    "line": 832,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "FAQ.md",
+    "line": 833,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "FAQ.md",
+    "line": 882,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "GUIDE.md",
+    "line": 996,
+    "counts": false,
+    "reason": "non-code file"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs hostname",
+  "grep_hits": 59,
+  "uses": [
+   {
+    "path": "crates/core/flags/complete/rg.zsh",
+    "line": 328,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "crates/core/flags/complete/rg.zsh",
+    "line": 482,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2835,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2844,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2853,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2857,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2861,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2864,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2866,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2868,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2889,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2892,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2955,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2957,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2958,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 2959,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1277,
+    "counts": false,
+    "reason": "calls core's own fn hostname(bin) in hiargs.rs"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1278,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1279,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1314,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1319,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1321,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1324,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1325,
+    "counts": false,
+    "reason": "definition of core's own fn hostname, other function"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1331,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1332,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1344,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1354,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1359,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1360,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1364,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1368,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1371,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1376,
+    "counts": true,
+    "reason": "grep::cli::hostname via pub extern crate grep_cli as cli + pub use"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1379,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1383,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1385,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1390,
+    "counts": false,
+    "reason": "local variable or string literal"
+   },
+   {
+    "path": "crates/core/flags/mod.rs",
+    "line": 167,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/mod.rs",
+    "line": 168,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/mod.rs",
+    "line": 172,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/mod.rs",
+    "line": 173,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/core/flags/lowargs.rs",
+    "line": 27,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/printer/src/hyperlink/mod.rs",
+    "line": 20,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/printer/src/hyperlink/mod.rs",
+    "line": 249,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/printer/src/hyperlink/mod.rs",
+    "line": 262,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/printer/src/hyperlink/mod.rs",
+    "line": 265,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/printer/src/hyperlink/mod.rs",
+    "line": 520,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/lib.rs",
+    "line": 128,
+    "counts": false,
+    "reason": "mod hostname declaration, module not function"
+   },
+   {
+    "path": "crates/cli/src/lib.rs",
+    "line": 140,
+    "counts": true,
+    "reason": "pub use hostname::hostname re-export names D"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 3,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 11,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 16,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 30,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 65,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 69,
+    "counts": false,
+    "reason": "string literal"
+   },
+   {
+    "path": "crates/cli/src/hostname.rs",
+    "line": 83,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": ".scrutate/text/s00000001/paths.bin",
+    "line": 1,
+    "counts": false,
+    "reason": "non-code file"
+   },
+   {
+    "path": ".github/workflows/ci.yml",
+    "line": 195,
+    "counts": false,
+    "reason": "non-code file"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers resolve_binary",
+  "grep_hits": 5,
+  "uses": [
+   {
+    "path": "crates/core/flags/hiargs.rs",
+    "line": 1327,
+    "counts": true,
+    "reason": "grep::cli::resolve_binary via re-export, inside core's fn hostname"
+   },
+   {
+    "path": "crates/core/search.rs",
+    "line": 97,
+    "counts": true,
+    "reason": "grep::cli::resolve_binary via re-export"
+   },
+   {
+    "path": "crates/cli/src/decompress.rs",
+    "line": 420,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/cli/src/decompress.rs",
+    "line": 501,
+    "counts": true,
+    "reason": "direct call inside nested fn add"
+   },
+   {
+    "path": "crates/cli/src/lib.rs",
+    "line": 137,
+    "counts": false,
+    "reason": "pub use re-export, not a call"
+   }
+  ]
+ },
+ {
+  "id": "W5/callers RegexMatcher.find_at",
+  "grep_hits": 40,
+  "uses": [
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 67,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 74,
+    "counts": false,
+    "reason": "self.regex is regex::bytes::Regex, external find_at"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 739,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 747,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 748,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 756,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 757,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 758,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 766,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 767,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 768,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 769,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 770,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 771,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 779,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 780,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 781,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 782,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 783,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 784,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 785,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 793,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 794,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/searcher/src/testutil.rs",
+    "line": 795,
+    "counts": true,
+    "reason": "matcher is testutil RegexMatcher::new(..), call inside assert_eq!"
+   },
+   {
+    "path": "crates/regex/src/matcher.rs",
+    "line": 414,
+    "counts": false,
+    "reason": "definition in grep_regex RegexMatcher, other type"
+   },
+   {
+    "path": "crates/matcher/tests/util.rs",
+    "line": 32,
+    "counts": false,
+    "reason": "definition in grep_matcher tests RegexMatcher, other type"
+   },
+   {
+    "path": "crates/matcher/tests/util.rs",
+    "line": 35,
+    "counts": false,
+    "reason": "regex::bytes::Regex, external"
+   },
+   {
+    "path": "crates/matcher/tests/util.rs",
+    "line": 73,
+    "counts": false,
+    "reason": "definition in RegexMatcherNoCaps, other type"
+   },
+   {
+    "path": "crates/matcher/tests/util.rs",
+    "line": 76,
+    "counts": false,
+    "reason": "regex::bytes::Regex, external"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 536,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 543,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 571,
+    "counts": false,
+    "reason": "trait declaration Matcher::find_at"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 622,
+    "counts": false,
+    "reason": "self: Self generic in trait default, not this impl"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 708,
+    "counts": false,
+    "reason": "self: Self generic in trait default, not this impl"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1030,
+    "counts": false,
+    "reason": "comment"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1041,
+    "counts": false,
+    "reason": "self: Self generic in trait default, not this impl"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1138,
+    "counts": false,
+    "reason": "impl for &M definition"
+   },
+   {
+    "path": "crates/matcher/src/lib.rs",
+    "line": 1143,
+    "counts": false,
+    "reason": "(*self) generic M, not this impl"
+   },
+   {
+    "path": "crates/pcre2/src/matcher.rs",
+    "line": 319,
+    "counts": false,
+    "reason": "definition in grep_pcre2 RegexMatcher, other type"
+   },
+   {
+    "path": "crates/pcre2/src/matcher.rs",
+    "line": 326,
+    "counts": false,
+    "reason": "pcre2 crate Regex, external"
+   }
+  ]
+ },
+ {
+  "id": "W5/refs parse_human_readable_size",
+  "grep_hits": 12,
+  "uses": [
+   {
+    "path": "crates/core/flags/defs.rs",
+    "line": 7603,
+    "counts": true,
+    "reason": "grep::cli::parse_human_readable_size via re-export"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 79,
+    "counts": false,
+    "reason": "definition of D"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 108,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 114,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 120,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 126,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 132,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 137,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 142,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/human.rs",
+    "line": 147,
+    "counts": true,
+    "reason": "tests module, use super::*"
+   },
+   {
+    "path": "crates/cli/src/lib.rs",
+    "line": 118,
+    "counts": false,
+    "reason": "crate doc block comment /*! */"
+   },
+   {
+    "path": "crates/cli/src/lib.rs",
+    "line": 141,
+    "counts": true,
+    "reason": "pub use human::{.., parse_human_readable_size} re-export names D"
+   }
+  ]
+ }
+]

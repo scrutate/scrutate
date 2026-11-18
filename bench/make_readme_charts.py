@@ -28,7 +28,7 @@ ROOT = os.path.normpath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, HERE)
 import gen_assets as G  # noqa: E402  (tokens, parts, SVG wrapper, write/check)
-from make_leaderboard_md import ms  # noqa: E402
+from make_leaderboard_md import ms, published  # noqa: E402
 
 RESULTS = os.path.join(ROOT, "bench", "results")
 
@@ -170,7 +170,9 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
             pairs.append((t, x["median"], f"{ms(x['median'])} ms" + (f" ({n} runs)" if n and n < r.get("runs", runs) else "")))
         if r.get("qtype") == "structural" and "--no-cache" not in r["tools"]["scrutate"].get("argv", ["--no-cache"]):
             title += ", capture cache"
-        row(title, f"ratio {r['ratio']:.3f}, {(1 - r.get('alpha', 0.05)) * 100:g}% CI {r['ci95'][0]:.3f} to {r['ci95'][1]:.3f}, {r['status']}", pairs)
+        p = published(r)
+        status = p["status"] + (f": {p['measured']}" if p.get("measured") else "")
+        row(title, f"ratio {r['ratio']:.3f}, {(1 - r.get('alpha', 0.05)) * 100:g}% CI {r['ci95'][0]:.3f} to {r['ci95'][1]:.3f}, {status}", pairs)
     sha = env.get("scrutate_sha256", "")[:8]
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
     y = foot(b, y + 22, W, [f"{env['cpu']}, macOS, shared with other work, {env['date'][:10]}, binary {sha}, "

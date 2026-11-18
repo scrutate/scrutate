@@ -50,6 +50,13 @@ impl Rules for Rust {
     // `self::x` and `super::x` inside inline `mod a { }` blocks count from those blocks first
     #[allow(clippy::too_many_arguments)]
     fn qualified(r: &mut Resolver, path: &str, fi: &FileInfo, lang: Lang, q: Node, node: Node, name: &str, line: i64) -> Resolution {
+        // Rust names a method only to call it (E0615): `x.name` that is no callee is a field, never a function
+        if node.parent().is_some_and(|p| p.kind() == "field_expression" && p.child_by_field_name("field") == Some(node) && !rust_callee(p)) {
+            return match r.walk_qualified(path, fi, lang, q, node, name, line) {
+                Ok((id, _)) if r.def_kind(id).is_some_and(|k| matches!(k.as_str(), "function" | "method")) => Err("field"),
+                other => other,
+            };
+        }
         let qt: String = text(q, &fi.src).chars().filter(|c| !c.is_whitespace()).collect();
         let segs: Vec<&str> = qt.split("::").collect();
         let ups = segs.iter().take_while(|s| **s == "super").count();
@@ -64,9 +71,16 @@ impl Rules for Rust {
         if mods.is_empty() || !(segs[0] == "self" || ups > 0) {
             return r.walk_qualified(path, fi, lang, q, node, name, line);
         }
+        // modules written on one line share their row: the name and the enclosing modules tell them apart
         let module = |m: Node| {
             let row = m.start_position().row as i64 + 1;
-            fi.defs.iter().find(|d| d.kind == "module" && d.start == row).map(|d| d.id)
+            let names: Vec<&str> = std::iter::successors(Some(m), |n| n.parent())
+                .filter(|n| n.kind() == "mod_item")
+                .filter_map(|n| n.child_by_field_name("name").map(|x| text(x, &fi.src)))
+                .collect();
+            let chain = names.iter().rev().copied().collect::<Vec<_>>().join(".");
+            let at_row = || fi.defs.iter().filter(|d| d.kind == "module" && d.start == row);
+            at_row().find(|d| d.qualname == chain || d.qualname.ends_with(&format!(".{chain}"))).or_else(|| at_row().next()).map(|d| d.id)
         };
         let rest = &segs[if ups == 0 { 1 } else { ups }..];
         let mut cur = match mods.get(ups) {
@@ -80,6 +94,12 @@ impl Rules for Rust {
             });
         }
         cur.map(|id| (id, "qualified")).ok_or("not found")
+    }
+
+    // `*self` in an impl for a reference or a smart pointer is the value it wraps, not the impl's own
+    // type: unknown rather than the enclosing impl, whose method would call itself
+    fn expression_ty(_r: &mut Resolver, _path: &str, fi: &FileInfo, e: Node) -> Option<Option<Ty>> {
+        (e.kind() == "unary_expression" && rust_deref_of_self(e, &fi.src) && rust_impl_of_wrapper(e, &fi.src)).then_some(None)
     }
 
     fn is_receiver(_q: Node, qt: &str, node: Node) -> bool {
@@ -231,6 +251,39 @@ fn rust_impl_of(r: &mut Resolver, s: &Symbol, id: i64) -> bool {
     }
     let Some(leaf) = item.and_then(|n| n.child_by_field_name("type")).and_then(type_name) else { return false };
     matches!(r.type_leaf(&s.path, &fi, Lang::Rust, leaf, s.start), Ok((t, _)) if t == id)
+}
+
+/// Whether field expression `f` is what a call calls, directly or through a turbofish (`x.m::<T>()`).
+fn rust_callee(f: Node) -> bool {
+    let callee = match f.parent() {
+        Some(g) if g.kind() == "generic_function" && g.child_by_field_name("function") == Some(f) => g,
+        _ => f,
+    };
+    callee.parent().is_some_and(|c| c.kind() == "call_expression" && c.child_by_field_name("function") == Some(callee))
+}
+
+/// Whether `e` is `*` applied, through parentheses and more `*`, to `self`.
+fn rust_deref_of_self(e: Node, src: &str) -> bool {
+    let mut at = e;
+    loop {
+        match at.kind() {
+            "unary_expression" if at.child(0).is_some_and(|op| text(op, src) == "*") => {}
+            "unary_expression" => return false,
+            "parenthesized_expression" => {}
+            "self" => return at.id() != e.id(),
+            _ => return false,
+        }
+        let Some(next) = at.named_child(0) else { return false };
+        at = next;
+    }
+}
+
+/// Whether `e` is inside an impl for a reference or a smart pointer (`impl M for &'a T`, `for Box<T>`).
+fn rust_impl_of_wrapper(e: Node, src: &str) -> bool {
+    let Some(imp) = std::iter::successors(e.parent(), |n| n.parent()).find(|n| n.kind() == "impl_item") else { return false };
+    let Some(ty) = imp.child_by_field_name("type") else { return false };
+    let t = text(ty, src).trim();
+    t.starts_with('&') || RUST_DEREF.contains(&t.split('<').next().unwrap_or("").trim())
 }
 
 /// Standard Rust types whose methods a call reaches through `Deref` to the type they hold.

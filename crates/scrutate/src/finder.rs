@@ -48,7 +48,7 @@ pub fn find(root: &Path, query: &str, limit: usize) -> Result<(Vec<FileHit>, boo
         bail!("files needs a query: part of a file name or path");
     }
     let key = root_key(root);
-    let state = state_file().map(|f| State::load(&f)).unwrap_or_default();
+    let state = state_file().filter(|f| state_dir_refused(f).is_none()).map(|f| State::load(&f)).unwrap_or_default();
     let now = now();
     let mut hits: Vec<(Rank, FileHit)> = walk(root)
         .into_iter()
@@ -84,12 +84,67 @@ pub fn visited(root: &Path, paths: &[&str]) {
     let _ = state.save(&file);
 }
 
-/// `$XDG_STATE_HOME/scrutate/frecency.json`, else under `~/.local/state/scrutate/` (on Windows
-/// `%LOCALAPPDATA%\scrutate\`). None when no such directory is named.
+/// Why the state directory holding `file` may not be read: another user owns it (Unix); one of the
+/// user's own that others may write to is closed to them first, as `open_state_dir` does.
+pub(crate) fn state_dir_refused(file: &Path) -> Option<String> {
+    file.parent().and_then(refused)
+}
+
+/// Makes `dir`, a state directory, if missing (mode 0700 on Unix) and checks it as `deps_dir` checks
+/// the cache: refused when another user owns it, closed to others (0700) when they may write to
+/// it. The reason it is refused goes to stderr once per process.
+pub(crate) fn open_state_dir(dir: &Path) -> Result<()> {
+    let mut b = std::fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    b.create(dir)?;
+    match refused(dir) {
+        Some(why) => {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| eprintln!("[scrutate] {why}"));
+            bail!(why)
+        }
+        None => Ok(()),
+    }
+}
+
+/// Why the state directory `dir` may not be used; one of the user's own that others may write to is
+/// first closed to them (0700).
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn refused(dir: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let m = std::fs::metadata(dir).ok()?;
+        let shown = crate::fmt::echo(&crate::paths::plain_path(dir).to_string_lossy());
+        if m.uid() != rustix::process::geteuid().as_raw() {
+            return Some(format!("the state directory {shown} belongs to another user: not used (set XDG_STATE_HOME to a directory of your own)"));
+        }
+        if m.mode() & 0o022 != 0 && std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).is_err() {
+            return Some(format!("others may write to the state directory {shown}: not used (set XDG_STATE_HOME to a directory of your own)"));
+        }
+    }
+    None
+}
+
+/// `frecency.json` in the state directory (`state_dir_in`).
 pub fn state_file() -> Option<PathBuf> {
-    let var = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
-    let base = var("XDG_STATE_HOME").or_else(|| if cfg!(windows) { var("LOCALAPPDATA") } else { var("HOME").map(|h| h.join(".local").join("state")) })?;
-    Some(base.join("scrutate").join(STATE_FILE))
+    state_file_in(cfg!(windows), |k| std::env::var_os(k))
+}
+
+/// `state_file` on Windows or not, with the environment `env`.
+pub(crate) fn state_file_in(windows: bool, env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    state_dir_in(windows, env).map(|d| d.join(STATE_FILE))
+}
+
+/// The directory of scrutate's state files (this frecency and the Grep hook's counter):
+/// `$XDG_STATE_HOME/scrutate` on every system, else `~/.local/state/scrutate` (on Windows
+/// `%LOCALAPPDATA%\scrutate`); a relative or empty value names none. None when nothing does.
+pub(crate) fn state_dir_in(windows: bool, env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let var = |k: &str| env(k).map(PathBuf::from).filter(|p| p.is_absolute());
+    let base = var("XDG_STATE_HOME").or_else(|| if windows { var("LOCALAPPDATA") } else { var("HOME").map(|h| h.join(".local").join("state")) })?;
+    Some(base.join("scrutate"))
 }
 
 /// tier (exact basename, basename, path), quality, frecency, length, path
@@ -269,17 +324,24 @@ impl State {
         self.roots.retain(|_, files| !files.is_empty());
     }
 
-    /// Written whole to a file beside `file`, then renamed over it.
+    /// Written whole to a new file beside `file`, then renamed over it: the new file is created
+    /// under a name no one can guess and never opened through anything already there.
     fn save(&mut self, file: &Path) -> Result<()> {
+        use std::hash::{BuildHasher, Hasher};
+        use std::io::Write;
         self.version = 1;
         let dir = file.parent().unwrap_or(Path::new("."));
-        std::fs::create_dir_all(dir)?;
-        #[cfg(not(target_os = "wasi"))]
-        let tmp = dir.join(format!("{STATE_FILE}.{}.tmp", std::process::id()));
-        // wasi has no process id
-        #[cfg(target_os = "wasi")]
-        let tmp = dir.join(format!("{STATE_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec(self)?)?;
+        open_state_dir(dir)?;
+        let random = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        let tmp = dir.join(format!("{STATE_FILE}.{random:016x}.tmp"));
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        if let Err(e) = o.open(&tmp).and_then(|mut f| f.write_all(&serde_json::to_vec(self)?)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
         if let Err(e) = std::fs::rename(&tmp, file) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.into());
@@ -369,6 +431,47 @@ mod tests {
         s.save(&file).unwrap();
         assert!((State::load(&file).frecency("r", "a", 1.0) - 1.0).abs() < 1e-9);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no temporary file is left");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn planted(name: &str) -> (PathBuf, PathBuf) {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp").join(format!("frecency_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("state")).unwrap();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"mine\n").unwrap();
+        (dir, victim)
+    }
+
+    /// A link planted at the name the temporary file once had (pid only) is not written through.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_temporary_name_is_not_written_through() {
+        let (dir, victim) = planted("tmp_link");
+        let state = dir.join("state");
+        std::os::unix::fs::symlink(&victim, state.join(format!("{STATE_FILE}.{}.tmp", std::process::id()))).unwrap();
+        let mut s = State::default();
+        s.visit("r", "a", 1.0);
+        s.save(&state.join(STATE_FILE)).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"mine\n");
+        assert!((State::load(&state.join(STATE_FILE)).frecency("r", "a", 1.0) - 1.0).abs() < 1e-9);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A state directory others may write to is closed to them before it is used; one another user
+    /// owns is refused (only a test as root could make one: the owner check is `deps_dir`'s).
+    #[cfg(unix)]
+    #[test]
+    fn a_state_directory_others_may_write_to_is_closed_first() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, _) = planted("open_dir");
+        let state = dir.join("state");
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let mut s = State::default();
+        s.visit("r", "a", 1.0);
+        s.save(&state.join(STATE_FILE)).unwrap();
+        assert_eq!(std::fs::metadata(&state).unwrap().permissions().mode() & 0o777, 0o700);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

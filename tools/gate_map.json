@@ -187,7 +187,7 @@
   "step": "rustup toolchain install --no-self-update && rustup target add wasm32-wasip1",
   "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
  },
- "ci.yml:wasi:bd84262f36": {
+ "ci.yml:wasi:06d8d3902d": {
   "step": "wasi-sdk, the C compiler for SQLite and the tree-sitter grammars",
   "by": "setup: the box's ci_setup.sh installs wasi-sdk in ~/wasi-sdk"
  },
@@ -279,7 +279,7 @@
   "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
   "by": "ci-only: a step of the vscode job, which only CI runs"
  },
- "ci.yml:neovim:e77f01e09a": {
+ "ci.yml:neovim:ba3e7a78f5": {
   "step": "the plugin in a headless Neovim",
   "by": "ci-only: the plugin test needs Neovim, which the boxes lack"
  },
@@ -327,7 +327,7 @@
   "step": "./.github/actions/scrutate",
   "by": "ci-only: a step of the action job, which only CI runs"
  },
- "ci.yml:gitlab-template:0a79fa550d": {
+ "ci.yml:gitlab-template:d7b1b286be": {
   "step": "the template on a merge request that adds a duplicate, in debian:bookworm-slim",
   "by": "ci-only: the template runs in a debian:bookworm-slim container, and the boxes run no docker for the gate"
  },
@@ -355,7 +355,7 @@
   "step": "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
   "by": "setup: the box's python3, and the lane venv the gate makes"
  },
- "ci.yml:bitbucket-template:bd22164cfc": {
+ "ci.yml:bitbucket-template:a94b6871aa": {
   "step": "the template on a push, in debian:bookworm-slim",
   "by": "ci-only: the template runs in a debian:bookworm-slim container, and the boxes run no docker for the gate"
  },
@@ -395,8 +395,8 @@
   "step": "zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd",
   "by": "gate: zizmor"
  },
- "security.yml:actionlint:c6527e0036": {
-  "step": "curl -fsSL -o \"$RUNNER_TEMP/actionlint.tar.gz\" https://github.com/rhysd/actionli",
+ "security.yml:actionlint:b01516d748": {
+  "step": "curl -fsSL --retry 5 --retry-all-errors -o \"$RUNNER_TEMP/actionlint.tar.gz\" http",
   "by": "setup: the box's ci_setup.sh puts actionlint 1.7.12 and shellcheck in SCRUTATE_GATE_TOOLS"
  },
  "security.yml:actionlint:94bb116f25": {
@@ -415,8 +415,8 @@
   "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "by": "setup: remote.py checks the commit out in the lane"
  },
- "security.yml:gitleaks:70cc87fcc5": {
-  "step": "curl -fsSL -o \"$RUNNER_TEMP/gitleaks.tar.gz\" https://github.com/gitleaks/gitleak",
+ "security.yml:gitleaks:dda49223e4": {
+  "step": "curl -fsSL --retry 5 --retry-all-errors -o \"$RUNNER_TEMP/gitleaks.tar.gz\" https:",
   "by": "setup: the box's ci_setup.sh puts gitleaks 8.30.1 in SCRUTATE_GATE_TOOLS"
  },
  "security.yml:gitleaks:4cda10c014": {
@@ -455,7 +455,7 @@
   "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
   "by": "ci-only: moves files between CI jobs; the gate builds and reads them in one lane"
  },
- "benchmarks.yml:walltime:8a8f6bbfcc": {
+ "benchmarks.yml:walltime:fb5d71f12b": {
   "step": "hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)",
   "by": "ci-only: benchmarks.yml needs quiet runners, hyperfine 2.0.0 and the pinned corpora, and compares a change with its base; the boxes are shared and loaded"
  },
@@ -787,12 +787,40 @@
   "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  },
- "jetbrains.yml:lsp4ij:b8d3357199": {
+ "jetbrains.yml:lsp4ij:047f8b11f0": {
   "step": "Gradle 9.9.1",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
  },
  "jetbrains.yml:lsp4ij:83906fca59": {
   "step": "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
   "by": "ci-only: the JetBrains plugin's Gradle build and tests, which need a JDK and the IntelliJ Platform"
+ },
+ "scorecard.yml:analysis:f0e64ebade": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "scorecard.yml:analysis:0bc099f467": {
+  "step": "ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "scorecard.yml:analysis:ec8f326a2e": {
+  "step": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "scorecard.yml:analysis:76ca1d4c0c": {
+  "step": "github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066",
+  "by": "ci-only: OpenSSF Scorecard reads the repository's GitHub settings and publishes to api.scorecard.dev and code scanning, which only a run on GitHub can do"
+ },
+ "fuzz-weekly.yml:barrier-stress:6583f65237": {
+  "step": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "by": "setup: remote.py checks the commit out in the lane"
+ },
+ "fuzz-weekly.yml:barrier-stress:d37fbfda8c": {
+  "step": "rustup toolchain install --no-self-update",
+  "by": "setup: the box's ci_setup.sh installs rust-toolchain.toml's toolchain and targets"
+ },
+ "fuzz-weekly.yml:barrier-stress:4a4989beee": {
+  "step": "cargo test --release -p scrutate --lib --locked a_file_written_just_before_a_call",
+  "by": "gate: test-stress"
  }
 }

@@ -249,6 +249,13 @@ incompatible index by itself, and that is never breaking.
   `bench/make_yardstick_md.py` writes a marked section of docs/COMPETITIVE.md from the result
   files it names, which `tools/gen_doc_assets.py --check` checks
   ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- An OpenSSF Scorecard workflow (`.github/workflows/scorecard.yml`, ossf/scorecard-action 2.5.0
+  pinned by commit) runs on every push to main and once a week, and publishes its score and its
+  findings to code scanning ([Security](docs/SECURITY.md)).
+- An LSP4IJ template for JetBrains IDEs (`integrations/jetbrains/lsp4ij-template`): *Import from
+  custom template...* in the Language Servers settings fills the name, the command `scrutate lsp` and
+  a file name pattern per language; the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and
+  runs Go to Declaration through it ([JetBrains](integrations/jetbrains/README.md)).
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,
@@ -1307,6 +1314,88 @@ incompatible index by itself, and that is never breaking.
 - A `grep --json` record whose text was redacted gives its `column` in bytes of the redacted
   text: it kept the column of the line as the file has it, so a match after a secret pointed
   inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
+- A one-file `index --text` no longer writes a large part of the text index again every third
+  update. With more than four segments only the largest stayed out of the merge, so a build of
+  more than one batch had its second segment rewritten with the small ones each time: on a
+  1,500-file tree, 11 one-file updates wrote 80 MB. The merge now takes the smallest segments, and
+  a larger one only once those taken reach a quarter of its size; the same updates wrote 5 MB
+  ([Architecture](docs/ARCHITECTURE.md)).
+- Go: a file of an external test package (`package a_test` in `a/`) is no longer part of package
+  `a`, and a `_test.go` file is seen only from the package's own test files, and through an import
+  only from the package's external test (`export_test.go`). A call
+  in `a/use.go`, or `a.Exported()` from another package, tied to a namesake in `a/a_test.go`, the
+  first file of the directory by name, so `refs`, `callers`, `impact` and `dead` missed the real
+  callers ([CLI](docs/CLI.md#refs)).
+- `grep -z` on an archive of more than a million members warns and exits 2, as the 8 GiB stop
+  does: it stopped there in silence and exited 1. Rust `self::` in an inline module written on
+  the same line as the module around it is that module: the resolver took the first module of
+  the line. PHP `NEW self()`, `NEW static()` and `NEW parent()` are uses of the constructor in
+  `refs`, as `new self()` was. In a custom language, no line inside a block comment defines,
+  even one that does not start with the opener ([CLI](docs/CLI.md#custom-languages)).
+- That read back opens the file without waiting (`O_NONBLOCK`) and then checks the handle, so a
+  FIFO put in place of the file between the check of its path and the open no longer blocks it.
+- A GitHub, GitLab, Slack, PyPI or Twilio token glued to a word character (`qghp_...`, as in
+  minified code) is redacted, as gitleaks marks it: these rules had a word boundary their
+  gitleaks source does not have ([Security](docs/SECURITY.md)).
+- docs/SECURITY.md and README name the private reporting channel: the repository's Security tab,
+  "Report a vulnerability".
+- `review --format gitlab` gives overloads that share a qualified name (Java's `f(int)` and
+  `f(String)`) a fingerprint each: they shared one, and GitLab, which takes fingerprints as
+  unique, showed one of the two issues. A finding no other shares keeps its fingerprint
+  ([CLI](docs/CLI.md)).
+- A file whose name holds a secret no longer reaches an agent through what names files beside an
+  answer: the MCP tools redact the note and `pending` list of files an update has not reached yet
+  and their error text, and `lsp` its errors and log messages, as they redact answers.
+  `SCRUTATE_REDACT=on` redacts the hidden `sexp` command's output too. `hook run` refuses an `rg`
+  with `--max-columns-preview`, which prints part of a line and may cut a secret where no rule
+  finds it. `npm-token` takes its prefix in any case, as gitleaks does
+  ([Security](docs/SECURITY.md#secrets-in-answers)).
+- A watched session's reads keep their change set when the directory above the root changes a
+  lot (`/tmp` or the home directory, watched for its `.ignore` and `.rgignore`): each other entry
+  made or removed there counted as a change, so busy siblings filled the 10,000-event bound and
+  every read walked the tree ([Architecture](docs/ARCHITECTURE.md)).
+- On Windows with `XDG_STATE_HOME` set, the Grep hook's counter (`hook-grep.jsonl`) goes there,
+  beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
+  directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
+  `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
+- `map` and the MCP repo map no longer build an edge per calling file and defining file for a
+  name defined in more than 32 files: with 3,000 files defining `get` and 3,000 calling it they
+  built 9 million edges. Such a name's calls are now summed once per caller and once per definer,
+  with the same scores but for rounding in the last digits of a `--json` score
+  ([CLI](docs/CLI.md#engine-b)).
+- `callers --json` and the MCP `callers` result mark each caller the resolver could not decide
+  `"undecided": true`, as `impact` does; the JSON dropped the count the text form prints, so a
+  reader took guesses for answers. In Rust, `self.name` read as a field is no use of a method
+  `name` (Rust names a method only to call it), and `(*self).m()` in an impl for a reference,
+  `Box`, `Rc` or `Arc` stays undecided: both were tied to the method of the enclosing impl
+  (ripgrep's `WalkBuilder.follow_links`, `Matcher.shortest_match_at`, `Sink.binary_data`)
+  ([CLI](docs/CLI.md#refs)).
+- A `.scrutate.toml` in a subdirectory that links to a file elsewhere in the repository is read
+  again: its link was held to the subdirectory, so every command run there stopped with "not
+  read". The bound is the repository, the nearest directory up holding `.git` or an index; a link
+  out of it still stops the command. One with a NUL byte in its first 4 KiB is now refused as
+  not text, where the message said it was out of bounds.
+- `grep --fuzzy` and `--fuzzy-regex` with `--json` or colour keep where each character of a
+  matched line starts as one bit per byte, not eight bytes per character: a 64 MB line takes
+  219 MB at peak instead of 723 MB, in the same time, with the same spans.
+- docs/INSTALL.md's platform table names the abi3t wheel (`cp315-abi3.abi3t`, CPython 3.15 and
+  free-threaded 3.15t) on every platform, as `release.yml` builds it and CI tests it (run
+  44069673980); `tools/gen_doc_assets.py --check` now fails a row that leaves out a wheel kind the
+  release builds. `bench/musl_vs_glibc.py` gave a worst musl/glibc ratio of x1.00 when musl was
+  faster on every search; it gives the largest ratio measured. `bench/musl_vs_glibc.sh` measures
+  the musl build against the glibc one on idle x86_64 hardware by the leaderboard's method; its
+  first result is pending ([Install](docs/INSTALL.md)).
+- In a custom language, a block comment opener after the line comment mark (`// matches
+  lib/*.rs`) no longer opens a block that hides every later definition. `grep -z`'s million-member
+  cap on a tar counts members, not their PAX or long-name headers: a tar of 600,000 files with a
+  PAX header each stopped as "more than 1000000 members" ([CLI](docs/CLI.md#custom-languages)).
+- A link planted in the state directory is no longer written through: `frecency.json`'s temporary
+  file had a name anyone could guess (the process id) and was opened through whatever was there,
+  and the Grep hook's counter was appended to through a link at its path. The temporary file now
+  has a random name and is created only where nothing is, the counter is opened without following
+  a link (`O_NOFOLLOW`; on Windows a link is refused), and a state directory another user owns is
+  not used while one others may write to is closed to them first, with one stderr line
+  ([Security](docs/SECURITY.md#threat-model)).
 - `grep` on a terminal writes each match of standard input as it is found, and each file's lines
   as soon as that file is done, as ripgrep does: matches read from a pipe (`tail -f log |
   scrutate grep ERROR`) waited for 512 of them or the end of the input, and plain output for 64

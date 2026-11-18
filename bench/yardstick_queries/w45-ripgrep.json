@@ -1,0 +1,438 @@
+[
+ {
+  "id": "W5/refs RegexMatcherBuilder.build_many",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "RegexMatcherBuilder.build_many",
+  "at": [
+   "crates/regex/src/matcher.rs",
+   53,
+   12
+  ],
+  "language": "rust",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "crates/core/flags/hiargs.rs",
+    507
+   ],
+   [
+    "crates/regex/src/matcher.rs",
+    46
+   ],
+   [
+    "crates/regex/src/matcher.rs",
+    96
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs Sink.binary_data",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "Sink.binary_data",
+  "at": [
+   "crates/searcher/src/sink.rs",
+   188,
+   8
+  ],
+  "language": "rust",
+  "case": "dispatch",
+  "expect": [
+   [
+    "crates/searcher/src/searcher/core.rs",
+    111
+   ],
+   [
+    "crates/searcher/src/sink.rs",
+    260
+   ],
+   [
+    "crates/searcher/src/sink.rs",
+    313
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs Matcher.shortest_match_at",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "Matcher.shortest_match_at",
+  "at": [
+   "crates/matcher/src/lib.rs",
+   1036,
+   8
+  ],
+  "language": "rust",
+  "case": "dispatch",
+  "expect": [
+   [
+    "crates/matcher/src/lib.rs",
+    992
+   ],
+   [
+    "crates/matcher/src/lib.rs",
+    1014
+   ],
+   [
+    "crates/matcher/src/lib.rs",
+    1359
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs RegexMatcher.new_captures",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "RegexMatcher.new_captures",
+  "at": [
+   "crates/matcher/tests/util.rs",
+   39,
+   8
+  ],
+  "language": "rust",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "crates/matcher/tests/test_matcher.rs",
+    89
+   ],
+   [
+    "crates/matcher/tests/test_matcher.rs",
+    99
+   ],
+   [
+    "crates/matcher/tests/test_matcher.rs",
+    133
+   ],
+   [
+    "crates/matcher/tests/test_matcher.rs",
+    203
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs WalkBuilder.follow_links",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "WalkBuilder.follow_links",
+  "at": [
+   "crates/ignore/src/walk.rs",
+   710,
+   12
+  ],
+  "language": "rust",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "crates/core/flags/hiargs.rs",
+    888
+   ],
+   [
+    "crates/ignore/src/walk.rs",
+    2451
+   ],
+   [
+    "crates/ignore/src/walk.rs",
+    2486
+   ],
+   [
+    "crates/ignore/src/walk.rs",
+    2519
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers SearcherBuilder.heap_limit",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "SearcherBuilder.heap_limit",
+  "at": [
+   "crates/searcher/src/searcher/mod.rs",
+   457,
+   12
+  ],
+  "language": "rust",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "crates/printer/src/json.rs",
+    "binary_detection"
+   ],
+   [
+    "crates/searcher/src/searcher/glue.rs",
+    "big_error_multi_line"
+   ],
+   [
+    "crates/searcher/src/searcher/glue.rs",
+    "big_error_one_line"
+   ],
+   [
+    "crates/searcher/src/searcher/mod.rs",
+    "config_error_heap_limit"
+   ],
+   [
+    "crates/searcher/src/testutil.rs",
+    "configs"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs sort_lines",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "sort_lines",
+  "at": [
+   "tests/util.rs",
+   39,
+   8
+  ],
+  "language": "rust",
+  "case": "macro_or_template",
+  "expect": [
+   [
+    "tests/feature.rs",
+    2
+   ],
+   [
+    "tests/feature.rs",
+    139
+   ],
+   [
+    "tests/feature.rs",
+    149
+   ],
+   [
+    "tests/feature.rs",
+    162
+   ],
+   [
+    "tests/misc.rs",
+    2
+   ],
+   [
+    "tests/misc.rs",
+    97
+   ],
+   [
+    "tests/misc.rs",
+    319
+   ],
+   [
+    "tests/misc.rs",
+    939
+   ],
+   [
+    "tests/misc.rs",
+    1134
+   ],
+   [
+    "tests/regression.rs",
+    2
+   ],
+   [
+    "tests/regression.rs",
+    124
+   ],
+   [
+    "tests/regression.rs",
+    125
+   ],
+   [
+    "tests/regression.rs",
+    924
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs TestCommand.pipe",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "TestCommand.pipe",
+  "at": [
+   "tests/util.rs",
+   307,
+   12
+  ],
+  "language": "rust",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "tests/binary.rs",
+    194
+   ],
+   [
+    "tests/feature.rs",
+    75
+   ],
+   [
+    "tests/multiline.rs",
+    100
+   ],
+   [
+    "tests/regression.rs",
+    924
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs hostname",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "hostname",
+  "at": [
+   "crates/cli/src/hostname.rs",
+   16,
+   8
+  ],
+  "language": "rust",
+  "case": "reexport",
+  "expect": [
+   [
+    "crates/cli/src/hostname.rs",
+    83
+   ],
+   [
+    "crates/cli/src/lib.rs",
+    140
+   ],
+   [
+    "crates/core/flags/hiargs.rs",
+    1376
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers resolve_binary",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "resolve_binary",
+  "at": [
+   "crates/cli/src/decompress.rs",
+   420,
+   8
+  ],
+  "language": "rust",
+  "case": "reexport",
+  "expect": [
+   [
+    "crates/cli/src/decompress.rs",
+    "add"
+   ],
+   [
+    "crates/core/flags/hiargs.rs",
+    "hostname"
+   ],
+   [
+    "crates/core/search.rs",
+    "preprocessor"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers RegexMatcher.find_at",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "RegexMatcher.find_at",
+  "at": [
+   "crates/searcher/src/testutil.rs",
+   67,
+   8
+  ],
+  "language": "rust",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "crates/searcher/src/testutil.rs",
+    "empty_line1"
+   ],
+   [
+    "crates/searcher/src/testutil.rs",
+    "empty_line2"
+   ],
+   [
+    "crates/searcher/src/testutil.rs",
+    "empty_line3"
+   ],
+   [
+    "crates/searcher/src/testutil.rs",
+    "empty_line4"
+   ],
+   [
+    "crates/searcher/src/testutil.rs",
+    "empty_line5"
+   ],
+   [
+    "crates/searcher/src/testutil.rs",
+    "empty_line6"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs parse_human_readable_size",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "parse_human_readable_size",
+  "at": [
+   "crates/cli/src/human.rs",
+   79,
+   8
+  ],
+  "language": "rust",
+  "case": "reexport",
+  "expect": [
+   [
+    "crates/cli/src/human.rs",
+    108
+   ],
+   [
+    "crates/cli/src/human.rs",
+    114
+   ],
+   [
+    "crates/cli/src/human.rs",
+    120
+   ],
+   [
+    "crates/cli/src/human.rs",
+    126
+   ],
+   [
+    "crates/cli/src/human.rs",
+    132
+   ],
+   [
+    "crates/cli/src/human.rs",
+    137
+   ],
+   [
+    "crates/cli/src/human.rs",
+    142
+   ],
+   [
+    "crates/cli/src/human.rs",
+    147
+   ],
+   [
+    "crates/cli/src/lib.rs",
+    141
+   ],
+   [
+    "crates/core/flags/defs.rs",
+    7603
+   ]
+  ],
+  "exact": true
+ }
+]

@@ -626,9 +626,11 @@ its end; UTF-16 files and files unreadable at index time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per
-generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges all but the
-largest by a streaming k-way merge, so the small segments a watch adds do not rewrite the whole
-index; more than 30% dead documents merges all of them. A merge checks the segments it reads
+generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges the
+smallest ones by a streaming k-way merge: enough of them to leave four, then each next larger one
+while it is at most four times the size of those taken (sizes in posting bytes), so the small
+segments a watch adds do not rewrite the large ones a build left; more than 30% dead documents
+merges all of them. A merge checks the segments it reads
 first, and a damaged one rebuilds the index. A file over 64 MB is read in 1 MB pieces, never
 mapped: a mapped file another process shortens ends the reader with SIGBUS. A manifest that is not
 valid JSON (a crash can leave it empty) is rebuilt by the next update like a damaged segment, and a
@@ -823,7 +825,9 @@ Anything those rules cannot vouch for is every file: lost events or a watcher er
 config file in a directory the walks enter, a directory that came or went, a directory left without a watch, a rule file outside
 every watch that changed, the watches set (the first time, and on Linux again when they gain a
 directory or a directory came or went since, since a file written while they were set may have
-no event), more than 10,000 events since the last read,
+no event), more than 10,000 events since the last read (of the tree, its rule files and its
+directories: another entry of a rule directory above the root, `/tmp` or the home directory, is
+not one),
 a cookie that took more than a second. That walk comes at once, unless the refresh interval is a
 floor the user gave and the change sets are a proof (`Freshness::order_proves`; on macOS only
 while the kqueue is in place). A walk the floor holds back still applies the files the events

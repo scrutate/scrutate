@@ -143,15 +143,32 @@ def count_line(statuses):
     return line + (f"; {measured} measured, under {MIN_RUNS} runs per tool" if measured else "")
 
 
+def short_of(status, n):
+    """Why a verdict on `n` runs per tool is measured, not ranked: under MIN_RUNS; else None."""
+    if status in ("PASS", "FAIL", "PARTIAL", "BLOCKED") and n < MIN_RUNS:
+        return f"{n} runs per tool, under the {MIN_RUNS} a verdict needs"
+    return None
+
+
 def published(r):
     """An Engine A row as the page gives it: a verdict on fewer than MIN_RUNS runs of scrutate or of
     its best competitor is measured, not ranked (`was` keeps the verdict)."""
     best = r.get("best_competitor")
-    if r["status"] in ("PASS", "FAIL", "PARTIAL", "BLOCKED") and best:
-        n = min(r["tools"].get("scrutate", {}).get("n", 0), r["tools"].get(best, {}).get("n", 0))
-        if n < MIN_RUNS:
-            return {**r, "status": "measured", "was": r["status"], "measured": f"{n} runs per tool, under the {MIN_RUNS} a verdict needs"}
-    return r
+    why = best and short_of(r["status"], min(r["tools"].get("scrutate", {}).get("n", 0), r["tools"].get(best, {}).get("n", 0)))
+    return {**r, "status": "measured", "was": r["status"], "measured": why} if why else r
+
+
+# the tool each mode's CPU and memory verdicts time
+MODE_TOOL = {"default": "scrutate", "-j1": "scrutate -j1"}
+
+
+def published_metric(r, key, mode):
+    """`published` for one mode's CPU (`cpu`) or memory (`rss`) verdict: its own runs against the
+    competitor lowest on that metric."""
+    m = r["metrics"][key][mode]
+    best = m.get("best_competitor")
+    why = best and short_of(m["status"], min(len(r["tools"].get(MODE_TOOL[mode], {}).get(key) or []), len(r["tools"].get(best, {}).get(key) or [])))
+    return {**m, "status": "measured", "was": m["status"], "why": why} if why else m
 
 
 def metric_value(key, v):
@@ -292,7 +309,7 @@ def engine_a(data, label, note=(), raw=None):
     if any("metrics" in r for r in data["benchmarks"].values()):
         for key, name in METRICS.items():
             out.append(f"Status counts, {name}: " + "; ".join(
-                f"{mode} mode " + count_line([r["metrics"][key][mode]["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
+                f"{mode} mode " + count_line([published_metric(r, key, mode)["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
     # results from before bench/walkread.c have no floor to show
     walk = any("walkread" in r for r in data["benchmarks"].values())
     head = "| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files" + (" | walk and read" if walk else "") + " | rank | ratio vs best (95% CI) | status |"
@@ -321,7 +338,12 @@ def engine_a(data, label, note=(), raw=None):
         idx = ms(xi.get("median")) if xi.get("status") == "ok" else xi.get("status", "")
         ratio = f"{r['ratio']:.3f} [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]{level(r)} vs {r['best_competitor']}" if "ratio" in r else r.get("why", "")
         cpus = data["environment"].get("cpus") or 1
-        flag = f" (load {r.get('max_load', 0):.0f})" if r.get("max_load", 0) > cpus else ""
+        lim = data["settings"].get("max_load")
+        # the bounded wait for an idle machine can end over the run's limit, far under the CPU count
+        if lim is not None and r.get("max_load", 0) > lim:
+            flag = f" (load {r['max_load']:.1f}, over the {lim:g} limit)"
+        else:
+            flag = f" (load {r.get('max_load', 0):.0f})" if r.get("max_load", 0) > cpus else ""
         first = r.get("first")
         if first:
             flag += f" (measured again; first: {first['status']}" + (f" {first['ratio']:.3f}" if first.get("ratio") else "") + ")"
@@ -360,7 +382,7 @@ def engine_a(data, label, note=(), raw=None):
         out.append("|---|---|---|---|---|---|---|")
         for bid, r in tested:
             m = r["metrics"]
-            cells = [metric_cell(key, m[key][mode], level(r)) for key in METRICS for mode in MODES]
+            cells = [metric_cell(key, published_metric(r, key, mode), level(r)) for key in METRICS for mode in MODES]
             for key in METRICS:
                 lead = m[key]["default"].get("best_competitor") or m[key]["-j1"].get("best_competitor")
                 med = r["tools"].get(lead, {}).get({"cpu": "cpu_median", "rss": "rss_median"}[key]) if lead else None
@@ -506,11 +528,11 @@ def main() -> int:
             "- Every machine not marked bare metal was shared with other work, so no result from it is a publishable #1 claim (a "
             "published #1 needs dedicated idle hardware: R-14.11 in docs/TRACEABILITY.md). A bare-metal section records how its "
             "machine was found (virtualization, kernel, CPU frequency governor, disk) and the load before each tool's runs, for a "
-            "reader to judge that; a row whose load exceeded the CPU count shows it in the status column.")
+            "reader to judge that; a row whose load exceeded the CPU count or the run's own load limit shows it in the status column.")
     else:
         lines.append(
             "- Every machine was shared with other work, so no result is a publishable #1 claim (a published #1 needs dedicated idle "
-            "hardware: R-14.11 in docs/TRACEABILITY.md); a row whose load exceeded the CPU count shows it in the status column.")
+            "hardware: R-14.11 in docs/TRACEABILITY.md); a row whose load exceeded the CPU count or the run's own load limit shows it in the status column.")
     lines += [
         "- The read-files ceiling (`bench/rawread.c`) is measured once per file set, right after the first benchmark that uses it, as the fastest of several "
         "thread counts: one per CPU and half that with a warm cache, up to 96 with a cold one (a disk takes more reads at once than "

@@ -2389,7 +2389,7 @@ fn comment_top(lines: &[&str], floor: usize, mut at: usize, m: &Marks) -> usize 
 
 /// Keyword-introduced definitions for languages without a grammar (or whose grammar found nothing).
 pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
-    line_chunks(source, &heuristic_marks(path), heuristic_def, starts_item, clean_comment)
+    line_chunks(source, &heuristic_marks(path), |_, l| heuristic_def(l), starts_item, clean_comment)
 }
 
 /// Whether `line` opens an item by its first word, named or not (`let () =`, `def _`): the keyword
@@ -2416,7 +2416,38 @@ pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
         };
         raw.split('\n').map(strip).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
     };
-    line_chunks(source, &marks, |l| if is_marked(l, &marks) { None } else { lang.definition(l) }, |_| false, doc)
+    let inside = inside_blocks(&split_lines(source), open, close, lang.line_comment.as_deref());
+    line_chunks(source, &marks, |i, l| if inside[i] || is_marked(l, &marks) { None } else { lang.definition(l) }, |_| false, doc)
+}
+
+/// Whether each line starts inside a block comment that an earlier line opened and has not closed.
+/// Outside a block, a line comment runs to the end of its line, so an opener after its mark opens
+/// nothing; an opener inside a string still opens a block.
+fn inside_blocks(lines: &[&str], open: &str, close: &str, line_comment: Option<&str>) -> Vec<bool> {
+    let mut out = vec![false; lines.len()];
+    if open.is_empty() || close.is_empty() {
+        return out;
+    }
+    let mut in_block = false;
+    for (i, line) in lines.iter().enumerate() {
+        out[i] = in_block;
+        let mut rest = *line;
+        loop {
+            if in_block {
+                let Some(p) = rest.find(close) else { break };
+                rest = &rest[p + close.len()..];
+                in_block = false;
+            } else {
+                let Some(p) = rest.find(open) else { break };
+                if line_comment.filter(|m| !m.is_empty()).and_then(|m| rest.find(m)).is_some_and(|c| c < p) {
+                    break;
+                }
+                rest = &rest[p + open.len()..];
+                in_block = true;
+            }
+        }
+    }
+    out
 }
 
 /// Chunks of the lines `def_of` names a definition: each block ends before the next definition
@@ -2426,14 +2457,14 @@ pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
 fn line_chunks(
     source: &str,
     marks: &Marks,
-    def_of: impl Fn(&str) -> Option<(&'static str, String)>,
+    def_of: impl Fn(usize, &str) -> Option<(&'static str, String)>,
     starts_item: impl Fn(&str) -> bool,
     doc_of: impl Fn(&str) -> String,
 ) -> Vec<Chunk> {
     let lines = split_lines(source);
     let mut defs: Vec<(usize, &'static str, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        if let Some((kind, name)) = def_of(line) {
+        if let Some((kind, name)) = def_of(i, line) {
             defs.push((i, kind, name));
         }
     }
@@ -2609,6 +2640,7 @@ mod tests {
                 return IDENT_START.find(args.split(',').next()?.trim()).map(|m| m.as_str().to_string());
             }
             ("make", "raw_text") => return None,
+            ("pascal", "statement") if node.named_child_count() != 1 || !matches!(target.kind(), "identifier" | "exprDot") => return None,
             ("verilog", "data_declaration") if !verilog_typeless_call(node, target, src) => return None,
             _ => {}
         }

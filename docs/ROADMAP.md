@@ -56,6 +56,8 @@ gap they close in docs/TRACEABILITY.md.
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
 | Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
 | Function order on glibc Linux (R-4.6) | release builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` link twice, the second time with lld's `--symbol-ordering-file` from `crates/scrutate/startup.order` under the build's own names (`tools/order_file.py --elf`); docs/RELEASING.md section 2 |
+| OpenSSF Scorecard | `.github/workflows/scorecard.yml` (ossf/scorecard-action 2.5.0, pinned by commit) runs on every push to main and once a week, publishing its score to api.scorecard.dev and its findings to code scanning; its first run is the next push to main |
+| An LSP4IJ template for JetBrains IDEs | `integrations/jetbrains/lsp4ij-template` fills the Language Servers dialog in one import (name, `scrutate lsp`, a file name pattern per language); the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and runs Go to Declaration through it |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the first release
@@ -75,16 +77,15 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   packaging/README.md).
 - `cargo install scrutate` from crates.io: `scrutate-ignore`, then `scrutate` with the int8 model;
   the upload needs the owner's crates.io account at the release ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
-  No `cargo publish --dry-run` of the current layout is recorded: the one log,
-  `bench/results/platforms/packages/cargo-package.log`, is of an older layout and failed to verify
-  the package.
+  `cargo publish --dry-run -p scrutate-ignore -p scrutate` passes on this layout: both packages
+  verify, `scrutate` against `scrutate-ignore` built from its own package, and `scrutate` is 7.8 MiB
+  compressed, under crates.io's 10 MiB (`bench/results/platforms/packages/cargo-package.log`).
 - A comment on GitLab merge requests (R-12.16; on GitHub the Action's `comment: true` posts
   `scrutate review` on a pull request, and the GitLab template saves it as a Code Quality report),
   and weekly benchmark runs for the dashboard (R-4.5).
 - Now that `ci.yml` is green, one job or setting each (docs/research/github-ci-2026-11.md): wheels
   to PyPI by trusted publishing (the jobs are in `release.yml` and wait for the `PYPI_PUBLISH`
-  variable), CodeQL default setup for Rust, OpenSSF Scorecard. For the integrations
-  (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one import.
+  variable), and CodeQL default setup for Rust, a repository setting the owner turns on (no file).
 
 ## Next
 

@@ -1309,12 +1309,16 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     let all_docs: usize = segs.iter().map(|s| s.ndocs).sum();
     let many_dead = all_docs > 0 && (all_docs - live_docs) * 10 > all_docs * 3;
     if many_dead || segs.len() > MAX_SEGMENTS {
-        // too many segments alone: the largest stays as it is, so the small ones a watch adds
-        // do not write the whole index again every few updates
-        let kept = (!many_dead).then(|| {
-            let largest = (0..segs.len()).max_by_key(|&i| segs[i].ndocs).unwrap_or(0);
-            segs.remove(largest)
-        });
+        // too many segments alone: only the small ones merge, so the ones a watch adds do not
+        // write the large ones again every few updates
+        let kept: Vec<Segment> = if many_dead {
+            Vec::new()
+        } else {
+            let take = size_merge(&segs.iter().map(|s| bytes(&s.post).len() as u64).collect::<Vec<_>>());
+            let (merged, kept): (Vec<_>, Vec<_>) = segs.drain(..).enumerate().partition(|(i, _)| take.contains(i));
+            segs = merged.into_iter().map(|(_, s)| s).collect();
+            kept.into_iter().map(|(_, s)| s).collect()
+        };
         // the merge slices the posting data with the stored offsets
         segs.iter().try_for_each(|s| s.validate(true)).map_err(Damaged)?;
         let merged_live: usize = segs.iter().map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).count()).sum();
@@ -1356,6 +1360,23 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     })
 }
 
+/// The segments, by their posting bytes, that a merge for too many segments takes: the smallest
+/// ones, enough to leave at most `MAX_SEGMENTS`, then each next one while it is at most four times
+/// what is taken, so a segment is written again only once the small ones have grown near its size.
+fn size_merge(sizes: &[u64]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..sizes.len()).collect();
+    order.sort_by_key(|&i| (sizes[i], i));
+    let mut k = (sizes.len() + 1).saturating_sub(MAX_SEGMENTS).max(2).min(sizes.len());
+    let mut sum: u64 = order[..k].iter().map(|&i| sizes[i]).sum();
+    while k < order.len() && sizes[order[k]] <= sum.saturating_mul(4) {
+        sum += sizes[order[k]];
+        k += 1;
+    }
+    let mut take = order[..k].to_vec();
+    take.sort_unstable();
+    take
+}
+
 /// Remove segment directories and liveness files the manifest no longer names. Errors are ignored
 /// (a file still mapped on Windows is removed by a later update).
 fn gc(dir: &Path, keep: &[String], live: &str) {
@@ -1382,6 +1403,41 @@ fn gc(dir: &Path, keep: &[String], live: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_size_merge_takes_the_small_segments_and_leaves_the_large_ones() {
+        const MB: u64 = 1 << 20;
+        const KB: u64 = 1 << 10;
+        // two batches of a build and three one-file updates
+        assert_eq!(super::size_merge(&[50 * MB, 26 * MB, 250 * KB, 250 * KB, 250 * KB]), [2, 3, 4]);
+        // a middle segment joins once what is taken is a quarter of it
+        assert_eq!(super::size_merge(&[50 * MB, 26 * MB, 6 * MB, 250 * KB, 250 * KB]), [3, 4]);
+        assert_eq!(super::size_merge(&[50 * MB, 26 * MB, 1500 * KB, 250 * KB, 250 * KB]), [2, 3, 4]);
+        // equal segments all merge
+        assert_eq!(super::size_merge(&[MB, MB, MB, MB, MB]), [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn small_updates_rewrite_a_bounded_share_of_the_index() {
+        // the measured case: a two-batch build, then one-file updates of about 250 KB each
+        const KB: u64 = 1 << 10;
+        let mut segs = vec![49_886 * KB, 25_868 * KB];
+        let mut written = 0u64;
+        for _ in 0..48 {
+            segs.push(250 * KB);
+            written += 250 * KB;
+            if segs.len() > super::MAX_SEGMENTS {
+                let take = super::size_merge(&segs);
+                assert!(segs.len() - take.len() < super::MAX_SEGMENTS, "{segs:?} {take:?}");
+                let merged: u64 = take.iter().map(|&i| segs[i]).sum();
+                written += merged;
+                segs = segs.iter().enumerate().filter(|(i, _)| !take.contains(i)).map(|(_, &s)| s).collect();
+                segs.push(merged);
+            }
+        }
+        // keeping only the largest segment out of the merge wrote 515 MB here
+        assert!(written < 200 * 1024 * KB, "{} MB", written >> 20);
+    }
+
     use super::*;
     use crate::instant::{Case, Pattern};
 

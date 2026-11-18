@@ -79,6 +79,16 @@ fn external(path: &Path) -> std::io::Result<Box<dyn Read>> {
 /// decompressed file itself). `each` returns false to stop. Errors of one member are passed to
 /// `failed` and the walk goes on; an error that ends the walk is returned.
 pub fn walk(path: &Path, kind: Kind, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool, failed: &mut dyn FnMut(String)) -> std::io::Result<()> {
+    walk_upto(path, kind, MAX_MEMBERS, each, failed)
+}
+
+fn walk_upto(
+    path: &Path,
+    kind: Kind,
+    max_members: usize,
+    each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool,
+    failed: &mut dyn FnMut(String),
+) -> std::io::Result<()> {
     match kind {
         Kind::Gz => {
             let mut r = Capped { inner: flate2::read::MultiGzDecoder::new(File::open(path)?), left: MAX_EXPANDED };
@@ -90,13 +100,19 @@ pub fn walk(path: &Path, kind: Kind, each: &mut dyn FnMut(Option<&str>, &mut dyn
             each(None, &mut r);
             Ok(())
         }
-        Kind::Tar => tar(Capped { inner: Box::new(File::open(path)?) as Box<dyn Read>, left: MAX_EXPANDED }, each, failed),
-        Kind::TarGz => tar(Capped { inner: Box::new(flate2::read::MultiGzDecoder::new(File::open(path)?)) as Box<dyn Read>, left: MAX_EXPANDED }, each, failed),
-        Kind::TarOther => tar(Capped { inner: external(path)?, left: MAX_EXPANDED }, each, failed),
+        Kind::Tar => tar(Capped { inner: Box::new(File::open(path)?) as Box<dyn Read>, left: MAX_EXPANDED }, max_members, each, failed),
+        Kind::TarGz => tar(
+            Capped { inner: Box::new(flate2::read::MultiGzDecoder::new(File::open(path)?)) as Box<dyn Read>, left: MAX_EXPANDED },
+            max_members,
+            each,
+            failed,
+        ),
+        Kind::TarOther => tar(Capped { inner: external(path)?, left: MAX_EXPANDED }, max_members, each, failed),
         Kind::Zip => {
             let mut z = zip::ZipArchive::new(File::open(path)?).map_err(std::io::Error::other)?;
             let mut left = MAX_EXPANDED;
-            for i in 0..z.len().min(MAX_MEMBERS) {
+            let mut stopped = false;
+            for i in 0..z.len().min(max_members) {
                 let mut e = match z.by_index(i) {
                     Ok(e) => e,
                     Err(err) => {
@@ -110,13 +126,21 @@ pub fn walk(path: &Path, kind: Kind, each: &mut dyn FnMut(Option<&str>, &mut dyn
                 let name = e.name().map(|n| n.into_owned()).unwrap_or_else(|_| format!("member {i}"));
                 let mut r = Capped { inner: &mut e, left };
                 if !each(Some(&name), &mut r) {
+                    stopped = true;
                     break;
                 }
                 left = r.left;
             }
+            if !stopped && z.len() > max_members {
+                return Err(too_many(max_members));
+            }
             Ok(())
         }
     }
+}
+
+fn too_many(max_members: usize) -> std::io::Error {
+    std::io::Error::other(format!("more than {max_members} members; stopped"))
 }
 
 /// The longest member name kept from a GNU long-name or PAX header; a zip name is at most 64 KiB
@@ -127,7 +151,7 @@ const MAX_NAME: u64 = 64 << 10;
 type Name = Result<Option<Vec<u8>>, ()>;
 
 /// The tar crate reads a long-name or PAX header whole, up to gigabytes, so they are read here.
-fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool, failed: &mut dyn FnMut(String)) -> std::io::Result<()> {
+fn tar<R: Read>(r: R, max_members: usize, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool, failed: &mut dyn FnMut(String)) -> std::io::Result<()> {
     struct Shared<R>(std::rc::Rc<std::cell::RefCell<R>>);
     impl<R: Read> Read for Shared<R> {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -139,9 +163,13 @@ fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool,
     // the name and size the extension headers give the next member
     let mut name: Name = Ok(None);
     let mut size = None;
+    // extension headers (PAX, GNU long names) and directories are entries but no members: the
+    // headers are bounded on their own, so a tar of nothing else still ends
+    let max_headers = max_members.saturating_mul(4);
+    let mut members = 0;
     for (n, entry) in a.entries()?.raw(true).enumerate() {
-        if n >= MAX_MEMBERS {
-            break;
+        if n >= max_headers {
+            return Err(std::io::Error::other(format!("more than {max_headers} tar headers; stopped")));
         }
         let mut e = entry?;
         let t = e.header().entry_type();
@@ -192,6 +220,10 @@ fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool,
             Some(v) => String::from_utf8_lossy(&v).into_owned(),
             None => String::from_utf8_lossy(&e.header().path_bytes()).into_owned(),
         };
+        if members == max_members {
+            return Err(too_many(max_members));
+        }
+        members += 1;
         if !each(Some(&name), &mut e) {
             break;
         }
@@ -271,6 +303,111 @@ mod tests {
         ] {
             assert_eq!(Kind::of(name), kind, "{name}");
         }
+    }
+
+    /// A tar and a zip of three members, `foo` in the last.
+    fn three_members(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let t = dir.join("three.tar");
+        let mut b = tar::Builder::new(File::create(&t).unwrap());
+        for (name, body) in [("a.txt", "x\n"), ("b.txt", "x\n"), ("c.txt", "foo\n")] {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(body.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, body.as_bytes()).unwrap();
+        }
+        b.finish().unwrap();
+        let z = dir.join("three.zip");
+        let mut w = zip::ZipWriter::new(File::create(&z).unwrap());
+        for (name, body) in [("a.txt", "x\n"), ("b.txt", "x\n"), ("c.txt", "foo\n")] {
+            w.start_file(name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+            std::io::Write::write_all(&mut w, body.as_bytes()).unwrap();
+        }
+        w.finish().unwrap();
+        (t, z)
+    }
+
+    #[test]
+    fn an_archive_past_the_member_cap_ends_with_an_error() {
+        let dir = std::env::temp_dir().join(format!("scrutate_archive_cap_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (t, z) = three_members(&dir);
+        for (path, kind) in [(&t, Kind::Tar), (&z, Kind::Zip)] {
+            let mut seen = Vec::new();
+            let r = walk_upto(
+                path,
+                kind,
+                2,
+                &mut |m, _| {
+                    seen.push(m.unwrap().to_string());
+                    true
+                },
+                &mut |_| {},
+            );
+            let e = r.expect_err("a member past the cap is not read, and the walk says so");
+            assert!(e.to_string().contains("more than 2 members"), "{kind:?}: {e}");
+            assert_eq!(seen, ["a.txt", "b.txt"], "{kind:?}");
+            // at the cap or under it, every member is read and nothing is said
+            let mut n = 0;
+            walk_upto(
+                path,
+                kind,
+                3,
+                &mut |_, _| {
+                    n += 1;
+                    true
+                },
+                &mut |_| {},
+            )
+            .unwrap();
+            assert_eq!(n, 3, "{kind:?}");
+            // a stop asked for by the search is no error
+            assert!(walk_upto(path, kind, 2, &mut |_, _| false, &mut |_| {}).is_ok(), "{kind:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_member_cap_counts_members_not_their_extension_headers() {
+        let dir = std::env::temp_dir().join(format!("scrutate_archive_pax_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = dir.join("pax.tar");
+        let mut b = tar::Builder::new(File::create(&t).unwrap());
+        for (name, body) in [("a.txt", "x\n"), ("b.txt", "x\n"), ("c.txt", "foo\n")] {
+            b.append_pax_extensions([("comment", &b"a PAX header of its own"[..])]).unwrap();
+            let mut h = tar::Header::new_ustar();
+            h.set_size(body.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, body.as_bytes()).unwrap();
+        }
+        b.finish().unwrap();
+        // three members, each behind a PAX header: six entries, three members
+        let mut seen = Vec::new();
+        walk_upto(
+            &t,
+            Kind::Tar,
+            3,
+            &mut |m, _| {
+                seen.push(m.unwrap().to_string());
+                true
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(seen, ["a.txt", "b.txt", "c.txt"]);
+        let e = walk_upto(&t, Kind::Tar, 2, &mut |_, _| true, &mut |_| {}).unwrap_err();
+        assert!(e.to_string().contains("more than 2 members"), "{e}");
+        // nothing but extension headers still ends
+        let h = dir.join("headers.tar");
+        let mut b = tar::Builder::new(File::create(&h).unwrap());
+        for _ in 0..10 {
+            b.append_pax_extensions([("comment", &b"no member follows"[..])]).unwrap();
+        }
+        b.finish().unwrap();
+        let e = walk_upto(&h, Kind::Tar, 2, &mut |_, _| true, &mut |_| {}).unwrap_err();
+        assert!(e.to_string().contains("headers"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

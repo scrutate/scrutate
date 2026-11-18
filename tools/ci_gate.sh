@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The checks of .github/workflows/ci.yml, security.yml and benchmarks.yml that a Linux box can run,
 # for the commit checked out here. tools/gate_map.json names, for every step of those workflows
-# (`run:` and `uses:`), and of release.yml, fuzz-weekly.yml and jetbrains.yml, the step below that
+# (`run:` and `uses:`), and of release.yml, fuzz-weekly.yml, jetbrains.yml and scorecard.yml, the step below that
 # covers it or why only CI runs it; tools/gate_parity.py (the gate-parity step) fails when a
 # workflow step is missing from the map, so the two cannot drift.
 #   bash tools/ci_gate.sh [--quick|--bench]
@@ -172,6 +172,8 @@ if [ "$mode" = "full" ]; then
   fast="env CARGO_TARGET_DIR=$target/fasttest CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
   step test $fast cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast
   step test-extra-langs $fast cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
+  # the session's write-then-read barrier tests at 1000 loops (ci.yml runs 200, fuzz-weekly.yml 1000)
+  step test-stress $fast env SCRUTATE_TEST_STRESS=1 cargo test --release -p scrutate --lib --locked a_file_written_just_before_a_call
   # ci.yml fuzz job's targets on stable: fuzz/ is a workspace of its own, which no clippy above
   # compiles; the nightly sanitizer build and the crash inputs stay CI's
   step fuzz-check bash -c "python3 tools/fuzz_lock.py --check && CARGO_TARGET_DIR='$target/fuzz' cargo check --manifest-path fuzz/Cargo.toml --bins --locked"
