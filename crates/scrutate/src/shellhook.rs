@@ -998,14 +998,22 @@ const CONTEXT: usize = 4 << 10;
 /// longer is sent as its marker and the rest of its line withheld.
 const CARRY_MAX: usize = 4 << 20;
 
-/// Where `w`, a piece of a line that goes on, may be cut: at least `TAIL` bytes before its end,
-/// on an ASCII byte, and `CONTEXT` before any secret the rules find across that point, with its
-/// kind.
-fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
-    let mut c = w.len().saturating_sub(TAIL);
-    while c > 0 && w[c] >= 0x80 {
+/// `c`, or up to 3 bytes before it where `w` holds a character there, so the cut splits none.
+fn char_start(w: &[u8], mut c: usize) -> usize {
+    let floor = c.saturating_sub(3);
+    while c > floor && w.get(c).is_some_and(|&b| b & 0xC0 == 0x80) {
         c -= 1;
     }
+    c
+}
+
+/// Where `w`, a piece of a line that goes on, may be cut: at least `TAIL` bytes before its end,
+/// on a character's start, and `CONTEXT` before any secret the rules find across that point, with
+/// its kind. With `gap`, secrets too close for that are first tried for a cut between them
+/// (`cut_between`), once; the last value says that try found none, so the line's later pieces skip it.
+fn piece_end(w: &[u8], gap: bool) -> (usize, Option<&'static str>, bool) {
+    let last = char_start(w, w.len().saturating_sub(TAIL));
+    let mut c = last;
     // each byte that is not UTF-8 as one character, so the spans' offsets are `w`'s
     let mut text = String::with_capacity(w.len());
     for chunk in w.utf8_chunks() {
@@ -1013,16 +1021,55 @@ fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
         text.extend(std::iter::repeat_n('\x7f', chunk.invalid().len()));
     }
     let spans = crate::secrets::spans(&text);
-    let mut kind = None;
+    let crossing = |c: usize| spans.iter().find(|&&(a, b, _)| a.saturating_sub(CONTEXT) < c && c < b).copied();
+    let (mut kind, mut tried, mut failed) = (None, !gap, false);
     // a secret near the cut goes to the next piece whole, with the name before it its rule reads
-    while let Some(&(a, _, k)) = spans.iter().find(|&&(a, b, _)| a.saturating_sub(CONTEXT) < c && c < b) {
-        c = a.saturating_sub(CONTEXT);
-        while c > 0 && w[c] >= 0x80 {
-            c -= 1;
+    while let Some((a, _, k)) = crossing(c) {
+        // the gap search reads the whole piece and depends on nothing the loop moves: once
+        if kind.is_some() && !std::mem::replace(&mut tried, true) {
+            if let Some(x) = cut_between(w, &text, &spans, last) {
+                return (x, Some(k), false);
+            }
+            failed = true;
         }
+        c = char_start(w, a.saturating_sub(CONTEXT));
         kind = Some(k);
     }
-    (c, kind)
+    (c, kind, failed)
+}
+
+/// For secrets too close together to cut `CONTEXT` before one without splitting another: a cut
+/// at most `c` in a gap between two of them, where the rules find each secret of `w` on one side
+/// or the other; none when a few tries find no such cut.
+fn cut_between(w: &[u8], text: &str, spans: &[(usize, usize, &'static str)], c: usize) -> Option<usize> {
+    // spans come sorted by start, one inside another merged: the last to start at or before `a`
+    // is the only one that can hold it
+    let holds = |side: &[(usize, usize, &str)], a: usize, b: usize| side[..side.partition_point(|s| s.0 <= a)].last().is_some_and(|s| b <= s.1);
+    let found = |x: usize| {
+        let (left, right) = (crate::secrets::spans(&text[..x]), crate::secrets::spans(&text[x..]));
+        spans.iter().all(|&(a, b, _)| (b <= x && holds(&left, a, b)) || (a >= x && holds(&right, a - x, b - x)))
+    };
+    let mut tries = 0;
+    for pair in spans.windows(2).rev() {
+        let (end, next) = (pair[0].1, pair[1].0);
+        if next <= end || end >= c {
+            continue;
+        }
+        for x in [end + 1, end + (next - end) / 2] {
+            let x = char_start(w, x.min(c));
+            if x > end && text.is_char_boundary(x) {
+                if found(x) {
+                    return Some(x);
+                }
+                tries += 1;
+                // each try reads the piece twice: a chain no early try can cut is carried instead
+                if tries == 2 {
+                    return None;
+                }
+            }
+        }
+    }
+    None
 }
 
 /// `line` as it goes out, redacted: a key's body line grep shows without its armour is read back
@@ -1074,6 +1121,8 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let mut line = Vec::new();
     // the rest of a long line's last piece, redacted with the next one
     let mut carry: Vec<u8> = Vec::new();
+    // this line's pieces found no cut between its secrets: the rest of it is not tried again
+    let mut no_gap = false;
     let mut send = |shown: &[u8], sent: &mut usize| {
         if room.is_some_and(|room| *sent + shown.len() > room) {
             return Err(true);
@@ -1095,10 +1144,14 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
                 (false, n == PIECE && !line.ends_with(b"\n"))
             }
         };
+        if !more {
+            no_gap = false;
+        }
         // a marker sent for a match too long to carry
         let mut extra = 0;
         if redact && more {
-            let (c, kind) = piece_end(&line);
+            let (c, kind, failed) = piece_end(&line, !no_gap);
+            no_gap |= failed;
             carry = line.split_off(c);
             if let Some(kind) = kind.filter(|_| carry.len() > CARRY_MAX) {
                 carry.clear();

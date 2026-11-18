@@ -1435,6 +1435,15 @@ incompatible index by itself, and that is never breaking.
   server gives a JSON-RPC batch a thread of its own only while fewer than 32 batches have one, and
   runs it on the reading thread past that: each batch line had its own thread, so 200 one-call
   batches during the first build took 304 threads ([Security](docs/SECURITY.md)).
+- `hook run` keeps a long line with no ASCII byte (one line of CJK text, or bytes that are not
+  UTF-8) in bounded memory and linear time: the cut backed up to an ASCII byte, found none, and
+  carried the whole line on to the next piece, so a 64 MiB line took 7 s and 1.9 GB, and takes
+  0.7 s and 70 MB. A cut now lands on a character's start. Secrets less than 4 KiB apart (a
+  one-line JSON log of tokens) pulled the cut back to the first of them and past 4 MiB withheld
+  the rest of the line; the cut now goes in a gap between two of them where the rules still find
+  each one, and every token goes out marked. That search makes two tries a piece and none for the
+  rest of a line where they found no gap, so a one-line key of 6 MiB, whose rows the rules find
+  close together, goes out in 0.4 s as before ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 

@@ -679,6 +679,33 @@ fn a_secret_too_long_to_carry_is_withheld_to_its_line_end() {
 }
 
 #[test]
+fn a_one_line_escaped_private_key_of_megabytes_goes_out_marked_in_seconds() {
+    let r = Repo::new("piece_key");
+    // a JSON string holding a PEM key, its rows joined by an escaped line break: rule matches close
+    // together all along the line, past several pieces
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    let body: String = (0..2 << 20)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[(x % 64) as usize] as char
+        })
+        .collect();
+    let rows: Vec<&str> = (0..body.len()).step_by(64).map(|i| &body[i..(i + 64).min(body.len())]).collect();
+    let armour = |end: &str| format!("-----{end} {}-----", ["RSA", "PRIVATE", "KEY"].join(" "));
+    let key = format!("{{\"key\":\"{}\\n{}\\n{}\\n\"}}", armour("BEGIN"), rows.join("\\n"), armour("END"));
+    r.write("key.json", &format!("{key}\n"));
+    let t0 = std::time::Instant::now();
+    let out = String::from_utf8_lossy(&redacted_run(&r, &["grep", "key", "key.json"])).into_owned();
+    // the gap search between rule matches ran its two full reads of a piece once per match
+    assert!(t0.elapsed() < std::time::Duration::from_secs(20), "took {:?}", t0.elapsed());
+    assert!(out.contains("[redacted:"), "{} bytes out", out.len());
+    let raw = rows.iter().filter(|row| row.len() == 64 && out.contains(**row)).count();
+    assert_eq!(raw, 0, "{raw} of {} body rows out as written", rows.len());
+}
+
+#[test]
 fn a_long_line_with_no_secret_goes_out_byte_for_byte() {
     let r = Repo::new("piece_exact");
     // over three pieces, with a stray byte that is not UTF-8 and characters of several bytes
@@ -693,6 +720,88 @@ fn a_long_line_with_no_secret_goes_out_byte_for_byte() {
     std::fs::write(r.root.join("min.js"), &line).unwrap();
     let out = redacted_run(&r, &["grep", "-a", "done", "min.js"]);
     assert!(out == line, "{} bytes out for {}", out.len(), line.len());
+}
+
+/// What `hook run --piped -- grep -a done long.txt` prints for `line`, how long it took, and the
+/// most memory it held where the platform says.
+#[allow(clippy::zombie_processes)] // wait4 reaps the child
+fn long_line_run(name: &str, line: &[u8]) -> (Vec<u8>, std::time::Duration, Option<u64>) {
+    use std::io::Read;
+    let r = Repo::new(name);
+    std::fs::write(r.root.join("long.txt"), line).unwrap();
+    let mut child = Command::new(BIN)
+        .args(["hook", "run", "--piped", "--", "grep", "-a", "done", "long.txt"])
+        .current_dir(&r.root)
+        .env_remove("SCRUTATE_REDACT")
+        .env_remove("SCRUTATE_MAX_BYTES")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut so = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = so.read_to_end(&mut out);
+        out
+    });
+    let start = std::time::Instant::now();
+    let peak = loop {
+        if start.elapsed() > std::time::Duration::from_secs(60) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("hook run on a {} byte line still running after 60 s", line.len());
+        }
+        #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+        {
+            let (mut status, mut usage) = (0, unsafe { std::mem::zeroed::<libc::rusage>() });
+            if unsafe { libc::wait4(child.id() as i32, &mut status, libc::WNOHANG, &mut usage) } > 0 {
+                // bytes on macOS, KiB on Linux
+                break Some(usage.ru_maxrss as u64 * if cfg!(target_os = "macos") { 1 } else { 1024 });
+            }
+        }
+        #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+        if child.try_wait().unwrap().is_some() {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    (reader.join().unwrap(), start.elapsed(), peak)
+}
+
+#[test]
+fn a_long_line_with_no_ascii_byte_goes_out_whole_in_bounded_memory_and_time() {
+    // characters of three bytes, then bytes that are not UTF-8 and never start a character
+    let cjk: Vec<u8> = "中".repeat((64 << 20) / 3).into_bytes();
+    let stray: Vec<u8> = (0..64 << 20).map(|i| 0x80 + (i % 64) as u8).collect();
+    for (name, mut line) in [("piece_cjk", cjk), ("piece_stray", stray)] {
+        line.extend_from_slice(b" done\n");
+        let (out, took, peak) = long_line_run(name, &line);
+        assert!(out == line, "{name}: {} bytes out for {}", out.len(), line.len());
+        assert!(took < std::time::Duration::from_secs(20), "{name}: {took:?}");
+        if let Some(peak) = peak {
+            assert!(peak < 256 << 20, "{name}: {} MiB at most", peak >> 20);
+        }
+    }
+}
+
+#[test]
+fn a_long_line_of_secrets_close_together_is_sent_with_each_one_marked() {
+    let token: String = (0..36).map(|i| b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJ0123456789"[i * 7 % 46] as char).collect();
+    let item = format!("{{\"token\":\"{}{token}\"}},", "ghp_");
+    // past the 4 MiB a carried match may grow to; the rules' own cost per secret sets the size
+    let n = (16 << 20) / item.len();
+    let line = format!("[{}] done\n", item.repeat(n));
+    let (out, took, peak) = long_line_run("piece_dense", line.as_bytes());
+    let out = String::from_utf8(out).unwrap();
+    assert!(!out.contains(&token[..12]), "a token went out");
+    assert_eq!(out.matches("{\"token\":\"[redacted:github-token]\"},").count(), n, "{} bytes out", out.len());
+    assert!(out.contains("] done\n"), "the rest of the line is sent");
+    assert!(took < std::time::Duration::from_secs(20), "{took:?}");
+    if let Some(peak) = peak {
+        assert!(peak < 256 << 20, "{} MiB at most", peak >> 20);
+    }
 }
 
 #[test]
