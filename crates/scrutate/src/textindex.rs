@@ -41,6 +41,10 @@ pub const BINARY: i64 = 1;
 pub const ALWAYS: i64 = 2;
 /// Unreadable when indexed: read again by the next update.
 pub const RETRY: i64 = 4;
+/// Of a `BINARY` file: its first NUL is in the head the code index reads (its first 4 KiB, by
+/// `index::head_reads_as_text`), so a search that reads files as that index does reads it only up to
+/// the NUL, which its trigrams cover. A file indexed before this flag lacks it and is read.
+pub const EARLY_NUL: i64 = 8;
 
 // ------------------------------------------------------------------------- query extraction
 /// A necessary condition on a file's trigrams for the pattern to match somewhere in it.
@@ -448,7 +452,11 @@ fn stream_masks(mut src: impl std::io::Read, piece: usize) -> std::io::Result<(i
             let last = nul.is_some() || len < buf.len();
             t.feed(&buf[..nul.unwrap_or(len)], base, last);
             if last {
-                flags = if nul.is_some() { BINARY } else { 0 };
+                // the NUL's offset in the file against the head `index::head_reads_as_text` reads
+                flags = match nul {
+                    Some(i) => BINARY | if base + i < HEAD { EARLY_NUL } else { 0 },
+                    None => 0,
+                };
                 return Ok(None);
             }
             base += len - 3;
@@ -462,6 +470,14 @@ fn stream_masks(mut src: impl std::io::Read, piece: usize) -> std::io::Result<(i
             None => (flags, tris),
         })
     })
+}
+
+/// The bytes `index::head_reads_as_text` reads.
+const HEAD: usize = 4096;
+
+/// `EARLY_NUL` for a file starting with `head` (one with a NUL byte), else 0.
+fn early_nul(head: &[u8]) -> i64 {
+    if crate::index::head_reads_as_text(head) { 0 } else { EARLY_NUL }
 }
 
 struct DocIn {
@@ -493,7 +509,7 @@ fn read_doc(root: &Path, rel: String, size: u64, mtime: i64, ctime: i64) -> DocI
         std::fs::read(&path).map(|bytes| match direct(&bytes) {
             Some(flags) => (flags, Vec::new(), Vec::new()),
             None => match bytes.iter().position(|&b| b == 0) {
-                Some(i) => (BINARY, trigram_masks(&bytes[..i]), Vec::new()),
+                Some(i) => (BINARY | early_nul(&bytes), trigram_masks(&bytes[..i]), Vec::new()),
                 None => (0, trigram_masks(&bytes), key_hashes(&bytes)),
             },
         })
@@ -1042,13 +1058,22 @@ impl TextIndex {
     /// Of `files` (paths from the root, each with its `stat` now when the caller has it), the ones
     /// a search for `q` must read: each one this index holds as it is now that can match, and each
     /// one it does not hold as it is now (new, changed since, left out, unreadable when indexed).
-    pub fn to_read<'a>(&self, q: &Q, multiline: bool, files: impl Iterator<Item = (&'a str, Option<crate::index::Stat>)>) -> Result<Vec<&'a str>> {
+    pub fn to_read<'a>(
+        &self,
+        q: &Q,
+        multiline: bool,
+        as_indexed: bool,
+        files: impl Iterator<Item = (&'a str, Option<crate::index::Stat>)>,
+    ) -> Result<Vec<&'a str>> {
         let mut held: std::collections::HashMap<&str, (bool, &[i64])> = std::collections::HashMap::new();
         for s in &self.segs {
             let bits = s.eval(q).with_context(|| format!("text index segment {} is damaged; rebuild it with `scrutate index --text --force`", s.name))?;
             for d in (0..s.ndocs).filter(|&d| s.is_live(d)) {
                 let f = s.flags(d);
-                let hit = bits.as_ref().is_none_or(|b| b[d / 64] & (1 << (d % 64)) != 0) || f & ALWAYS != 0 || (multiline && f & BINARY != 0);
+                // past a NUL the trigrams say nothing: multi-line search reads past any, a search as
+                // the code index reads past one beyond the head
+                let past_nul = f & BINARY != 0 && (multiline || (as_indexed && f & EARLY_NUL == 0));
+                let hit = bits.as_ref().is_none_or(|b| b[d / 64] & (1 << (d % 64)) != 0) || f & ALWAYS != 0 || past_nul;
                 // a path held twice is read
                 held.entry(s.path(d)).and_modify(|e| e.0 = true).or_insert((hit, &s.docs()[d * COLS..(d + 1) * COLS]));
             }
@@ -1497,7 +1522,9 @@ mod tests {
         for at in [0, 1, 2, 3, 4, 62, 63, 64, 65, 66, 67, 2500, 4999] {
             text[at] = 0;
             for piece in [1, 3, 64, 4096] {
-                assert_eq!(stream_masks(&text[..], piece).unwrap(), (BINARY, trigram_masks(&text[..at])), "NUL at {at}, pieces of {piece}");
+                let flags = BINARY | early_nul(&text);
+                assert_eq!(flags & EARLY_NUL != 0, at < HEAD, "NUL at {at}");
+                assert_eq!(stream_masks(&text[..], piece).unwrap(), (flags, trigram_masks(&text[..at])), "NUL at {at}, pieces of {piece}");
             }
             text[at] = b'a';
         }
@@ -1725,6 +1752,34 @@ mod tests {
             }
         }
         assert!(matched > 1000, "only {matched} matches");
+    }
+
+    #[test]
+    fn a_search_as_indexed_reads_a_binary_file_only_when_its_nul_is_past_the_first_4_kib() {
+        let root = std::env::temp_dir().join(format!("scrutate_text_late_nul_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("hit.txt"), "a needle_word here\n").unwrap();
+        std::fs::write(root.join("text.txt"), "nothing here\n").unwrap();
+        // an image: a NUL in its first bytes, so a search reads it only up to there
+        std::fs::write(root.join("early.png"), [&b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"[..], &[b'x'; 5000]].concat()).unwrap();
+        // text with a NUL past 4 KiB: read whole as the code index reads it, the use past the NUL too
+        std::fs::write(root.join("late.bin"), [&b"line\n".repeat(1000)[..], b"\0", b"needle_word\n"].concat()).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        update(&root, false, false).unwrap();
+        let ix = TextIndex::open(&root).unwrap().unwrap();
+        let q = query_for(&Query { pattern: Pattern { text: "needle_word".into(), ..Pattern::default() }, ..Query::default() }).unwrap();
+        let names = ["early.png", "hit.txt", "late.bin", "text.txt"];
+        let read = |multiline, as_indexed| {
+            let mut r = ix.to_read(&q, multiline, as_indexed, names.iter().map(|n| (*n, None))).unwrap();
+            r.sort();
+            r
+        };
+        assert_eq!(read(false, false), ["hit.txt"]);
+        assert_eq!(read(false, true), ["hit.txt", "late.bin"], "the image cannot hold a use");
+        assert_eq!(read(true, false), ["early.png", "hit.txt", "late.bin"], "multi-line reads past any NUL");
+        drop(ix);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
