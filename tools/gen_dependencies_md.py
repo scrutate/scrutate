@@ -3,6 +3,7 @@
 size of the transitive graph, from Cargo.toml + `cargo metadata --locked`."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -58,7 +59,7 @@ PURPOSE = {
     "rust-stemmers": "Snowball English stemmer",
     "windows-sys": "opens and a rename relative to a directory handle (NtCreateFile, NtSetInformationFile) for `tsquery --rewrite --write`, refusing junctions (Windows; already in the tree through other crates)",
     "same-file": "tells the file standard output writes to apart, so `grep --index` does not search its own output (already in the tree through ignore)",
-    "rustix": "directory-relative opens and renames for `tsquery --rewrite --write`, refusing links (Linux and macOS; already in the tree through tar)",
+    "rustix": "directory-relative opens and renames for `tsquery --rewrite --write`, refusing links; the effective uid the dependency cache's and the state directory's ownership checks compare; ending git's process group; non-blocking and no-follow opens (Linux and macOS; already in the tree through tar)",
     "serde": "serialisation",
     "serde_json": "JSON output / MCP / config",
     "sha1": "file content hashes",
@@ -66,6 +67,13 @@ PURPOSE = {
     "toml": "configuration files",
     "tree-sitter": "incremental parsing runtime",
 }
+
+
+def optional_packages() -> dict:
+    """The packages of the locked resolve with every feature on, by name."""
+    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked", "--all-features"], cwd=ROOT,
+                                     capture_output=True, text=True, check=True).stdout)
+    return {p["name"]: p for p in meta["packages"]}
 
 
 def main() -> int:
@@ -84,11 +92,13 @@ def main() -> int:
            "| Crate | Version (locked) | Licence | Purpose | Optional |", "|---|---|---|---|---|"]
     # one row per crate: a crate declared twice (per target, with other features) is one dependency
     direct = sorted({d["name"]: d for d in core["dependencies"]}.values(), key=lambda d: d["name"])
+    # an optional crate the default build leaves out is in the lock all the same
+    every = optional_packages()
     grammars = []
     for d in direct:
         if d["kind"] == "dev":
             continue
-        locked = next((p for p in c.packages.values() if p["name"] == d["name"]), None)
+        locked = next((p for p in c.packages.values() if p["name"] == d["name"]), None) or every.get(d["name"])
         ver = locked["version"] if locked else d["req"]
         lic = (locked or {}).get("license") or "?"
         if d["name"].startswith("tree-sitter-"):

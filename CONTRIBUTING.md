@@ -54,7 +54,7 @@ cargo test --release -p scrutate                  # unit + samples + robustness 
 SCRUTATE_TEST_STRESS=1 cargo test --release -p scrutate --lib a_file_written_just_before_a_call   # the session's write-then-read tests at 1000 loops (200 by default; tools/ci_gate.sh's full mode and the weekly fuzz-weekly.yml run 1000)
 cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
 bash tools/ci_gate.sh [--quick]                   # CI's Linux checks on a box set up by its ci_setup.sh (on the box, not in this repository); tools/gate_map.json names what covers each CI step
-python3 tools/gate_parity.py                      # every step of the six workflows, run: and uses:, is in that map, keyed by what decides how it runs (PyYAML from python[test])
+python3 tools/gate_parity.py                      # every step of the seven workflows, run: and uses:, is in that map, keyed by what decides how it runs (PyYAML from python[test])
 python3 tools/fuzz_lock.py --check                # fuzz/Cargo.lock holds the root lock's versions; without --check it makes the file again
 python3 tools/gitleaks_config.py                  # .gitleaks.toml holds title and [extend] useDefault = true alone, in any case, and no .gitleaksignore sits beside it (Python 3.11+)
 cargo audit

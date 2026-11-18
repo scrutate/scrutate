@@ -91,10 +91,10 @@
   that takes a path or location reads that form back.
   `scrutate grep` does the same in colour on a terminal and in `--symbols` text; piped, it prints
   the name as is, as grep and ripgrep do.
-- **Configuration**: the nearest `.scrutate.toml` from the current directory up to the
-  repository top (the directory holding `.git` or `.scrutate`), else
-  `$XDG_CONFIG_HOME/scrutate/config.toml`; `$SCRUTATE_CONFIG` names a file, and with `--root` the
-  file in that directory is used. `[index] exclude_dirs` is read only from the `.scrutate.toml`
+- **Configuration**: `$SCRUTATE_CONFIG`, when set, names the file and wins; else the nearest
+  `.scrutate.toml` from the current directory up to the repository top (the directory holding
+  `.git` or `.scrutate`), with `--root` the one in that directory; else
+  `$XDG_CONFIG_HOME/scrutate/config.toml` (`~/.config/scrutate/config.toml`). `[index] exclude_dirs` is read only from the `.scrutate.toml`
   at the index root, so every command, the MCP server, the language server and the Python
   bindings leave out the same directories wherever they start; elsewhere (a subdirectory's
   `.scrutate.toml`, `$SCRUTATE_CONFIG`, your `config.toml`) it is ignored with a warning.
@@ -190,8 +190,8 @@ compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and `.Z` through
 tools, as ripgrep does. Limits:
 
 - an archive or compressed file stops with a warning at 8 GiB expanded or past a million members
-  (a tar's PAX, long-name and directory headers are no members; it also stops past four million
-  headers);
+  (a tar's members are its regular files: PAX and long-name headers, directories, links and other
+  entries are not; it also stops past four million headers);
 - a member or compressed file stops with a warning at a line longer than 64 MiB (not with `-U`,
   which holds the whole member);
 - a tar member whose GNU long name or PAX path is over 64 KiB is skipped with a warning; other
@@ -347,7 +347,7 @@ while files change.
 | `stats` | Index statistics as one JSON object: `files`, `files_skipped` (the files it leaves out), `chunks`, `symbols`, `call_edges`, `imports`, `segments`, `semantic` (whether the semantic model is on), `text_index` (its `files`, `segments` and `bytes`), and `not_indexed` when files are left out (see below). |
 | `languages [--json]` | The verified capability registry. The JSON gives each language's `id`, its `extensions`, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names (`filenames`), whether it has `definitions`, `call_edges`, `imports` and `docstrings` (booleans), every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included), and `"tier": "grammar"`. A custom language follows the built-in ones: its line ends `custom: .scrutate.toml` (or `custom:` and the path of your configuration file), and its JSON has `"tier": "custom"` and `"source"`. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
-| `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured] [--short-tools]` | MCP server on stdio (see below); `--watch` also brings the indexes up to date after each burst of file changes; `--structured` also sends each answer as JSON; `--short-tools` sends the short tool list. |
+| `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured] [--short-tools] [--allow-edits]` | MCP server on stdio (see below); `--watch` also brings the indexes up to date after each burst of file changes; `--structured` also sends each answer as JSON; `--short-tools` sends the short tool list; `--allow-edits` lists `edit_symbol` ([Edits](#serve---allow-edits-and-edit_symbol)). |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config [--json]` | Show the configuration file in effect. `--json` prints `{"root": ..., "configuration_file": ...}`: the root an index command run here uses, and the configuration file (`null` when none). It builds no index; the editor plugins read it to find the root. |
 | `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search, printed as `{"query", "hits"}` (`ms`, its time in milliseconds, added with `--timing`); a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints the answer's envelope with the operation's name (`{"op", "schema", "result"}`, and `stopped_at` when it stopped at its limit) or `{"op", "error"}`; a `response_format` other than `detailed` or `concise` is such an error, and either form prints the same envelope. A `max_results` over 5,000 for `grep_code` or `references` is lowered to 5,000 here too, with no note. A `grep_code` answer that stopped carries `stopped_at` inside its `result`. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`candidates`, each with `id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`), the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`) and the query's words and literal names (`terms`, `lits`): the rows the ranker is trained on. |
@@ -1543,7 +1543,8 @@ files obeyed, hidden files and links below a given path left out).
 The index learns of a written file as of any edit: the next `symbol`, `search` or other lookup
 sees its new size and time and reads it again, and Engine A's `grep` reads the file as it is.
 `grep --index` answers from the text index as it was built, so `grep --index --update` sees the
-new text. No MCP tool rewrites: the server only reads, except `reindex`.
+new text. No MCP tool runs a `tsquery` rewrite: the server writes source files only through `edit_symbol`
+under `serve --allow-edits`.
 
 ### Custom languages
 

@@ -101,5 +101,6 @@ was not started here.
 
 The server stays on the machine: it writes only `.scrutate/`, the frecency file of `find_files`
 under `$XDG_STATE_HOME/scrutate/` (else `~/.local/state/scrutate/`, on Windows
-`%LOCALAPPDATA%\scrutate\`) and, with `--allow-edits`, the definitions `edit_symbol` is asked to
-apply. It opens no network connections and runs no repository code.
+`%LOCALAPPDATA%\scrutate\`), the dependency copies `scope: "deps"` makes in the user cache
+(`$SCRUTATE_CACHE_DIR`, else the platform's, see [Uninstalling](../../docs/INSTALL.md#uninstalling)) and, with
+`--allow-edits`, the definitions `edit_symbol` is asked to apply. It opens no network connections and runs no repository code.
