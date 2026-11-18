@@ -486,6 +486,23 @@ fn go_a_test_package_is_not_part_of_the_package_it_tests() {
 }
 
 #[test]
+fn go_a_method_declared_in_a_test_file_is_found_from_the_package_tests() {
+    let r = Repo::new(
+        "go_test_methods",
+        &[
+            ("go.mod", "module example.com/m\n\ngo 1.22\n"),
+            ("a/t.go", "package a\n\ntype T struct{}\n\nfunc New() *T { return &T{} }\n"),
+            ("a/export_test.go", "package a\n\nfunc (t *T) resetForTest() {}\n\nfunc (t *T) ResetForTest() { t.resetForTest() }\n"),
+            ("a/a_test.go", "package a\n\nfunc TestIn() {\n\tx := New()\n\tx.resetForTest()\n}\n"),
+            ("a/ext_test.go", "package a_test\n\nimport \"example.com/m/a\"\n\nfunc TestOut() {\n\tx := a.New()\n\tx.ResetForTest()\n}\n"),
+        ],
+    );
+    // the package's own test file, and the external test package through its import of a
+    assert_eq!(r.refs_of("resetForTest", "a/export_test.go:3"), ["a/a_test.go:5", "a/export_test.go:3", "a/export_test.go:5"]);
+    assert_eq!(r.refs_of("ResetForTest", "a/export_test.go:5"), ["a/export_test.go:5", "a/ext_test.go:7"]);
+}
+
+#[test]
 fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
     let use_js = "import { helper } from './lib';\nfunction viaVar(flag) {\n  if (flag) {\n    var helper = other();\n  }\n  return helper();\n}\nfunction viaLet(flag) {\n  if (flag) {\n    let helper = other();\n  }\n  return helper();\n}\nfunction viaConst(flag) {\n  {\n    const helper = 3;\n  }\n  for (var i = 0; i < 1; i++) {\n    var other = helper();\n  }\n  return helper();\n}\n";
     let r = Repo::new("js_var", &[("lib.js", "export function helper() { return 1; }\n"), ("use.js", use_js)]);

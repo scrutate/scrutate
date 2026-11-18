@@ -503,7 +503,8 @@ to its end, where `grep` stops at the NUL, and one with a NUL there is binary an
    (`f func() T`) has its result type. A variable set from a call takes the function's declared return type (through `?` and holders
    such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes field `x`'s
    declared type, and a module-level or static variable its declared or built type. A Go method
-   is found by its receiver type in any file of the package, or through an embedded field
+   is found by its receiver type in any file of the package, its `_test.go` files of the same
+   package clause included (`export_test.go`), or through an embedded field
    (`v.Hello()` with `type Wrap struct { *Base }` is `Base.Hello`); an embedded `base.Base` is
    the `Base` of the package imported as `base`, never a local type of that name. A Rust method a type does not define
    itself is the default method of a trait the type implements (`impl Greet for S {}`, also
