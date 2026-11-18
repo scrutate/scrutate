@@ -419,7 +419,7 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     }
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
     // the index holds a file whose first 4 KiB have no NUL, and the uses past one with it
-    let as_text = watched && o.as_indexed && src.at().is_some_and(head_is_text);
+    let as_text = watched && o.as_indexed && whole.map_or_else(|| src.at().is_some_and(head_is_text), crate::index::head_reads_as_text);
     let checked = as_text.then(|| searcher.binary_detection().clone());
     if as_text {
         searcher.set_binary_detection(BinaryDetection::none());

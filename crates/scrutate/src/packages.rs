@@ -339,6 +339,11 @@ fn user_cache(windows: bool, macos: bool, var: impl Fn(&str) -> Option<PathBuf>,
     if let Some(d) = var(if windows { "LOCALAPPDATA" } else { "XDG_CACHE_HOME" }) {
         return Ok(d.join("scrutate"));
     }
+    // nor HOME, which the same shells set: where LOCALAPPDATA is by default
+    if windows {
+        let profile = var("USERPROFILE").ok_or_else(|| anyhow!("no user cache directory: set SCRUTATE_CACHE_DIR"))?;
+        return Ok(profile.join("AppData/Local/scrutate"));
+    }
     let home = home.ok_or_else(|| anyhow!("no user cache directory: set SCRUTATE_CACHE_DIR"))?;
     Ok(if macos { home.join("Library/Caches/scrutate") } else { home.join(".cache/scrutate") })
 }
@@ -917,7 +922,7 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
 /// The cache's `deps` directory, made the user's alone: the cache root must belong to the user and
 /// be writable by no one else, or another user could swap a copy for one of their own; a
 /// directory of the cache that is open to others is closed (Unix: mode 0700). On Windows the
-/// cache is under the user's own `%LOCALAPPDATA%` (never `XDG_CACHE_HOME`), whose access the system
+/// cache is under the user's own `%LOCALAPPDATA%` (never `XDG_CACHE_HOME` or `HOME`), whose access the system
 /// gives that user alone; a `SCRUTATE_CACHE_DIR` there is not checked.
 fn deps_dir(given: Option<&Path>) -> Result<PathBuf> {
     let root = cache_dir(given)?;
@@ -1362,6 +1367,16 @@ mod tests {
         assert_eq!(user_cache(true, false, var, None).unwrap(), Path::new("/local/scrutate"));
         assert_eq!(user_cache(false, false, var, None).unwrap(), Path::new("/msys/cache/scrutate"));
         assert!(user_cache(true, false, |k: &str| var(k).filter(|_| k != "LOCALAPPDATA"), None).is_err());
+    }
+
+    #[test]
+    fn on_windows_with_no_localappdata_the_dependency_cache_is_under_userprofile_never_home() {
+        let msys = Some(PathBuf::from("/msys/home"));
+        let profile = |k: &str| (k == "USERPROFILE").then(|| PathBuf::from("/users/me"));
+        assert_eq!(user_cache(true, false, profile, msys.clone()).unwrap(), Path::new("/users/me/AppData/Local/scrutate"));
+        assert!(user_cache(true, false, |_: &str| None, msys.clone()).is_err());
+        // elsewhere the home directory is still the fallback
+        assert_eq!(user_cache(false, false, |_: &str| None, msys).unwrap(), Path::new("/msys/home/.cache/scrutate"));
     }
 
     #[test]

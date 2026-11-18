@@ -463,6 +463,12 @@ incompatible index by itself, and that is never breaking.
   to a file (was 0.238 s; ripgrep 0.183 s) and 0.152 s through a pipe (was 0.392 s). A smaller
   output starts no thread; a write error still stops the search and is reported once
   ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- `refs`, `callers`, `references` and `dead` read a binary file the text index holds only when
+  its first NUL byte is past its first 4 KiB, where they read it to its end; one with a NUL in that
+  head (an image, a jar, a wasm module) they pass by its trigrams, as `grep --index` does. They
+  read every file with a NUL byte on every call, and read a file's first 4 KiB a second time
+  when the whole file was already in memory. An index built before records no NUL position, and
+  its binary files are read as before until they are indexed again.
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are
@@ -1396,6 +1402,10 @@ incompatible index by itself, and that is never breaking.
   a link (`O_NOFOLLOW`; on Windows a link is refused), and a state directory another user owns is
   not used while one others may write to is closed to them first, with one stderr line
   ([Security](docs/SECURITY.md#threat-model)).
+- On Windows with `LOCALAPPDATA` unset, the dependency cache is under
+  `%USERPROFILE%\AppData\Local\scrutate`, where `LOCALAPPDATA` points by default, and with no
+  `USERPROFILE` either it is an error naming `SCRUTATE_CACHE_DIR`; it fell back to `HOME`, which
+  MSYS and Git Bash set ([Security](docs/SECURITY.md)).
 - `grep` on a terminal writes each match of standard input as it is found, and each file's lines
   as soon as that file is done, as ripgrep does: matches read from a pipe (`tail -f log |
   scrutate grep ERROR`) waited for 512 of them or the end of the input, and plain output for 64
