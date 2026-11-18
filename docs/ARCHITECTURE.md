@@ -252,7 +252,13 @@ adds:
   within a millisecond of other output waits in a 64 KB buffer, so many files leave in one write
   (a write per matching file: 88,000 writes for `return` in the Linux tree; on Linux 302 ms to
   190 ms). Output after a quiet spell leaves at once and threads release held output between
-  files, so nothing waits longer than a millisecond or the longest file being searched.
+  files, so nothing waits longer than a millisecond or the longest file being searched. Once a
+  first 64 KB fills, the writes leave from a thread of their own, fed the full buffers over a
+  bounded channel (4 waiting at most) in the order they filled, so a search thread never waits on
+  a write system call; a smaller output starts no thread. While a search thread held the sink for
+  a write, every thread that finished a file slept behind it, and on Linux x86 the writes added to
+  the search's time (`return` in the Linux tree on an Intel Xeon 8488C VM, 32 vCPU: 0.12 s to
+  /dev/null, 0.24 s to a file; with the writing thread 0.11 s to a file, ripgrep 0.18 s).
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
   (`--json`, schema version 1, record types in [CLI](CLI.md#conventions)). Flags: [CLI
   reference](CLI.md#engine-a-grep-alias-g).

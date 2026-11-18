@@ -451,6 +451,18 @@ incompatible index by itself, and that is never breaking.
   `tools/ci_gate.sh` does; the binary is still linked with the release profile (fat LTO, one
   unit). The two write-then-read session tests run 200 loops, 1000 with `SCRUTATE_TEST_STRESS`
   set ([Contributing](CONTRIBUTING.md#quality-gates-all-must-pass-before-a-change-is-merged)).
+- `grep` without `--max-results` counts a file's matches in the file's own search and adds them
+  to the shared total once per file, where every matching line added to it, and the counters every
+  search thread adds to each sit on a cache line of their own. On many-core x86 the threads had
+  waited on each other for those lines when a search prints many lines. The counts printed do not
+  change.
+- Plain `grep` output past its first 64 KiB is written by a thread of its own, fed full 64 KiB
+  buffers in the order they filled, so no search thread waits on a write. While one search thread
+  held the output for a write, the others slept behind it, and on Linux x86 the writes added to the
+  search's time. `return` in the Linux tree on an Intel Xeon 8488C VM (32 vCPU) now takes 0.111 s
+  to a file (was 0.238 s; ripgrep 0.183 s) and 0.152 s through a pipe (was 0.392 s). A smaller
+  output starts no thread; a write error still stops the search and is reported once
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are
