@@ -506,6 +506,47 @@ impl Peq {
     }
 }
 
+/// Where each unit of a line (a character, or a byte that is not UTF-8) starts, one bit per byte:
+/// a long line costs an eighth of a byte per byte here, not a word per character.
+pub(crate) struct UnitStarts(Vec<u64>);
+
+impl UnitStarts {
+    /// The starts of a line of `len` bytes, where `unit(i)` is the length of the unit at `i`.
+    pub(crate) fn new(len: usize, mut unit: impl FnMut(usize) -> usize) -> UnitStarts {
+        let mut bits = vec![0u64; len.div_ceil(64)];
+        let mut i = 0;
+        while i < len {
+            bits[i / 64] |= 1 << (i % 64);
+            i += unit(i);
+        }
+        UnitStarts(bits)
+    }
+
+    /// `f` of each start in `from..to`, the last first: a loop over words and their bits, so
+    /// reading a line of single-byte units costs about what reading a list of them did.
+    #[inline]
+    pub(crate) fn for_each_rev(&self, from: usize, to: usize, mut f: impl FnMut(usize)) {
+        if from >= to {
+            return;
+        }
+        for word in (from / 64..to.div_ceil(64)).rev() {
+            let base = word * 64;
+            let mut bits = self.0[word];
+            if to - base < 64 {
+                bits &= (1u64 << (to - base)) - 1;
+            }
+            if from > base {
+                bits &= !((1u64 << (from - base)) - 1);
+            }
+            while bits != 0 {
+                let b = 63 - bits.leading_zeros() as usize;
+                bits ^= 1 << b;
+                f(base + b);
+            }
+        }
+    }
+}
+
 /// The fuzzy spans of a line of `len` bytes, chosen by `in_gap`: for each number of edits `c` from
 /// 0 to `k`, over each part of the line no span covers yet, it adds the spans costing `c` there.
 pub(crate) fn fuzzy_passes(len: usize, k: usize, mut in_gap: impl FnMut(usize, usize, usize, &mut Vec<(usize, usize)>)) -> Vec<(usize, usize)> {
@@ -760,16 +801,10 @@ impl FuzzyMatcher {
     /// longest, none overlapping; an end character is matched or is a word character substituted,
     /// never inserted.
     pub(crate) fn spans(&self, line: &[u8]) -> Vec<(usize, usize)> {
-        let mut units = Vec::new();
-        let mut i = 0;
-        while i < line.len() {
-            units.push(i);
-            i += unit_len(line, i);
-        }
+        let units = UnitStarts::new(line.len(), |i| unit_len(line, i));
         fuzzy_passes(line.len(), self.k, |c, from, to, out| {
-            let gap = &units[units.partition_point(|&u| u < from)..units.partition_point(|&u| u < to)];
             let mut at = from;
-            for s in self.starts(line, gap, c) {
+            for s in self.starts(line, &units, from, to, c) {
                 if s >= at
                     && let Some(e) = self.longest_from(line, s, to, c)
                 {
@@ -780,31 +815,32 @@ impl FuzzyMatcher {
         })
     }
 
-    /// Over the units `gap` of `line`: every unit where a part within `c` edits of the pattern
-    /// starts and ends inside the gap, left to right (the reversed pattern, searching backward).
-    fn starts(&self, line: &[u8], gap: &[usize], c: usize) -> Vec<usize> {
+    /// Over the units of `line` in `from..to`: every unit where a part within `c` edits of the
+    /// pattern starts and ends inside that range, left to right (the reversed pattern, searching
+    /// backward).
+    fn starts(&self, line: &[u8], units: &UnitStarts, from: usize, to: usize, c: usize) -> Vec<usize> {
         let mut out = Vec::new();
         let m = self.m as isize;
         if let Some(b) = &self.long {
             let (_, rev) = &**b;
             let (mut pv, mut mv) = rev.start();
             let mut score = m;
-            for &u in gap.iter().rev() {
+            units.for_each_rev(from, to, |u| {
                 score += rev.step(&mut pv, &mut mv, rev.eq_at(line, u).0);
                 if score <= c as isize {
                     out.push(u);
                 }
-            }
+            });
         } else {
             let top = 1u128 << (self.m - 1);
             let mask = if self.m == 128 { u128::MAX } else { (1u128 << self.m) - 1 };
             let (mut pv, mut mv, mut score) = (mask, 0u128, m);
-            for &u in gap.iter().rev() {
+            units.for_each_rev(from, to, |u| {
                 score += myers_step(self.rev.at(line, u).0, &mut pv, &mut mv, top, mask);
                 if score <= c as isize {
                     out.push(u);
                 }
-            }
+            });
         }
         out.reverse();
         out
@@ -3793,6 +3829,33 @@ pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The unit starts of any part of a line, read last first, are those the line's characters
+    /// give: ASCII, two- to four-byte UTF-8, a combining mark and bytes that are not UTF-8, over
+    /// several 64-bit words, for every range.
+    #[test]
+    fn unit_starts_give_every_start_of_a_range_last_first() {
+        let mut line = Vec::new();
+        for _ in 0..6 {
+            line.extend_from_slice("ab é日𝄞e\u{301} ".as_bytes());
+            line.extend_from_slice(&[0xFF, b'x', 0xC3]);
+        }
+        let mut all = Vec::new();
+        let mut i = 0;
+        while i < line.len() {
+            all.push(i);
+            i += unit_len(&line, i);
+        }
+        let units = UnitStarts::new(line.len(), |i| unit_len(&line, i));
+        for from in 0..=line.len() {
+            for to in from..=line.len() {
+                let want: Vec<usize> = all.iter().rev().copied().filter(|&u| from <= u && u < to).collect();
+                let mut got = Vec::new();
+                units.for_each_rev(from, to, |u| got.push(u));
+                assert_eq!(got, want, "{from}..{to}");
+            }
+        }
+    }
 
     thread_local! {
         /// files of one line this thread searched in two passes through small buffers

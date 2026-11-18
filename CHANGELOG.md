@@ -1375,6 +1375,9 @@ incompatible index by itself, and that is never breaking.
   read". The bound is the repository, the nearest directory up holding `.git` or an index; a link
   out of it still stops the command. One with a NUL byte in its first 4 KiB is now refused as
   not text, where the message said it was out of bounds.
+- `grep --fuzzy` and `--fuzzy-regex` with `--json` or colour keep where each character of a
+  matched line starts as one bit per byte, not eight bytes per character: a 64 MB line takes
+  219 MB at peak instead of 723 MB, in the same time, with the same spans.
 
 ## [0.1.0] - 2026-11-11
 
