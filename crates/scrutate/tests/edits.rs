@@ -212,11 +212,17 @@ fn crlf_lines_stay_crlf_and_the_rest_of_the_file_is_byte_for_byte_the_same() {
 #[cfg(unix)]
 #[test]
 fn a_file_reached_through_a_link_is_never_written() {
+    // an edit named by a link edits the file the index holds, by its own path; the link stays a
+    // link (a file swapped for a link after the read is refused: rewrite.rs's unix_tests)
     let mut s = Server::start("link", &[("real/a.py", PY)], &["--allow-edits"]);
     std::os::unix::fs::symlink(s.root.join("real/a.py"), s.root.join("linked.py")).unwrap();
-    let (text, _) = s.call("edit_symbol", json!({"symbol": "linked.py:4-5", "new_text": "def first():\n    return 2\n", "apply": true, "hash": "x"}));
-    assert!(!text.contains("+    return 2") || text.starts_with("error"), "{text}");
-    assert_eq!(s.file("real/a.py"), PY);
+    let new = "def first():\n    return 2\n";
+    let (dry, err) = s.call("edit_symbol", json!({"symbol": "linked.py:4-5", "new_text": new}));
+    assert!(!err && dry.contains("--- real/a.py"), "{dry}");
+    let (text, err) = s.call("edit_symbol", json!({"symbol": "linked.py:4-5", "new_text": new, "apply": true, "hash": Server::hash_in(&dry)}));
+    assert!(!err && text.starts_with("edited real/a.py:4-5"), "{text}");
+    assert!(s.file("real/a.py").contains("    return 2\n"));
+    assert!(fs::symlink_metadata(s.root.join("linked.py")).unwrap().file_type().is_symlink());
 }
 
 /// One file per language with four definitions, each returning its number.

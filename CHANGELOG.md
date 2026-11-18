@@ -1404,6 +1404,14 @@ incompatible index by itself, and that is never breaking.
   `%USERPROFILE%\AppData\Local\scrutate`, where `LOCALAPPDATA` points by default, and with no
   `USERPROFILE` either it is an error naming `SCRUTATE_CACHE_DIR`; it fell back to `HOME`, which
   MSYS and Git Bash set ([Security](docs/SECURITY.md)).
+- `--deps` and `scope: "deps"` read a lockfile, `Cargo.toml`, `go.mod`, a package's
+  `package.json` and a distribution's `RECORD` only as a regular file, never through a link, of at
+  most 64 MiB (1 MB for the manifests); a lockfile or manifest that is a link or larger is refused
+  by name. They were read with no size limit and through a link, so a planted `Cargo.lock` could
+  point outside the repository or be gigabytes long ([Security](docs/SECURITY.md)).
+- `setup claude` runs `claude` only from an absolute `PATH` entry outside the current directory and
+  its work tree, as `hook run` takes its programs: it took the first one on `PATH`, so with `.` or a
+  directory of the repository there it ran a `claude` the repository held ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 

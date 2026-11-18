@@ -3154,8 +3154,13 @@ fn panic_text(msg: &str, location: &str, index_opened: bool) -> String {
 }
 
 pub fn main_exit() {
-    // a panic is a bug, but the user still gets a one-line diagnosis and a stable exit code
-    // (2 = error) instead of a backtrace dump; RUST_BACKTRACE=1 shows the details
+    exit_with(run)
+}
+
+/// Run `run` and exit with its code. A panic is a bug, but the user still gets a one-line
+/// diagnosis and a stable exit code (2 = error) instead of a backtrace dump; RUST_BACKTRACE=1
+/// shows the details.
+fn exit_with(run: impl FnOnce() -> Result<i32> + std::panic::UnwindSafe) -> ! {
     std::panic::set_hook(Box::new(|info| {
         let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
         let opened = crate::index::OPENED.load(std::sync::atomic::Ordering::Relaxed);
@@ -3178,6 +3183,27 @@ pub fn main_exit() {
 mod tests {
     use clap::Parser;
     use proptest::prelude::*;
+
+    /// A panic prints one line on stderr and exits 2, end to end: the test runs itself again as a
+    /// child, where the process's own exit path meets a panic.
+    #[test]
+    fn a_panic_prints_one_line_and_exits_2() {
+        if std::env::var_os("SCRUTATE_TEST_PANIC").is_some() {
+            super::exit_with(|| -> anyhow::Result<i32> { panic!("planted panic") });
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cli::tests::a_panic_prints_one_line_and_exits_2", "--nocapture", "--test-threads=1"])
+            .env("SCRUTATE_TEST_PANIC", "1")
+            .env_remove("RUST_BACKTRACE")
+            .env_remove("SCRUTATE_DIAGNOSTICS")
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{err}");
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines.len(), 1, "{err}");
+        assert!(lines[0].starts_with("scrutate: internal error: planted panic (") && lines[0].ends_with("Please report it with RUST_BACKTRACE=1."), "{err}");
+    }
 
     /// `/tmp` and `/var/tmp` stop the climb whatever `TMPDIR` says: on macOS it never names them.
     #[cfg(unix)]

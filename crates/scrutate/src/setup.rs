@@ -89,10 +89,11 @@ impl Env {
     }
 }
 
-/// The first `name` on `PATH` that is a file.
+/// The first `name` on `PATH` that is a file, in an entry `hook run` would take a program from
+/// (absolute, outside the current directory and its work tree).
 fn on_path(name: &str) -> Option<PathBuf> {
     let names: Vec<String> = if cfg!(windows) { ["exe", "cmd", "bat"].iter().map(|e| format!("{name}.{e}")).collect() } else { vec![name.to_string()] };
-    std::env::split_paths(&std::env::var_os("PATH")?).flat_map(|d| names.iter().map(move |n| d.join(n)).collect::<Vec<_>>()).find(|p| p.is_file())
+    crate::shellhook::trusted_path_dirs().into_iter().flat_map(|d| names.iter().map(move |n| d.join(n)).collect::<Vec<_>>()).find(|p| p.is_file())
 }
 
 /// One thing `setup` does.

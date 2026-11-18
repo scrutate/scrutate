@@ -83,22 +83,43 @@ pub struct Locked {
 
 pub const LOCKFILES: [&str; 5] = ["Cargo.lock", "package-lock.json", "uv.lock", "poetry.lock", "go.mod"];
 
+/// The most bytes read of a manifest (`Cargo.toml`, `go.mod`, a package's `package.json`).
+const MANIFEST_MAX: u64 = 1 << 20;
+/// The most bytes read of a lockfile or a distribution's `RECORD`: a large repository's
+/// package-lock.json runs to megabytes.
+const LOCK_MAX: u64 = 64 << 20;
+
+/// The text of `name` at `root` when it is a regular file of at most `max` bytes, not a link;
+/// `None` when there is no such file, and an error naming it when there is another kind of file
+/// or a larger one, which --deps never reads.
+fn read_capped(root: &Path, name: &str, max: u64) -> Result<Option<String>> {
+    let path = root.join(name);
+    if std::fs::symlink_metadata(&path).is_err() {
+        return Ok(None);
+    }
+    match crate::files::read_regular(&path, max) {
+        Some(bytes) => Ok(String::from_utf8(bytes).ok()),
+        None => bail!("{name} is not a regular file of at most {} MiB: --deps reads no link and no larger file", max >> 20),
+    }
+}
+
 /// The packages every lockfile at `root` pins, and the lockfiles read.
-pub fn locked(root: &Path) -> (Vec<Locked>, Vec<&'static str>) {
+pub fn locked(root: &Path) -> Result<(Vec<Locked>, Vec<&'static str>)> {
     let mut out = Vec::new();
     let mut read = Vec::new();
     for lockfile in LOCKFILES {
-        let Ok(text) = std::fs::read_to_string(root.join(lockfile)) else { continue };
+        let max = if lockfile == "go.mod" { MANIFEST_MAX } else { LOCK_MAX };
+        let Some(text) = read_capped(root, lockfile, max)? else { continue };
         read.push(lockfile);
         out.extend(match lockfile {
-            "Cargo.lock" => cargo_lock(&text, &std::fs::read_to_string(root.join("Cargo.toml")).unwrap_or_default()),
+            "Cargo.lock" => cargo_lock(&text, &read_capped(root, "Cargo.toml", MANIFEST_MAX)?.unwrap_or_default()),
             "package-lock.json" => npm_lock(&text),
             "uv.lock" => uv_lock(&text),
             "poetry.lock" => poetry_lock(&text),
             _ => go_mod(&text),
         });
     }
-    (out, read)
+    Ok((out, read))
 }
 
 fn cargo_lock(text: &str, manifest: &str) -> Vec<Locked> {
@@ -431,7 +452,9 @@ fn dists(root: &Path) -> Vec<Dist> {
         infos.sort();
         for info in infos {
             let Some((name, version)) = info.trim_end_matches(".dist-info").split_once('-') else { continue };
-            let record = std::fs::read_to_string(site.join(&info).join("RECORD")).unwrap_or_default();
+            // a RECORD that is a link or too large lists no file
+            let record =
+                crate::files::read_regular(&site.join(&info).join("RECORD"), LOCK_MAX).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
             let files = record
                 .lines()
                 .filter_map(|l| if let Some(q) = l.strip_prefix('"') { q.split('"').next() } else { l.split(',').next() })
@@ -500,7 +523,7 @@ fn import_names(l: &Locked, dists: &[Dist]) -> Vec<String> {
 /// its root): the longest start that is a locked package's import name, before a `.` or `::`; for
 /// Go also a package in a module's subdirectory, by its import path or its name.
 fn split<'n>(root: &Path, name: &'n str, imported: &dyn Fn(&str) -> bool) -> Result<(Locked, &'n str, String)> {
-    let (all, read) = locked(root);
+    let (all, read) = locked(root)?;
     if read.is_empty() {
         bail!("no lockfile at the root ({}): --deps reads the version a lockfile pins", LOCKFILES.join(", "));
     }
@@ -766,7 +789,7 @@ fn chosen<'l>(root: &Path, hits: &[&'l Locked], dists: &[Dist]) -> Result<&'l Lo
 /// one; Cargo.lock writes `NAME VERSION` in `dependencies` when it locks more than one version of
 /// NAME, and `NAME VERSION (SOURCE)` when it locks one version from more than one source.
 fn cargo_direct(root: &Path, name: &str) -> Vec<(String, Option<From>)> {
-    let text = std::fs::read_to_string(root.join("Cargo.lock")).unwrap_or_default();
+    let text = read_capped(root, "Cargo.lock", LOCK_MAX).ok().flatten().unwrap_or_default();
     let Ok(t) = text.parse::<toml::Table>() else { return Vec::new() };
     let packages = t.get("package").and_then(|p| p.as_array()).cloned().unwrap_or_default();
     let mut out: Vec<(String, Option<From>)> = packages
@@ -882,7 +905,7 @@ fn installed(root: &Path, l: &Locked) -> Result<Installed> {
         }
         Eco::Npm => {
             let dir = own_dir(l, root, &Path::new("node_modules").join(&l.name))?.ok_or_else(|| missing("node_modules".into()))?;
-            let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap_or_default()).unwrap_or_default();
+            let manifest: Value = serde_json::from_str(&read_capped(&dir, "package.json", MANIFEST_MAX)?.unwrap_or_default()).unwrap_or_default();
             match manifest["version"].as_str() {
                 Some(v) if v == l.version => Ok(whole(dir)),
                 Some(v) => bail!("{} is locked at {} but node_modules has {}: run npm ci", l.name, l.version, crate::fmt::echo(v)),

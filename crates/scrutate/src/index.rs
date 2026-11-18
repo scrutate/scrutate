@@ -5110,6 +5110,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// An update that panics leaves the database as it was, and the next update, with no write
+    /// transaction left open, indexes what the failed one did not.
+    #[test]
+    fn an_update_that_panics_rolls_back_and_the_next_one_succeeds() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_panic_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let named = |ix: &super::Index, n: &str| -> i64 { ix.db.query_row("SELECT count(*) FROM chunks WHERE name = ?1", [n], |r| r.get(0)).unwrap() };
+        std::fs::write(root.join("b.py"), "def beta():\n    return 2\n").unwrap();
+        super::AFTER_LANGUAGES.with(|h| *h.borrow_mut() = Some(Box::new(|| panic!("planted panic"))));
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ix.update(false)));
+        assert!(failed.is_err());
+        assert!(ix.db.is_autocommit(), "the write transaction is closed");
+        assert_eq!((named(&ix, "alpha"), named(&ix, "beta")), (1, 0));
+        ix.update(false).unwrap();
+        assert_eq!((named(&ix, "alpha"), named(&ix, "beta")), (1, 1));
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn update_counts_as_a_refresh() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_refresh_{}", std::process::id()));
