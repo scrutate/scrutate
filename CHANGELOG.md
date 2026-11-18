@@ -1402,6 +1402,10 @@ incompatible index by itself, and that is never breaking.
   a link (`O_NOFOLLOW`; on Windows a link is refused), and a state directory another user owns is
   not used while one others may write to is closed to them first, with one stderr line
   ([Security](docs/SECURITY.md#threat-model)).
+- On Windows with `LOCALAPPDATA` unset, the dependency cache is under
+  `%USERPROFILE%\AppData\Local\scrutate`, where `LOCALAPPDATA` points by default, and with no
+  `USERPROFILE` either it is an error naming `SCRUTATE_CACHE_DIR`; it fell back to `HOME`, which
+  MSYS and Git Bash set ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 
