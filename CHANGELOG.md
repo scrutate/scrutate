@@ -469,6 +469,10 @@ incompatible index by itself, and that is never breaking.
   read every file with a NUL byte on every call, and read a file's first 4 KiB a second time
   when the whole file was already in memory. An index built before records no NUL position, and
   its binary files are read as before until they are indexed again.
+- `grep` holds a file of one long line under 64 MiB once: a file whose first 64 KiB hold no line
+  break and no NUL byte is read whole, or in two passes for a plain `-F` literal, where the stream
+  reader grew its buffer to up to three times the line, and the search is faster. `--json` writes a
+  match record from the line itself, not from a copy. The measured figures wait for a recorded run.
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are

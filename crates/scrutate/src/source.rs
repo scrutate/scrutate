@@ -373,7 +373,8 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
         // most files are small: one read of up to SMALL_FILE + 1 bytes takes such a file whole and
         // tells a larger one apart, with no call for the size (a `statx` per file otherwise: 96,000
         // of them on the Linux tree)
-        let first = if src.known_size().is_none_or(|n| n <= SMALL_FILE) { first(at, &mut w.small) } else { First::Larger };
+        let read_first = src.known_size().is_none_or(|n| n <= SMALL_FILE);
+        let first = if read_first { first(at, &mut w.small) } else { First::Larger };
         if let (First::Whole(_) | First::Other, Some(opened)) = (&first, src.opened()) {
             c.small_reads.fetch_add(1, Ordering::Relaxed);
             if r.p.slow(opened.elapsed().as_nanos() as u64) {
@@ -386,8 +387,13 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
             First::Larger => {
                 let len = src.size().unwrap_or(0);
                 let min = f.split_file_bytes;
-                if len >= min {
-                    match split(r, at, len, (min / 8).max(1), &rel) {
+                // a shorter file whose first SMALL_FILE bytes hold no line break and no NUL byte may
+                // be one line: read whole (`split` with no range to split), it is held once, where
+                // the stream grows its buffer to up to 3 times the line
+                let long_first_line =
+                    len > SMALL_FILE && len < min && !(if read_first { breaks(&w.small[..SMALL_FILE as usize]) } else { head_breaks(at, &mut w.small) });
+                if len >= min || long_first_line {
+                    match split(r, at, len, if long_first_line { len } else { (min / 8).max(1) }, &rel) {
                         Outcome::Done => return,
                         Outcome::Stream => {}
                         // `whole` takes only a source of one line with no NUL byte
@@ -525,6 +531,21 @@ enum First {
     Larger,
     /// a small source for the stream reader: it starts with a byte-order mark, or the read failed
     Other,
+}
+
+/// Whether `b` holds a line break or a NUL byte.
+fn breaks(b: &[u8]) -> bool {
+    memchr::memchr2(b'\n', 0, b).is_some()
+}
+
+/// `breaks` of the source's first `SMALL_FILE` bytes, read into `buf` as `first` reads (true when
+/// the read fails, so the source goes to the stream).
+fn head_breaks<A: ReadAt>(at: &A, buf: &mut Vec<u8>) -> bool {
+    let max = SMALL_FILE as usize;
+    if buf.len() <= max {
+        *buf = vec![0; max + 1];
+    }
+    at.read_at(&mut buf[..max], 0).map_or(true, |n| breaks(&buf[..n]))
 }
 
 /// Reads into `buf`, kept by the thread across files (sized once, never zeroed again).
