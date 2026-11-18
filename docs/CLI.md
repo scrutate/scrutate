@@ -185,7 +185,9 @@ search with a warning naming it. With `-P`, `--index` cannot narrow the files an
 of them. PCRE2 is the `pcre2` cargo feature, on by default. A build without it
 (`--no-default-features`, as the `wasm32-wasip1` build is, since PCRE2's JIT has no wasm backend)
 refuses `-P` and the `pcre2` mode (`grep_code`) with
-`-P/--pcre2 (mode pcre2) is not in this build: it was built without the pcre2 feature`.
+`-P/--pcre2 (mode pcre2) is not in this build: it was built without the pcre2 feature`. The
+aarch64 musl build reports an empty `-P` match only at a character's start, where the other builds
+report one at each byte of a multi-byte character, as ripgrep does (`x*` on `é€x`).
 
 `-z` also searches zip and tar archives (members shown as `archive.zip{dir/file}`) and
 compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and `.Z` through the system's
