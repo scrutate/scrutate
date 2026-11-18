@@ -80,7 +80,9 @@ impl Rules for Rust {
                 .collect();
             let chain = names.iter().rev().copied().collect::<Vec<_>>().join(".");
             let at_row = || fi.defs.iter().filter(|d| d.kind == "module" && d.start == row);
-            at_row().find(|d| d.qualname == chain || d.qualname.ends_with(&format!(".{chain}"))).or_else(|| at_row().next()).map(|d| d.id)
+            // the chain itself before a deeper module whose chain ends the same (`x.a.b` for `a.b`)
+            let suffix = format!(".{chain}");
+            at_row().find(|d| d.qualname == chain).or_else(|| at_row().find(|d| d.qualname.ends_with(&suffix))).or_else(|| at_row().next()).map(|d| d.id)
         };
         let rest = &segs[if ups == 0 { 1 } else { ups }..];
         let mut cur = match mods.get(ups) {
@@ -496,13 +498,20 @@ fn rust_use(n: Node, prefix: &str, src: &str, out: &mut Vec<Binding>) {
 impl Resolver<'_> {
     /// The `mod name;` declarations of a Rust file: (line, name, the file of that module).
     pub fn rust_mods(&mut self, from: &str) -> Vec<(i64, String, Option<String>)> {
+        self.rust_mod_items(from).into_iter().map(|m| (m.line, m.name, m.file)).collect()
+    }
+
+    /// `rust_mods`, each saying whether it is at the file's top level and whether `#[path]` names its file.
+    fn rust_mod_items(&mut self, from: &str) -> Vec<ModItem> {
         let fi = self.file(from);
         let (Some(Lang::Rust), Some(tree)) = (fi.lang, fi.tree()) else { return Vec::new() };
         let mut out = Vec::new();
         // (node, module directory, where a `#[path]` there starts: the file's directory at the top,
         // an inline block's module directory inside one)
-        let mut stack = vec![(tree.root_node(), self.rust_own_dir(from), dir_of(from).to_string())];
+        let top_dir = self.rust_children_dir(from);
+        let mut stack = vec![(tree.root_node(), top_dir, dir_of(from).to_string())];
         while let Some((n, dir, base)) = stack.pop() {
+            let top = n.kind() == "source_file";
             let mut cur = n.walk();
             for ch in n.named_children(&mut cur) {
                 if ch.kind() != "mod_item" {
@@ -513,17 +522,42 @@ impl Resolver<'_> {
                 match ch.child_by_field_name("body") {
                     Some(body) => stack.push((body, sub.clone(), sub)),
                     None => {
-                        let file = match rust_path_attr(ch, &fi.src) {
-                            Some(p) => Some(join(&base, &p)).filter(|f| self.files.contains(f)),
+                        let attr = rust_path_attr(ch, &fi.src);
+                        let file = match &attr {
+                            Some(p) => Some(join(&base, p)).filter(|f| self.files.contains(f)),
                             None => self.rust_mod_file(&sub),
                         };
-                        out.push((ch.start_position().row as i64 + 1, name, file));
+                        out.push(ModItem { line: ch.start_position().row as i64 + 1, name, file, top, by_path: attr.is_some() });
                     }
                 }
             }
         }
-        out.sort();
+        out.sort_by(|a, b| (a.line, &a.name).cmp(&(b.line, &b.name)));
         out
+    }
+
+    /// The directory the `mod x;` items of `from` name files in: beside `from` when a `#[path]`
+    /// loads it (rustc reads it as a `mod.rs` and never looks in `rust_own_dir`), else
+    /// `rust_own_dir`.
+    fn rust_children_dir(&mut self, from: &str) -> String {
+        if !self.rust_root_file(from) && self.rust_loaded_by_path(from) {
+            return dir_of(from).to_string();
+        }
+        self.rust_own_dir(from)
+    }
+
+    /// Whether a `#[path]` attribute of some Rust file names `path`.
+    fn rust_loaded_by_path(&mut self, path: &str) -> bool {
+        if self.rust_path_loaded.is_none() {
+            // while it is made, a file's own modules take the usual directory
+            self.rust_path_loaded = Some(HashSet::new());
+            let mut loaded = HashSet::new();
+            for f in self.rust_path_files() {
+                loaded.extend(self.rust_mod_items(&f).into_iter().filter(|m| m.by_path).filter_map(|m| m.file));
+            }
+            self.rust_path_loaded = Some(loaded);
+        }
+        self.rust_path_loaded.as_ref().is_some_and(|s| s.contains(path))
     }
 
     /// The Rust files that may declare `mod` for `path`: the module files of its parent directory,
@@ -541,10 +575,28 @@ impl Resolver<'_> {
             cands.extend(roots);
         }
         cands.extend(self.rust_path_files());
+        // a file a `#[path]` loads keeps its own modules beside it, as a `mod.rs` does
+        let beside: Vec<String> = self.files.iter().filter(|f| f.ends_with(".rs") && dir_of(f) == d).cloned().collect();
+        for f in beside {
+            if self.rust_loaded_by_path(&f) {
+                cands.push(f);
+            }
+        }
         cands.retain(|c| self.files.contains(c) && c != path && (!c.ends_with("/build.rs") && c != "build.rs" || self.rust_root_file(c)));
         cands.dedup();
         cands
     }
+}
+
+/// A `mod name;` item of a Rust file.
+struct ModItem {
+    line: i64,
+    name: String,
+    file: Option<String>,
+    /// at the file's top level, not inside an inline `mod { }`
+    top: bool,
+    /// its file is the one a `#[path]` attribute names
+    by_path: bool,
 }
 
 /// The path of a `#[path = "p"]` attribute on a `mod` item, as written.
@@ -583,8 +635,10 @@ impl Resolver<'_> {
         if !self.file(from).src.contains("#[path") {
             return None;
         }
-        let usual = self.rust_mod_file(&join(&self.rust_own_dir(from), name));
-        self.rust_mods(from).into_iter().find(|(_, n, f)| n == name && f.is_some() && *f != usual).and_then(|(_, _, f)| f)
+        let dir = self.rust_children_dir(from);
+        let usual = self.rust_mod_file(&join(&dir, name));
+        // a path from the file's top: a `#[path]` mod inside an inline block is another module
+        self.rust_mod_items(from).into_iter().find(|m| m.top && m.name == name && m.file.is_some() && m.file != usual).and_then(|m| m.file)
     }
 
     fn rust_mod_file(&self, dir: &str) -> Option<String> {
@@ -670,7 +724,7 @@ impl Resolver<'_> {
         let first = *segs.first()?;
         let (mut dir, mut i) = match first {
             "crate" => (self.rust_crate_root(from)?, 1),
-            "self" => (self.rust_own_dir(from), 1),
+            "self" => (self.rust_children_dir(from), 1),
             "super" => {
                 let mut d = self.rust_own_dir(from);
                 let mut i = 0;
@@ -692,8 +746,8 @@ impl Resolver<'_> {
                     }
                     // a file a `#[path]` names keeps its own modules beside it, as a `mod.rs` does
                     (dir_of(&f).to_string(), 1)
-                } else if declared && self.rust_mod_file(&join(&self.rust_own_dir(from), other)).is_some() {
-                    (self.rust_own_dir(from), 0)
+                } else if let Some(d) = Some(self.rust_children_dir(from)).filter(|d| declared && self.rust_mod_file(&join(d, other)).is_some()) {
+                    (d, 0)
                 } else if root {
                     return None;
                 } else {

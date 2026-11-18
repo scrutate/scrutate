@@ -1412,6 +1412,11 @@ incompatible index by itself, and that is never breaking.
 - `setup claude` runs `claude` only from an absolute `PATH` entry outside the current directory and
   its work tree, as `hook run` takes its programs: it took the first one on `PATH`, so with `.` or a
   directory of the repository there it ran a `claude` the repository held ([Security](docs/SECURITY.md)).
+- Rust: a `#[path]` mod inside an inline `mod` block no longer takes over a top-level `mod` of
+  the same name, so `foo::bar()` at the top of `lib.rs` stays in `src/foo.rs`. A file a `#[path]`
+  loads finds its own `mod fd;` beside it, as rustc does, in `refs`, `deps` and `rdeps`. In
+  modules written on one line, `self::` in `a::b` is `a::b`, not an `x::a::b` before it
+  ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 
