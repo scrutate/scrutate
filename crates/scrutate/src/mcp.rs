@@ -464,7 +464,8 @@ fn read_line(r: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -> std::io::Re
 /// Serve until stdin closes. The first indexing runs in the background so a client is answered
 /// at once; tool calls that arrive meanwhile wait for it (`BUILD_WAIT`). Up to `MAX_CALLS` in
 /// flight, each call runs on a thread of its own, so the reader still sees a
-/// `notifications/cancelled` for it; past that a call runs on the reading thread.
+/// `notifications/cancelled` for it; past that a call runs on the reading thread. A batch is the same:
+/// a thread of its own while fewer than `MAX_CALLS` batches have one, else the reading thread.
 ///
 /// `structured`: every tool declares an `outputSchema` and every result carries the answer as
 /// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in
@@ -481,7 +482,7 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
         })?
     };
     let calls = Calls::default();
-    let server = Server { session: &session, calls: &calls, settings: &settings, version, structured, short };
+    let server = Server { session: &session, calls: &calls, settings: &settings, version, structured, short, batches: Default::default() };
     let (server, send) = (&server, &to_stdout as &Wire);
     std::thread::scope(|scope| -> Result<()> {
         let mut stdin = std::io::stdin().lock();
@@ -504,7 +505,7 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
             }
             match serde_json::from_str(line) {
                 Ok(Value::Array(batch)) if !batch.is_empty() => {
-                    scope.spawn(move || {
+                    let answer = move || {
                         let replies = Mutex::new(Vec::new());
                         // progress notifications go out at once; the batch's answers go out together
                         let sink = |m: Value| {
@@ -515,7 +516,19 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
                         if !replies.is_empty() {
                             send(Value::Array(replies));
                         }
-                    });
+                    };
+                    // a batch has a thread of its own while fewer than MAX_CALLS do, as a call has;
+                    // past that it runs on the reading thread, so no client raises the threads unbounded
+                    let slot = BatchSlot(&server.batches);
+                    if server.batches.fetch_add(1, Ordering::SeqCst) < MAX_CALLS {
+                        scope.spawn(move || {
+                            let _slot = slot;
+                            answer();
+                        });
+                    } else {
+                        drop(slot);
+                        answer();
+                    }
                 }
                 Ok(msg) => server.handle(scope, send, msg),
                 Err(_) => respond_err(send, &Value::Null, -32700, "parse error", None),
@@ -581,6 +594,17 @@ struct Server<'a> {
     version: &'a str,
     structured: bool,
     short: bool,
+    /// batches running on threads of their own
+    batches: std::sync::atomic::AtomicUsize,
+}
+
+/// A batch's place in `Server::batches`, given back when the batch ends, a panic included.
+struct BatchSlot<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for BatchSlot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Server<'_> {
@@ -870,7 +894,8 @@ mod tests {
         let (root, session, sent) = fixture("eight");
         let calls = Calls::default();
         let settings = Settings::new(None);
-        let server = Server { session: &session, calls: &calls, settings: &settings, version: "test", structured: true, short: false };
+        let server =
+            Server { session: &session, calls: &calls, settings: &settings, version: "test", structured: true, short: false, batches: Default::default() };
         let send = |m: Value| sent.lock().unwrap().push(m);
         session.building();
         let (server, send) = (&server, &send);

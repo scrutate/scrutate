@@ -712,3 +712,71 @@ fn a_call_after_the_root_is_deleted_is_answered_and_the_server_keeps_answering()
     }
     assert!(ask(json!({"jsonrpc": "2.0", "id": 102, "method": "ping"})).is_some(), "the server still answers a ping");
 }
+
+/// The threads of process `pid` now; None where this platform has no cheap way to count them.
+fn threads_of(pid: u32) -> Option<usize> {
+    if cfg!(target_os = "linux") {
+        return fs::read_dir(format!("/proc/{pid}/task")).ok().map(|d| d.count());
+    }
+    if cfg!(target_os = "macos") {
+        let out = Command::new("ps").args(["-M", "-p", &pid.to_string()]).output().ok()?;
+        return Some(String::from_utf8_lossy(&out.stdout).lines().count().saturating_sub(1));
+    }
+    None
+}
+
+/// A batch line has a thread of its own only while fewer than 32 batches do: many one-call
+/// batches sent during the first build, each of whose calls waits for it, cannot raise the
+/// server's threads without bound, and every batch is still answered. The first build's own
+/// workers grow with the machine's cores, so the bound is on what the batches add to them.
+#[test]
+fn many_batches_at_once_keep_the_server_s_threads_bounded() {
+    let Some((idle, _)) = peak_threads("batch_threads_idle", 0) else { return };
+    let (most, answered) = peak_threads("batch_threads", 200).unwrap();
+    assert_eq!(answered, 200, "every batch is answered");
+    // 32 call threads and 32 batch threads, with room for the timing of the build's own
+    assert!(most.saturating_sub(idle) < 120, "{most} threads at once for 200 batches, {idle} for none");
+}
+
+/// The most threads `serve` has during its first build of 3,000 files while `batches` one-call
+/// batches are sent (a second and a half when none), and how many batches it answered; None where
+/// threads cannot be counted.
+fn peak_threads(name: &str, batches: usize) -> Option<(usize, usize)> {
+    let r = Repo::new(name, 3000);
+    let mut child = spawn(&r, &["serve"], &[]);
+    let pid = child.id();
+    if threads_of(pid).is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    }
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stdout.lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let writer = std::thread::spawn(move || {
+        for i in 0..batches {
+            let call = json!([{"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": "find_symbol", "arguments": {"name": "make_widget_7"}}}]);
+            writeln!(stdin, "{call}").unwrap();
+        }
+        stdin
+    });
+    let (mut answered, mut most) = (0, 0);
+    let start = std::time::Instant::now();
+    let until = if batches == 0 { std::time::Duration::from_millis(1500) } else { std::time::Duration::from_secs(120) };
+    while (batches == 0 || answered < batches) && start.elapsed() < until {
+        most = most.max(threads_of(pid).unwrap_or(0));
+        if let Ok(line) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
+            answered += usize::from(serde_json::from_str::<Value>(&line).is_ok_and(|v| v.is_array()));
+        }
+    }
+    drop(writer.join().unwrap());
+    let _ = child.wait();
+    Some((most, answered))
+}

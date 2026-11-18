@@ -1426,6 +1426,11 @@ incompatible index by itself, and that is never breaking.
   added all its matches to the file's count (`--max-results 1` printed 3 for three matches), and
   `--stats` and the JSON summary counted the groups. Each match now counts in all three, as
   `--sort` and ripgrep count it.
+- `.scrutate/model.sig`, the cached hash of a semantic model file, is removed and made anew as
+  the index's other files of fixed names are, so it is never written through a link. The MCP
+  server gives a JSON-RPC batch a thread of its own only while fewer than 32 batches have one, and
+  runs it on the reading thread past that: each batch line had its own thread, so 200 one-call
+  batches during the first build took 304 threads ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 
