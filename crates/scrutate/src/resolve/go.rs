@@ -16,18 +16,14 @@ impl Rules for Go {
     // the files of the directory with the same package clause (`package a_test` is another
     // package), and the `_test.go` ones only for a test file: other code does not see them
     fn package_files(r: &mut Resolver, path: &str) -> Vec<String> {
-        let own = r.go_package(path);
-        let test = path.ends_with("_test.go");
-        let mut out = r.go_dir(dir_of(path));
-        // a file whose clause cannot be read is kept: a half-written file hides nothing
-        out.retain(|f| (test || !f.ends_with("_test.go")) && (own.is_none() || f == path || r.go_package(f).is_none_or(|p| Some(p) == own)));
-        out
+        same_package(r, path, path.ends_with("_test.go"))
     }
 
-    // a method is declared outside its type, in any file of the package: its receiver names the type
+    // a method is declared outside its type, in any file of the package, test files included: only
+    // a test can call one declared there, so a call outside them never compiles
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let owner = strip_generics(qualname);
-        for f in Self::package_files(r, path) {
+        for f in same_package(r, path, true) {
             let gf = r.file(&f);
             let Some(tree) = gf.tree() else { continue };
             let root = tree.root_node();
@@ -93,6 +89,15 @@ impl Rules for Go {
     fn import_files(r: &mut Resolver, from: &str, _fi: &FileInfo, _line: i64, module: &str) -> Option<Vec<String>> {
         Some(Self::module_files(r, from, module).unwrap_or_default())
     }
+}
+
+/// The files of `path`'s directory with its package clause, its `_test.go` files only with `tests`.
+fn same_package(r: &mut Resolver, path: &str, tests: bool) -> Vec<String> {
+    let own = r.go_package(path);
+    let mut out = r.go_dir(dir_of(path));
+    // a file whose clause cannot be read is kept: a half-written file hides nothing
+    out.retain(|f| (tests || !f.ends_with("_test.go")) && (own.is_none() || f == path || r.go_package(f).is_none_or(|p| Some(p) == own)));
+    out
 }
 
 fn go_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {

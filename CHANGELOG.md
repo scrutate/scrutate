@@ -1328,7 +1328,8 @@ incompatible index by itself, and that is never breaking.
   ([Architecture](docs/ARCHITECTURE.md)).
 - Go: a file of an external test package (`package a_test` in `a/`) is no longer part of package
   `a`, and a `_test.go` file is seen only from the package's own test files, and through an import
-  only from the package's external test (`export_test.go`). A call
+  only from the package's external test (`export_test.go`); a method a `_test.go` file of the
+  package declares is still found by its receiver type. A call
   in `a/use.go`, or `a.Exported()` from another package, tied to a namesake in `a/a_test.go`, the
   first file of the directory by name, so `refs`, `callers`, `impact` and `dead` missed the real
   callers ([CLI](docs/CLI.md#refs)).
