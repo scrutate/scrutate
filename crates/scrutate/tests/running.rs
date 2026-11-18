@@ -27,28 +27,54 @@ const KEY: &str = "1129270868";
 /// output buffer and a pipe hold, and 4,000 files 192 KB, more.
 fn tree() -> &'static Path {
     static T: OnceLock<PathBuf> = OnceLock::new();
-    T.get_or_init(|| {
-        // kept between runs, only read: 64 MB is too much to write for every run
-        let done = std::env::temp_dir().join("scrutate_running_tree_1");
-        if done.is_dir() {
-            return done;
+    // kept between runs, only read: 64 MB is too much to write for every run
+    T.get_or_init(|| ensure(&std::env::temp_dir().join("scrutate_running_tree_1")))
+}
+
+fn body() -> String {
+    "needle\n".repeat(2) + &"a line of text, long enough to make the file take some time\n".repeat(270)
+}
+
+/// Whether `done` holds every file of the tree at its size: macOS deletes files of the temporary
+/// directory it sees unread for three days and leaves their directories, and an empty tree makes
+/// every search end at once.
+fn whole(done: &Path) -> bool {
+    let len = body().len() as u64;
+    (0..40).all(|d| (0..100).all(|f| std::fs::metadata(done.join(format!("d{d}")).join(format!("f{f}.txt"))).is_ok_and(|m| m.is_file() && m.len() == len)))
+}
+
+/// `done`, made again unless it is whole.
+fn ensure(done: &Path) -> PathBuf {
+    if whole(done) {
+        return done.to_path_buf();
+    }
+    let root = std::env::temp_dir().join(format!("scrutate_running_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let body = body();
+    for d in 0..40 {
+        let dir = root.join(format!("d{d}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in 0..100 {
+            std::fs::write(dir.join(format!("f{f}.txt")), &body).unwrap();
         }
-        let root = std::env::temp_dir().join(format!("scrutate_running_{}", std::process::id()));
+    }
+    let _ = std::fs::remove_dir_all(done);
+    // whole or not there: a run stopped while writing leaves only its own directory
+    if std::fs::rename(&root, done).is_err() {
         let _ = std::fs::remove_dir_all(&root);
-        let body = "needle\n".repeat(2) + &"a line of text, long enough to make the file take some time\n".repeat(270);
-        for d in 0..40 {
-            let dir = root.join(format!("d{d}"));
-            std::fs::create_dir_all(&dir).unwrap();
-            for f in 0..100 {
-                std::fs::write(dir.join(format!("f{f}.txt")), &body).unwrap();
-            }
-        }
-        // whole or not there: a run stopped while writing leaves only its own directory
-        if std::fs::rename(&root, &done).is_err() {
-            let _ = std::fs::remove_dir_all(&root);
-        }
-        done
-    })
+    }
+    done.to_path_buf()
+}
+
+#[test]
+fn a_tree_kept_from_an_earlier_run_is_made_again_when_files_are_gone() {
+    let _one = lock();
+    let t = tree();
+    // what the system's cleanup of old temporary files leaves: the directories, not the files
+    std::fs::remove_file(t.join("d3").join("f7.txt")).unwrap();
+    ensure(t);
+    let n = (0..40).flat_map(|d| (0..100).map(move |f| t.join(format!("d{d}")).join(format!("f{f}.txt")))).filter(|p| p.is_file()).count();
+    assert_eq!(n, 4000, "the tree is whole again");
 }
 
 struct Search {
