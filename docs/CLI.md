@@ -189,7 +189,9 @@ refuses `-P` and the `pcre2` mode (`grep_code`) with
 compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and `.Z` through the system's
 tools, as ripgrep does. Limits:
 
-- an archive or compressed file stops with a warning at 8 GiB expanded or past a million members;
+- an archive or compressed file stops with a warning at 8 GiB expanded or past a million members
+  (a tar's PAX, long-name and directory headers are no members; it also stops past four million
+  headers);
 - a member or compressed file stops with a warning at a line longer than 64 MiB (not with `-U`,
   which holds the whole member);
 - a tar member whose GNU long name or PAX path is over 64 KiB is skipped with a warning; other
@@ -1570,7 +1572,8 @@ definitions = [
   the language server agree on what a file is; one the index never reads (`csv`, `log`, `lock`
   ...); and one another custom language owns.
 - `line_comment` (optional): the mark that starts a comment line.
-- `block_comment` (optional): the opener and the closer of a block comment.
+- `block_comment` (optional): the opener and the closer of a block comment. An opener after the
+  line comment mark on its line opens nothing; one inside a string still opens a block.
 - `definitions`: one table per pattern, `kind` one of `class`, `constant`, `enum`, `function`,
   `impl`, `interface`, `macro`, `method`, `module`, `struct`, `trait`, `type`, and `pattern` a
   regular expression (Rust `regex` syntax) matched against one line at a time. All the patterns
