@@ -98,7 +98,7 @@ def test_the_readme_compared_against_table_is_what_its_inputs_give_and_a_hand_ed
     assert D.regenerated_problems("README.md", readme) == []
     lines = readme.split("\n")
     row = next(i for i, line in enumerate(lines) if line.startswith("| ripgrep "))
-    lines[row] = lines[row].replace("faster on ", "faster on 9", 1)
+    lines[row] = lines[row].replace("lower median on ", "lower median on 9", 1)
     problems = D.regenerated_problems("README.md", "\n".join(lines))
     assert len(problems) == 1 and problems[0].startswith(f"README.md:{row + 1}: differs from what bench/make_compared_md.py writes"), problems
 

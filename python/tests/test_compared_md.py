@@ -46,12 +46,12 @@ def test_each_tool_gets_its_share_range_and_its_verdicts_where_it_was_the_fastes
     assert rg.startswith("| ripgrep 15.2.0 (macos-arm64), 15.1.0 (linux-aarch64 VM) | ")
     assert "macos-arm64: 2 warm, 1 cold; linux-aarch64 VM: 1 warm" in rg
     # 1/2, 1/1.25, 3/2, 1/4
-    assert "0.25 to 1.50 of its median; faster on 3 of 4" in rg
+    assert "0.25 to 1.50 of its median; lower median on 3 of 4" in rg
     assert "PASS 2, FAIL 1 of the 3 where it was the fastest other tool" in rg
     grep = rows["GNU grep"]
     # the wrong one is not among the compared: the count says so
     assert "macos-arm64: 2 warm; not compared on linux-aarch64 VM" in grep
-    assert "0.10 to 0.25 of its median; faster on 2 of 2; GNU grep wrong on 1 more, left out" in grep
+    assert "0.10 to 0.25 of its median; lower median on 2 of 2; GNU grep wrong on 1 more, left out" in grep
     assert C.table([], [])[0].startswith("| Tool | Compared on |")
     assert "never the fastest other tool, so not ranked" in grep
 

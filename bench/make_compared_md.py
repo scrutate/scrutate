@@ -63,7 +63,7 @@ def tool_cell(tool: str, versions: dict) -> str:
 
 def shares(rows) -> str:
     xs = [s for s, _ in rows]
-    return f"{span(xs)} of its median; faster on {sum(s < 1 for s in xs)} of {len(xs)}"
+    return f"{span(xs)} of its median; lower median on {sum(s < 1 for s in xs)} of {len(xs)}"
 
 
 def engine_a_row(tool: str, runs) -> str:
