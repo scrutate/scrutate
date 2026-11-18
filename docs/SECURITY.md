@@ -420,7 +420,8 @@ writes its lines through `hook::redacted`; `hook run` redacts what the search pr
 by line as it streams (a line over 1 MiB in pieces, each cut at least 64 KiB before the piece's
 end and 4 KiB before any match of a rule near the cut, so a secret and the name before it are never
 split, or, where secrets sit closer than that, in a gap between two where the rules still find each
-one on its side; a match crossing the cut
+one on its side, as two tries a piece find one and no later piece of a line where they found none
+tries again, so the search costs a few reads of a piece; a match crossing the cut
 that runs past 4 MiB goes out as its marker and the rest of its line is withheld; with colour off, and refusing an `rg` with `--replace` or `--json`, which
 rewrite a line before the redactor can see a secret in it whole), and leaves `.scrutate/` out of a `grep` or `rg` it runs: the index and the
 `tsquery` cache hold the repository's text in binary records, where a secret runs straight into

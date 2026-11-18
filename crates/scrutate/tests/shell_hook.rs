@@ -675,6 +675,33 @@ fn a_secret_too_long_to_carry_is_withheld_to_its_line_end() {
 }
 
 #[test]
+fn a_one_line_escaped_private_key_of_megabytes_goes_out_marked_in_seconds() {
+    let r = Repo::new("piece_key");
+    // a JSON string holding a PEM key, its rows joined by an escaped line break: rule matches close
+    // together all along the line, past several pieces
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    let body: String = (0..2 << 20)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[(x % 64) as usize] as char
+        })
+        .collect();
+    let rows: Vec<&str> = (0..body.len()).step_by(64).map(|i| &body[i..(i + 64).min(body.len())]).collect();
+    let armour = |end: &str| format!("-----{end} {}-----", ["RSA", "PRIVATE", "KEY"].join(" "));
+    let key = format!("{{\"key\":\"{}\\n{}\\n{}\\n\"}}", armour("BEGIN"), rows.join("\\n"), armour("END"));
+    r.write("key.json", &format!("{key}\n"));
+    let t0 = std::time::Instant::now();
+    let out = String::from_utf8_lossy(&redacted_run(&r, &["grep", "key", "key.json"])).into_owned();
+    // the gap search between rule matches ran its two full reads of a piece once per match
+    assert!(t0.elapsed() < std::time::Duration::from_secs(20), "took {:?}", t0.elapsed());
+    assert!(out.contains("[redacted:"), "{} bytes out", out.len());
+    let raw = rows.iter().filter(|row| row.len() == 64 && out.contains(**row)).count();
+    assert_eq!(raw, 0, "{raw} of {} body rows out as written", rows.len());
+}
+
+#[test]
 fn a_long_line_with_no_secret_goes_out_byte_for_byte() {
     let r = Repo::new("piece_exact");
     // over three pieces, with a stray byte that is not UTF-8 and characters of several bytes

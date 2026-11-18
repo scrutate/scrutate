@@ -1002,8 +1002,9 @@ fn char_start(w: &[u8], mut c: usize) -> usize {
 
 /// Where `w`, a piece of a line that goes on, may be cut: at least `TAIL` bytes before its end,
 /// on a character's start, and `CONTEXT` before any secret the rules find across that point, with
-/// its kind.
-fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
+/// its kind. With `gap`, secrets too close for that are first tried for a cut between them
+/// (`cut_between`), once; the last value says that try found none, so the line's later pieces skip it.
+fn piece_end(w: &[u8], gap: bool) -> (usize, Option<&'static str>, bool) {
     let last = char_start(w, w.len().saturating_sub(TAIL));
     let mut c = last;
     // each byte that is not UTF-8 as one character, so the spans' offsets are `w`'s
@@ -1014,18 +1015,20 @@ fn piece_end(w: &[u8]) -> (usize, Option<&'static str>) {
     }
     let spans = crate::secrets::spans(&text);
     let crossing = |c: usize| spans.iter().find(|&&(a, b, _)| a.saturating_sub(CONTEXT) < c && c < b).copied();
-    let mut kind = None;
+    let (mut kind, mut tried, mut failed) = (None, !gap, false);
     // a secret near the cut goes to the next piece whole, with the name before it its rule reads
     while let Some((a, _, k)) = crossing(c) {
-        if kind.is_some()
-            && let Some(x) = cut_between(w, &text, &spans, last)
-        {
-            return (x, Some(k));
+        // the gap search reads the whole piece and depends on nothing the loop moves: once
+        if kind.is_some() && !std::mem::replace(&mut tried, true) {
+            if let Some(x) = cut_between(w, &text, &spans, last) {
+                return (x, Some(k), false);
+            }
+            failed = true;
         }
         c = char_start(w, a.saturating_sub(CONTEXT));
         kind = Some(k);
     }
-    (c, kind)
+    (c, kind, failed)
 }
 
 /// For secrets too close together to cut `CONTEXT` before one without splitting another: a cut
@@ -1052,7 +1055,8 @@ fn cut_between(w: &[u8], text: &str, spans: &[(usize, usize, &'static str)], c: 
                     return Some(x);
                 }
                 tries += 1;
-                if tries == 6 {
+                // each try reads the piece twice: a chain no early try can cut is carried instead
+                if tries == 2 {
                     return None;
                 }
             }
@@ -1110,6 +1114,8 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
     let mut line = Vec::new();
     // the rest of a long line's last piece, redacted with the next one
     let mut carry: Vec<u8> = Vec::new();
+    // this line's pieces found no cut between its secrets: the rest of it is not tried again
+    let mut no_gap = false;
     let mut send = |shown: &[u8], sent: &mut usize| {
         if room.is_some_and(|room| *sent + shown.len() > room) {
             return Err(true);
@@ -1131,10 +1137,14 @@ fn stream(mut child: std::process::Child, room: Option<usize>) -> (i32, usize, u
                 (false, n == PIECE && !line.ends_with(b"\n"))
             }
         };
+        if !more {
+            no_gap = false;
+        }
         // a marker sent for a match too long to carry
         let mut extra = 0;
         if redact && more {
-            let (c, kind) = piece_end(&line);
+            let (c, kind, failed) = piece_end(&line, !no_gap);
+            no_gap |= failed;
             carry = line.split_off(c);
             if let Some(kind) = kind.filter(|_| carry.len() > CARRY_MAX) {
                 carry.clear();

@@ -1326,7 +1326,9 @@ incompatible index by itself, and that is never breaking.
   0.7 s and 70 MB. A cut now lands on a character's start. Secrets less than 4 KiB apart (a
   one-line JSON log of tokens) pulled the cut back to the first of them and past 4 MiB withheld
   the rest of the line; the cut now goes in a gap between two of them where the rules still find
-  each one, and every token goes out marked ([Security](docs/SECURITY.md)).
+  each one, and every token goes out marked. That search makes two tries a piece and none for the
+  rest of a line where they found no gap, so a one-line key of 6 MiB, whose rows the rules find
+  close together, goes out in 0.4 s as before ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 
