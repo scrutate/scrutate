@@ -1976,7 +1976,14 @@ fn every_index_file_that_can_hold_text_reads_as_binary() {
         }
     }
     // each kind the check covers was written: a writer that went quiet would leave it nothing
-    let kinds: Vec<(&str, &str, usize)> = WRITTEN.iter().chain(NO_TEXT).map(|(p, w)| (*p, *w, found.iter().filter(|r| on_list(p, r)).count())).collect();
+    // answers are kept only where the index says when it was made (not under musl)
+    let kept = fs::metadata(dir.join("index.db")).and_then(|m| m.created()).is_ok();
+    let kinds: Vec<(&str, &str, usize)> = WRITTEN
+        .iter()
+        .chain(NO_TEXT)
+        .filter(|(p, _)| kept || *p != "answers/*.bin")
+        .map(|(p, w)| (*p, *w, found.iter().filter(|r| on_list(p, r)).count()))
+        .collect();
     eprintln!("checked {} index files: {}", found.len(), kinds.iter().map(|(p, _, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", "));
     let none: Vec<String> = kinds.iter().filter(|k| k.2 == 0).map(|(p, w, _)| format!("{p} ({w})")).collect();
     assert!(none.is_empty(), "no file of these kinds was written, so nothing of them was checked: {}", none.join(", "));
