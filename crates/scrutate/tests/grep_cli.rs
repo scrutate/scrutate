@@ -277,6 +277,157 @@ fn max_results_statistics_count_only_the_matches_printed() {
 }
 
 #[test]
+fn a_multiline_count_counts_every_match_against_max_results() {
+    let d = Dir::new("multicount");
+    d.write("u.txt", b"ab\nab\nab\nab\n");
+    let count = |extra: &[&str]| {
+        let mut args = vec!["grep", "-U", "-c"];
+        args.extend(extra);
+        args.extend([r"b\na", "u.txt"]);
+        d.run(&args)
+    };
+    // as ripgrep: the three matches the merged lines hold count one by one
+    assert_eq!(count(&[]).1, "3\n");
+    assert_eq!(count(&["--max-results", "1"]).1, "1\n");
+    assert_eq!(count(&["--max-results", "2"]).1, "2\n");
+    assert_eq!(count(&["--max-results", "9"]).1, "3\n");
+    assert_eq!(count(&["--sort", "--max-results", "1"]).1, "1\n");
+    assert_eq!(count(&["--stats"]).2.split(' ').next(), Some("3"));
+    let (_, out, _) = count(&["--json", "--max-results", "1"]);
+    assert!(out.contains(r#""count":1,"#) && out.contains(r#""matches":1,"#), "{out}");
+}
+
+/// Matches a pipe hands over reach a terminal as they are found, as ripgrep's line buffering on a
+/// terminal gives them (`tail -f log | scrutate grep ERROR`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn matches_from_a_pipe_reach_a_terminal_as_they_are_found() {
+    use std::io::{Read, Write as _};
+    use std::os::fd::FromRawFd;
+    unsafe extern "C" {
+        fn posix_openpt(flags: i32) -> i32;
+        fn grantpt(fd: i32) -> i32;
+        fn unlockpt(fd: i32) -> i32;
+        fn ptsname(fd: i32) -> *const std::ffi::c_char;
+    }
+    const O_RDWR: i32 = 2;
+    let shown = |b: &[u8]| -> String {
+        // colour escapes out, so the line reads as text
+        let mut out = String::new();
+        let mut esc = false;
+        for c in String::from_utf8_lossy(b).chars() {
+            match c {
+                '\x1b' => esc = true,
+                c if esc && c.is_ascii_alphabetic() => esc = false,
+                _ if esc => {}
+                c => out.push(c),
+            }
+        }
+        out
+    };
+    for no_color in [false, true] {
+        let m = unsafe { posix_openpt(O_RDWR) };
+        assert!(m >= 0);
+        let name = unsafe {
+            assert!(grantpt(m) == 0 && unlockpt(m) == 0);
+            std::ffi::CStr::from_ptr(ptsname(m)).to_str().unwrap().to_string()
+        };
+        let mut master = unsafe { fs::File::from_raw_fd(m) };
+        let terminal = fs::OpenOptions::new().read(true).write(true).open(&name).unwrap();
+        let mut c = Command::new(BIN);
+        c.args(["grep", "foo"]).stdin(Stdio::piped()).stdout(terminal).stderr(Stdio::null()).env_remove("NO_COLOR");
+        if no_color {
+            c.env("NO_COLOR", "1");
+        }
+        let mut child = c.spawn().unwrap();
+        drop(c);
+        let mut input = child.stdin.take().unwrap();
+        input.write_all(b"foo 1\nbar\n").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n @ 1..) = master.read(&mut buf) {
+                if tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        let (mut got, deadline) = (Vec::new(), std::time::Instant::now() + std::time::Duration::from_secs(5));
+        while !shown(&got).contains("foo 1") && std::time::Instant::now() < deadline {
+            if let Ok(b) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                got.extend(b);
+            }
+        }
+        // the input is still open: the line was not held for its end
+        assert!(shown(&got).contains("foo 1"), "NO_COLOR {no_color}: {:?}", shown(&got));
+        drop(input);
+        assert!(child.wait().unwrap().success());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn on_a_terminal_each_file_s_lines_stay_together() {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    unsafe extern "C" {
+        fn posix_openpt(flags: i32) -> i32;
+        fn grantpt(fd: i32) -> i32;
+        fn unlockpt(fd: i32) -> i32;
+        fn ptsname(fd: i32) -> *const std::ffi::c_char;
+    }
+    const O_RDWR: i32 = 2;
+    let d = Dir::new("tty_together");
+    let pad = "x".repeat(60);
+    for i in 0..60 {
+        let body: String = (0..150).map(|k| format!("needle {i} {k} {pad}\nother line\n")).collect();
+        d.write(&format!("f{i:02}.txt"), body.as_bytes());
+    }
+    for no_color in [false, true] {
+        let m = unsafe { posix_openpt(O_RDWR) };
+        assert!(m >= 0);
+        let name = unsafe {
+            assert!(grantpt(m) == 0 && unlockpt(m) == 0);
+            std::ffi::CStr::from_ptr(ptsname(m)).to_str().unwrap().to_string()
+        };
+        let mut master = unsafe { fs::File::from_raw_fd(m) };
+        let terminal = fs::OpenOptions::new().read(true).write(true).open(&name).unwrap();
+        let mut c = Command::new(BIN);
+        c.args(["grep", "-j", "8", "needle", "."]).current_dir(&d.0).stdin(Stdio::null()).stdout(terminal).stderr(Stdio::null()).env_remove("NO_COLOR");
+        if no_color {
+            c.env("NO_COLOR", "1");
+        }
+        let mut child = c.spawn().unwrap();
+        drop(c);
+        let reader = std::thread::spawn(move || {
+            let (mut got, mut buf) = (Vec::new(), [0u8; 65536]);
+            // the read ends with an error once the child has exited and no writer is left
+            while let Ok(n @ 1..) = master.read(&mut buf) {
+                got.extend_from_slice(&buf[..n]);
+            }
+            got
+        });
+        assert!(child.wait().unwrap().success());
+        let got = reader.join().unwrap();
+        let mut text = String::new();
+        let mut esc = false;
+        for ch in String::from_utf8_lossy(&got).chars() {
+            match ch {
+                '\x1b' => esc = true,
+                ch if esc && ch.is_ascii_alphabetic() => esc = false,
+                _ if esc => {}
+                '\r' => {}
+                ch => text.push(ch),
+            }
+        }
+        let paths: Vec<&str> = text.lines().filter_map(|l| l.split_once(':').map(|(p, _)| p)).collect();
+        assert_eq!(paths.len(), 60 * 150, "NO_COLOR {no_color}: every match printed");
+        let switches = paths.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(switches, 59, "NO_COLOR {no_color}: a file's lines were split by another file's");
+    }
+}
+
+#[test]
 fn every_count_holds_for_many_matches_over_many_files_and_threads() {
     let d = Dir::new("manycounts");
     // file i holds (i % 7 + 1) * 40 matching lines between other lines: 120 files, 19,080 matches

@@ -904,7 +904,10 @@ dependency in `tests/secrets.rs`.
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
     (`tests/intel_refs.rs`, its CPU time), `getrusage(RUSAGE_CHILDREN)` into a zeroed `rusage`
-    (`tests/fuzzy_memory.rs`, its children's peak memory) with arguments they own, `std::env::set_var` in
+    (`tests/fuzzy_memory.rs`, its children's peak memory) with arguments they own, `posix_openpt`,
+    `grantpt`, `unlockpt` and `ptsname` in two tests of `tests/grep_cli.rs` for a terminal their child
+    writes to, the name read before the next call and the descriptor taken once into the `File` that
+    closes it, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
     `fork`, `getpid`, `waitpid`) made through the stubs above, and `_exit` directly.
@@ -940,6 +943,7 @@ dependency in `tests/secrets.rs`.
   | `crates/scrutate/src/watch.rs` | 28 |
   | `crates/scrutate/tests/cli.rs` | 2 |
   | `crates/scrutate/tests/fuzzy_memory.rs` | 2 |
+  | `crates/scrutate/tests/grep_cli.rs` | 8 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 2 |
   | `crates/scrutate/tests/lazy_bind.rs` | 12 |

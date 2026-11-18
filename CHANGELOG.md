@@ -1417,6 +1417,15 @@ incompatible index by itself, and that is never breaking.
   loads finds its own `mod fd;` beside it, as rustc does, in `refs`, `deps` and `rdeps`. In
   modules written on one line, `self::` in `a::b` is `a::b`, not an `x::a::b` before it
   ([CLI](docs/CLI.md#refs)).
+- `grep` on a terminal writes each match of standard input as it is found, and each file's lines
+  as soon as that file is done, as ripgrep does: matches read from a pipe (`tail -f log |
+  scrutate grep ERROR`) waited for 512 of them or the end of the input, and plain output for 64
+  KiB or a millisecond's hold. Lines of files searched at once stay together by file. A pipe or a
+  file still gets its lines in batches ([CLI](docs/CLI.md#conventions)).
+- `grep -U -c --max-results N` stops at N matches: a merged group counted once against the cap but
+  added all its matches to the file's count (`--max-results 1` printed 3 for three matches), and
+  `--stats` and the JSON summary counted the groups. Each match now counts in all three, as
+  `--sort` and ripgrep count it.
 
 ## [0.1.0] - 2026-11-11
 
