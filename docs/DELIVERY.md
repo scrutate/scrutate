@@ -3,7 +3,7 @@
 <img src="assets/banner-delivery.svg" alt="Delivery index. Where is each delivered item in this repository?" width="880">
 </p>
 
-# Delivery index: Scrutate 0.1.0 (2026-11-11)
+# Delivery index: Scrutate 0.1.0 (2026-11-18)
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Releasing](RELEASING.md) &nbsp;·&nbsp; Next: [Dependencies](DEPENDENCIES.md)
 
