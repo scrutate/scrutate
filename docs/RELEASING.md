@@ -142,9 +142,8 @@ bash bench/run_macos.sh   # refuses changes no commit holds, then builds the bin
   other row takes all 30 runs and is judged at alpha 0.049. This is the Haybittle-Peto boundary
   (Haybittle 1971, Peto et al. 1976), with the last look lowered so the alphas sum to 0.05 by
   Bonferroni whatever the load did between blocks: a 99.9% or 95.1% interval that clears 1 meets a
-  95% claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20
-  runs and changed no verdict; a look after one block flipped 5, since one block has no interleaving
-  (that replay's output is not committed). R-14.10 in docs/TRACEABILITY.md defines a #1 over at
+  95% claim. A replay of the rule over the recorded 30-run, 3-block files, and of a look after one
+  block, waits for a recorded run: the replay that chose two blocks was not committed. R-14.10 in docs/TRACEABILITY.md defines a #1 over at
   least 30 runs per tool, with the run count recorded per row: LEADERBOARD.md shows a row that
   stopped at 20 as measured, not ranked, so the stop rule serves CI's gate. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
   needs every block of both binaries, and the publish scripts (`bench/run_macos.sh`,

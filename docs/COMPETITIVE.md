@@ -35,9 +35,9 @@ below 1) and in all 5 cold-cache ones. Its lead over the next tool:
 
 Other work on the laptop disturbed six of the 37 rows, so the harness measured each once more
 ([Leaderboard](LEADERBOARD.md) gives both measurements). Five had passed. The sixth,
-`smallfiles/simple regex`, had an interval reaching 1.02 the first time and 0.757 the second. One
-second measurement is worse: `llvm/case-insensitive` is 8% ahead where it had been 16%; the
-committed result does not record why.
+`smallfiles/simple regex`, had an interval reaching 1.02 the first time and 0.759 the second. Two
+second measurements are worse: `llvm/case-insensitive` is 8% ahead where it had been 16%, and
+`ripgrep/simple regex` 18% where it had been 20%; the committed result does not record why.
 
 In a 5-CPU Linux VM on the same Mac (one virtual CPU per performance core), Engine A is
 significantly fastest on all 14 Linux-tree benchmarks: 7 to 16% ahead of ripgrep on 11, 40% ahead
@@ -47,7 +47,7 @@ scrutate reads its capture cache (a cache hit), but on a first run scrutate was 
 run on a 4-vCPU Linux x86_64 server whose result file is not committed (section 2). With
 the page cache dropped before every run it takes 0.28 to 0.30 of the next tool's time on all four
 rows (git grep or ugrep, 1.2 to 1.4 s each), because it reads a cold tree on up to 64 threads
-where the others use one per core: 18 to 25% above the time to merely read the files.
+where the others use one per core: 18 to 24% above the time to merely read the files.
 
 **On macOS, opening files is the expensive part, and more threads make it slower.** Reading every
 file of the Linux tree and nothing else (the "read files" column, `bench/rawread.c`) is fastest on
@@ -167,11 +167,10 @@ committed yet.
 
 No measured tool has a code-intelligence index, so this part has no competitor:
 
-- **Ranked search by meaning** with a learned ranker: MRR@10 0.635 for natural-language queries
-  with a function answer on an undocumented held-out Python code base, against 0.463 for BM25
-  over the same candidates; 0.916 to 1.000 for name and identifier queries; held-out Rust, Go,
-  Java, JavaScript and TypeScript repositories gain too (docs/QUALITY.md, from the logs of run f3
-  of `bench/retrain_ranker.sh` on 2026-11-12, which are not committed).
+- **Ranked search by meaning** with a learned ranker, measured against BM25 over the same
+  candidates on held-out code bases in Python, Rust, Go, Java, JavaScript and TypeScript
+  (docs/QUALITY.md); its figures wait for a recorded run, since the logs of the run they came
+  from are not committed. The floor CI holds it to is `bench/quality/floor.json`.
 - **Symbols from 61 grammars** (74 with the optional grammars), each verified by a sample; call
   graph, imports and dependents, references grouped by symbol, outline, similar code, exact and
   near-duplicate detection, cross-repository search.

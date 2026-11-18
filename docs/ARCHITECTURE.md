@@ -257,8 +257,7 @@ adds:
   bounded channel (4 waiting at most) in the order they filled, so a search thread never waits on
   a write system call; a smaller output starts no thread. While a search thread held the sink for
   a write, every thread that finished a file slept behind it, and on Linux x86 the writes added to
-  the search's time (`return` in the Linux tree on an Intel Xeon 8488C VM, 32 vCPU: 0.12 s to
-  /dev/null, 0.24 s to a file; with the writing thread 0.11 s to a file, ripgrep 0.18 s).
+  the search's time (how much, with and without the writing thread, waits for a recorded run).
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
   (`--json`, schema version 1, record types in [CLI](CLI.md#conventions)). Flags: [CLI
   reference](CLI.md#engine-a-grep-alias-g).
@@ -614,8 +613,8 @@ a fixed repetition of up to four become exact sets when their part is one and th
 otherwise `x?` adds no condition and a repetition of at least one keeps its part's; anything else
 adds no constraint), evaluated over the postings as bitsets; Engine A's per-file searcher
 searches the surviving files. A string of four bytes or more needs its trigrams at positions that
-can line up, each followed by a byte that fits (`kernel_thread` on the Linux tree: 164 candidate
-files instead of 1,781). The condition is necessary, never sufficient: the candidates come from the
+can line up, each followed by a byte that fits, so fewer files are candidates than hold the
+trigrams (how many fewer on the Linux tree waits for a recorded run). The condition is necessary, never sufficient: the candidates come from the
 indexed snapshot and each is searched as it is now, so a file added since the last update is not
 searched and one edited since is searched only if its indexed text passed (`--update` first closes
 that gap); a property test and a coverage-guided fuzz target check that any text a pattern matches

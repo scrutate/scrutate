@@ -53,8 +53,8 @@ Every PASS refers to a test, benchmark or audit output here.
    binaries carry no Apple or Windows code signature
    ([SECURITY](SECURITY.md#known-gaps-and-residual-risks)).
 4. **Benchmark leadership is not proven on dedicated hardware**, which section 14 requires for #1
-   claims; on the laptop and its Linux VM every row measured is won with significance (docs/LEADERBOARD.md,
-   R-4.6 below).
+   claims; on the laptop and its Linux VM every ranked row is won with significance, and the timed
+   indexed rows are measured, not ranked (docs/LEADERBOARD.md, R-4.6 below).
 
 ## Remaining defects and incomplete requirements
 
@@ -62,9 +62,10 @@ Status words as in docs/TRACEABILITY.md.
 
 | ID | What is missing | Status | What closes it |
 |---|---|---|---|
-| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 7 indexed; Linux aarch64 VM: 14 warm, 4 cold, 7 indexed; the eighth indexed metric, the update after 100 edits, is n/a where every rival rebuilds), but Linux x86_64 has only an early `bench/compare_tools.py` run (`bench/results/final.json`, 2026-11-08, a 2-core Xeon VM) and no leaderboard run, Intel macOS, Windows x64 and Windows ARM64 have no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
+| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every ranked row is won with significance (macOS arm64: 37 warm, 5 cold and 2 indexed, index size and query memory; Linux aarch64 VM: 14 warm, 4 cold, 2 indexed); five timed indexed metrics are measured, not ranked (under 30 runs per tool), and the update after 100 edits is n/a where every rival rebuilds; but Linux x86_64 has only an early `bench/compare_tools.py` run (`bench/results/final.json`, 2026-11-08, a 2-core Xeon VM) and no leaderboard run, Intel macOS, Windows x64 and Windows ARM64 have no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
-| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push), and `benchmarks.yml` one on a pull request (43823369090); `benchmarks.yml` runs on `main` and `release.yml` runs on a runner; for `release.yml` before the tag, a dry run (`gh workflow run release.yml --ref main -f dry_run=true`, docs/RELEASING.md section 7) |
+| R-6.12, R-14.15 | CI runs, every benchmark tracked in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push), and `benchmarks.yml` green runs on a pull request (43823369090) and on `main` (44180406969); the indexed comparison and the cold-cache rows in a CI job, `benchmark gate` as a required check, and `release.yml` run on a runner; for `release.yml` before the tag, a dry run (`gh workflow run release.yml --ref main -f dry_run=true`, docs/RELEASING.md section 7) |
+| R-2B.12 | Ranking quality on held-out code | PARTIAL | the floor of `bench/quality.py` holds (`bench/quality/floor.json`); a committed run of `bench/retrain_ranker.sh`'s evaluation (QUALITY.md), whose last run's logs are not committed |
 | R-12.17 | Signed releases and published packages | PARTIAL | one run of the release workflow's Sigstore steps (a dry run first), then the owner's PyPI, Marketplace and Open VSX setup, the tap and bucket repositories and the winget pull request |
 | R-6.15, R-12.16 | The GitLab and Bitbucket templates run on gitlab.com and bitbucket.org (CI runs them in local emulators) | PARTIAL | a pipeline run of each template on gitlab.com and on bitbucket.org |
 | R-8.10 | Deliver 0.1.0 | PARTIAL | the `v0.1.0` tag, a run of `release.yml` and the published release (docs/RELEASING.md) |

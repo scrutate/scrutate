@@ -268,9 +268,8 @@ incompatible index by itself, and that is never breaking.
 - `refs`, `callers` and `dead` hold a bounded set of parsed files: 256 MiB a request, and 256 MiB
   kept across the requests of `serve`, `lsp` and `batch`. The index stores each file's import
   bindings, so a C name looked up through included headers parses only the files whose trees it
-  reads. On the Linux tree `refs mutex_lock` takes 76.1 s and
-  652 MB, where it took 123.2 s and 6.2 GB, and `dead` on the whole tree holds about 4 GB, where it
-  needed 23.8 GB. The index's schema goes to 18, so an older index is rebuilt once.
+  reads, so `refs` and `dead` on the Linux tree take far less time and memory (by how much waits for a recorded run).
+  The index's schema goes to 18, so an older index is rebuilt once.
 - An answer that a bounded read stopped short says why, in its own line and in `stopped_reason`
   beside `stopped_at` (`--json`, the MCP tools), where it read "stopped at 0 results".
 - An SSH public key after its type (`ssh-ed25519 AAAA...`, as in `known_hosts` and
@@ -301,7 +300,7 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#conventions)).
 - A command on a large tree brings its index up to date sooner: the look at every file runs on
   every core, beside the read of what the index recorded, and a file's recorded hash is read only
-  when its stat changed. On the Linux tree a warm `symbol` takes 314 ms where it took 843 ms
+  when its stat changed, so a warm `symbol` is faster (its time on the Linux tree waits for a recorded run)
   ([ADR 0012](docs/adr/0012-a-fresh-process-look.md)).
 - `grep` prints a CRLF line with its `\r`, matched and context lines alike, in streamed, sorted
   (`--sort`) and cut (`--max-bytes`) output and in colour, as ripgrep 15.2.0 does, where it
@@ -312,11 +311,11 @@ incompatible index by itself, and that is never breaking.
 - The MCP `grep_code` tool and `references` of a running server read the tree's files from a look
   the server keeps up to date with its watch, where each call walked the whole tree first: on the
   Linux tree a call no longer pays that walk, a query that matches nothing included (on Linux and
-  Windows, and on macOS while its kqueue is in place: on a Mac 7 queries on a 24,866-file part of
-  the Linux tree went from 82.7 to 8.4 ms median) ([CLI](docs/CLI.md#serve-mcp)).
+  Windows, and on macOS while its kqueue is in place; how much faster that makes a call
+  waits for a recorded run) ([CLI](docs/CLI.md#serve-mcp)).
 - A build from this repository with GCC 15 on x86_64 or aarch64 Linux compiles the tree-sitter
   grammars with `-fjump-tables`, which GCC 15 drops at the `-O0` their `parser.c` asks for:
-  parsing was 1.8 times slower (Linux's C sources, 22 s against 12 s); a build outside the
+  parsing was slower (by how much waits for a recorded run); a build outside the
   repository needs it in `CFLAGS`, which the repository's `CFLAGS_x86_64_unknown_linux_gnu` and
   `CFLAGS_aarch64_unknown_linux_gnu` are joined with ([Install](docs/INSTALL.md)).
 - `tsquery` does not parse a file that holds none of the strings every match of the query needs
@@ -336,8 +335,7 @@ incompatible index by itself, and that is never breaking.
   text when it is parsed, and read a definition's text only when it is in a group or shares a
   bucket, so they no longer read every definition's text, and find the same groups. The index's
   schema goes up, so an older index is built again once; the keys make the index larger and a full
-  index slower (measured by hand for the change, in its commit message: no script in `bench/`
-  reruns it).
+  index slower (by how much waits for a recorded run: no script in `bench/` reruns it).
 - On macOS an index update flushes its files with a write barrier (`F_BARRIERFSYNC`) in place of
   a flush of the drive cache: the update behind a read of one changed file takes about 30 ms in
   place of about 150 ms, and the files still reach the disk before the database names them.
@@ -356,8 +354,8 @@ incompatible index by itself, and that is never breaking.
   every write made before the call in its answer. On macOS, where FSEvents can give a write a
   later event than a cookie made after it, the server watches every file and directory its walk lists (an ignored build output takes no watch) through a
   kqueue instead, whose notes the system posts inside the call that makes the change: a call reads
-  them at once and looks at the files they name (on 14,520 files, `find_symbol` through the server
-  takes 5.8 ms where a look at the tree took 108 ms). While those watches are not in place, for a
+  them at once and looks at the files they name, where it looked at the tree (the time saved
+  waits for a recorded run). While those watches are not in place, for a
   tree, or the trees of all of a process's sessions together, past half the process's descriptors less 1,024 (`kern.maxfilesperproc`; about 29,700 files
   and directories where it is 61,440), or on a volume that gives no kqueue notes, every macOS
   call looks at every file. When the watch cannot vouch for fewer files, or
@@ -367,17 +365,16 @@ incompatible index by itself, and that is never breaking.
   the `quick_check` walk and the schema work run once per state of the file, recorded in
   `.scrutate/checked`, and an update that finds nothing changed no longer rewrites the database.
   The semantic model's tables are read where they lie in the binary instead of being copied.
-  On a 61 MB index, `symbol` takes 16.5 ms where it took 86.7 ms, and `search` 68.8 ms where it
-  took 174.6 ms ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
+  `symbol` and `search` are faster for it (by how much waits for a recorded run) ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - The index keeps a table of the definition names, one row per spelling, with their word
   initials and a trigram index over them, for `symbol`'s near matches; its schema version goes
   up, so an index made before is rebuilt on its next use ([CLI](docs/CLI.md#engine-b)).
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
-  (7.5 MiB compressed), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
+  (7.8 MiB compressed, `bench/results/platforms/packages/cargo-package.log`), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
   crates; publishing waits for the release ([INSTALL](docs/INSTALL.md)).
 - The bundled semantic model stores its word tables as int8 with one scale per row: 7.6 MB in
-  place of 14.6 MB, the binary is that much smaller, and ranking quality holds (MRR@10 0.5873 to
-  0.5874). Its revision is 2, so an index makes its vectors again on the next update; a model
+  place of 14.6 MB, and the binary is that much smaller. `bench/quality.py` measured MRR@10 0.5873
+  before the change (`bench/quality/floor.json`); the run after it is not committed. Its revision is 2, so an index makes its vectors again on the next update; a model
   file named by `SCRUTATE_SEMANTIC` must be in the new format ([QUALITY](docs/QUALITY.md)).
 - The vendored walker is its own crate, `scrutate-ignore` (a modified copy of `ignore` 0.4.34,
   `Unlicense OR MIT`, its eleven changes listed in `vendor/ignore/README.md`), and the workspace
@@ -387,8 +384,8 @@ incompatible index by itself, and that is never breaking.
   (`bench/wait_aged.py`, at most an hour) in place of a fixed hour
   ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - `bench/leaderboard.py` stops a row at 20 runs once every verdict holds at alpha 0.001
-  (Haybittle-Peto boundary); replayed over every recorded run it changed no verdict. On by
-  default, off with `--no-stop-early`; a #1 is now defined over at least 20 runs per tool
+  (Haybittle-Peto boundary). On by default, off with `--no-stop-early`; a published verdict needs
+  30 runs per tool, so CI's gate is what the stop rule serves (see the entry on verdicts below)
   ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - The release binaries for glibc Linux (x86_64 and aarch64) lay out the functions a small search
   runs side by side, as the macOS one does: a second link with rust-lld and the order file under
@@ -426,9 +423,8 @@ incompatible index by itself, and that is never breaking.
   `關係` and `关系` and the reverse (OpenCC ver.1.4.2 `JPShinjitaiCharacters.txt`, Apache-2.0).
   An older index reads every file again ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
 - `watch` on macOS follows FSEvents with file-level events, loaded with `dlopen` only by `watch`,
-  so a save updates that file alone with no walk of the tree (one walk at most every 30 s): 0.24 to 0.31 s from the save to the
-  update on a tree of 20,000 directories (release build, the 200 ms burst wait included), where
-  the timer took 11 to 14 s (debug build). The timer stays as the fallback when FSEvents cannot
+  so a save updates that file alone with no walk of the tree (one walk at most every 30 s), much
+  sooner than the timer did (the time from a save to the update waits for a recorded run). The timer stays as the fallback when FSEvents cannot
   load ([CLI](docs/CLI.md#watch)).
 - The `notify` crate is 9.0.0-rc.9, pinned (it needs Rust 1.91, the existing minimum).
 - Three tool errors say how to fix the call: `missing required argument name` (was `missing
@@ -459,8 +455,7 @@ incompatible index by itself, and that is never breaking.
 - Plain `grep` output past its first 64 KiB is written by a thread of its own, fed full 64 KiB
   buffers in the order they filled, so no search thread waits on a write. While one search thread
   held the output for a write, the others slept behind it, and on Linux x86 the writes added to the
-  search's time. `return` in the Linux tree on an Intel Xeon 8488C VM (32 vCPU) now takes 0.111 s
-  to a file (was 0.238 s; ripgrep 0.183 s) and 0.152 s through a pipe (was 0.392 s). A smaller
+  search's time (what the writing thread saves waits for a recorded run). A smaller
   output starts no thread; a write error still stops the search and is reported once
   ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - `refs`, `callers`, `references` and `dead` read a binary file the text index holds only when
@@ -654,9 +649,8 @@ incompatible index by itself, and that is never breaking.
   answering from the old tree. Off a local disk only `serve --watch` follows, since the others
   watch nothing there; a command line call made in the old tree is no longer answered by
   that session.
-- `impact` and `review` take time in proportion to the change, where it grew with its square: 8,000
-  edited definitions that call one another took 251.9 s and take 3.8 s, 2,000 took 17.1 s and
-  take 1.0 s. Each answer the caller walk stores no longer lists the answers directory twice.
+- `impact` and `review` take time in proportion to the change, where it grew with its square
+  (their times on a large change waits for a recorded run). Each answer the caller walk stores no longer lists the answers directory twice.
 - A reader that closes early (`| head`) ends `impact`, `review` (every format) and every other
   command quietly with exit 0, as it ended a search, where they printed "internal error: failed
   printing to stdout: Broken pipe" and exited 2 ([CLI](docs/CLI.md)).
@@ -1046,8 +1040,7 @@ incompatible index by itself, and that is never breaking.
 - The index's write-ahead log stays small while readers overlap: after an update it is cut to
   nothing once readers on older commits finish (waited for about a second, else by the next
   update), and a cut log keeps at most 4 MB of its file. Under four MCP servers searching and a
-  `watch` editing every second for 10 minutes, the log peaked at 1.29 MB, where it reached 5.88
-  MB ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+  `watch` editing every second, the log stays small (its peak waits for a recorded run) ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - A Free Pascal unit in a `.pp` file that starts with compiler directives (`{$mode objfpc}{$H+}`,
   the Lazarus default) is parsed as Pascal, not as one Puppet module; an index reads its files
   again.
@@ -1102,7 +1095,7 @@ incompatible index by itself, and that is never breaking.
   tree's `kernel/`; the spans of `--json` and colour cost up to 15.5% more there (`--fuzzy=2
   return`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep --fuzzy` reads a long line full of matches once: each match read on to the line's end
-  again, so 100,000 matches on one line took 125.8 G instructions, now 0.79 G
+  again, so its work grew with the square of the matches (the instructions saved waits for a recorded run)
   ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - An internal error advises `scrutate index --force` only in a process that opened an index:
   `grep` without `--index`, `hook`, `setup` and the other commands without one now only ask for a
@@ -1163,8 +1156,8 @@ incompatible index by itself, and that is never breaking.
   is indexed within 1 to 30 s, and the burst no longer walks the tree while one has none; the
   message names `fs.inotify.max_user_watches` when that limit is the cause
   ([CLI](docs/CLI.md#watch)).
-- A one-line file of 8,000 nested functions indexes in 0.13 s with a 44 MB peak, from 3.1 s and
-  542 MB: the definitions of a file share a text budget of 1 MiB plus 8 bytes per byte of the
+- A one-line file of thousands of nested functions indexes in far less time and memory (by how
+  much waits for a recorded run): the definitions of a file share a text budget of 1 MiB plus 8 bytes per byte of the
   file, past which each keeps its first line. Normal files keep at most 5.1 times their size, so
   they index as before ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - On Unix `.scrutate/` is made with mode 0700, and an existing one is set to it by the next
@@ -1270,7 +1263,7 @@ incompatible index by itself, and that is never breaking.
   with its 95% interval clear of 1, and leaves tools with another answer out of its CPU, memory
   and cold-cache tables ([Leaderboard](docs/LEADERBOARD.md), [Benchmarks](docs/BENCHMARKS.md)).
 - docs/LANGUAGES.md's Calls and Imports columns are now checked by `cargo test`, as its tier text
-  said: `tests/samples.rs` fails when a language that declares call edges or imports has a sample
+  said: `crates/scrutate/tests/samples.rs` fails when a language that declares call edges or imports has a sample
   with none, and the 22 samples (two of them extra-langs) that lacked one now hold a call or an
   import. The Docstrings column is named Body docstrings, since every grammar keeps the comment
   above a definition as its documentation ([Languages](docs/LANGUAGES.md)).
@@ -1322,10 +1315,9 @@ incompatible index by itself, and that is never breaking.
   inside the marker. A match inside a secret points at its marker ([CLI](docs/CLI.md)).
 - A one-file `index --text` no longer writes a large part of the text index again every third
   update. With more than four segments only the largest stayed out of the merge, so a build of
-  more than one batch had its second segment rewritten with the small ones each time: on a
-  1,500-file tree, 11 one-file updates wrote 80 MB. The merge now takes the smallest segments, and
-  a larger one only once those taken reach a quarter of its size; the same updates wrote 5 MB
-  ([Architecture](docs/ARCHITECTURE.md)).
+  more than one batch had its second segment rewritten with the small ones each time. The merge
+  now takes the smallest segments, and a larger one only once those taken reach a quarter of its
+  size, so one-file updates write far less (how much waits for a recorded run) ([Architecture](docs/ARCHITECTURE.md)).
 - Go: a file of an external test package (`package a_test` in `a/`) is no longer part of package
   `a`, and a `_test.go` file is seen only from the package's own test files, and through an import
   only from the package's external test (`export_test.go`); a method a `_test.go` file of the
@@ -1383,8 +1375,8 @@ incompatible index by itself, and that is never breaking.
   out of it still stops the command. One with a NUL byte in its first 4 KiB is now refused as
   not text, where the message said it was out of bounds.
 - `grep --fuzzy` and `--fuzzy-regex` with `--json` or colour keep where each character of a
-  matched line starts as one bit per byte, not eight bytes per character: a 64 MB line takes
-  219 MB at peak instead of 723 MB, in the same time, with the same spans.
+  matched line starts as one bit per byte, not eight bytes per character, so a long line takes
+  less memory at its peak with the same spans (how much waits for a recorded run).
 - docs/INSTALL.md's platform table names the abi3t wheel (`cp315-abi3.abi3t`, CPython 3.15 and
   free-threaded 3.15t) on every platform, as `release.yml` builds it and CI tests it (run
   44069673980); `tools/gen_doc_assets.py --check` now fails a row that leaves out a wheel kind the
@@ -1611,9 +1603,10 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - Text index for repeated grep-style queries (`scrutate index --text`, `grep --index`): trigram
   postings whose output equals the walk's; incremental and safe for concurrent readers.
 - UTF-16 files with a byte-order mark are transcoded and indexed (they were skipped as binary).
-- Text index format 2 adds position masks to the postings (the Linux tree: `kernel_thread` 1,781
-  candidate files to 164; from 4% behind Zoekt to 5% ahead). The index is 409 MB instead of
-  148 MB.
+- Text index format 2 adds position masks to the postings, so fewer files are candidates for a
+  string of four bytes or more; concurrent throughput against Zoekt on the Linux tree went from
+  3% behind to 5% ahead, and the index from 154 MB to 428 MB
+  (`bench/results/macos-arm64/superseded/indexed-eeab.json` and `indexed-fb5c.json`).
 - Chunk line numbers follow grep's line counting (`\n` only), found by fuzzing. Index schema 12.
 - Ranked search: field-weighted BM25 + exact lookup + semantic vectors (IVF) + LightGBM
   LambdaRank ranker; bit-identical with the Python reference implementation.

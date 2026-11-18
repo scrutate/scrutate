@@ -177,14 +177,14 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
     y = foot(b, y + 22, W, [f"{env['cpu']}, macOS, shared with other work, {env['date'][:10]}, binary {sha}, "
                             f"{'up to ' if warm['settings'].get('stop') else ''}{runs} runs, medians. docs/LEADERBOARD.md"], c["dim"]) - 6
-    # start-up comes from another harness with another run count: its own block and its own source line
+    # start-up comes from another harness, which times it three times as often as a search: its own block and source line
     st = {TOOL_LABEL.get(s["tool"], s["tool"]): s["startup_median_ms"] for s in compare["startup"] if "startup_median_ms" in s}
     other = min((t for t in st if t != "scrutate"), key=st.get)
     row("Start-up, a directory with one file", "",
         [("scrutate", st["scrutate"], f"{st['scrutate']:.1f} ms"), (other, st[other], f"{st[other]:.1f} ms")])
     cenv = compare["environment"]
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
-    y = foot(b, y + 22, W, [f"{cenv['cpu']}, macOS, {cenv['date'][:10]}, {compare['runs']} runs, medians. docs/BENCHMARKS.md"], c["dim"])
+    y = foot(b, y + 22, W, [f"{cenv['cpu']}, macOS, {cenv['date'][:10]}, {compare['runs'] * 3} runs, medians. docs/BENCHMARKS.md"], c["dim"])
     H = int(y + 10)
     parts = []
     for bid, t in WALL_ROWS:

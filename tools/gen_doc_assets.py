@@ -630,8 +630,8 @@ def diagram_text_index():
     r2 = [
         ("Pattern", "Its regex syntax tree is walked: literals, small classes and alternations become string sets.", "card"),
         ("Trigram condition", "A boolean condition: necessary, never sufficient. Evaluated over the postings as bitsets.", "card"),
-        ("Candidate files", "Strings of four bytes or more must line up. `kernel_thread` on the Linux tree: 164 "
-         "files instead of 1,781.", "card"),
+        ("Candidate files", "Strings of four bytes or more must line up, so far fewer files are searched than "
+         "hold the trigrams.", "card"),
     ]
     h2 = max(Svg.need(w, t, b) for t, b, _ in r2)
     for x, (t, b, c) in zip(xs, r2):
