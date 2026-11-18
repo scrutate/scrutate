@@ -49,6 +49,11 @@ pub(super) trait Source {
     fn expands(&self) -> bool {
         false
     }
+    /// It may never end (standard input, `tail -f log | ...`): on a terminal its lines leave one by
+    /// one, where a file's leave together when it is done.
+    fn endless(&self) -> bool {
+        false
+    }
     /// Search it as one stream from its start; `widest`, where given, keeps the largest read asked.
     fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, widest: Option<&Cell<usize>>) -> Result<(), K::Error>;
 }
@@ -152,6 +157,9 @@ impl Source for Stdin {
     type At = NoReads;
     fn at(&self) -> Option<&NoReads> {
         None
+    }
+    fn endless(&self) -> bool {
+        true
     }
     fn stream<K: Sink>(&mut self, m: &AnyMatcher, s: &mut Searcher, sink: K, _: Option<&Cell<usize>>) -> Result<(), K::Error> {
         m.search_reader(s, std::io::stdin().lock(), sink)
@@ -419,6 +427,7 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
     // built in place: the struct update moved a whole Collector once more per file
     let mut sink = r.collector(Arc::clone(&rel));
     sink.convert = named;
+    sink.line_buffered = o.line_buffered && src.endless();
     sink.out = std::mem::take(&mut w.out);
     let res = match whole {
         Some(b) => match if clear || as_text { None } else { memchr::memchr(0, b) } {

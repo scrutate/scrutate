@@ -859,7 +859,7 @@ link to a file outside the package and a package directory that is a link out of
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
     `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
     (`tests/intel_refs.rs`, its CPU time) with arguments they own, `posix_openpt`, `grantpt`,
-    `unlockpt` and `ptsname` in `tests/grep_cli.rs` for a terminal its child writes to, the name
+    `unlockpt` and `ptsname` in two tests of `tests/grep_cli.rs` for a terminal their child writes to, the name
     read before the next call and the descriptor taken once into the `File` that closes it, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
@@ -895,7 +895,7 @@ link to a file outside the package and a package directory that is a link out of
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 28 |
   | `crates/scrutate/tests/cli.rs` | 2 |
-  | `crates/scrutate/tests/grep_cli.rs` | 4 |
+  | `crates/scrutate/tests/grep_cli.rs` | 8 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/intel_refs.rs` | 2 |
   | `crates/scrutate/tests/lazy_bind.rs` | 12 |

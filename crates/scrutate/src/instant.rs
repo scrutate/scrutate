@@ -1928,7 +1928,8 @@ struct Collector<'a> {
     each: Option<u64>,
     /// matches not yet added to `stats_matches` (see `count_match`)
     pending: u64,
-    /// `Query::line_buffered`
+    /// `Query::line_buffered` and an endless source (standard input): each line leaves as found.
+    /// A file's lines leave together when it ends, so files searched at once do not mix
     line_buffered: bool,
 }
 
@@ -2310,8 +2311,9 @@ impl Collector<'_> {
         (kept, before + kept >= max)
     }
 
-    /// Hands the plain lines held over to the sink once they reach `at` bytes, or at once on a
-    /// terminal; a range of a split file and a context group on several threads wait their turn.
+    /// Hands the plain lines held over to the sink once they reach `at` bytes, or at once for
+    /// standard input on a terminal; a range of a split file and a context group on several
+    /// threads wait their turn.
     fn hand_over_plain(&mut self, p: &PlainSink, at: usize) {
         if (self.out.len() >= at || self.line_buffered) && !self.hold && !self.whole_groups && !self.out.is_empty() {
             p.write(&self.out, std::mem::take(&mut self.first), self.stop);
@@ -2726,7 +2728,7 @@ impl<'a> Run<'a> {
             count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
             each: None,
             pending: 0,
-            line_buffered: o.line_buffered,
+            line_buffered: false,
         }
     }
 }

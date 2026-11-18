@@ -42,8 +42,9 @@
   hint), with `--json` and `SCRUTATE_DIAGNOSTICS=json` too; the exit code is 2.
 - **Streams**: results on stdout, diagnostics and progress on stderr. Piped output is plain
   `path:line:text`; colour only on a terminal, off with `--no-color` or `NO_COLOR` set, empty
-  too. As ripgrep does, `grep` writes each line to a terminal as it is found (`tail -f log |
-  scrutate grep ERROR` shows each match at once), and to a pipe or a file in batches.
+  too. As ripgrep does, `grep` on a terminal writes each match of standard input as it is found
+  (`tail -f log | scrutate grep ERROR` shows each match at once) and each file's lines together
+  once that file is done; to a pipe or a file it writes in batches.
 - **Determinism**: `--sort` orders Engine A output as `rg --sort path` does: paths in
   command-line order, under each its files by path compared part by part, then by line
   (`sub/deep/a.txt` before `sub/deep-x/b.txt`, `foo/mod.rs` before `foo.rs`); a file two paths

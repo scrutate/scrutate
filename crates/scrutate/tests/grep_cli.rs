@@ -365,6 +365,68 @@ fn matches_from_a_pipe_reach_a_terminal_as_they_are_found() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn on_a_terminal_each_file_s_lines_stay_together() {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    unsafe extern "C" {
+        fn posix_openpt(flags: i32) -> i32;
+        fn grantpt(fd: i32) -> i32;
+        fn unlockpt(fd: i32) -> i32;
+        fn ptsname(fd: i32) -> *const std::ffi::c_char;
+    }
+    const O_RDWR: i32 = 2;
+    let d = Dir::new("tty_together");
+    let pad = "x".repeat(60);
+    for i in 0..60 {
+        let body: String = (0..150).map(|k| format!("needle {i} {k} {pad}\nother line\n")).collect();
+        d.write(&format!("f{i:02}.txt"), body.as_bytes());
+    }
+    for no_color in [false, true] {
+        let m = unsafe { posix_openpt(O_RDWR) };
+        assert!(m >= 0);
+        let name = unsafe {
+            assert!(grantpt(m) == 0 && unlockpt(m) == 0);
+            std::ffi::CStr::from_ptr(ptsname(m)).to_str().unwrap().to_string()
+        };
+        let mut master = unsafe { fs::File::from_raw_fd(m) };
+        let terminal = fs::OpenOptions::new().read(true).write(true).open(&name).unwrap();
+        let mut c = Command::new(BIN);
+        c.args(["grep", "-j", "8", "needle", "."]).current_dir(&d.0).stdin(Stdio::null()).stdout(terminal).stderr(Stdio::null()).env_remove("NO_COLOR");
+        if no_color {
+            c.env("NO_COLOR", "1");
+        }
+        let mut child = c.spawn().unwrap();
+        drop(c);
+        let reader = std::thread::spawn(move || {
+            let (mut got, mut buf) = (Vec::new(), [0u8; 65536]);
+            // the read ends with an error once the child has exited and no writer is left
+            while let Ok(n @ 1..) = master.read(&mut buf) {
+                got.extend_from_slice(&buf[..n]);
+            }
+            got
+        });
+        assert!(child.wait().unwrap().success());
+        let got = reader.join().unwrap();
+        let mut text = String::new();
+        let mut esc = false;
+        for ch in String::from_utf8_lossy(&got).chars() {
+            match ch {
+                '\x1b' => esc = true,
+                ch if esc && ch.is_ascii_alphabetic() => esc = false,
+                _ if esc => {}
+                '\r' => {}
+                ch => text.push(ch),
+            }
+        }
+        let paths: Vec<&str> = text.lines().filter_map(|l| l.split_once(':').map(|(p, _)| p)).collect();
+        assert_eq!(paths.len(), 60 * 150, "NO_COLOR {no_color}: every match printed");
+        let switches = paths.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(switches, 59, "NO_COLOR {no_color}: a file's lines were split by another file's");
+    }
+}
+
 #[test]
 fn every_count_holds_for_many_matches_over_many_files_and_threads() {
     let d = Dir::new("manycounts");
