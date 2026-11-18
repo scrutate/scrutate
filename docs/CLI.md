@@ -1528,7 +1528,16 @@ the query, a second run finds nothing to change and exits 1.
 Each file is written whole: its bytes are read once, the new bytes go to a temporary file next to
 it (`.NAME.scrutate-PID.tmp`) with the file's permissions, and that file is renamed over the
 original only if the original's bytes on disk are still exactly those read; a file changed
-meanwhile is left alone and named in a warning. A file is also left alone, and named, when its
+meanwhile is left alone and named in a warning. On Linux and macOS the original stays open
+through the rename and is read again after it: when another process changed it after the check
+(an append, or a write through a descriptor opened before the rename), the file is put back as
+that process left it, anything added since to it or to the rewritten text is appended after
+that, and the file is named in a warning (`changed while it was written, put back as the other
+writer left it`); a change there that does not add to the end is saved beside the file
+(`NAME.scrutate-PID.N.kept`) and named. A write made after that second read, through a
+descriptor opened before the rename, lands on the replaced file and is lost, as with any editor
+that saves by rename. On Windows nothing is checked after the rename, so a change that lands
+between the check and the rename is lost. A file is also left alone, and named, when its
 text where a match would change does not parse (a tree-sitter error or missing node there), when
 the rewritten text does not parse there, when it is not UTF-8, when it is a link or a directory on its path
 from `--root` is one, when it lies outside `--root`, and when a directory on its path has become a link (on Windows a link or a

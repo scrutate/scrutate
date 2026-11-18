@@ -1370,6 +1370,12 @@ incompatible index by itself, and that is never breaking.
   `Box`, `Rc` or `Arc` stays undecided: both were tied to the method of the enclosing impl
   (ripgrep's `WalkBuilder.follow_links`, `Matcher.shortest_match_at`, `Sink.binary_data`)
   ([CLI](docs/CLI.md#refs)).
+- `tsquery --rewrite --write` and the MCP `edit_symbol` no longer lose, and report as written, a
+  line another process appends between the check that the file is unchanged and the rename over
+  it. On Linux and macOS the file checked stays open through the rename and is read again: a
+  change found there puts the file back as the other process left it, keeps what was added to
+  either file since, and names the file in a warning (exit 2). Windows checks nothing after the
+  rename, and the docs say so ([CLI](docs/CLI.md#tsquery---rewrite)).
 
 ## [0.1.0] - 2026-11-11
 

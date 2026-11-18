@@ -491,8 +491,10 @@ fn the_size_bound_reads_one_million_bytes_and_not_one_more() {
     assert_eq!(t.read("past.py"), format!("{at}\n"));
 }
 
-/// A second process that appends to a file under the bound while `--write` runs never loses an
-/// appended line: the write lands only on the text it read, and a file changed since is left alone.
+/// A second process that appends to a file while `--write` runs never loses an appended line: a
+/// file changed before the check is left alone, and one changed between the check and the rename
+/// is put back. Unix only: Windows checks nothing after the rename.
+#[cfg(unix)]
 #[test]
 fn a_write_never_lands_on_top_of_another_writers_change() {
     let t = Tree::new("second_writer");
