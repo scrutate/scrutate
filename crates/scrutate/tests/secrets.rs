@@ -1823,7 +1823,6 @@ const NO_TEXT: &[(&str, &str)] = &[
     ("checked", "a stamp of the last integrity check: counts, sizes and times"),
     ("text/lock", "empty: only its lock is used"),
     ("text/manifest.json", "the text index's format, generation and segment names"),
-    ("text/manifest.json.tmp", "the manifest while it is written, renamed over manifest.json"),
     ("text/*/live-*.bin", "a bitmap of the segment's live files"),
     ("text/*/paths.bin", "the indexed files' paths, which a listing of the tree shows too"),
 ];
@@ -1970,7 +1969,9 @@ fn every_index_file_that_can_hold_text_reads_as_binary() {
         found.push(rel.clone());
         let mut head = Vec::new();
         std::io::Read::read_to_end(&mut std::io::Read::take(fs::File::open(e.path()).unwrap(), 1024), &mut head).unwrap();
-        if !head.contains(&0) && !NO_TEXT.iter().any(|(pattern, _)| on_list(pattern, &rel)) {
+        // a listed file's temporary, caught before its rename (seen on Windows), holds the same
+        let kind = rel.strip_suffix(".tmp").unwrap_or(&rel);
+        if !head.contains(&0) && !NO_TEXT.iter().any(|(pattern, _)| on_list(pattern, kind)) {
             text.push(format!("{rel}: {:?}", String::from_utf8_lossy(&head[..head.len().min(80)])));
         }
     }

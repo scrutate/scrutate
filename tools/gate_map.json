@@ -619,7 +619,7 @@
   "step": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
- "release.yml:vsix:4cb78fec2a": {
+ "release.yml:vsix:458b1eac2f": {
   "step": "sed -i '/^<!-- Head written by/,/^<!-- End of head. -->/d' README.md",
   "by": "ci-only: release.yml builds, packages, signs and publishes on a tag or a manual run; the gate runs ci.yml's and security.yml's checks it calls"
  },
