@@ -39,7 +39,7 @@ def main():
     if not sys.platform.startswith("linux") or shutil.which("objdump") is None:
         print("skip: needs Linux and objdump")
         return 0
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=REPO, capture_output=True, text=True, check=True).stdout)
+    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=REPO, capture_output=True, text=True, encoding="utf-8", check=True).stdout)
     crates = {p["name"]: p for p in meta["packages"] if p["name"].startswith("tree-sitter-")}
     newest = {}
     build = os.path.join(sys.argv[1], "build")

@@ -1834,7 +1834,8 @@ mod tests {
     /// index was made.
     fn keeps(root: &std::path::Path) -> bool {
         let known = std::fs::metadata(root.join(".scrutate/index.db")).unwrap().created().is_ok();
-        assert!(known || !cfg!(any(target_os = "linux", target_os = "macos", windows)), "no creation time on a system that has one");
+        // musl's std reads no creation time on Linux
+        assert!(known || !cfg!(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos", windows)), "no creation time on a system that has one");
         known
     }
 

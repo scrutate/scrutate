@@ -72,7 +72,7 @@ PURPOSE = {
 def optional_packages() -> dict:
     """The packages of the locked resolve with every feature on, by name."""
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked", "--all-features"], cwd=ROOT,
-                                     capture_output=True, text=True, check=True).stdout)
+                                     capture_output=True, text=True, encoding="utf-8", check=True).stdout)
     return {p["name"]: p for p in meta["packages"]}
 
 

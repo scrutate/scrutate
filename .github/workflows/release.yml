@@ -206,6 +206,7 @@ jobs:
         run: |
           sed -i '/^<!-- Head written by/,/^<!-- End of head. -->/d' README.md
           npm ci
+          mkdir -p "$GITHUB_WORKSPACE/dist"
           npx --yes @vscode/vsce@4.1.1 package --out "$GITHUB_WORKSPACE/dist/scrutate-$VERSION.vsix" \
             --baseContentUrl "https://github.com/$GITHUB_REPOSITORY/blob/HEAD/integrations/vscode" \
             --baseImagesUrl "https://github.com/$GITHUB_REPOSITORY/raw/HEAD/integrations/vscode"

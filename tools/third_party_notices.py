@@ -57,7 +57,7 @@ def compiled_into(package: str) -> Compiled:
     The one walk behind this file, `sbom.py` and `gen_dependencies_md.py`.
     """
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=os.path.join(HERE, ".."),
-                                     capture_output=True, text=True, check=True).stdout)
+                                     capture_output=True, text=True, encoding="utf-8", check=True).stdout)
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     root = next(p["id"] for p in meta["packages"] if p["name"] == package)
     seen, stack = set(), [root]
