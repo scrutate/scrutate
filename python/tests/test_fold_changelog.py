@@ -18,6 +18,9 @@ VERSION, DATE = "0.1.0", "2026-12-01"
 
 @pytest.fixture
 def folded(tmp_path):
+    # after the release the tree holds the fold itself, checked by release_notes.py and check_version.py
+    if os.path.exists(os.path.join(ROOT, "docs", "changes", f"{VERSION}.md")):
+        pytest.skip(f"{VERSION} is folded in this tree; these tests fold its CHANGELOG before the release")
     for rel in ("CHANGELOG.md", f"docs/changes/{VERSION}-summary.md", "docs/DELIVERY.md", "docs/SECURITY.md", "CITATION.cff"):
         (tmp_path / os.path.dirname(rel)).mkdir(parents=True, exist_ok=True)
         shutil.copy(os.path.join(ROOT, rel), tmp_path / rel)
