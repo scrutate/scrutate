@@ -621,8 +621,11 @@ searched and one edited since is searched only if its indexed text passed (`--up
 that gap); a property test and a coverage-guided fuzz target check that any text a pattern matches
 satisfies its condition, Unicode case folding included (the Kelvin sign matches `k` under `-i`).
 Files with a NUL byte index only the bytes before it (line-mode search stops there) and are always
-searched by multi-line queries and by `refs`, which reads a file with no NUL in its first 4 KiB to
-its end; UTF-16 files and files unreadable at index time are always searched.
+searched by multi-line queries. `refs`, `callers`, `references` and `dead` read a file with no NUL
+in its first 4 KiB to its end, so they search one whose NUL is past that head whatever its
+trigrams say, and pass one with a NUL in it (an image, an archive) by its trigrams, as line mode
+does; a file indexed before the index recorded where its NUL is is searched. UTF-16 files and files
+unreadable at index time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per

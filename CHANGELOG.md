@@ -463,6 +463,12 @@ incompatible index by itself, and that is never breaking.
   to a file (was 0.238 s; ripgrep 0.183 s) and 0.152 s through a pipe (was 0.392 s). A smaller
   output starts no thread; a write error still stops the search and is reported once
   ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- `refs`, `callers`, `references` and `dead` read a binary file the text index holds only when
+  its first NUL byte is past its first 4 KiB, where they read it to its end; one with a NUL in that
+  head (an image, a jar, a wasm module) they pass by its trigrams, as `grep --index` does. They
+  read every file with a NUL byte on every call, and read a file's first 4 KiB a second time
+  when the whole file was already in memory. An index built before records no NUL position, and
+  its binary files are read as before until they are indexed again.
 
 ### Fixed
 - `grep --sort` and Python's `sort=True` print each file's lines once the files before it are
