@@ -87,7 +87,7 @@ def engine_a_row(tool: str, runs) -> str:
     if not rows:
         return f"| {NAME.get(tool, tool)} | no committed result file | - | - |"
     on = "; ".join(f"{m}: " + ", ".join(f"{n} {c}" for c, n in counts[m].items()) for m in dict.fromkeys(machines) if m in counts)
-    on += "".join(f"; not measured on {m}" for m in dict.fromkeys(machines) if m not in counts)
+    on += "".join(f"; not compared on {m}" for m in dict.fromkeys(machines) if m not in counts)
     if tool == "ast-grep":
         against = (shares(cached) + " with scrutate's capture cache filled; " if cached else "") + "parse for parse (`tsquery --no-cache`): " + (
             shares(parsed) if parsed else "no committed result file")
@@ -95,7 +95,7 @@ def engine_a_row(tool: str, runs) -> str:
         against = shares(rows)
     if wrong:
         # the other tool's wrong answers, never scrutate's
-        against += f"; {NAME.get(tool, tool)} wrong on {wrong}, left out"
+        against += f"; {NAME.get(tool, tool)} wrong on {wrong} more, left out"
     if verdicts:
         n = Counter(verdicts)
         ranked = ", ".join(f"{v} {n[v]}" for v in VERDICTS if n[v]) + f" of the {len(verdicts)} where it was the fastest other tool"
@@ -145,7 +145,7 @@ def indexed_row(tool: str, runs) -> str:
 
 
 def table(engine_a: list, indexed: list) -> list[str]:
-    out = ["| Tool | Measured on | Scrutate against it | Ranked at 95% |", "|---|---|---|---|"]
+    out = ["| Tool | Compared on | Scrutate against it | Ranked at 95% |", "|---|---|---|---|"]
     for tool in ORDER:
         out.append(indexed_row(tool, indexed) if tool in INDEXED else engine_a_row(tool, engine_a))
     return out

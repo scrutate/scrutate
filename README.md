@@ -142,20 +142,23 @@ Every measurement below comes from a result file under `bench/results/`, written
 </p>
 
 Compared against, one row per tool, from the result files docs/LEADERBOARD.md names (written by
-`bench/make_compared_md.py`). A share is scrutate's median time, size or memory over the tool's,
-so under 1 is scrutate ahead; a verdict is ranked only on 30 runs or more of both tools.
+`bench/make_compared_md.py`). Those are the results of an earlier build, filed as superseded, and
+are regenerated at the release. A share is scrutate's median time, size or memory over the tool's,
+so under 1 is scrutate ahead; a verdict is ranked only on 30 runs or more of both tools. "Compared
+on" counts the benchmarks where both tools answered right; a tool's wrong answers are counted
+apart and left out.
 
 <!-- compared-against: begin -->
 <!-- inputs: --engine-a bench/results/macos-arm64/superseded/leaderboard-warm-9aa0.json --engine-a bench/results/macos-arm64/superseded/leaderboard-cold-9aa0.json --engine-a bench/results/linux-aarch64/superseded/leaderboard-warm-261e.json --engine-a bench/results/linux-aarch64/superseded/leaderboard-cold-261e.json --indexed bench/results/macos-arm64/superseded/indexed-9aa0.json --indexed bench/results/linux-aarch64/superseded/indexed-261e.json -->
 
-| Tool | Measured on | Scrutate against it | Ranked at 95% |
+| Tool | Compared on | Scrutate against it | Ranked at 95% |
 |---|---|---|---|
-| GNU grep 3.12 | macos-arm64: 30 warm, 5 cold; linux-aarch64 VM: 8 warm, 4 cold | 0.01 to 0.48 of its median; faster on 47 of 47; GNU grep wrong on 7, left out | never the fastest other tool, so not ranked |
+| GNU grep 3.12 | macos-arm64: 30 warm, 5 cold; linux-aarch64 VM: 8 warm, 4 cold | 0.01 to 0.48 of its median; faster on 47 of 47; GNU grep wrong on 7 more, left out | never the fastest other tool, so not ranked |
 | ripgrep 15.2.0 | macos-arm64: 35 warm, 5 cold; linux-aarch64 VM: 13 warm, 4 cold | 0.05 to 0.93 of its median; faster on 57 of 57 | PASS 24 of the 24 where it was the fastest other tool |
-| ack v3.10.0 | macos-arm64: 28 warm, 5 cold; not measured on linux-aarch64 VM | 0.01 to 0.13 of its median; faster on 33 of 33; ack wrong on 5, left out | never the fastest other tool, so not ranked |
-| ag 2.2.0 | macos-arm64: 28 warm, 5 cold; linux-aarch64 VM: 8 warm, 3 cold | 0.02 to 0.63 of its median; faster on 44 of 44; ag wrong on 13, left out | never the fastest other tool, so not ranked |
-| git grep 2.56.0 (macos-arm64), 2.39.5 (linux-aarch64 VM) | macos-arm64: 32 warm, 5 cold; linux-aarch64 VM: 9 warm, 4 cold | 0.02 to 0.72 of its median; faster on 50 of 50; git grep wrong on 5, left out | PASS 6 of the 6 where it was the fastest other tool |
-| ugrep 7.8.5 | macos-arm64: 32 warm, 5 cold; linux-aarch64 VM: 11 warm, 4 cold | 0.15 to 0.85 of its median; faster on 52 of 52; ugrep wrong on 5, left out | PASS 27 of the 27 where it was the fastest other tool |
+| ack v3.10.0 | macos-arm64: 28 warm, 5 cold; not compared on linux-aarch64 VM | 0.01 to 0.13 of its median; faster on 33 of 33; ack wrong on 5 more, left out | never the fastest other tool, so not ranked |
+| ag 2.2.0 | macos-arm64: 28 warm, 5 cold; linux-aarch64 VM: 8 warm, 3 cold | 0.02 to 0.63 of its median; faster on 44 of 44; ag wrong on 13 more, left out | never the fastest other tool, so not ranked |
+| git grep 2.56.0 (macos-arm64), 2.39.5 (linux-aarch64 VM) | macos-arm64: 32 warm, 5 cold; linux-aarch64 VM: 9 warm, 4 cold | 0.02 to 0.72 of its median; faster on 50 of 50; git grep wrong on 5 more, left out | PASS 6 of the 6 where it was the fastest other tool |
+| ugrep 7.8.5 | macos-arm64: 32 warm, 5 cold; linux-aarch64 VM: 11 warm, 4 cold | 0.15 to 0.85 of its median; faster on 52 of 52; ugrep wrong on 5 more, left out | PASS 27 of the 27 where it was the fastest other tool |
 | ast-grep 0.51.1 | macos-arm64: 2 warm; linux-aarch64 VM: 1 warm | 0.04 to 0.16 of its median; faster on 3 of 3 with scrutate's capture cache filled; parse for parse (`tsquery --no-cache`): no committed result file | PASS 2 of the 2 where it was the fastest other tool |
 | Zoekt commit a5a933b (2026-11-03) | macos-arm64, linux-aarch64 VM: the text index, a process per query | index build 0.04, index size 0.10, query p50 0.23 to 0.37, query memory 0.04 to 0.05 of Zoekt's | index size PASS 2 of 2; query memory PASS 2 of 2; the timed metrics are measured, not ranked (under 30 runs); kept running as a server: no committed result file |
 | livegrep commit 923d5ad | linux-aarch64 VM: the text index, a process per query; not measured on macos-arm64 | index build 0.17, index size 0.06, query p50 0.15, query memory 0.01 of livegrep's | index size PASS 1 of 1; query memory PASS 1 of 1; the timed metrics are measured, not ranked (under 30 runs); kept running as a server: no committed result file |
