@@ -1192,7 +1192,8 @@ of the revisions up to 2025-11-25, and revision 2026-07-28, where each request n
 `_meta` and nothing is remembered between requests. Each tool call runs on its own thread, up to
 32 in flight (`MAX_CALLS`), so the loop keeps reading and a `notifications/cancelled` finds the
 call it names; past that a call runs on the reading thread, and a cancel for it is read when it
-ends. A result is text cut
+ends. A JSON-RPC batch gets a thread of its own the same way, up to 32 at once, and runs on the
+reading thread past that. A result is text cut
 to the byte budget; with `serve --structured` it also carries the envelope in `structuredContent`.
 When both forms do not fit, that is a page: `Answer::text_page` says how many items the text
 page shows, and `Answer::page_json` cuts the JSON form to the same items in the same shape,

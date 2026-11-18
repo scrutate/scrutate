@@ -190,7 +190,9 @@ fn cached_signature(path: &Path, cache: &Path) -> Result<String> {
         return Ok(sig);
     }
     let sig = file_signature(&std::fs::read(&full).map_err(|e| anyhow!("load semantic model {}: {e}", path.display()))?);
-    let _ = std::fs::write(cache, format!("{key}\t{sig}\n")); // a read-only index directory hashes again next time
+    // removed and made anew, as the index's other files of fixed names: never written through a
+    // link; a read-only index directory hashes again next time
+    let _ = crate::index::write_new(cache, format!("{key}\t{sig}\n").as_bytes());
     Ok(sig)
 }
 
@@ -235,6 +237,22 @@ mod tests {
         assert!(std::fs::read_to_string(&cache).unwrap().ends_with(&format!("{}\n", file_signature(b"one"))));
         std::fs::write(&model, b"two!").unwrap();
         assert_eq!(cached_signature(&model, &cache).unwrap(), file_signature(b"two!"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_where_the_signature_goes_is_replaced_and_its_target_left_alone() {
+        let dir = std::env::temp_dir().join(format!("scrutate_model_sig_link_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("index")).unwrap();
+        let (model, cache, outside) = (dir.join("m.npz"), dir.join("index/model.sig"), dir.join("outside.txt"));
+        std::fs::write(&model, b"one").unwrap();
+        std::fs::write(&outside, b"not the index's\n").unwrap();
+        std::os::unix::fs::symlink(&outside, &cache).unwrap();
+        assert_eq!(cached_signature(&model, &cache).unwrap(), file_signature(b"one"));
+        assert_eq!(std::fs::read(&outside).unwrap(), b"not the index's\n");
+        assert!(!std::fs::symlink_metadata(&cache).unwrap().file_type().is_symlink());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

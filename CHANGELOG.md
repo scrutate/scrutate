@@ -1389,6 +1389,11 @@ incompatible index by itself, and that is never breaking.
   lib/*.rs`) no longer opens a block that hides every later definition. `grep -z`'s million-member
   cap on a tar counts members, not their PAX or long-name headers: a tar of 600,000 files with a
   PAX header each stopped as "more than 1000000 members" ([CLI](docs/CLI.md#custom-languages)).
+- `.scrutate/model.sig`, the cached hash of a semantic model file, is removed and made anew as
+  the index's other files of fixed names are, so it is never written through a link. The MCP
+  server gives a JSON-RPC batch a thread of its own only while fewer than 32 batches have one, and
+  runs it on the reading thread past that: each batch line had its own thread, so 200 one-call
+  batches during the first build took 304 threads ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 
