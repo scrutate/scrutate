@@ -256,6 +256,11 @@ incompatible index by itself, and that is never breaking.
   custom template...* in the Language Servers settings fills the name, the command `scrutate lsp` and
   a file name pattern per language; the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and
   runs Go to Declaration through it ([JetBrains](integrations/jetbrains/README.md)).
+- README's Benchmarks section has a Compared against table, one row per tool measured (GNU grep,
+  ripgrep, ack, ag, git grep, ugrep, ast-grep, Zoekt, livegrep): its version, the machines and
+  benchmarks it ran on, scrutate's median as a share of its, and the verdicts ranked at 95%.
+  `bench/make_compared_md.py` writes it from the result files docs/LEADERBOARD.md names, and
+  `tools/gen_doc_assets.py --check` fails on a hand edit or on a table left on older files.
 
 ### Changed
 - The tree is on Rust edition 2024 and builds with the pinned Rust 1.100.0 (`rust-toolchain.toml`,

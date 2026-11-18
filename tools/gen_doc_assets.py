@@ -1157,7 +1157,16 @@ PAGES = {"docs/LEADERBOARD.md": "bench/make_leaderboard_md.py", "docs/BENCHMARKS
 # lockfile change that skipped its script fails here; LANGUAGES.md needs two builds, so ci.yml's compat job checks it
 FROM_TREE = {"docs/DEPENDENCIES.md": "tools/gen_dependencies_md.py"}
 # pages where a script writes one marked section from the result files it names, and the rest is prose
-SECTIONS = {"docs/COMPETITIVE.md": "bench/make_yardstick_md.py"}
+SECTIONS = {"docs/COMPETITIVE.md": "bench/make_yardstick_md.py", "README.md": "bench/make_compared_md.py"}
+
+
+def readme_inputs_problems(readme, board):
+    """README's Compared against table against the result files docs/LEADERBOARD.md names: a table
+    left on older files after an ingest."""
+    named = [re.search(r"^<!-- inputs: (.*) -->$", text, re.M) for text in (readme, board)]
+    if not all(named) or shlex.split(named[0].group(1)) != shlex.split(named[1].group(1)):
+        return ["README.md: the Compared against table reads other result files than docs/LEADERBOARD.md names; run bench/make_compared_md.py"]
+    return []
 
 
 def regenerated_problems(path, text):
@@ -1422,7 +1431,9 @@ def main():
                 text = f.read()
         problems.extend(regenerated_problems(path, text))
     with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f, open(os.path.join(ROOT, "docs", "LEADERBOARD.md"), encoding="utf-8") as g:
-        problems.extend(readme_count_problems(f.read(), files.get("docs/LEADERBOARD.md") or g.read()))
+        readme, board = f.read(), files.get("docs/LEADERBOARD.md") or g.read()
+        problems.extend(readme_count_problems(readme, board))
+        problems.extend(readme_inputs_problems(readme, board))
     for p in problems:
         print(p, file=sys.stderr)
     if problems:

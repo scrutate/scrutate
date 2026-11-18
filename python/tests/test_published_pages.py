@@ -91,3 +91,21 @@ def test_a_generator_given_check_compares_and_never_writes(tmp_path):
     out = tmp_path / "out.md"
     assert G.write_or_check(str(page), "one\nthree\n", "gen.py", ["--out", str(out)]) == 0
     assert out.read_text() == "one\nthree\n" and page.read_text() == "one\ntwo\n"
+
+
+def test_the_readme_compared_against_table_is_what_its_inputs_give_and_a_hand_edit_is_named():
+    readme = page("README.md")
+    assert D.regenerated_problems("README.md", readme) == []
+    lines = readme.split("\n")
+    row = next(i for i, line in enumerate(lines) if line.startswith("| ripgrep "))
+    lines[row] = lines[row].replace("lower median on ", "lower median on 9", 1)
+    problems = D.regenerated_problems("README.md", "\n".join(lines))
+    assert len(problems) == 1 and problems[0].startswith(f"README.md:{row + 1}: differs from what bench/make_compared_md.py writes"), problems
+
+
+def test_the_readme_table_reads_the_results_the_leaderboard_reads():
+    readme, board = page("README.md"), page("docs/LEADERBOARD.md")
+    assert D.readme_inputs_problems(readme, board) == []
+    other = readme.replace("--indexed bench/results/macos-arm64/superseded/indexed-9aa0.json", "--indexed bench/results/macos-arm64/superseded/indexed-fb3b.json", 1)
+    assert D.readme_inputs_problems(other, board) == [
+        "README.md: the Compared against table reads other result files than docs/LEADERBOARD.md names; run bench/make_compared_md.py"]
