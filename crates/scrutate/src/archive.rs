@@ -163,8 +163,8 @@ fn tar<R: Read>(r: R, max_members: usize, each: &mut dyn FnMut(Option<&str>, &mu
     // the name and size the extension headers give the next member
     let mut name: Name = Ok(None);
     let mut size = None;
-    // extension headers (PAX, GNU long names) and directories are entries but no members: the
-    // headers are bounded on their own, so a tar of nothing else still ends
+    // only regular files are members: extension headers (PAX, GNU long names), directories, links
+    // and other entries are bounded on their own, so a tar of nothing else still ends
     let max_headers = max_members.saturating_mul(4);
     let mut members = 0;
     for (n, entry) in a.entries()?.raw(true).enumerate() {
