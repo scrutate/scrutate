@@ -243,6 +243,7 @@ python3 bench/make_leaderboard_md.py --engine-a $M/leaderboard-warm.json --engin
   --engine-a $X/leaderboard-warm.json --engine-a $X/leaderboard-cold.json \
   --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json \
   --indexed $M/indexed.json --indexed $X/indexed.json --indexed $L/indexed.json
+python3 bench/make_compared_md.py      # README's Compared against table, from the files LEADERBOARD.md now names
 python3 bench/make_benchmarks_md.py $(ls $M/compare.json $X/compare.json $L/compare.json 2>/dev/null)   # one section per machine that has one
 python3 bench/make_dashboard.py
 python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
