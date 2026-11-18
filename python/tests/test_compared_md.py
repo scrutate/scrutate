@@ -50,7 +50,7 @@ def test_each_tool_gets_its_share_range_and_its_verdicts_where_it_was_the_fastes
     assert "PASS 2, FAIL 1 of the 3 where it was the fastest other tool" in rg
     grep = rows["GNU grep"]
     assert "macos-arm64: 2 warm; not measured on linux-aarch64 VM" in grep
-    assert "0.10 to 0.25 of its median; faster on 2 of 2; 1 answer wrong, left out" in grep
+    assert "0.10 to 0.25 of its median; faster on 2 of 2; GNU grep wrong on 1, left out" in grep
     assert "never the fastest other tool, so not ranked" in grep
 
 
@@ -65,7 +65,7 @@ def test_a_tool_no_file_measured_and_a_comparison_with_no_file_say_so():
     assert set(rows) == set(C.ORDER) and len(rows) == 9
     assert rows["ack"].endswith("| no committed result file | - | - |")
     # only cache hits were measured: parse for parse has no file
-    assert "with its capture cache filled; parse for parse (`tsquery --no-cache`): no committed result file" in rows["ast-grep"]
+    assert "with scrutate's capture cache filled; parse for parse (`tsquery --no-cache`): no committed result file" in rows["ast-grep"]
 
 
 def indexed(env, rivals):
@@ -85,7 +85,7 @@ def test_an_indexed_rival_gets_its_figures_and_the_servers_have_no_file(monkeypa
     z = rows["zoekt"]
     assert z.startswith("| Zoekt commit a5a933b (2026-11-03) | macos-arm64, linux-aarch64 VM: the text index, a process per query | ")
     # build 2/50 and 2/8, size 0.1 both, p50 0.25 and 0.5, memory 0.05 and 0.1
-    assert "index build 0.04 to 0.25, index size 0.10, query p50 0.25 to 0.50, query memory 0.05 to 0.10 of its" in z
+    assert "index build 0.04 to 0.25, index size 0.10, query p50 0.25 to 0.50, query memory 0.05 to 0.10 of Zoekt's" in z
     assert "index size PASS 2 of 2; the timed metrics are measured, not ranked (under 30 runs); kept running as a server: no committed result file" in z
     lg = rows["livegrep"]
     assert lg.startswith("| livegrep commit 923d5ad | ")

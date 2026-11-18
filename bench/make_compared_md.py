@@ -89,12 +89,13 @@ def engine_a_row(tool: str, runs) -> str:
     on = "; ".join(f"{m}: " + ", ".join(f"{n} {c}" for c, n in counts[m].items()) for m in dict.fromkeys(machines) if m in counts)
     on += "".join(f"; not measured on {m}" for m in dict.fromkeys(machines) if m not in counts)
     if tool == "ast-grep":
-        against = (shares(cached) + " with its capture cache filled; " if cached else "") + "parse for parse (`tsquery --no-cache`): " + (
+        against = (shares(cached) + " with scrutate's capture cache filled; " if cached else "") + "parse for parse (`tsquery --no-cache`): " + (
             shares(parsed) if parsed else "no committed result file")
     else:
         against = shares(rows)
     if wrong:
-        against += f"; {wrong} {'answer' if wrong == 1 else 'answers'} wrong, left out"
+        # the other tool's wrong answers, never scrutate's
+        against += f"; {NAME.get(tool, tool)} wrong on {wrong}, left out"
     if verdicts:
         n = Counter(verdicts)
         ranked = ", ".join(f"{v} {n[v]}" for v in VERDICTS if n[v]) + f" of the {len(verdicts)} where it was the fastest other tool"
@@ -134,7 +135,7 @@ def indexed_row(tool: str, runs) -> str:
     if not versions:
         return f"| {NAME.get(tool, tool)} | no committed result file | - | - |"
     on = ", ".join(versions) + ": the text index, a process per query" + "".join(f"; not measured on {m}" for m in dict.fromkeys(machines) if m not in versions)
-    against = ", ".join(f"{name} {span(xs)}" for name, xs in figures.items() if xs) + " of its"
+    against = ", ".join(f"{name} {span(xs)}" for name, xs in figures.items() if xs) + f" of {NAME.get(tool, tool)}'s"
     n = len(versions)
     cells = [f"{k} " + ", ".join(f"{v} {c[v]}" for v in VERDICTS if c[v]) + f" of {n}" for k, c in ranked.items()]
     if timed:
