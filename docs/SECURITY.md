@@ -46,57 +46,59 @@ the user starts with `serve --allow-edits`, write source files ([below](#the-str
 
 | Area | Control | Evidence |
 |---|---|---|
-| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported or run. There are no build systems, repository hooks, `.scrutate.toml` scripts or plugins. The binary starts another program in three cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does; gzip, zip and tar are read in process); and `impact` (the command and the MCP tool) and `review` run `git` from `PATH` in the root to read the diff, as `read --history` (and `read_code` with `history`) does to read a definition's commits (see [Running git](#running-git)); and `scrutate hook run` runs the `rg`, `grep` or `find` it was given, from `PATH`, or this binary's own `grep` for an `rg` whose arguments `scrutate grep` reads the same way ([below](#setup-and-the-grep-hook)). Without `-z`, `impact`, `review`, a history or `hook run`, no search starts a program. `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` from `PATH` when it is there ([below](#setup-and-the-grep-hook)). | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs`, `Git::command` in `git.rs` and `command` in `shellhook.rs` (from `run_main`), and `setup.rs` runs `claude` as above; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
-| No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) has no networking crate; offline build and run verified in a proxy-restricted environment. |
-| Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file. The index is written only under `<root>/.scrutate/`; another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)). Segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only as regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the root: a linked folder on the way that leads outside makes the file count as missing. A tool-call path that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
+| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported or run. There are no build systems, repository hooks, `.scrutate.toml` scripts or plugins. The binary starts another program in four cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does; gzip, zip and tar are read in process); `impact` (the command and the MCP tool) and `review` run `git` from `PATH` in the root to read the diff, as `read --history` (and `read_code` with `history`) does to read a definition's commits (see [Running git](#running-git)); and `scrutate hook run` runs the `rg`, `grep` or `find` it was given, from `PATH`, or this binary's own `grep` for an `rg` whose arguments `scrutate grep` reads the same way ([below](#setup-and-the-grep-hook)); and `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` when it finds `claude` on `PATH` ([below](#setup-and-the-grep-hook)). Without `-z`, `impact`, `review`, a history or `hook run`, no search starts a program. | `tests/git_spawns.rs` `every_process_the_shipped_code_starts_is_one_security_md_lists` (every `Command::new` and grep-cli decompression reader outside test code is in `archive.rs` `external`, `git.rs` `raw`, `setup.rs` `apply` and `shellhook.rs` `command`) and `git_starts_in_one_place`; `tests/impact.rs` (a revision written as an option is refused, and no file is written) and `outside_git_and_with_a_bad_revision_it_says_so_and_exits_2`. |
+| No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) and `Cargo.lock` hold no networking crate, and the source uses no `std::net`. |
+| Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file. The index is written only under `<root>/.scrutate/`; another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)). Segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths in production code; unit tests use pid-named directories under the system temp directory). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json` and `jsconfig.json` are read only as regular files inside the repository, of at most 1 MB. `--deps` reads `Cargo.toml`, `go.mod` and an installed npm package's `package.json` only as regular files (not through a link) of at most 1 MB, and the lockfiles `Cargo.lock`, `package-lock.json`, `uv.lock`, `poetry.lock` and a Python distribution's `RECORD` only as regular files of at most 64 MiB ([Dependency source](#dependency-source)). A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the root: a linked folder on the way that leads outside makes the file count as missing. A tool-call path that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings tests `r.read("/etc/passwd")` and `r.read("../no_such_file_outside_the_repo")` raise ValueError, packages `a_lockfile_or_manifest_reached_through_a_link_is_refused_by_name` and `a_lockfile_over_its_size_limit_is_refused_by_name`, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
 | Symlinks | Not followed by default (Engine A and B); `-L` follows with loop detection (the `ignore` walker). | robustness: loop + dangling + escaping symlinks. |
 | Permission-aware | Unreadable files are counted as errors (`--stats`) and skipped, never fatal. | robustness `unreadable_files_are_reported_not_fatal` (skipped when running as root, as in CI containers; the error counter exercises the code path). |
 | Resource exhaustion: regex | Rust `regex` (linear time, no backtracking) with compiled-size limits (20 MB regex, 10 MB DFA); oversized patterns are an error. | robustness `regex_limits_and_errors_are_clean`: `(a*)*b` on a 10 000-char line finishes; `(a{1000}){1000}` is an error. |
-| Resource exhaustion: files | Engine B skips files > 1 MB and binary files (NUL in the first 4 KB); chunk text and body are capped at 200 lines (40 for a container) and 32 KiB, and the definitions of one file share a budget of 1 MiB plus 8 bytes per byte of the file, past which each keeps its first line, so a one-line file of 8,000 nested functions keeps 0.34 MB of compressed chunk text and indexes with a 44 MB peak; tree-sitter parse per file; Engine A streams with bounded batches; `--max-filesize`, `--max-depth`, `--max-results`, `--max-count`. With `-z`, an archive or compressed file stops at 8 GiB expanded or a million members, a member at a line longer than 64 MiB, and a tar member's name from a long-name or PAX header is read up to 64 KiB, so a small archive cannot make `grep -z` hold gigabytes. Index time stays linear in nesting depth: a file of 60,000 nested Lisp calls, nested lists or 50,000 nested HTML elements indexes in under a second. The resolver does not read a file nested more than 2,000 levels deep, so such a file cannot overflow the stack of `refs`, the language server or the MCP server, or hold them for minutes. | robustness `hostile_text_shapes_never_panic` (5 MB line, 200k lines, 20 000-deep nesting); parse_index `deeply_nested_lisp_and_html_parse_in_linear_time` (Lisp and Scheme to 60,000 levels, bare lists to 80,000, HTML to 50,000) and `chunk_text_has_a_byte_cap_on_a_one_line_file_of_nested_functions`. |
-| Hostile text | Invalid UTF-8 (lossy decode), BOM, CRLF/CR, UTF-16 with a byte-order mark (transcoded by both engines), multibyte boundaries, emoji identifiers, 255-byte names, spaces/unicode in paths. This suite found a real UTF-8 boundary panic, now fixed (`text::prefix_bytes`). | same test; `parser_fuzz_smoke` (400 random inputs); proptest `parser_yields_well_formed_chunks`. |
-| Index corruption | `PRAGMA quick_check` on open for a database up to 64 MiB (`SCRUTATE_QUICK_CHECK_MAX_BYTES`; a larger one is checked by `scrutate check` and rebuilt when an operation meets damage), once per state of the database file (a passing check is recorded with the file's identity and data version, and any change to the file runs it again); every segment array validated for dtype/shape/length on open; `scrutate check` runs `integrity_check` + deep validation (sorted ids, posting ranges, IVF permutation) and optional file re-hashing. Damaged indexes are rebuilt automatically, also when a search first meets the damage in a segment array (a posting row, a pointer or a cluster table that points outside the segment); a planted non-database file is replaced; locked ≠ corrupt (a live database is never deleted). The artifact store is part of the index: an artifact that does not decode, kept texts that do not decode, a file that names an artifact the store does not hold, and rows that disagree with their artifact are found where an update reads them (and by `scrutate check`) and rebuilt by the same rule. | `tests/artifacts.rs::damage_to_the_store_is_found_and_the_index_built_again`; robustness `corrupted_index_is_detected_and_rebuilt` (5 corruption scenarios); cli `a_posting_row_outside_its_segment_triggers_a_rebuild`; `concurrent_indexers_and_readers_do_not_corrupt` (3 writers + 2 readers, 30× repeated, `integrity_check` ok). |
+| Resource exhaustion: files | Engine B skips files > 1 MB and binary files (NUL in the first 4 KB); chunk text and body are capped at 200 lines (40 for a container) and 32 KiB, and the definitions of one file share a budget of 1 MiB plus 8 bytes per byte of the file, past which each keeps its first line, so a one-line file of 8,000 nested functions keeps 0.34 MB of compressed chunk text and indexes with a 44 MB peak ([Architecture](ARCHITECTURE.md)); tree-sitter parse per file; Engine A streams with bounded batches; `--max-filesize`, `--max-depth`, `--max-results`, `--max-count`. With `-z`, an archive or compressed file stops at 8 GiB expanded or a million members, a member at a line longer than 64 MiB, and a tar member's name from a long-name or PAX header is read up to 64 KiB, so a small archive cannot make `grep -z` hold gigabytes. Parse time stays linear in nesting depth (four times the depth costs under ten times the time) up to 60,000 nested Lisp calls, 80,000 nested lists or 50,000 nested HTML elements. The resolver does not read a file nested more than 2,000 levels deep, so such a file cannot overflow the stack of `refs`, the language server or the MCP server, or hold them for minutes. | robustness `hostile_text_shapes_never_panic` (5 MB line, 200k lines, 20 000-deep nesting); parse_index `deeply_nested_lisp_and_html_parse_in_linear_time` (Lisp and Scheme to 60,000 levels, bare lists to 80,000, HTML to 50,000) and `chunk_text_has_a_byte_cap_on_a_one_line_file_of_nested_functions`. |
+| Hostile text | Invalid UTF-8 (lossy decode), BOM, CRLF/CR, UTF-16 with a byte-order mark (transcoded by both engines), multibyte boundaries, emoji identifiers, 254-byte names, spaces/unicode in paths. This suite found a real UTF-8 boundary panic, now fixed (`text::prefix_bytes`). | same test; cli `utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b`; `parser_fuzz_smoke` (400 random inputs); proptest `parser_yields_well_formed_chunks`. |
+| Index corruption | `PRAGMA quick_check` on open for a database up to 64 MiB (`SCRUTATE_QUICK_CHECK_MAX_BYTES`; a larger one is checked by `scrutate check` and rebuilt when an operation meets damage), once per state of the database file (a passing check is recorded with the file's identity and data version, and any change to the file runs it again); every segment array validated for dtype/shape/length on open; `scrutate check` runs `integrity_check` + deep validation (sorted ids, posting ranges, IVF permutation) and optional file re-hashing. Damaged indexes are rebuilt automatically, also when a search first meets the damage in a segment array (a posting row, a pointer or a cluster table that points outside the segment); a planted non-database file is replaced; locked ≠ corrupt (a live database is never deleted). The artifact store is part of the index: an artifact that does not decode, kept texts that do not decode, a file that names an artifact the store does not hold, and rows that disagree with their artifact are found where an update reads them (and by `scrutate check`) and rebuilt by the same rule. | `tests/artifacts.rs::damage_to_the_store_is_found_and_the_index_built_again`; robustness `corrupted_index_is_detected_and_rebuilt` (5 corruption scenarios); cli `a_posting_row_outside_its_segment_triggers_a_rebuild`; `concurrent_indexers_and_readers_do_not_corrupt` (3 writers of 3 rounds, 2 readers, `integrity_check` ok). |
 | Index privacy | `.scrutate/` holds a compressed copy of every indexed chunk's text, including chunks of files the owner made private (`chmod 600`). On Unix it is made with mode 0700, whatever the umask, so another user can read nothing inside it; an existing one with any other mode (an earlier version's, made under umask 022) is set to 0700 by the next command that writes it. The files inside keep the umask's mode, which does not matter while the directory above shuts others out. A `.scrutate` another user owns is left as it is. Only `.scrutate` itself changes mode: no file of the repository, and nothing outside it. On Windows the directory inherits the repository directory's inheritable permissions, as every new directory does. | cli `the_index_directory_is_private_to_its_owner_under_umask_022` (`index`, `index --text`, `callers` and the `tsquery` cache each make it 0700; a 0755 one is tightened). |
 | Cache files | `.scrutate/tsquery/` (captures by content) and `.scrutate/answers/` (what `callers` and `callees` learned) are read only as regular files within their size limit (128 MB and 64 MB), never through a symbolic link, and decoded with every length checked; a file that does not decode, or whose header names another scrutate, executable, index database or root, counts as no file. They are written whole to a temporary name and renamed into place: a tsquery file only after the index directory check refuses a symbolic link anywhere in `.scrutate/`, an answers file after a check that `.scrutate/` and `.scrutate/answers/` are directories and no links (the whole check runs when either is made; one answer is written per definition a walk asks about, and the whole check on each made an impact walk's time grow with the square of the change). A planted cache file that does decode is trusted as the checkout's own index is: it can make the answers it names wrong until it is deleted (deleting `.scrutate/` is always safe). | `files::tests::a_cache_file_is_read_only_as_a_regular_file_within_its_limit`; `answers::tests`; the tsquery tests in `tests/cli.rs`. |
-| Panic containment | A panic in the CLI prints one diagnostic line and exits 2. A panic inside an MCP tool call is reported as a tool error and the server keeps running: the session closes the reader the call ran on and opens another. The Python bindings and the language server keep a panic inside its call the same way. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `session.rs`; `session::tests::a_panic_inside_one_call_is_that_calls_error_and_the_session_goes_on`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
-| Supply chain | 213 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0, BSL-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0) and OpenCC ver.1.4.2's `JPShinjitaiCharacters.txt` (Apache-2.0, pinned by SHA-256 in `tools/gen_han_fold.py`), `crates/scrutate/data/han_fold.txt`; `Cargo.lock` committed; `cargo audit` over the 255 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB of 1,509 advisories, updated 2026-11-15). The bundled SQLite is 3.54.1, from `libsqlite3-sys` 0.40.0 under `rusqlite` 0.43.0; it was first upgraded for RUSTSEC-2026-0459 at `rusqlite` 0.41 and `libsqlite3-sys` 0.39. `ignore` is vendored with eleven documented changes (`vendor/ignore`, listed in its README) and published as its own crate, `scrutate-ignore`, so a crate from crates.io builds with the same walker; the SBOM marks it as a modified copy of `ignore`. `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). `cargo deny check` runs on every push to main, every pull request, once a week and on the tagged commit before a release against `deny.toml`: an advisory (vulnerable, unmaintained, unsound or yanked), a licence outside the list above, a wildcard version, or a crate from a registry other than crates.io or from git fails it. | `cargo audit` over `Cargo.lock` (docs/TEST_RESULTS.md holds an earlier run); SBOM in release artifacts; `deny.toml` and the `deny` job of `.github/workflows/security.yml`. |
-| Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.100.0). Two clean builds in two build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, fresh containers, linux/arm64) produced the same SHA-256 on 2026-11-16 with `rustc 1.100.0 (0ef1bc386 2026-11-09)`: `a3a0549d...` (`bench/results/platforms/repro/`). The binary the Linux leaderboard measured, `261ed1a2...`, is the Rust 1.99.1 build from before the toolchain moved to 1.100.0, so it is not this hash; the benchmarks rerun on the release binary at release time (docs/RELEASING.md). Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
+| Panic containment | A panic in the CLI prints one diagnostic line and exits 2. A panic inside an MCP tool call is reported as a tool error and the server keeps running: the session closes the reader the call ran on and opens another. The Python bindings keep a panic inside its call the same way, and the language server keeps one inside its request: it answers that request with an error and answers the next. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `session.rs`; `cli::tests::a_panic_prints_one_line_and_exits_2` (the exit path run as a child: one stderr line, exit 2); `lsp::tests::a_panic_stays_inside_one_request`; `index::tests::an_update_that_panics_rolls_back_and_the_next_one_succeeds` (the database as it was, no write transaction left open, the next update indexes the file); `session::tests::a_panic_inside_one_call_is_that_calls_error_and_the_session_goes_on`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
+| Supply chain | 213 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0, BSL-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0) and OpenCC ver.1.4.2's `JPShinjitaiCharacters.txt` (Apache-2.0, pinned by SHA-256 in `tools/gen_han_fold.py`), `crates/scrutate/data/han_fold.txt`; `Cargo.lock` committed; `cargo audit` over the 255 locked crates passes (docs/TEST_RESULTS.md, advisory DB of 1,527 advisories, 2026-11-17). The bundled SQLite is 3.54.1, from `libsqlite3-sys` 0.40.0 under `rusqlite` 0.43.0; it was first upgraded for RUSTSEC-2026-0459 at `rusqlite` 0.41 and `libsqlite3-sys` 0.39. `ignore` is vendored with eleven documented changes (`vendor/ignore`, listed in its README) and published as its own crate, `scrutate-ignore`, so a crate from crates.io builds with the same walker; the SBOM marks it as a modified copy of `ignore`. `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). `cargo deny check` runs on every push to main, every pull request, once a week and on the tagged commit before a release against `deny.toml`: an advisory (vulnerable, unmaintained, unsound or yanked), a licence outside the list above, a wildcard version, or a crate from a registry other than crates.io or from git fails it. | `cargo audit` over `Cargo.lock` (docs/TEST_RESULTS.md); SBOM in release artifacts; `deny.toml` and the `deny` job of `.github/workflows/security.yml`. |
+| Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.100.0). Two clean builds in two build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, fresh containers, linux/arm64) produced the same SHA-256 with `rustc 1.100.0 (0ef1bc386 2026-11-09)`: `a3a0549d...` (`bench/results/platforms/repro/`). The binary the Linux leaderboard measured, `261ed1a2...`, is the Rust 1.99.1 build from before the toolchain moved to 1.100.0, so it is not this hash; the benchmarks rerun on the release binary at release time (docs/RELEASING.md). Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
 | Signed releases | "Signed" means: every file on the release carries a SLSA build provenance attestation (`actions/attest`), signed through Sigstore with the workflow's OIDC identity and logged in Sigstore's public transparency log (SLSA v1.0 Build Level 2), and is listed in `SHA256SUMS`; the SBOM is attested to the archives. `gh attestation verify FILE --repo scrutate/scrutate --signer-workflow scrutate/scrutate/.github/workflows/release.yml --source-ref refs/tags/v0.1.0` checks a file ([Install](INSTALL.md#from-a-release-archive)). No platform code signature (see Known gaps). | `.github/workflows/release.yml`, **not yet executed**; no release has been signed yet. |
 | Workflows | Every action is pinned to a commit, checkout keeps no credentials, and each job gets only the permissions it names. `zizmor` 1.32.0 with `--persona pedantic` and its online audits checks `.github` on every push to main, every pull request, once a week and on the tagged commit before a release, and `actionlint` 1.7.12 with shellcheck on every `run:` script checks the workflows on the same runs; a finding fails the job. | the `zizmor` and `actionlint` jobs of `.github/workflows/security.yml`. |
 | `unsafe` count | Each file's count of the `unsafe` keyword (line comments and plain string literals left out) must equal the table in the [`unsafe` inventory](#known-gaps-and-residual-risks), checked on every push to main, every pull request, once a week and on the tagged commit before a release, so a new `unsafe` cannot land without its line there. | `tools/unsafe_count.py`; the `unsafe` job of `.github/workflows/security.yml`. |
 | Secrets in the tree | No tracked file holds a secret: gitleaks 8.30.1 with its own rules, installed by the SHA-256 it publishes, reads the tree on every push to main, every pull request, once a week and on the tagged commit before a release, against `.gitleaks.toml` and no allow list: a line its rules flag that holds no secret carries `gitleaks:allow` with the reason, so no file is exempt as a whole (gitleaks 8.30.1 applies an allow list's paths alone, whatever its condition). `tools/gitleaks_config.py` fails the job and the gate unless the config holds `title` and `[extend] useDefault = true` alone, its keys read in any case as gitleaks reads them (a rule, a disabled rule, an allow list or an extended path can each narrow the scan), and when a `.gitleaksignore` is committed beside it. The gate also plants a token in `intel.rs` and in `secrets.rs` in a copy of the tree and requires gitleaks to find each. The tests run scrutate's own redactor over every tracked file too, so test samples are built at run time; a `format!` template that builds one (`sk-ant-api03-{}`) holds no secret, and neither scanner flags it. | the `gitleaks` job of `.github/workflows/security.yml`; `tools/gitleaks_config.py` and python/tests/test_gitleaks_config.py; tests/secrets.rs `no_tracked_file_holds_a_secret`. |
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. They found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. Every week each target fuzzes for 45 minutes from the corpus the last run kept, and a crash, timeout or out-of-memory input fails the run and is kept as an artifact. | `bench/results/fuzz/` (run logs), `.github/workflows/fuzz-weekly.yml`, `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
-| Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
+| Network file systems | A repository on an SMB share (Samba server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults (booleans, numbers, sizes, globs, file type names), directory names to leave out and language tables (extensions and regex patterns); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
 | MCP server | Reads the repository and writes `.scrutate/` and the frecency file above, the package cache for `scope: "deps"`, and, only under `serve --allow-edits`, the file an `edit_symbol` call names ([Verified symbol edits](#verified-symbol-edits)); path arguments are confined. It takes requests on stdio, and offers its open index to command line calls of the same user through `.scrutate/session.sock` on Unix or a named pipe on Windows (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs` and its tests; `tests/mcp_protocol.rs`, `tests/mcp_tools.rs`, `tests/cli.rs`; the -32700 for a line that is not JSON and the 200-character quote (`fmt.rs`) are checked by reading the code. |
 | Python bindings | Engine behind a session (calls side by side, writes one at a time, a panic kept inside its call); `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
 
 ## Running git
 
-`impact` and `review` run the `git` program found on `PATH` (on Windows the current directory is
-not searched first) in the root: `rev-parse`, `merge-base`, `config --get-regexp`, `diff-index`
-(`diff-tree` between two commits; raw and `-U0`), `ls-files --others` and one `cat-file --batch`.
-`read --history` runs `--version`, `config --get-regexp`, `rev-parse --is-shallow-repository` (and in a shallow clone
-`rev-parse --git-path shallow`, whose file of commit ids it reads), `cat-file -e`, `diff-index -p
--U0 HEAD` with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of an indexed
-file, never a path the caller writes: inside `-L start,end:path`, `HEAD:./path` and after `--`, a
-path that starts with `-` or holds a colon reads as a path. Nothing in the repository names this
-program or its arguments. Every call goes through one builder, `Git::command`, which runs only
-these commands and refuses any other (`tests/git_spawns.rs` fails on a git started anywhere else),
-and every call only reads: `--no-optional-locks` (git writes no index file),
-the diff by plumbing that never refreshes the index (`git diff` writes `.git/index` back when a
-file's stat changed, holding `index.lock` against your own `git add` meanwhile), `-c
-core.fsmonitor=false` (no file system monitor program), `-c log.showSignature=false` (no
-`gpg.program` to check a signed commit), `--no-ext-diff` and `--no-textconv` on every diff and log
-(no external diff or text conversion program from git's configuration), and `GIT_NO_LAZY_FETCH=1` (a
-partial clone fetches no object it lacks, which would write `.git/objects` and run the remote's
-upload program or `core.sshCommand`; `impact` then says to fetch them first. git 2.44 and later
-read it; an older git fetches).
+`impact` and `review` run the `git` program found on `PATH` (on Windows from scrutate's own
+directory, then the system directories, then `PATH`, never the current directory) in the root:
+`rev-parse`, `merge-base`, `config --get-regexp`, `diff-index` (`diff-tree` between two commits; raw
+and `-U0`), `ls-files --others` and one `cat-file --batch`. `read --history` runs `--version`,
+`config --get-regexp`, `rev-parse --is-shallow-repository` (and in a shallow clone `rev-parse
+--git-path shallow`, whose file of commit ids it reads), `cat-file -e`, `diff-index -p -U0 HEAD`
+with `--literal-pathspecs` after `--`, and `log -L` with `-s`, each on the path of an indexed file,
+never a path the caller writes: inside `-L start,end:path`, `HEAD:./path` and after `--`, a path
+that starts with `-` or holds a colon reads as a path. Other calls read `rev-parse --show-prefix`,
+`--is-inside-work-tree` and `--absolute-git-dir`, `ls-files -u` and `config --get`. Nothing in the
+repository names this program or its arguments. Every call goes through `Git::raw`, reached only
+from `Git::command` (which runs only the listed reads and refuses any other) and the one `config`
+read of the filter drivers (`tests/git_spawns.rs` fails on a git started anywhere else), and every
+call only reads: `--no-optional-locks` (git writes no index file), the diff by plumbing that never
+refreshes the index (`git diff` writes `.git/index` back when a file's stat changed, holding
+`index.lock` against your own `git add` meanwhile), `-c core.fsmonitor=false` (no file system
+monitor program), `-c log.showSignature=false` (no `gpg.program` to check a signed commit),
+`--no-ext-diff` and `--no-textconv` on every diff and log (no external diff or text conversion
+program from git's configuration), and `GIT_NO_LAZY_FETCH=1` (a partial clone fetches no object it
+lacks, which would write `.git/objects` and run the remote's upload program or `core.sshCommand`;
+`impact` then says to fetch them first. git 2.44 and later read it; an older git fetches).
 
 The one argument a caller gives is a revision (`--base`, the tool's `base`, `review --head`). An
 empty one, or one starting with `-`, is refused before git runs, so `--base=--output=x` cannot
 become git's `--output` and write a file. It goes as one argument, `REV^{commit}`, to
 `git rev-parse --verify`, and later calls get the commit id that prints. Each side of `A...B` is
-checked the same way.
+checked the same way, and an empty side means `HEAD`.
 
 Of the environment, only a relative `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or
 `GIT_COMMON_DIR` changes: it is made absolute against the command's working directory, where git
@@ -120,10 +122,11 @@ While `scrutate serve` runs, index commands use its open index through a socket 
 commands and settings). This local boundary is reviewed here; the Windows choices are in
 [ADR 0006](adr/0006-the-session-on-windows.md).
 
-What it is. A Unix-domain stream socket, mode 0600, in the index directory, which only its owner
-can enter (mode 0700, see [Controls and evidence](#controls-and-evidence)), made when `serve`
-starts and removed when it exits; no TCP or UDP port. The command line never starts a server,
-and the listening thread ends with `serve`.
+What it is. A Unix-domain stream socket in the index directory, which only its owner can enter
+(mode 0700, see [Controls and evidence](#controls-and-evidence)), made when `serve` starts, then
+set to mode 0600 at once (the 0700 directory covers the moment between), and removed when it exits;
+no TCP or UDP port. The command line never starts a server, and the listening thread ends with
+`serve`.
 
 On Windows: a named pipe, `\\.\pipe\scrutate-session-<hash>`, the hash a BLAKE2b-128 of the
 user's SID and the canonical root. It is created with a protected DACL of one entry, full access
@@ -163,8 +166,9 @@ Checks, at both ends:
   gives a session 2 seconds to take it, and each write of the server's answer waits at most 2
   seconds for the caller to take it (on Windows each step of at most 64 KB), so a caller that
   reads a long answer slowly keeps its connection longer; at most 16 connections at once, a
-  further one closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`), an answer slower
-  than 60 s, a closed connection or any error makes the command line do the work itself.
+  further one closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`), an answer the
+  session stops sending for 60 s, a closed connection or any error makes the command line do the
+  work itself.
 
 What a process of the same user gains: nothing. A request is an operation the command line could
 run itself (`ops::Op`, ranked search included, with how to print it: `--json`, the byte limit and
@@ -252,8 +256,9 @@ do not validate, or a panic while reading the other index counts as a miss, and 
 parsed.
 
 What is verified and what is trusted: an artifact's key is a 128-bit BLAKE2b hash of the artifact
-format, the content revision, the SHA-1 of the file's bytes, its file name, and for an `index`
-file its directory's name, all from this process's own read. So an artifact is used only for bytes
+format, the content revision, the SHA-1 of the file's bytes, its file name, for an `index` file
+its directory's name, and the signature of the custom language that claims the file, if one does,
+all from this process's own read. So an artifact is used only for bytes
 that hash to its key, under a name that parses the same. That it holds what a parse of those bytes
 gives is not verified: its store is trusted, as a checkout's own index is. A planted store can make
 answers about the content it names wrong in the work tree that reads it, until
@@ -300,16 +305,19 @@ extension refused).
 ## Setup and the Grep hook
 
 `scrutate setup <agent>` writes only the files [docs/CLI.md](CLI.md#setup-and-the-grep-hook) names
-for that agent and scope (under the home directory, `$CODEX_HOME` or `$XDG_CONFIG_HOME`, or the
-repository's top with `--project`), and only when it is run; no other command touches them. Each
+for that agent and scope (under the home directory, `$CLAUDE_CONFIG_DIR`, `$CODEX_HOME` or
+`$XDG_CONFIG_HOME`, or the repository's top with `--project`), and only when it is run; no other command touches them. Each
 file gets one entry named `scrutate`, which runs this binary by its absolute path with `serve`
 (with `--project`, `--root <repository> serve`) and nothing else. Only with `--hook` do Claude
 Code's settings get two `PreToolUse` groups (Grep and Bash) and Codex's `hooks.json` one (Bash), and only with `--instructions` does the agent's
 instruction file get one marked block. A file that does not parse is left as it is, and a crash leaves the old file or the new one, never half of one. For Claude Code's
-user file, `setup` runs `claude` from `PATH` (`claude mcp add-json`, `claude mcp remove`), because
-running Claude Code sessions rewrite that file themselves. An entry in a project file (`.mcp.json`,
-`.cursor/mcp.json`) is a command line the agent runs for anyone who opens the repository and
-accepts it; Claude Code asks before it starts one.
+user file, `setup` runs `claude` (`claude mcp add-json`, `claude mcp remove`), because running
+Claude Code sessions rewrite that file themselves. It takes `claude` only from `PATH` entries that
+are absolute and outside the current directory and the work tree around it, as `hook run` takes its
+programs: a relative entry such as `.`, or one inside the repository, is passed over
+(`tests/setup_agents.rs` `a_claude_on_a_path_entry_the_repository_controls_is_never_run`). An entry
+in a project file (`.mcp.json`, `.cursor/mcp.json`) is a command line the agent runs for anyone who
+opens the repository and accepts it; Claude Code asks before it starts one.
 
 `scrutate hook grep` answers each Claude Code Grep call it reads on standard input. It reads files
 as Engine A does (ignore rules followed, no link followed, nothing executed), and only below the
@@ -321,9 +329,11 @@ read exists (a macOS `com.anthropic.claudecode.plist`, the Windows key
 `SOFTWARE\Policies\ClaudeCode`): an administrator's read rule is never bypassed. It also fails open
 on any argument it does not map, an error, a binary or unreadable file and after 3 seconds
 ([CLI](CLI.md#setup-and-the-grep-hook) lists every case): no output, exit 0, Grep runs. It never
-exits 2, which would block the call. Its one file is the counter
-`$XDG_STATE_HOME/scrutate/hook-grep.jsonl`: per answered call the session id, two byte counts and
-the time, and no file name or text of the repository.
+exits 2, which would block the call. A Grep the hook does not answer (outside the project, under
+read rules, or on an internal failure) runs as Claude Code's own Grep, unredacted. Its one file is
+the counter `$XDG_STATE_HOME/scrutate/hook-grep.jsonl` (default `~/.local/state`;
+`%LOCALAPPDATA%\scrutate` on Windows), which `hook run` also appends to: per answered call the
+session id, two byte counts and the time, and no file name or text of the repository.
 
 `scrutate hook bash` rewrites a shell command only by putting `scrutate hook run --` in front of
 its first command, when that command is a read-only search by `rg`, `grep` or `find`; the rest of
@@ -358,9 +368,10 @@ work tree, and runs the program with `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`
 `--write` it changes only files under the given paths whose canonical path lies inside `--root`
 ([CLI](CLI.md#tsquery---rewrite) lists every file it leaves alone, a link among them). Each is
 written to a new temporary file in its own directory (`create_new`, so nothing planted there is
-opened) and renamed over the original only if the original's bytes are unchanged, so an edit made
-meanwhile is never lost. The root is opened once when the plan starts, and every read and write
-goes through that handle and the directories opened from it one name at a time, a name never
+opened) and renamed over the original only if the original's bytes are unchanged, checked just
+before the rename, so an edit made since the read is kept; only one in the instant between that
+check and the rename could be lost. The root is opened once when the plan starts, and every read and
+write goes through that handle and the directories opened from it one name at a time, a name never
 followed: with `O_NOFOLLOW` on Linux and macOS (`openat`, `renameat`), and on Windows with
 `FILE_OPEN_REPARSE_POINT` (`NtCreateFile` and a `FileRenameInformation` rename relative to the
 directory handle), where a directory that is a junction or link is refused. The temporary file,
@@ -392,13 +403,14 @@ marker is not).
 
 ## Secrets in answers
 
-What an agent reads is secret-safe by default: the MCP tools, the Grep hook and `lsp` replace each
-secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour around it.
-A text page ends with `(N secrets redacted: SCRUTATE_REDACT=off shows them)`, N counting the
-redactions that page shows; the structured form carries `"redacted": {KIND: count}` for what it
+What an agent reads is secret-safe by default: the MCP tools, the Grep hook, `hook run` and `lsp`
+replace each secret they find with `[redacted:KIND]`, keeping the key name, URL scheme or PEM armour
+around it. A text page ends with `(N secrets redacted: SCRUTATE_REDACT=off shows them)`, N counting
+the redactions that page shows; the structured form carries `"redacted": {KIND: count}` for what it
 holds, which may be more items than the page. `SCRUTATE_REDACT=off` turns it off and `on` turns it
-on for the CLI's index answers (`--json` redacted as values, the closing line on stderr); any other
-value keeps the default and says so on stderr. No tool argument turns it off, so an agent cannot.
+on for every CLI answer that prints file text, except the hidden `sexp` debugging command (`--json`
+redacted as values, the closing line on stderr); an empty value keeps the default; any other value
+(`OFF`, `0`) keeps it and says so on stderr. No tool argument turns it off, so an agent cannot.
 
 Where it runs (`secrets.rs`): an answer's items are redacted before the budget pages them, so no
 page edge cuts a secret in two, in the detailed and the concise form (only the items a page can
@@ -451,14 +463,16 @@ symbolic link, with `..` or a trailing slash, is climbed from its target), not t
 repository inside the tree, where the binary header is what keeps its text out. Not covered: a link or a hard link made while the search runs
 (the walk is done before it starts); a hard link to an index file of a repository outside the
 searched tree; a search that prints only part of a secret (`-o` with a pattern that matches
-inside it), since the redactor sees a line as printed and a piece of a token gives it nothing to
-recognise; and, not the hook's to stop, a command it does not answer (`cat`, `strings` of those files), and the file names `find`
-prints. A path that holds a secret (a file named with a token) is redacted like any
-other text, so that path cannot be opened from the answer.
+inside it, or `rg --max-columns` with `--max-columns-preview`), since the redactor sees a line as
+printed and a piece of a token gives it nothing to recognise; and, not the hook's to stop, a command
+it does not answer (`cat`, `strings` of those files), and the file names `find` prints. A path that
+holds a secret (a file named with a token) is redacted like any other text, so that path cannot be
+opened from the answer.
 
 The detectors, ports of gitleaks v8.30.1 and secretlint v13.1.0 rules where the table names one,
 each regex run only on text holding one of its keywords (an Aho-Corasick pass; `key-material` has
-none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is read as `/`:
+none and runs on every text), with gitleaks' entropy thresholds except where the next paragraph
+says; JSON's `\/` is read as `/`:
 
 | Kind | Rule it comes from |
 |---|---|
@@ -497,9 +511,14 @@ none and runs on every text), with gitleaks' entropy thresholds; JSON's `\/` is 
 | `generic-secret` | gitleaks generic-api-key (without its stopwords) |
 | `private-key` | gitleaks private-key, secretlint-rule-privatekey (line by line between the armour) |
 
-Where a rule differs from its gitleaks v8.30.1 source, it marks more: `digitalocean-token` reads
-all three forms without regard to case (gitleaks only the refresh token), and `vault-token` takes
-a batch token above entropy 3.5 (gitleaks 4).
+Where a rule differs from its gitleaks v8.30.1 source: `digitalocean-token` reads all three forms
+without regard to case (gitleaks only the refresh token); `vault-token` takes a batch token above
+entropy 3.5 (gitleaks 4); `aws-access-key-id` and `npm-token` have no entropy floor (gitleaks 3 and
+2); the Slack bot token's floor is 2 (gitleaks 3) and the routable GitLab token's 3 (gitleaks 4);
+and `anthropic-api-key` takes `api` or `admin` with any `0N` version and 90 to 128 characters
+before its closing `AA` (gitleaks `api03` or `admin01` and exactly 93). Each of these marks more
+but one: `npm-token` takes its `npm_` prefix in lower case only (gitleaks any case), so it marks
+less there.
 
 `url-token` takes a URL's user part of 20 or more characters shaped like a token, as a clone URL
 carries a token (`https://<token>@github.com/...`); `url-password` takes the password of any other
@@ -646,9 +665,9 @@ cannot be opened, shown by `hook run` with no line number or with a colon in its
 secrets in base64, hex or URL encoding (gitleaks decodes them; scrutate does not); formats outside
 the table; a secret split over two lines of code or built at run time; a value alone with neither
 a vendor prefix nor a name on its line (a name on the line before it); the CLI and the Python
-bindings, which print what the files hold unless `SCRUTATE_REDACT=on` (the CLI's index answers
-only); and the index itself: `.scrutate/` keeps chunk text, secrets included, and the hash of
-every key body line (mode 0700 on Unix).
+bindings, which print what the files hold unless `SCRUTATE_REDACT=on` (the CLI only, and not its
+hidden `sexp` command); and the index itself: `.scrutate/` keeps chunk text, secrets included, and
+the hash of every key body line (mode 0700 on Unix).
 
 ## Verified symbol edits
 
@@ -673,8 +692,12 @@ shares its first or last line with other code that is not a comment is refused, 
 whole lines); and only when the new file parses as well as the old one and
 keeps every definition outside the edit ([ADR 0009](adr/0009-verified-symbol-edits.md)). Tests:
 `tests/edits.rs` (the tool absent without the flag, a stale hash refused with the file kept as
-another writer left it, an edit that breaks the parse or adds a definition refused, a file
-reached through a link never written).
+another writer left it, an edit that breaks the parse or adds a definition refused, and
+`a_file_reached_through_a_link_is_never_written`: an edit named through a link edits the file the
+index holds by its own path and leaves the link a link) and the unit test
+`a_file_that_became_a_link_after_the_read_is_never_written` in `crates/scrutate/src/rewrite.rs` (a
+file swapped for a link after it was read is refused as not a regular file; the link and its
+target are left as they were).
 
 ## Dependency source
 
@@ -684,12 +707,18 @@ tree ([above](#the-main-checkouts-index-in-a-linked-work-tree)), the settings th
 the user's own configuration file (`$SCRUTATE_CONFIG`, or `config.toml` under
 `$XDG_CONFIG_HOME/scrutate/` or `~/.config/scrutate/`) do. The read boundary then holds the
 packages the root's lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, `poetry.lock`,
-`go.mod`) name, in four stores (`$CARGO_HOME/registry/src`, the root's `node_modules`, `.venv`'s
-`site-packages`, `$GOMODCACHE`), at the locked versions, and nothing more. A lockfile is
-untrusted: a name or version that is not one of its ecosystem's (a `/`, a `..`, a character
-outside letters, digits and `-._~+`) is refused by name, and what an answer or an error shows of a
+`go.mod`) name, in four stores (`$CARGO_HOME/registry/src`, `$CARGO_HOME` by default `~/.cargo`;
+the root's `node_modules`; `.venv`'s `site-packages`; `$GOMODCACHE`, by default `$GOPATH/pkg/mod`,
+then `~/go/pkg/mod`), at the locked versions, and nothing more. A lockfile is untrusted: a name or
+version that is not one of its ecosystem's (a `/` outside an npm scope or a Go module path, a `..`,
+a character outside letters, digits and `-._~+`) is refused by name, and what an answer or an error shows of a
 lockfile has either passed that check or is escaped, so no control character of it reaches a
-terminal. A store outside the repository (the cargo
+terminal. `Cargo.toml`, `go.mod` and an installed npm package's `package.json` are read only as
+regular files (not through a link) of at most 1 MB; the lockfiles `Cargo.lock`, `package-lock.json`,
+`uv.lock`, `poetry.lock` and a Python distribution's `RECORD` only as regular files of at most 64
+MiB (a large repository's `package-lock.json` runs to megabytes). A lockfile or manifest at the
+root that is a link or larger stops `--deps` with an error that names it; a `RECORD` that is either
+lists no file. A store outside the repository (the cargo
 registry, the Go module cache) is the user's: the directory built from a name is canonicalized and
 refused when it resolves outside it. A store inside the repository (`node_modules`, `.venv`'s
 `site-packages`) is read through no link: every directory from the root down to the package must
@@ -713,8 +742,11 @@ shared. A package edited in place after it was copied is answered as it was
 ([ADR 0005](adr/0005-dependency-source.md)).
 Tests: `tests/packages.rs` (`../../x` and the like as a name and a version in each lockfile, a
 link to a file outside the package and a package directory that is a link out of
-`node_modules`, path dependencies inside and outside), and a planted secret in a dependency in
-`tests/secrets.rs`.
+`node_modules`, path dependencies inside and outside,
+`a_lockfile_or_manifest_reached_through_a_link_is_refused_by_name`,
+`a_lockfile_over_its_size_limit_is_refused_by_name` and
+`a_poetry_name_or_version_that_leaves_its_store_is_refused_by_name`), and a planted secret in a
+dependency in `tests/secrets.rs`.
 
 ## Known gaps and residual risks
 
@@ -726,7 +758,8 @@ link to a file outside the package and a package directory that is a link out of
   - `npy.rs`: memory-mapped array views (`Mmap::map` in `npy::map`, which the text index's
     segment files use too, read with bounds-checked slicing only; `from_raw_parts` after dtype,
     length and alignment checks; the `Pod` trait documents the invariants; a byte view of a `Pod`
-    slice when saving);
+    slice when saving; a byte copy of the checked length into a `Vec<T>` of that capacity in
+    `to_vec`);
   - `lex.rs`: one `matrixmultiply::sgemm` call with lengths derived from the slices it is given;
   - `text.rs`: `from_utf8_unchecked` on a run of ASCII word bytes (ASCII boundaries are UTF-8
     boundaries);
@@ -770,13 +803,13 @@ link to a file outside the package and a package directory that is a link out of
     from a byte copy with bounds-checked slicing; and on macOS one `fcntl(F_BARRIERFSYNC)` per
     file the index flushes (`sync_file`), on a descriptor the `File` it borrows keeps open, with
     no third argument;
-  - `memory.rs` (Linux with glibc): one `malloc_trim(0)` after an answer of `serve`, `lsp` or
-    `batch`, which takes no pointer and only gives free pages back;
+  - `memory.rs` (Linux with glibc): at most one `malloc_trim(0)` after an answer of `serve`,
+    `lsp` or `batch`, rate-limited, which takes no pointer and only gives free pages back;
   - `policy.rs`: one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
     whose size it passes;
-  - `instant.rs`: on Linux one `statfs` per search root, and per directory named `proc` or `sys`
-    below one, into a buffer larger than `struct statfs` on every Linux ABI, of which only the
-    first field (`f_type`) is read;
+  - `instant.rs`: on Linux one `statfs` per search root and per watched root (`watch::local`),
+    and per directory named `proc` or `sys` below one, into a buffer larger than `struct statfs` on
+    every Linux ABI, of which only the first field (`f_type`) is read;
   - `running.rs` (macOS only): `getuid`, the System V semaphore calls `semget`, `semctl` and
     `semop` on one semaphore, `IPC_STAT` into a buffer larger than `struct semid_ds` of which the
     first 16 bytes are read, `sigaction`, `pthread_sigmask` and `raise` for `SIGTSTP`, and file
@@ -857,7 +890,7 @@ link to a file outside the package and a package directory that is a link out of
     (`tests/intel_refs.rs`, its CPU time) with arguments they own, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
-    `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
+    `fork`, `getpid`, `waitpid`) made through the stubs above, and `_exit` directly.
 
   Edition 2024 writes `unsafe` on each `extern` block (`unsafe extern "C"`), on
   `#[unsafe(no_mangle)]`, and as a block around the body of an `unsafe fn`
@@ -910,9 +943,9 @@ link to a file outside the package and a package directory that is a link out of
   it: another process that shortens it while it is searched can end that process with `SIGBUS`,
   the risk ripgrep takes for the same speed. A process that stays up (`serve`, `lsp`, a session),
   where agents edit the files it searches, maps none of them: it reads a named file whole (up to
-  64 MiB) instead. `tests/maps.rs` lists every call that maps a file with why its file may be
-  mapped (built-in data, segment files scrutate writes once, or a file named to a one-shot grep),
-  and a new one fails until it is listed.
+  64 MiB, and streams a larger one) instead. `tests/maps.rs` lists every call that maps a file with
+  why its file may be mapped (built-in data, segment files scrutate writes once, or a file named to
+  a one-shot grep), and a new one fails until it is listed.
 - **Index privacy on Windows**: `.scrutate/` inherits the repository directory's permissions there,
   so a file whose own permissions are narrower than its directory's has its chunks readable by
   whoever can read the repository directory. On Unix the directory is the owner's alone (above).

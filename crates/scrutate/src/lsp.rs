@@ -798,6 +798,10 @@ impl Server {
     }
 
     fn request(&mut self, method: &str, p: &Value) -> Reply {
+        #[cfg(test)]
+        if method == "scrutate/testPanic" {
+            panic!("planted panic");
+        }
         self.folders.iter_mut().for_each(Folder::follow);
         if method == "initialize" {
             if self.initialized {
@@ -1034,6 +1038,12 @@ impl Pending {
 }
 
 /// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
+/// The reply to one request: a bug in it must not take the editor's server down.
+fn answer(srv: &mut Server, method: &str, params: &Value) -> Reply {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.request(method, params)))
+        .unwrap_or_else(|_| Err((-32603, format!("internal failure while answering {method} (a bug: please report it)"))))
+}
+
 pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     if cfg!(target_os = "wasi") {
         bail!("lsp is not in the wasi build: it needs threads");
@@ -1106,9 +1116,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
             continue;
         };
         srv.cancel = Arc::clone(&flag);
-        // a bug in one request must not take the editor's server down
-        let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.request(method, params)))
-            .unwrap_or_else(|_| Err((-32603, format!("internal failure while answering {method} (a bug: please report it)"))));
+        let reply = answer(&mut srv, method, params);
         running.lock().unwrap_or_else(|p| p.into_inner()).done();
         let reply = if flag.load(std::sync::atomic::Ordering::Relaxed) { Err(cancelled()) } else { reply };
         send(&match reply {
@@ -1130,6 +1138,27 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A panic in one request answers that request with an error, and the next is answered.
+    #[test]
+    fn a_panic_stays_inside_one_request() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_panic_{}", std::process::id()));
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            folders: Vec::new(),
+            initialized: true,
+            shutdown: false,
+            build_wait: crate::session::BUILD_WAIT,
+            waited_out: Default::default(),
+            skipped: Default::default(),
+            noted: Default::default(),
+            cancel: Default::default(),
+        };
+        let r = answer(&mut srv, "scrutate/testPanic", &Value::Null);
+        assert_eq!(r.map_err(|e| e.0), Err(-32603));
+        assert!(answer(&mut srv, "shutdown", &Value::Null).is_ok());
+    }
 
     #[test]
     fn a_request_during_the_first_build_is_answered_once_the_wait_runs_out() {

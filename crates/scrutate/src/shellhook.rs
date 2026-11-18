@@ -967,13 +967,19 @@ fn die_with_us_windows(child: Option<&std::process::Child>) -> Option<*mut std::
 /// which a plain `Command::new` searches on Windows.
 fn on_path(name: &str) -> Option<std::path::PathBuf> {
     let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    trusted_path_dirs().into_iter().map(|d| d.join(&file)).find(|p| p.is_file())
+}
+
+/// The PATH entries a program may be taken from: absolute ones outside the current directory and
+/// the work tree around it, so a repository cannot plant the program run.
+pub(crate) fn trusted_path_dirs() -> Vec<std::path::PathBuf> {
     let here = std::env::current_dir().ok().and_then(|d| std::fs::canonicalize(d).ok());
     let top = here.as_ref().and_then(|h| h.ancestors().find(|a| a.join(".git").exists()).map(std::path::Path::to_path_buf));
     let inside = |d: &std::path::Path| {
         let d = std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
         here.as_ref().is_some_and(|h| d.starts_with(h)) || top.as_ref().is_some_and(|t| d.starts_with(t))
     };
-    std::env::split_paths(&std::env::var_os("PATH")?).filter(|d| d.is_absolute() && !inside(d)).map(|d| d.join(&file)).find(|p| p.is_file())
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).filter(|d| d.is_absolute() && !inside(d)).collect()
 }
 
 /// The most bytes of one line read at a time.

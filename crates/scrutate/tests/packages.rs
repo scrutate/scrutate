@@ -1274,3 +1274,50 @@ fn one_version_from_two_sources_is_read_from_the_source_the_root_uses() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_lockfile_or_manifest_reached_through_a_link_is_refused_by_name() {
+    for linked in ["Cargo.lock", "Cargo.toml"] {
+        let t = Tree::new("cargo_link");
+        t.cargo_lock(&[("serde", "1.0.200")]);
+        t.write("Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n");
+        t.cargo("serde", "1.0.200", "pub trait Deserialize {}\n");
+        // the file moves outside the repository and a link takes its place
+        let outside = t.home.join(linked);
+        fs::rename(t.root.join(linked), &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, t.root.join(linked)).unwrap();
+        let (code, out, err) = t.run(&["symbol", "--deps", "serde::Deserialize"]);
+        assert_eq!(code, 2, "{linked}: {out}{err}");
+        assert!(err.contains(linked) && err.contains("not a regular file"), "{linked}: {err}");
+    }
+}
+
+#[test]
+fn a_lockfile_over_its_size_limit_is_refused_by_name() {
+    let t = Tree::new("cargo_big");
+    t.cargo_lock(&[("serde", "1.0.200")]);
+    t.cargo("serde", "1.0.200", "pub trait Deserialize {}\n");
+    // sparse: the length is what is checked, before a byte is read
+    fs::OpenOptions::new().write(true).open(t.root.join("Cargo.lock")).unwrap().set_len((64 << 20) + 1).unwrap();
+    let (code, out, err) = t.run(&["symbol", "--deps", "serde::Deserialize"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("Cargo.lock") && err.contains("64 MiB"), "{err}");
+}
+
+#[test]
+fn a_poetry_name_or_version_that_leaves_its_store_is_refused_by_name() {
+    for b in ["../../x", "..", "/etc"] {
+        let t = Tree::new("poetry_bad");
+        t.write(
+            "poetry.lock",
+            &format!(
+                "[[package]]\nname = \"{b}\"\nversion = \"1.0.0\"\n\n[[package]]\nname = \"ok\"\nversion = \"{b}\"\n\n[metadata]\nlock-version = \"2.0\"\n"
+            ),
+        );
+        t.wheel("ok", "1.0.0", &[("ok/__init__.py", "def leak():\n    pass\n")]);
+        let (code, out, err) = t.run(&["symbol", "--deps", "ok.leak"]);
+        assert_ne!(code, 0, "{b}: {out}");
+        assert!(!out.contains("leak") && err.contains("refused"), "{b}: {out}{err}");
+    }
+}

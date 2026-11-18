@@ -953,8 +953,10 @@ is copied only when it resolves inside it, a linked directory is skipped, and so
 ecosystem's (a `/`, a `..`, a character outside letters, digits and `-._~+`), a directory that
 resolves outside the cargo registry or the Go module cache, and a link anywhere from the root down
 to a package in `node_modules` (`node_modules` itself included) or to `.venv`'s `site-packages`,
-are refused by name. Of a Python distribution only the files its `RECORD` lists are copied, none
-that is a link or lies under one. The
+are refused by name. A lockfile, `Cargo.toml` or `go.mod` at the root is read only as a regular
+file (not through a link) of at most 64 MiB (1 MB for `Cargo.toml`, `go.mod` and a package's
+`package.json`); any other is refused by name. Of a Python distribution only the files its
+`RECORD` lists are copied, none that is a link or lies under one. The
 repository's index never holds a dependency's files. Answers are redacted as the repository's are
 ([serve](#serve-mcp)). Not read yet: pnpm and Yarn lockfiles, `callees`' `external:` names and
 `search`.

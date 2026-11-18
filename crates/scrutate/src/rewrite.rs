@@ -623,6 +623,33 @@ fn unified(path: &str, old: &str, new: &str, spans: &[(usize, usize, usize, usiz
     out
 }
 
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+
+    /// A file swapped for a link after it was read, the link's target holding the same bytes, is
+    /// never written: the write refuses it as not a regular file, and the link and its target stay.
+    #[test]
+    fn a_file_that_became_a_link_after_the_read_is_never_written() {
+        let base = std::env::temp_dir().join(format!("scrutate_rewrite_link_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, outside) = (base.join("root"), base.join("outside.py"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "print(x)\n").unwrap();
+        let one = open_one(&root, "a.py").unwrap();
+        std::fs::write(&outside, "print(x)\n").unwrap();
+        std::fs::remove_file(root.join("a.py")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("a.py")).unwrap();
+        let why = one.plan(b"log(x)\n".to_vec(), (0, 5, 0, 3)).write();
+        assert_eq!(why, [Some("a.py: not a regular file, left alone".to_string())]);
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "print(x)\n");
+        assert!(std::fs::symlink_metadata(root.join("a.py")).unwrap().file_type().is_symlink());
+        let left: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["a.py"], "no temporary file is left");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;

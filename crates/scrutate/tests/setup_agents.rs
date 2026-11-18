@@ -611,3 +611,24 @@ fn uninstall_keeps_text_added_after_the_block_on_its_own_line() {
         assert_eq!(fs::read_to_string(&claude_md).unwrap(), want, "{before:?}");
     }
 }
+
+/// A `claude` the repository could plant is never run: a relative PATH entry, and an absolute one
+/// inside the work tree, are passed over as `hook run` passes them over; with no other `claude`
+/// setup writes `~/.claude.json` itself.
+#[cfg(unix)]
+#[test]
+fn a_claude_on_a_path_entry_the_repository_controls_is_never_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("planted_claude");
+    let marker = s.base.join("ran");
+    s.write(&s.repo.join("tools/claude"), &format!("#!/bin/sh\necho ran > '{}'\n", marker.display()));
+    fs::set_permissions(s.repo.join("tools/claude"), fs::Permissions::from_mode(0o755)).unwrap();
+    let inside = format!("{}/tools", s.repo.display());
+    for path in ["tools:/usr/bin:/bin", "./tools:/usr/bin:/bin", &format!("{inside}:/usr/bin:/bin")] {
+        let (code, out, err) = s.setup_in(&s.repo, &["claude"], path);
+        assert_eq!(code, 0, "{path}: {out}{err}");
+        assert!(!marker.exists(), "{path}: the planted claude ran: {out}");
+        assert!(!out.contains("claude mcp"), "{path}: {out}");
+        assert!(fs::read_to_string(s.user_file("claude")).unwrap().contains("\"scrutate\""), "{path}");
+    }
+}
