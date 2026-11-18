@@ -715,6 +715,7 @@ pub struct Resolver<'a> {
     go_dirs: Option<HashMap<String, Vec<String>>>,
     go_imports: Option<HashMap<String, String>>,
     rust_path_files: Option<Vec<String>>,
+    rust_path_loaded: Option<HashSet<String>>,
     /// by directory: the config found there, or that there is none
     ts: HashMap<String, Option<Rc<js::TsPaths>>>,
     js_packages: Option<HashMap<String, Vec<Rc<js::JsPackage>>>>,
@@ -1306,6 +1307,7 @@ impl<'a> Resolver<'a> {
             go_dirs: None,
             go_imports: None,
             rust_path_files: None,
+            rust_path_loaded: None,
             ts: HashMap::new(),
             js_packages: None,
             nest: 0,
@@ -3288,6 +3290,20 @@ mod tests {
         let (s, _) = crate::open_updated(&root, false).unwrap();
         let s = s.into_searcher();
         (root, s)
+    }
+
+    /// Modules written on one line share their row: `self::` in `a.b` is `a.b`, not the `x.a.b`
+    /// before it whose chain ends the same. (A one-line tree, so the agreement check of the
+    /// integration tests, which names a caller by its line, cannot hold it.)
+    #[test]
+    fn rust_self_in_one_line_modules_is_its_own_chain_before_a_deeper_one_ending_alike() {
+        let src = "mod x { mod a { mod b { pub fn f() -> i32 { 1 } } } } mod a { mod b { pub fn f() -> i32 { 2 } pub fn g() -> i32 { self::f() } } }\n";
+        let (root, s) = indexed("one_line_chain", &[("Cargo.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"), ("src/lib.rs", src)]);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        let col = src.find("self::f()").unwrap() + "self::".len();
+        let got = rv.resolve_at("src/lib.rs", 1, col, "f").map(|(id, _)| s.ix.chunk(id).unwrap().unwrap().qualname);
+        assert_eq!(got, Ok("a.b.f".to_string()));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// A second request reads the files the first parsed without parsing them again, until a file's

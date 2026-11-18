@@ -1351,6 +1351,11 @@ incompatible index by itself, and that is never breaking.
   built 9 million edges. Such a name's calls are now summed once per caller and once per definer,
   with the same scores but for rounding in the last digits of a `--json` score
   ([CLI](docs/CLI.md#engine-b)).
+- Rust: a `#[path]` mod inside an inline `mod` block no longer takes over a top-level `mod` of
+  the same name, so `foo::bar()` at the top of `lib.rs` stays in `src/foo.rs`. A file a `#[path]`
+  loads finds its own `mod fd;` beside it, as rustc does, in `refs`, `deps` and `rdeps`. In
+  modules written on one line, `self::` in `a::b` is `a::b`, not an `x::a::b` before it
+  ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 

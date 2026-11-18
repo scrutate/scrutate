@@ -313,6 +313,40 @@ fn rust_a_path_attribute_names_the_module_file() {
 }
 
 #[test]
+fn rust_a_path_attribute_inside_an_inline_module_leaves_a_top_level_mod_of_its_name_alone() {
+    let r = Repo::new(
+        "rs_path_inline",
+        &[
+            ("Cargo.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("src/lib.rs", "mod foo;\nmod outer {\n    #[path = \"other.rs\"]\n    mod foo;\n}\npub fn run() -> i32 {\n    foo::bar()\n}\n"),
+            ("src/foo.rs", "pub fn bar() -> i32 {\n    1\n}\n"),
+            ("src/outer/other.rs", "pub fn bar() -> i32 {\n    2\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("bar", "src/foo.rs:1"), ["src/foo.rs:1", "src/lib.rs:7"]);
+    assert_eq!(r.refs_of("bar", "src/outer/other.rs:1"), ["src/outer/other.rs:1"]);
+}
+
+#[test]
+fn rust_a_file_a_path_attribute_loads_keeps_its_modules_beside_it() {
+    // rustc reads a #[path] file as it reads a mod.rs: its `mod fd;` is sys/fd.rs, not sys/unix/fd.rs
+    let r = Repo::new(
+        "rs_path_children",
+        &[
+            ("Cargo.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("src/lib.rs", "#[path = \"sys/unix.rs\"]\nmod sys;\n"),
+            ("src/sys/unix.rs", "mod fd;\npub fn open() -> i32 {\n    self::fd::raw()\n}\n"),
+            ("src/sys/fd.rs", "pub fn raw() -> i32 {\n    3\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("raw", "src/sys/fd.rs:1"), ["src/sys/fd.rs:1", "src/sys/unix.rs:3"]);
+    let (_, deps) = r.run(&["deps", "src/sys/unix.rs"]);
+    assert!(deps.lines().any(|l| l == "src/sys/unix.rs:1  fd  -> src/sys/fd.rs"), "{deps}");
+    let (code, rdeps) = r.run(&["rdeps", "src/sys/fd.rs"]);
+    assert!(code == 0 && rdeps.lines().any(|l| l == "src/sys/unix.rs:1  fd"), "{rdeps}");
+}
+
+#[test]
 fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
     let r = Repo::new(
         "rs_trait_default",
