@@ -1363,6 +1363,13 @@ incompatible index by itself, and that is never breaking.
   built 9 million edges. Such a name's calls are now summed once per caller and once per definer,
   with the same scores but for rounding in the last digits of a `--json` score
   ([CLI](docs/CLI.md#engine-b)).
+- `callers --json` and the MCP `callers` result mark each caller the resolver could not decide
+  `"undecided": true`, as `impact` does; the JSON dropped the count the text form prints, so a
+  reader took guesses for answers. In Rust, `self.name` read as a field is no use of a method
+  `name` (Rust names a method only to call it), and `(*self).m()` in an impl for a reference,
+  `Box`, `Rc` or `Arc` stays undecided: both were tied to the method of the enclosing impl
+  (ripgrep's `WalkBuilder.follow_links`, `Matcher.shortest_match_at`, `Sink.binary_data`)
+  ([CLI](docs/CLI.md#refs)).
 
 ## [0.1.0] - 2026-11-11
 

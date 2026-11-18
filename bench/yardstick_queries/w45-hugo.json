@@ -1,0 +1,474 @@
+[
+ {
+  "id": "W5/refs pageState.wrapError",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "pageState.wrapError",
+  "at": [
+   "hugolib/page.go",
+   790,
+   22
+  ],
+  "language": "go",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "hugolib/page__content.go",
+    603
+   ],
+   [
+    "hugolib/page__content.go",
+    623
+   ],
+   [
+    "hugolib/page__content.go",
+    930
+   ],
+   [
+    "hugolib/page__content.go",
+    976
+   ],
+   [
+    "hugolib/page__content.go",
+    1025
+   ],
+   [
+    "hugolib/page__menus.go",
+    86
+   ],
+   [
+    "hugolib/page__per_output.go",
+    127
+   ],
+   [
+    "hugolib/page__per_output.go",
+    136
+   ],
+   [
+    "hugolib/page__per_output.go",
+    197
+   ],
+   [
+    "hugolib/shortcode.go",
+    386
+   ],
+   [
+    "hugolib/shortcode.go",
+    392
+   ],
+   [
+    "hugolib/site.go",
+    1486
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers pageMetaSource.wrapError",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "pageMetaSource.wrapError",
+  "at": [
+   "hugolib/page.go",
+   776,
+   26
+  ],
+  "language": "go",
+  "case": "dispatch",
+  "expect": [
+   [
+    "hugolib/page.go",
+    "wrapError"
+   ],
+   [
+    "hugolib/page__meta.go",
+    "initEarly"
+   ],
+   [
+    "hugolib/page__new.go",
+    "doNewPageFromPageMeta"
+   ],
+   [
+    "hugolib/page__new.go",
+    "newPageFromPageMeta"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs WhatChanged.Drain",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "WhatChanged.Drain",
+  "at": [
+   "hugolib/site.go",
+   1176,
+   23
+  ],
+  "language": "go",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "hugolib/hugo_sites_build.go",
+    305
+   ],
+   [
+    "hugolib/hugo_sites_build.go",
+    357
+   ],
+   [
+    "hugolib/hugo_sites_build.go",
+    374
+   ],
+   [
+    "hugolib/hugo_sites_build.go",
+    852
+   ],
+   [
+    "hugolib/hugo_sites_build.go",
+    1199
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs SourceFilesystem.ReverseLookup",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "SourceFilesystem.ReverseLookup",
+  "at": [
+   "hugolib/filesystems/basefs.go",
+   367,
+   28
+  ],
+  "language": "go",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "hugolib/filesystems/basefs.go",
+    355
+   ],
+   [
+    "hugolib/filesystems/basefs.go",
+    431
+   ],
+   [
+    "hugolib/filesystems/basefs_test.go",
+    483
+   ],
+   [
+    "hugolib/filesystems/basefs_test.go",
+    522
+   ],
+   [
+    "hugolib/filesystems/basefs_test.go",
+    525
+   ],
+   [
+    "hugolib/pagecollections.go",
+    234
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs isBuiltOrTouched.isBuilt",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "isBuiltOrTouched.isBuilt",
+  "at": [
+   "internal/js/esbuild/batch.go",
+   814,
+   27
+  ],
+  "language": "go",
+  "case": "dispatch",
+  "expect": [
+   [
+    "internal/js/esbuild/batch.go",
+    733
+   ],
+   [
+    "internal/js/esbuild/batch.go",
+    1128
+   ],
+   [
+    "internal/js/esbuild/batch.go",
+    1371
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs optionsMap.isBuilt",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "optionsMap.isBuilt",
+  "at": [
+   "internal/js/esbuild/batch.go",
+   1360,
+   27
+  ],
+  "language": "go",
+  "case": "macro_or_template",
+  "expect": [
+   [
+    "internal/js/esbuild/batch.go",
+    1134
+   ],
+   [
+    "internal/js/esbuild/batch.go",
+    1146
+   ],
+   [
+    "internal/js/esbuild/batch.go",
+    1158
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs toFileError",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "toFileError",
+  "at": [
+   "parser/metadecoders/decoder.go",
+   425,
+   6
+  ],
+  "language": "go",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "parser/metadecoders/decoder.go",
+    295
+   ],
+   [
+    "parser/metadecoders/decoder.go",
+    301
+   ],
+   [
+    "parser/metadecoders/decoder.go",
+    307
+   ],
+   [
+    "parser/metadecoders/decoder.go",
+    333
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers importResolver.toFileError",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "importResolver.toFileError",
+  "at": [
+   "resources/resource_transformers/cssjs/inline_imports.go",
+   252,
+   28
+  ],
+  "language": "go",
+  "case": "overload_or_same_name",
+  "expect": [
+   [
+    "resources/resource_transformers/cssjs/postcss.go",
+    "Transform"
+   ],
+   [
+    "resources/resource_transformers/cssjs/tailwindcss.go",
+    "Transform"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers Template.Delims",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "Template.Delims",
+  "at": [
+   "tpl/internal/go_templates/texttemplate/template.go",
+   162,
+   20
+  ],
+  "language": "go",
+  "case": "reexport",
+  "expect": [
+   [
+    "tpl/internal/go_templates/htmltemplate/template.go",
+    "Delims"
+   ],
+   [
+    "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "TestDelims"
+   ],
+   [
+    "tpl/internal/go_templates/texttemplate/exec_test.go",
+    "TestTree"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs Template.Delims",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "Template.Delims",
+  "at": [
+   "tpl/internal/go_templates/htmltemplate/template.go",
+   352,
+   20
+  ],
+  "language": "go",
+  "case": "reexport",
+  "expect": [
+   [
+    "tpl/internal/go_templates/htmltemplate/example_test.go",
+    138
+   ],
+   [
+    "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    861
+   ],
+   [
+    "tpl/internal/go_templates/htmltemplate/exec_test.go",
+    1002
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs StackThreadSafe.Push",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "StackThreadSafe.Push",
+  "at": [
+   "common/collections/stack.go",
+   35,
+   30
+  ],
+  "language": "go",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "cache/dynacache/dynacache.go",
+    79
+   ],
+   [
+    "common/collections/stack_test.go",
+    26
+   ],
+   [
+    "common/collections/stack_test.go",
+    27
+   ],
+   [
+    "common/collections/stack_test.go",
+    28
+   ],
+   [
+    "common/collections/stack_test.go",
+    54
+   ],
+   [
+    "common/collections/stack_test.go",
+    55
+   ],
+   [
+    "common/collections/stack_test.go",
+    68
+   ],
+   [
+    "common/collections/stack_test.go",
+    69
+   ],
+   [
+    "common/collections/stack_test.go",
+    70
+   ],
+   [
+    "common/collections/stack_test.go",
+    71
+   ],
+   [
+    "hugolib/content_map_page_assembler.go",
+    556
+   ],
+   [
+    "hugolib/content_map_page_assembler.go",
+    622
+   ],
+   [
+    "hugolib/content_map_page_assembler.go",
+    839
+   ],
+   [
+    "hugolib/content_map_page_assembler.go",
+    963
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/callers Pages.MergeByLanguage",
+  "workload": "W5",
+  "kind": "callers",
+  "name": "Pages.MergeByLanguage",
+  "at": [
+   "resources/page/pages_language_merge.go",
+   30,
+   17
+  ],
+  "language": "go",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "hugolib/pages_language_merge_test.go",
+    "BenchmarkMergeByLanguage"
+   ],
+   [
+    "hugolib/pages_language_merge_test.go",
+    "TestMergeLanguages"
+   ],
+   [
+    "resources/page/pages_language_merge.go",
+    "MergeByLanguageInterface"
+   ]
+  ],
+  "exact": true
+ },
+ {
+  "id": "W5/refs SimpleThreadSafeTree.LongestPrefix",
+  "workload": "W5",
+  "kind": "refs",
+  "name": "SimpleThreadSafeTree.LongestPrefix",
+  "at": [
+   "hugolib/doctree/simpletree.go",
+   143,
+   38
+  ],
+  "language": "go",
+  "case": "call_on_call_result",
+  "expect": [
+   [
+    "hugolib/content_map_page_assembler.go",
+    211
+   ],
+   [
+    "hugolib/doctree/nodeshiftree_test.go",
+    96
+   ],
+   [
+    "hugolib/doctree/simpletree_test.go",
+    50
+   ],
+   [
+    "hugolib/doctree/treeshifttree.go",
+    89
+   ]
+  ],
+  "exact": true
+ }
+]

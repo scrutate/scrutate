@@ -497,7 +497,12 @@ pub fn output_schema(tool: &str) -> Value {
         obj(properties, &["path", "start", "end", "kind", name])
     };
     let result = match tool {
-        "search_code" | "find_symbol" | "callers" => list(span("name")),
+        "search_code" | "find_symbol" => list(span("name")),
+        "callers" => {
+            let mut hit = span("name");
+            hit["properties"]["undecided"] = ty("boolean");
+            list(hit)
+        }
         "callees" => obj(json!({"resolved": list(span("name")), "external": list(ty("string"))}), &["resolved", "external"]),
         "grep_code" => {
             let line = obj(json!({"line": ty("integer"), "text": ty("string")}), &["line", "text"]);
@@ -3097,7 +3102,18 @@ impl Answer {
     /// The answer as JSON, the shape `--json` prints.
     pub fn json(&self) -> Value {
         match self {
-            Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits_json(hits),
+            Answer::Hits { hits, .. } => hits_json(hits),
+            Answer::Callers { hits, undecided, .. } => {
+                // the undecided callers come last
+                let mut v = hits_json(hits);
+                if let Some(list) = v.as_array_mut() {
+                    let from = list.len().saturating_sub(*undecided);
+                    for h in &mut list[from..] {
+                        h["undecided"] = json!(true);
+                    }
+                }
+                v
+            }
             Answer::Callees { resolved, external, .. } => json!({"resolved": hits_json(resolved), "external": external}),
             Answer::Grep { groups, stopped_at } => json!({
                 "groups": groups.iter().map(|g| with_note(json!({
