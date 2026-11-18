@@ -968,7 +968,7 @@ def engines(phone=False) -> str:
 # outlined, so they read on a phone. One colour and one height, so the headings below them lead.
 STRIPS = [
     ("strip-engines", "01", "NO INDEX, OR AN INDEX"),
-    ("strip-quick-start", "02", "FOURTEEN COMMANDS"),
+    ("strip-quick-start", "02", "EIGHTEEN COMMANDS"),
     ("strip-what-it-does", "03", "FIFTEEN THINGS IT DOES"),
     ("strip-benchmarks", "04", "EVERYTHING HERE IS MEASURED"),
     ("strip-agents", "05", "MCP AND LSP ON STDIO"),

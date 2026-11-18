@@ -41,7 +41,9 @@ README.md, CHANGELOG.md, THIRD_PARTY_NOTICES.txt, docs/ and integrations/, and t
 No release commit exists yet. The files in `dist/` and `dist-linux/` now were built on 2026-11-11,
 before the project became MIT OR Apache-2.0 (2026-11-13): their archives, wheels and packages hold
 one `LICENSE` (Apache-2.0) in place of the two licence files, and no free-threaded or abi3t wheel
-was built. They are rebuilt on the release commit, and this table with them.
+was built. They are rebuilt on the release commit, and this table with them. Every hash in it,
+with the binary inside each archive, is in
+`bench/results/platforms/packages/dist-2026-11-11-SHA256SUMS.txt`, recomputed from the files.
 
 | Artifact | Platform | SHA-256 of the file | Binary inside |
 |---|---|---|---|

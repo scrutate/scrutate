@@ -22,31 +22,31 @@ gap they close in docs/TRACEABILITY.md.
 | Look-around and backreferences with a step budget (R-2A.2) | `grep -P` (PCRE2, stopped by its match limit with a warning) |
 | Fuzzy patterns longer than 128 bytes (R-2A.2) | `--fuzzy`, up to 4096 characters (64-bit blocks with carries) |
 | Fuzzy regex (R-2A.2) | `--fuzzy-regex[=N]`, `src/fuzzyre.rs` (bit-parallel Glushkov automaton, up to 64 positions) |
-| Small trees (R-4.6) | the parallel walk starts at the first directory of any root that holds directories (one thread used to read all 60 directories of a 211-file repository while the search threads waited); a sequential walk feeding three search threads only for a flat root of up to 256 files; ignore files matched without a regex (each built a `GlobSet`: 100 to 400 µs, the global excludes file 0.4 ms of every run); 133 system functions bound on first use (0.4 ms); a grep-only argument parser |
-| One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), its UTF-8 checked a piece at a time as it is written: 32 ms on a 100 MB line in the final run (ugrep 38.8 ms) |
+| Small trees (R-4.6) | the parallel walk starts at the first directory of any root that holds directories (one thread used to read all 60 directories of a 211-file repository while the search threads waited); a sequential walk feeding three search threads only for a flat root of up to 256 files; ignore files matched without a regex (each built a `GlobSet`); 133 system functions bound on first use; a grep-only argument parser (what each saved was measured by hand and waits for a recorded run) |
+| One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part, its UTF-8 checked a piece at a time as it is written: 32 ms on a 100 MB line in the final run (ugrep 38.8 ms, `leaderboard-warm-9aa0.json`) |
 | Incremental re-search for editors (R-4.1) | `grep --index --update` (refresh the text index, then search only candidate files); `watch` and `serve --watch` keep the index fresh |
-| Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash: the Linux tree took about 25 s, the repeated query 1.6 s |
+| Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash, so a repeated query parses no file again (its time on the Linux tree waits for a recorded run) |
 | Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust, Go, Java, PHP, C and C++ through `#include`, and C# (60 of 60 hand-checked resolutions right on networkx and ripgrep; `tests/resolve.rs`, `tests/resolve_java.rs`, `tests/resolve_php.rs`) |
 | Language server (R-6.15) | `scrutate lsp`; the VS Code extension starts it; JetBrains through LSP4IJ |
 | Sample for `ocaml_interface` (R-3.4) | all 74 grammars verified by samples (docs/LANGUAGES.md) |
-| int8 semantic vectors (R-4.3) | schema 13: index about a fifth smaller, ranking quality within 0.001 MRR (docs/QUALITY.md) |
+| int8 semantic vectors (R-4.3) | schema 13: int8 codes and one scale per vector in place of float16; the size and quality checks of the change wait for a recorded run (docs/QUALITY.md) |
 | `scrutate watch` (R-2B.1) | inotify on Linux (directories past the watch limit checked on a timer), ReadDirectoryChangesW on Windows (an overflowed buffer walks the tree), FSEvents on macOS loaded only by `watch` (the index's own check on a timer when it cannot load) |
 | Benchmark dashboard (R-4.5) | `bench/make_dashboard.py` writes `docs/dashboard.html` from the results in `bench/results/` |
 | Package definitions (R-12.17) | `packaging/`: Homebrew formula (installed and tested in a Linux Homebrew), Scoop and winget manifests (schema-validated), `.deb` and `.rpm` (built and install-tested in clean Debian and Fedora containers) |
 | Third-party notices in releases | `tools/third_party_notices.py`; archives, wheels and the `.deb` and `.rpm` packages include `THIRD_PARTY_NOTICES.txt` |
-| Incremental parsing of edited files (R-2B.1) | a long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous tree, for the 21 grammars without an external scanner (with one, a reparse was seen to differ from a fresh parse); a 66 KB Go file: 5.5 ms to 2.0 ms per edit; `tests/incremental.rs` |
-| Ranking quality beyond Python (R-2B.12) | the ranker is fitted on Python plus Rust, Go, Java, JavaScript and TypeScript repositories, with functions and types as answers; held-out results per language in docs/QUALITY.md |
-| Indexed search precision (R-2B.1, R-4.6) | text index format 2: next-byte and position masks per posting; concurrent throughput against Zoekt went from 4% behind to 5% ahead (20% ahead, with p50 latency 0.37 of Zoekt's, in the final run) |
+| Incremental parsing of edited files (R-2B.1) | a long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous tree, for the 21 grammars without an external scanner (with one, a reparse was seen to differ from a fresh parse); `tests/incremental.rs` |
+| Ranking quality beyond Python (R-2B.12) | the ranker is fitted on Python plus Rust, Go, Java, JavaScript and TypeScript repositories, with functions and types as answers; the held-out results per language wait for a recorded run (docs/QUALITY.md) |
+| Indexed search precision (R-2B.1, R-4.6) | text index format 2: next-byte and position masks per posting; concurrent throughput against Zoekt went from 3% behind to 5% ahead (`indexed-eeab.json`, `indexed-fb5c.json`; 20% ahead, with p50 latency 0.37 of Zoekt's, in the final run, `indexed-9aa0.json`) |
 | Many files on macOS (R-4.6) | as many walking threads as performance cores (kernel contention made 11 threads slower than 5); the Linux and LLVM trees, 200,000 small files and the binary-heavy tree went from behind or level with ugrep to ahead of it (in the final run 15 to 30% on every row but two: 45% on the Linux search with 1.3 million matching lines, 8.5% on LLVM's case-insensitive one) |
-| Regexes anchored at line starts (R-4.6) | only line starts beginning with the regex's prefix literals are examined: `^(a|aa)+$` on the pathological corpus, 52 ms to 18 ms (13 ms since its one-line file is read on several threads) |
-| Start-up in git repositories (R-4.6) | `vendor/ignore` reads the global excludes path without compiling a regex: 0.4 ms of a 6 ms search of a 220-file repository |
+| Regexes anchored at line starts (R-4.6) | only line starts beginning with the regex's prefix literals are examined: `^(a|aa)+$` on the pathological corpus takes 13 ms in the final run (`leaderboard-warm-9aa0.json`) |
+| Start-up in git repositories (R-4.6) | `vendor/ignore` reads the global excludes path without compiling a regex |
 | One definition of every index operation (R-6.15, R-13) | `ops.rs`: the CLI, the MCP server, `batch` and the Python bindings share arguments, defaults, limits, text and JSON; they had drifted (three limits for `callers`, references textual in MCP and resolved in the CLI) |
 | An MCP server that fits how agents work today (R-6.15) | read-only and local hints on every tool, server instructions, answers within a byte budget with an offset to continue, `grep_code` on Engine A, no tool call blocked for more than 20 s by a first index build; from docs/research/agent-facing-search-2026-11.md |
 | Index upkeep in one place (R-12.12) | `Repo`: update, and rebuild when the database is corrupt, for every front end that stays open |
 | The index never disagrees with the walk about a pattern (R-2B.1) | one translation of the pattern for Engine A's matcher and the text index's trigram condition, checked by an in-process test |
 | Linux-tree searches against ripgrep (R-4.6) | a busy `.gitignore` compiles its globs; files up to 1 MB read whole; no size lookup per file: in the test VM 7 to 16% ahead of ripgrep on 11 of the 13 text rows, 40% ahead with very many matches, 59% ahead on the complex regex |
 | Cold trees on Linux (R-4.6) | a read counts as a disk read at 30 µs there (the macOS value, 75 µs, never fired), and a walk reading from the disk grows by a thread for every 16 slow reads, up to 64: the four cold Linux-tree rows went from level with git grep (two lost by under 1%) to 0.28 to 0.30 of the best competitor's time, 18 to 25% above the read-files ceiling |
-| Heavy output through a pipe (R-4.6) | output that follows other output within a millisecond waits in a 64 KB buffer and leaves in one write, where every matching file used to cost a write and a wake-up of the reader: `return` in the Linux tree (1.3 million lines) in the Linux VM, from 0.95 of ripgrep's time to 0.60. Past the first 64 KB the writes leave from a thread of their own, so no search thread waits on a write while others queue behind it: on an Intel Xeon Platinum 8488C VM (32 vCPU, Linux), the same search to a file went from 0.238 s to 0.111 s (ripgrep 0.183 s: 0.61 of its time) and through a pipe from 0.392 s to 0.152 s, 10 runs each |
+| Heavy output through a pipe (R-4.6) | output that follows other output within a millisecond waits in a 64 KB buffer and leaves in one write, where every matching file used to cost a write and a wake-up of the reader: `return` in the Linux tree (1.3 million lines) in the Linux VM, from 0.95 of ripgrep's time (`leaderboard-warm-e49f.json`) to 0.60 (`leaderboard-warm-261e.json`). Past the first 64 KB the writes leave from a thread of their own, so no search thread waits on a write while others queue behind it; what that saves on Linux x86_64 waits for a recorded run |
 | A read-files ceiling that is one (R-14.8) | `bench/rawread.c` gives each thread 64 neighbouring paths at a time, and the harness keeps the fastest of several thread counts; with one path at a time, its threads shared a directory and read a cold tree at a third of the disk's speed |
 | Measurements a busy machine spoiled (R-14.9) | a benchmark where some tool's block medians differ by more than 25% is measured again, once, whatever its status, and keeps its first result beside the second; a warm row records how much of its corpus was in the page cache (on this 18 GB laptop the LLVM tree, 4.9 GB in 16 KB pages, no longer fits once a browser and an editor are open) |
 | What agents ask of an MCP server now (R-6.15) | revision 2026-07-28 beside the handshake revisions (`server/discover`, a version in each request, `resultType`, cache hints on lists); with `serve --structured`, an `outputSchema` on every tool and the `--json` form of each answer in `structuredContent` (off by default: Claude Code shows its model that JSON in place of the text); `notifications/cancelled` honoured, each call on a thread of its own; progress reports with files read against the total while the first index is built, `reindex` runs or `structural_search` reads; large structured answers paged with the text (`next_offset`); `read_code` of a whole definition by name; the location at the start of every result accepted wherever a tool takes a symbol |
@@ -54,7 +54,7 @@ gap they close in docs/TRACEABILITY.md.
 | TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file in `refs`, `deps` and `rdeps`; so does an import of a workspace package by its `package.json` name (`exports`, `module`, `main`, a build output standing for its source under `src/`) |
 | Limits left in 0.1.0's first draft (R-2A, R-12.12) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
-| Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
+| Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars there were then is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
 | Function order on glibc Linux (R-4.6) | release builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` link twice, the second time with lld's `--symbol-ordering-file` from `crates/scrutate/startup.order` under the build's own names (`tools/order_file.py --elf`); docs/RELEASING.md section 2 |
 | OpenSSF Scorecard | `.github/workflows/scorecard.yml` (ossf/scorecard-action 2.5.0, pinned by commit) runs on every push to main and once a week, publishing its score to api.scorecard.dev and its findings to code scanning; its first run is the next push to main |
 | An LSP4IJ template for JetBrains IDEs | `integrations/jetbrains/lsp4ij-template` fills the Language Servers dialog in one import (name, `scrutate lsp`, a file name pattern per language); the `jetbrains` workflow imports it with LSP4IJ 0.21.0 and runs Go to Declaration through it |
@@ -89,8 +89,8 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 
 ## Next
 
-Measurements in this section that name no committed result file or CI run were taken on the
-development Mac and are not recorded in the repository.
+What is left to measure or decide; a figure here names its committed result file or CI run, and
+the rest wait for a recorded run.
 
 - Python tooling to Rust (R-13.1): one `xtask` crate in the workspace, not a default member and never
   shipped, run as `cargo xtask NAME`, replacing the 20 maintenance scripts in `tools/` and
@@ -99,65 +99,52 @@ development Mac and are not recorded in the repository.
   run proves. In order: delete `name_research.py` (its output,
   docs/name_research.json, is committed); the CI checks (`check_doc_shift`, `unsafe_count`,
   `gate_parity`, `gitleaks_config`, `fuzz_lock`, `jump_tables`), their Python tests as the
-  specification; `order_file`; the release scripts (`check_version`, `release_notes`,
+  specification; `order_file`; the data generator `gen_han_fold`, against its committed output; the release scripts (`check_version`, `release_notes`,
   `fold_changelog`, `sbom`, `third_party_notices`), each against golden files of the Python
   output; last the docs generators (`gen_assets`, `gen_doc_assets`, `gen_dependencies_md`,
   `gen_test_results`, `traceability_tally`, `generated_page`), byte for byte.
 - Small trees and start-up, what is left (the measured state is in
   [Architecture](ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)).
-  A one-file directory search runs fewer instructions than GNU grep (17 M against its 20.8 M) in the
-  same CPU time but touches 20 more pages (a Rust hello-world: 291 page reclaims, 1.9 MB):
-  anonymous constant tables the linker cannot order by name (12 pages), relocated data (6) and
-  the 64 KB line buffer the searcher zeroes. Wall time against GNU grep depends on load (1.87 ms
-  against 1.97 ms in steady runs, behind in interleaved blocks under other work); an idle-machine
-  benchmark settles it. Ruled out: binary size (0.07 ms at 85 MB; a file written minutes ago
-  costs 0.2 ms more) and a condition variable in place of the idle walker threads' short sleeps
-  (3.9 ms against 3.7). A linker order file did nothing under ThinLTO (585 page faults against
-  586), since ld64 cannot place the functions ThinLTO promotes; with one object it took 131 page
-  reclaims out. Profile-guided optimisation gained 2 to 3.5% on the 220-file tree, not adopted:
-  it needs a 13 MB profile in the repository and every release build.
-- Peak memory against GNU grep. `-j1` holds less than ugrep and ripgrep on every tree and more
-  than GNU grep, a 235 KB C program (macOS):
-
-  | Tree | `-j1` | GNU grep |
-  |---|---|---|
-  | a one-file directory | 2.5 MB | 1.95 MB |
-  | the ripgrep sources | 3.3 MB | 2.3 MB |
-  | py-big | 4.6 MB | 2.8 MB |
-  | the Linux tree | 6.5 MB | 3.4 MB |
-  | LLVM | 8.3 MB | 6.4 MB |
-
-  On a large tree the rest is mostly allocator memory freed and kept (per-CPU magazines:
-  `MallocMaxMagazines=1` in the environment takes 1.1 MB off the Linux tree; a process cannot set
-  it for itself), the ignore matchers (1.2 MB there) and whole directories read at once. A
-  one-line file is held whole (103 MB for 100 MB) for a regex, `-i`, `-w`, `--json` or color; a
-  plain `-F` literal with plain output or `-c` reads it in two passes and holds 3 to 5 MB. Under
-  the 64 MiB split size such a file still goes through the stream reader, whose buffer grows to
-  the line; the two passes could serve it. The default mode holds ordered output on one large file
-  with many matches (23 MB); 2 MB ranges in place of 8 MB halve that for 2.4 to 3.5% more
-  instructions, not taken.
-- The function order on glibc Linux, measured. Of 5.8 MB resident at the start of a small search
-  before it, 3.5 MB was the executable's text, spread over 85 MB with the kernel mapping 64 KB
-  around each fault; 0.5 MB is data relocated at load. The release build now links the macOS
+  A one-file directory search runs fewer instructions than GNU grep in the same CPU time but
+  touches more pages: anonymous constant tables the linker cannot order by name, relocated data
+  and the 64 KB line buffer the searcher zeroes. Wall time against GNU grep depends on load; an
+  idle-machine benchmark settles it. Ruled out: binary size and a condition variable in place of
+  the idle walker threads' short sleeps. A linker order file did nothing under ThinLTO, since ld64
+  cannot place the functions ThinLTO promotes, and helped with one object. Profile-guided
+  optimisation gained a little on a 220-file tree, not adopted: it needs a profile in the
+  repository and in every release build. The figures of each of these wait for a recorded run.
+- Peak memory against GNU grep. `-j1` holds more than GNU grep, a small C program, on every tree
+  measured on macOS (a one-file directory, the ripgrep sources, py-big, the Linux tree, LLVM); the
+  per-tree figures wait for a recorded run. On a large tree the rest is mostly allocator memory
+  freed and kept (per-CPU magazines: `MallocMaxMagazines=1` in the environment lowers it, and a
+  process cannot set it for itself), the ignore matchers and whole directories read at once. A
+  one-line file is held whole for a regex, `-i`, `-w`, `--json` or color; a plain `-F` literal
+  with plain output or `-c` reads it in two passes and holds a few MB. Under the 64 MiB split size
+  such a file still goes through the stream reader, whose buffer grows to the line; the two passes
+  could serve it. The default mode holds ordered output on one large file with many matches;
+  smaller ranges in place of 8 MB would lower that for more instructions, not taken.
+- The function order on glibc Linux, measured. Before it, most of what a small search had
+  resident at its start was the executable's text, spread over the whole binary with the kernel
+  mapping 64 KB around each fault, and some was data relocated at load. The release build now links the macOS
   order with rust-lld (docs/RELEASING.md section 2); ci.yml's `rust` job prints the minor page
   faults of `--version` and a one-file `grep` without and with it. First run (CI run 43463286517,
   median of 7): a one-file `grep` takes 334 to 321 faults on x86_64 and 322 to 297 on aarch64
   (4% and 8% fewer); `--version` stays where it was (365 to 369, 371 to 372), since it touches
   little code past the start. The musl builds keep GNU ld and no order.
-- Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s just to
-  open and read on the five performance cores, a search 0.58 s; the rest above that floor is the
-  search. The corpora `linux` and `linux-nodot` shared files by hard links, doubling every open's
-  cost on macOS for every tool; `bench/corpora.py` now copies them (APFS clones). `openat`
-  through the directory's descriptor does not lower the floor: 13.3 µs a file against 12.4 µs by
-  path.
+- Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): most of a search of the Linux
+  tree is the time to open and read its files, which the leaderboard's read-files ceiling measures
+  per row (docs/LEADERBOARD.md). The corpora `linux` and `linux-nodot` shared files by hard links,
+  doubling every open's cost on macOS for every tool; `bench/corpora.py` now copies them (APFS
+  clones). `openat` through the directory's descriptor does not lower the floor (its timing waits
+  for a recorded run).
 - Linux on dedicated hardware: every Linux leaderboard run (`bench/results/linux-aarch64/`)
   comes from a VM on the development Mac (5 CPUs; 8 for the `*-6602` run), on a virtual disk on its SSD. The x86_64
   server runs COMPETITIVE.md quotes have no committed result, and `bench/results/final.json`, an
-  early run of 2026-11-08 on a 2-core x86_64 Xeon, is used by no document. Two values fitted on
-  the VM need checking on NVMe and network
-  disks: the read time that counts as a disk read (30 µs) and the most threads for a cold tree
-  (64). A cold tree there also costs about 90 MB on 64 threads against 16 MB warm (`-j` bounds
-  both).
+  early run of 2026-11-08 on a 2-core x86_64 Xeon, is cited only by docs/RELEASE_READINESS.md
+  (R-4.6) as the one x86_64 run, and no published figure comes from it. Two values fitted on the
+  VM need checking on NVMe and network disks: the read time that counts as a disk read (30 µs)
+  and the most threads for a cold tree (64). A cold tree there also takes more memory on 64
+  threads than warm (`-j` bounds both).
 - Windows: nothing is measured. It takes the macOS values (threads: the cores, at most 12; cold:
   twice the cores, at most 24; a disk read: 75 µs) from the `OTHER` row in
   `crates/scrutate/src/policy.rs`, where a measured row goes.

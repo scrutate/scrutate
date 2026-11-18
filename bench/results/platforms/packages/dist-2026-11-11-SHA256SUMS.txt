@@ -1,0 +1,14 @@
+# SHA-256 of the 0.1.0 artifacts built on 2026-11-11 (docs/DELIVERY.md), recomputed from the files
+# dist/ (macOS arm64)
+3c4b51d27c64807d6731cc896515e1d5e6dcb4ece4406f62e023aca0520e699f  scrutate-0.1.0-aarch64-apple-darwin.tar.gz
+cd62b27ec0d5b9c0342c3592163d50c7dc891010de92411180b38df99ec4f45b  scrutate-0.1.0-cp39-abi3-macosx_13_0_arm64.whl
+4ba77d65110d0251e08d4ef9c7ae8c5a203c9fcdf9ba3776148aaf73faee5dda  scrutate-0.1.0.cdx.json
+cecae2e9943bc0f017d485249ab1e966bc4c2b573de21ef136b608e0dd6726db  scrutate_0.1.0-1_arm64.deb
+0c1d8f46b07b0f2f0e595db10c672ed259b3f7f3ecbc0685fc713bf3af1d7c61  scrutate-0.1.0-1.aarch64.rpm
+# dist-linux/ (Linux aarch64)
+be103d4605fa6c5aa85cecb7dc234ebc10795af2c2691a2518f9e15454ef6461  scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz
+81528e21aaa6458a07fbd587c3bea169607c34f1e9d0652210263ebcfa4ec279  scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl
+1a750da0ebcb832ddf09b4ac401415cf2147665bddb5bcd4cc1b3a131ae47bbf  scrutate-0.1.0.cdx.json
+# the scrutate binary inside each archive
+9aa0a14ec4b0e10bc49f822e5e1a37f2d26f2133f0ebfdba7982e953e5dab5c3  scrutate-0.1.0-aarch64-apple-darwin.tar.gz:scrutate-0.1.0-aarch64-apple-darwin/scrutate
+1b8dbc6797ee73596eb8864c6c56a96687f32988137455521fc34b30eed5a7b1  scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz:scrutate-0.1.0-aarch64-unknown-linux-gnu/scrutate
