@@ -1046,13 +1046,13 @@ impl Pending {
     }
 }
 
-/// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
 /// The reply to one request: a bug in it must not take the editor's server down.
 fn answer(srv: &mut Server, method: &str, params: &Value) -> Reply {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.request(method, params)))
         .unwrap_or_else(|_| Err((-32603, format!("internal failure while answering {method} (a bug: please report it)"))))
 }
 
+/// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
 pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     if cfg!(target_os = "wasi") {
         bail!("lsp is not in the wasi build: it needs threads");
