@@ -1346,6 +1346,11 @@ incompatible index by itself, and that is never breaking.
   beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
   directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
   `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
+- `map` and the MCP repo map no longer build an edge per calling file and defining file for a
+  name defined in more than 32 files: with 3,000 files defining `get` and 3,000 calling it they
+  built 9 million edges. Such a name's calls are now summed once per caller and once per definer,
+  with the same scores but for rounding in the last digits of a `--json` score
+  ([CLI](docs/CLI.md#engine-b)).
 
 ## [0.1.0] - 2026-11-11
 
