@@ -359,9 +359,10 @@ work tree, and runs the program with `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`
 ([CLI](CLI.md#tsquery---rewrite) lists every file it leaves alone, a link among them). Each is
 written to a new temporary file in its own directory (`create_new`, so nothing planted there is
 opened) and renamed over the original only if the original's bytes are unchanged. On Linux and
-macOS the original stays open through the rename and is read again after it, so an edit that
-lands between the check and the rename is put back and the file named; on Windows such an edit is
-lost ([CLI](CLI.md#tsquery---rewrite) says what is kept). The root is opened once when the plan starts, and every read and write
+macOS the original stays open and the two files exchange names in one step, so an edit that
+lands between the check and the exchange, a save by rename included, gets the name back and the
+file is named; a late write to the file no name points to is carried over for 5 ms (at most 1 s)
+or kept beside it; on Windows such an edit is lost ([CLI](CLI.md#tsquery---rewrite) says what is kept). The root is opened once when the plan starts, and every read and write
 goes through that handle and the directories opened from it one name at a time, a name never
 followed: with `O_NOFOLLOW` on Linux and macOS (`openat`, `renameat`), and on Windows with
 `FILE_OPEN_REPARSE_POINT` (`NtCreateFile` and a `FileRenameInformation` rename relative to the

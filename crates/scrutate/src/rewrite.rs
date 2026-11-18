@@ -291,7 +291,10 @@ impl Plan {
     /// Write each changed file whole by rename, only while its bytes on disk are those read.
     /// Returns, per file in order, why it was left alone (`PATH: why, left alone`) or nothing.
     pub fn write(&self) -> Vec<Option<String>> {
-        self.files.iter().map(|f| write_one(&self.root, f).err().map(|why| format!("{}: {why}, left alone", f.shown))).collect()
+        let line = |f: &FileChange, why: String| {
+            if why.starts_with(PUT_BACK) { format!("{}: {why}", f.shown) } else { format!("{}: {why}, left alone", f.shown) }
+        };
+        self.files.iter().map(|f| write_one(&self.root, f).err().map(|why| line(f, why))).collect()
     }
 }
 
@@ -557,55 +560,158 @@ fn all_of(file: &std::fs::File) -> std::io::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// The file `was` held changed between the check and the rename, so another writer's change
-/// went to the file the rename replaced: `name` gets that file's text back, then whatever was
-/// added, through a descriptor opened before, to it or to the rewritten text the rename put in
-/// place. A file changed otherwise than by adding to its end is saved beside `name`, named in the
-/// answer.
+/// What the warning says when another writer's change was given back the name.
+const PUT_BACK: &str = "changed while it was written, put back as the other writer left it";
+
+/// How long a file no name points to any more is watched for a write still on its way: until
+/// it has stayed the same this many times, this far apart, and never longer than `WATCH_MAX`.
 #[cfg(unix)]
-fn put_back(dir: &Dir, name: &std::ffi::OsStr, perm: std::fs::Permissions, was: &std::fs::File, ours: &std::fs::File, new: &[u8]) -> std::io::Result<String> {
+const QUIET_LOOKS: u32 = 5;
+#[cfg(unix)]
+const LOOK_EVERY: std::time::Duration = std::time::Duration::from_millis(1);
+#[cfg(unix)]
+const WATCH_MAX: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[cfg(unix)]
+fn same_file(a: &std::fs::File, b: &std::fs::File) -> std::io::Result<bool> {
+    let (x, y) = (rustix::fs::fstat(a)?, rustix::fs::fstat(b)?);
+    Ok((x.st_dev, x.st_ino) == (y.st_dev, y.st_ino))
+}
+
+/// `bytes` in a new file beside `name`: the first free `NAME.scrutate-PID.N.kept`, so a file
+/// already there (planted, or left by an earlier run) is never opened and never in the way.
+#[cfg(unix)]
+fn keep_aside(dir: &Dir, name: &std::ffi::OsStr, bytes: &[u8]) -> std::io::Result<String> {
     use std::io::Write;
     let stem = name.to_string_lossy();
-    let theirs = all_of(was)?;
-    let back = format!(".{stem}.scrutate-{}.back", std::process::id());
-    let mut out = dir.create_new(&back)?;
-    let made = (|| {
-        out.write_all(&theirs)?;
-        out.set_permissions(perm)?;
-        out.sync_all()?;
-        dir.rename(&back, name)
-    })();
-    if made.is_err() {
-        dir.remove(&back);
+    for n in 0..10_000 {
+        let at = format!("{stem}.scrutate-{}.{n}.kept", std::process::id());
+        match dir.create_new(&at) {
+            Ok(mut f) => {
+                f.write_all(bytes)?;
+                f.sync_all()?;
+                return Ok(at);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
     }
-    made?;
-    // (the file, what is known of it): a descriptor opened on either before the rename back can still add to it
-    let mut seen = [(was, theirs), (ours, new.to_vec())];
-    let mut kept = Vec::new();
-    for _ in 0..3 {
-        let mut quiet = true;
-        for (i, (file, known)) in seen.iter_mut().enumerate() {
-            let now = all_of(file)?;
-            if now == *known {
+    Err(std::io::Error::other("no free name for a file beside it"))
+}
+
+/// Watch `stray`, a file `name` no longer points to, for writes a descriptor opened on it before
+/// still makes: what is added at its end is added to `name`, anything else is kept aside. On an
+/// error its whole text is kept aside, so no byte is lost to a failed copy.
+#[cfg(unix)]
+fn carry(dir: &Dir, name: &std::ffi::OsStr, stray: &std::fs::File, mut known: Vec<u8>, kept: &mut Vec<String>) -> std::io::Result<()> {
+    use std::io::Write;
+    let started = std::time::Instant::now();
+    let mut quiet = 0;
+    let step = (|| -> std::io::Result<()> {
+        while quiet < QUIET_LOOKS && started.elapsed() < WATCH_MAX {
+            let now = all_of(stray)?;
+            if now == known {
+                quiet += 1;
+                std::thread::sleep(LOOK_EVERY);
                 continue;
             }
-            quiet = false;
-            if now.starts_with(known) {
+            quiet = 0;
+            if now.starts_with(&known) {
                 dir.open(name, true)?.write_all(&now[known.len()..])?;
             } else {
-                let at = format!("{stem}.scrutate-{}.{i}.kept", std::process::id());
-                dir.create_new(&at)?.write_all(&now)?;
+                kept.push(keep_aside(dir, name, &now)?);
+            }
+            known = now;
+        }
+        Ok(())
+    })();
+    if step.is_err() {
+        kept.push(keep_aside(dir, name, &all_of(stray)?)?);
+    }
+    Ok(())
+}
+
+/// The temporary file `tmp` holds the new text and `was` the file checked: put the new text at
+/// `name` without losing what another writer did to it meanwhile. Linux and macOS exchange the two
+/// names in one step (`RENAME_EXCHANGE`, `RENAME_SWAP`), so the file taken out of `name` is
+/// still at `tmp` to look at: when it is not `was` (a save by rename) or `was` changed, the names
+/// are exchanged back. Where the file system has no exchange, the name is checked to be `was`
+/// and renamed over. Either way the file no name points to any more is watched for late writes.
+#[cfg(unix)]
+fn settle(dir: &Dir, name: &std::ffi::OsStr, tmp: &str, f: &FileChange, at: &mut dyn FnMut(Step)) -> std::io::Result<Option<String>> {
+    use rustix::fs::{RenameFlags, renameat_with};
+    // until the exchange the temporary file holds only the new text: an error removes it
+    let held = (|| -> std::io::Result<Option<(std::fs::File, std::fs::File)>> {
+        let was = dir.open(name, false)?;
+        if all_of(&was)? != f.read {
+            return Ok(None);
+        }
+        Ok(Some((was, dir.open(tmp.as_ref(), false)?)))
+    })();
+    let (was, ours) = match held {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            dir.remove(tmp);
+            return Ok(Some("changed since it was read".into()));
+        }
+        Err(e) => {
+            dir.remove(tmp);
+            return Err(e);
+        }
+    };
+    at(Step::BeforeRename);
+    let swapped = match renameat_with(&dir.0, tmp, &dir.0, name, RenameFlags::EXCHANGE) {
+        Ok(()) => true,
+        Err(e) if [rustix::io::Errno::INVAL, rustix::io::Errno::NOSYS, rustix::io::Errno::NOTSUP, rustix::io::Errno::OPNOTSUPP].contains(&e) => false,
+        Err(e) => {
+            dir.remove(tmp);
+            return Err(e.into());
+        }
+    };
+    let mut kept = Vec::new();
+    let why = if !swapped {
+        // no exchange here: the name must still be `was` right before the rename
+        let named = dir.open(name, false)?;
+        if !same_file(&named, &was)? || all_of(&was)? != f.read {
+            dir.remove(tmp);
+            return Ok(Some("changed since it was read".into()));
+        }
+        dir.rename(tmp, name)?;
+        at(Step::AfterRename);
+        carry(dir, name, &was, f.read.clone(), &mut kept)?;
+        None
+    } else {
+        at(Step::AfterRename);
+        let out = dir.open(tmp.as_ref(), false)?;
+        let replaced = !same_file(&out, &was)?;
+        if !replaced && all_of(&was)? == f.read {
+            // the new text is in place: no new open reaches `was` once its last name is gone
+            dir.remove(tmp);
+            carry(dir, name, &was, f.read.clone(), &mut kept)?;
+            None
+        } else {
+            // another writer's file, or `was` changed: it gets the name back
+            if let Err(e) = renameat_with(&dir.0, tmp, &dir.0, name, RenameFlags::EXCHANGE) {
+                return Ok(Some(format!("changed while it was written, and the other writer's file could not be put back: it is {tmp} ({e})")));
+            }
+            let back = dir.open(tmp.as_ref(), false)?;
+            if same_file(&back, &ours)? {
+                dir.remove(tmp);
+            } else {
+                // the name changed hands again meanwhile: what came out of it is kept, under a free name
+                let at = keep_aside(dir, name, b"")?;
+                dir.rename(tmp, at.as_ref())?;
                 kept.push(at);
             }
-            *known = now;
+            carry(dir, name, &ours, f.new.clone(), &mut kept)?;
+            Some(if replaced { "changed since it was read".to_string() } else { PUT_BACK.to_string() })
         }
-        if quiet {
-            break;
+    };
+    Ok(match (why, kept.as_slice()) {
+        (why, []) => why,
+        (why, k) => {
+            Some(format!("{} (a change that did not add to its end is in {})", why.unwrap_or_else(|| "changed while it was written".into()), k.join(" and ")))
         }
-    }
-    Ok(match kept.as_slice() {
-        [] => String::new(),
-        k => format!(" (a change that did not add to its end is in {})", k.join(" and ")),
     })
 }
 
@@ -628,35 +734,32 @@ fn write_one_at(root: &Dir, f: &FileChange, at: &mut dyn FnMut(Step)) -> Result<
         }
         Err(e) => return Err(e.to_string()),
     };
-    #[cfg(unix)]
-    let keep = perm.clone();
-    let mut renamed = false;
+    let mut settled = false;
     let written = (|| -> std::io::Result<Option<String>> {
         out.write_all(&f.new)?;
         out.set_permissions(perm)?;
         out.sync_all()?;
         drop(out);
+        // from here the temporary file is settle's to keep or remove
+        settled = true;
         #[cfg(unix)]
-        let (was, ours) = (dir.open(name, false)?, dir.open(tmp.as_ref(), false)?);
-        #[cfg(unix)]
-        let now = all_of(&was)?;
+        return settle(&dir, name, &tmp, f, at);
         #[cfg(not(unix))]
-        let now = dir.read(name)?;
-        if now != f.read {
-            return Ok(Some("changed since it was read".into()));
+        {
+            if dir.read(name)? != f.read {
+                dir.remove(&tmp);
+                return Ok(Some("changed since it was read".into()));
+            }
+            at(Step::BeforeRename);
+            if let Err(e) = dir.rename(&tmp, name) {
+                dir.remove(&tmp);
+                return Err(e);
+            }
+            at(Step::AfterRename);
+            Ok(None)
         }
-        at(Step::BeforeRename);
-        dir.rename(&tmp, name)?;
-        renamed = true;
-        at(Step::AfterRename);
-        #[cfg(unix)]
-        if all_of(&was)? != f.read {
-            let kept = put_back(&dir, name, keep, &was, &ours, &f.new)?;
-            return Ok(Some(format!("changed while it was written, put back as the other writer left it{kept}")));
-        }
-        Ok(None)
     })();
-    if !renamed {
+    if !settled {
         dir.remove(&tmp);
     }
     match written {
@@ -818,6 +921,79 @@ mod race {
         assert!(now.starts_with("print(x)\nprint(x)\nprint(x)\n# to the old file\n"), "{now:?}");
         assert!(now.contains("# to the new file\n"), "{now:?}");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Every file of the directory and its text, by name.
+    fn files_in(dir: &Path) -> Vec<(String, String)> {
+        let mut v: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (e.file_name().to_string_lossy().into_owned(), std::fs::read_to_string(e.path()).unwrap_or_default())
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn an_editor_that_saves_by_rename_between_the_check_and_the_rename_keeps_its_save() {
+        let (p, path) = planned("by_rename");
+        let saved = "print(x)\nprint(x)\nprint(x)\n# saved by the editor\n";
+        let why = write_one_at(&p.root, &p.files[0], &mut |s| {
+            if s == Step::BeforeRename {
+                let swp = path.with_file_name("a.py.swp");
+                std::fs::write(&swp, saved).unwrap();
+                std::fs::rename(&swp, &path).unwrap();
+            }
+        });
+        assert_eq!(why, Err("changed since it was read".to_string()));
+        assert_eq!(files_in(path.parent().unwrap()), [("a.py".to_string(), saved.to_string())]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_rewrite_of_the_new_text_in_place_is_kept_beside_it_whatever_is_there_already() {
+        let (p, path) = planned("in_place");
+        let dir = path.parent().unwrap().to_path_buf();
+        // the first side-file names are taken (an earlier run, or planted): they are never opened
+        for n in 0..2 {
+            std::fs::write(dir.join(format!("a.py.scrutate-{}.{n}.kept", std::process::id())), "not this write's").unwrap();
+        }
+        let why = write_one_at(&p.root, &p.files[0], &mut |s| match s {
+            Step::BeforeRename => append(&path, "# late"),
+            Step::AfterRename => {
+                use std::os::unix::fs::FileExt;
+                std::fs::OpenOptions::new().write(true).open(&path).unwrap().write_all_at(b"MIDDLE", 0).unwrap();
+            }
+        });
+        let files = files_in(&dir);
+        assert_eq!(files.iter().find(|(n, _)| n == "a.py").map(|f| f.1.as_str()), Some("print(x)\nprint(x)\nprint(x)\n# late\n"), "{files:?}");
+        let kept: Vec<_> = files.iter().filter(|(_, t)| t.contains("MIDDLE")).collect();
+        assert_eq!(kept.len(), 1, "{files:?}");
+        assert!(
+            why.as_ref().is_err_and(|w| w.starts_with("changed while it was written, put back as the other writer left it") && w.contains(&kept[0].0)),
+            "{why:?}"
+        );
+        assert_eq!(files.iter().filter(|(_, t)| t == "not this write's").count(), 2, "{files:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_line_added_before_the_rename_is_kept_whatever_is_beside_the_file() {
+        let (p, path) = planned("beside");
+        let dir = path.parent().unwrap().to_path_buf();
+        for planted in [format!(".a.py.scrutate-{}.back", std::process::id()), format!("a.py.scrutate-{}.0.kept", std::process::id())] {
+            std::fs::write(dir.join(planted), "planted").unwrap();
+        }
+        let why = write_one_at(&p.root, &p.files[0], &mut |s| {
+            if s == Step::BeforeRename {
+                append(&path, "# late");
+            }
+        });
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "print(x)\nprint(x)\nprint(x)\n# late\n");
+        assert_eq!(why, Err("changed while it was written, put back as the other writer left it".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
