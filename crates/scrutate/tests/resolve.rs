@@ -347,6 +347,25 @@ fn rust_a_file_a_path_attribute_loads_keeps_its_modules_beside_it() {
 }
 
 #[test]
+fn rust_a_file_a_path_attribute_loads_never_takes_its_module_directory_for_its_modules() {
+    // with sys/unix/fd.rs there too, rustc still compiles sys/fd.rs for unix.rs's `mod fd;`
+    let r = Repo::new(
+        "rs_path_children_both",
+        &[
+            ("Cargo.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("src/lib.rs", "#[path = \"sys/unix.rs\"]\nmod sys;\n"),
+            ("src/sys/unix.rs", "mod fd;\npub fn open() -> i32 {\n    self::fd::raw()\n}\n"),
+            ("src/sys/fd.rs", "pub fn raw() -> i32 {\n    3\n}\n"),
+            ("src/sys/unix/fd.rs", "pub fn raw() -> i32 {\n    4\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("raw", "src/sys/fd.rs:1"), ["src/sys/fd.rs:1", "src/sys/unix.rs:3"]);
+    assert_eq!(r.refs_of("raw", "src/sys/unix/fd.rs:1"), ["src/sys/unix/fd.rs:1"]);
+    let (_, deps) = r.run(&["deps", "src/sys/unix.rs"]);
+    assert!(deps.lines().any(|l| l == "src/sys/unix.rs:1  fd  -> src/sys/fd.rs"), "{deps}");
+}
+
+#[test]
 fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
     let r = Repo::new(
         "rs_trait_default",
