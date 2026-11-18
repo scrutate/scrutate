@@ -2259,8 +2259,6 @@ impl Collector<'_> {
         Ok(more)
     }
 
-    /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
-    /// first, so this one is not reported, nor counted.
     /// Counts a match: with `max_results` its number over all threads, which the cap needs as it
     /// happens; without, 0, and the file's matches are added together in `flush`, since an add per
     /// matching line from every thread kept the counter's cache line moving between cores.
@@ -2273,6 +2271,8 @@ impl Collector<'_> {
         }
     }
 
+    /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
+    /// first, so this one is not reported, nor counted.
     fn over_limit(&self, n: u64) -> bool {
         let over = self.max_results.is_some_and(|max| n > max);
         if over {
