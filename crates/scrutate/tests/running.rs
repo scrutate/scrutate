@@ -156,10 +156,11 @@ fn probe() -> (usize, usize) {
 
 /// The tests of this file one at a time, also across processes that run them at once.
 fn lock() -> (std::sync::MutexGuard<'static, ()>, std::fs::File) {
-    tree();
     let one = ONE.lock().unwrap_or_else(|p| p.into_inner());
     let file = std::fs::File::create(std::env::temp_dir().join("scrutate_running_tests.lock")).unwrap();
     file.lock().unwrap();
+    // checked and made again only under the lock: another process may be searching it
+    tree();
     (one, file)
 }
 
