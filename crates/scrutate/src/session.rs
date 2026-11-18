@@ -3071,7 +3071,8 @@ mod tests {
             if st.files_looked == 1 {
                 break;
             }
-            assert!(t0.elapsed() < Duration::from_secs(20), "the watch never told a read what changed");
+            // a busy Windows CI runner's watch took over 20 s here
+            assert!(t0.elapsed() < Duration::from_secs(60), "the watch never told a read what changed");
             std::thread::sleep(Duration::from_millis(50));
         }
         (root, s)
