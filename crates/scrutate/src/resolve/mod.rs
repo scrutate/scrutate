@@ -810,7 +810,7 @@ pub fn repo_text(root: &std::path::Path, rel: &str) -> Option<String> {
     crate::index::decode_source(&repo_bytes(root, rel)?).map(|t| t.into_owned())
 }
 
-fn repo_bytes(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
+pub(crate) fn repo_bytes(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
     crate::answers::noted(root, rel);
     let p = root.join(rel);
     let meta = std::fs::symlink_metadata(&p).ok()?;

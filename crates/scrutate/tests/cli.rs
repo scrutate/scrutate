@@ -3505,6 +3505,36 @@ fn a_repositorys_configuration_file_is_read_only_inside_its_bounds() {
 
 #[cfg(unix)]
 #[test]
+fn a_subdirectory_configuration_file_is_bounded_by_the_repository_and_one_not_text_says_so() {
+    let r = Repo::new("cfg_sub");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write("packages/web/a.txt", b"alpha\n");
+    r.write("packages/web/.hidden.txt", b"alpha hidden\n");
+    let web = r.root.join("packages/web");
+    let toml = web.join(".scrutate.toml");
+    // a link to the repository's own file, outside the subdirectory but inside the repository
+    r.write(".scrutate.toml", b"[grep]\nhidden = true\n");
+    std::os::unix::fs::symlink("../../.scrutate.toml", &toml).unwrap();
+    let (code, out, err) = run_in(&web, &["grep", "alpha"], &[]);
+    assert!(code == 0 && out.contains(".hidden.txt"), "{out}{err}");
+    let (_, out, err) = run_in(&web, &["config"], &[]);
+    assert!(out.contains("hidden = true"), "{out}{err}");
+    // one out of the repository still stops the command
+    let outside = Repo::plain("cfg_sub_outside");
+    outside.write("x.toml", b"[grep]\nhidden = true\n");
+    fs::remove_file(&toml).unwrap();
+    std::os::unix::fs::symlink(outside.root.join("x.toml"), &toml).unwrap();
+    let (code, _, err) = run_in(&web, &["grep", "alpha"], &[]);
+    assert!(code == 2 && err.contains(".scrutate.toml: not read"), "{err}");
+    // a NUL byte in its first 4 KiB: refused as not text, not as out of bounds
+    fs::remove_file(&toml).unwrap();
+    r.write("packages/web/.scrutate.toml", b"[grep]\nhidden = true\n\0\n");
+    let (code, _, err) = run_in(&web, &["grep", "alpha"], &[]);
+    assert!(code == 2 && err.contains("not text") && !err.contains("inside the"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symbolic_link_to_the_index_directory_is_not_called_a_hard_link() {
     let r = Repo::new("link_to_index");
     r.write("a.txt", b"alpha\n");

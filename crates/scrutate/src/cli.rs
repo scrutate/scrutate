@@ -973,6 +973,13 @@ fn nearest_config(cwd: &Path) -> PathBuf {
     cwd.to_path_buf()
 }
 
+/// The repository `dir` is in: the nearest directory from it up holding `.git` or an index; `dir`
+/// when there is none.
+fn repo_top(dir: &Path) -> PathBuf {
+    let top = dir.ancestors().find(|d| d.join(".git").exists() || d.join(crate::files::INDEX_DIR).is_dir());
+    top.unwrap_or(dir).to_path_buf()
+}
+
 /// The names of the directories from `top` down to `dir`; empty when `dir` is not below `top`.
 fn names_below(dir: &Path, top: &Path) -> Vec<String> {
     dir.strip_prefix(top).map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect()).unwrap_or_default()
@@ -1198,7 +1205,7 @@ pub fn run() -> Result<i32> {
     let mut cfg_excludes = false;
     // a bad file stops the commands that read it, after clap has had --help and --version
     let cfg_error = cfg_path.as_deref().and_then(|p| {
-        (if local { crate::config::load_own(&cfg_root, p) } else { crate::config::load(p) })
+        (if local { crate::config::load_own(&cfg_root, &repo_top(&cfg_root), p) } else { crate::config::load(p) })
             .map(|mut cfg| {
                 cfg_excludes = !cfg.index.exclude_dirs.is_empty();
                 if local {
@@ -1622,7 +1629,7 @@ pub fn run() -> Result<i32> {
                 Some(p) => {
                     outln!("configuration file: {}", p.display());
                     // the root's own file only within its bounds, as it is read for the settings
-                    let text = if local { crate::files::root_config_text(&cfg_root).unwrap_or_default() } else { std::fs::read_to_string(p)? };
+                    let text = if local { crate::files::config_text(&cfg_root, &repo_top(&cfg_root)).unwrap_or_default() } else { std::fs::read_to_string(p)? };
                     outln!("{}", text.trim_end());
                     if !cfg_globs.is_empty() {
                         outln!("\ngrep globs, matched from {}: {}", crate::paths::plain_path(&cfg_root).display(), cfg_globs.join(", "));

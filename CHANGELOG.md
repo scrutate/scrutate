@@ -1370,6 +1370,11 @@ incompatible index by itself, and that is never breaking.
   `Box`, `Rc` or `Arc` stays undecided: both were tied to the method of the enclosing impl
   (ripgrep's `WalkBuilder.follow_links`, `Matcher.shortest_match_at`, `Sink.binary_data`)
   ([CLI](docs/CLI.md#refs)).
+- A `.scrutate.toml` in a subdirectory that links to a file elsewhere in the repository is read
+  again: its link was held to the subdirectory, so every command run there stopped with "not
+  read". The bound is the repository, the nearest directory up holding `.git` or an index; a link
+  out of it still stops the command. One with a NUL byte in its first 4 KiB is now refused as
+  not text, where the message said it was out of bounds.
 
 ## [0.1.0] - 2026-11-11
 
