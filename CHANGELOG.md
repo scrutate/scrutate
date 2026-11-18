@@ -1370,6 +1370,10 @@ incompatible index by itself, and that is never breaking.
   `Box`, `Rc` or `Arc` stays undecided: both were tied to the method of the enclosing impl
   (ripgrep's `WalkBuilder.follow_links`, `Matcher.shortest_match_at`, `Sink.binary_data`)
   ([CLI](docs/CLI.md#refs)).
+- On Windows with `LOCALAPPDATA` unset, the dependency cache is under
+  `%USERPROFILE%\AppData\Local\scrutate`, where `LOCALAPPDATA` points by default, and with no
+  `USERPROFILE` either it is an error naming `SCRUTATE_CACHE_DIR`; it fell back to `HOME`, which
+  MSYS and Git Bash set ([Security](docs/SECURITY.md)).
 
 ## [0.1.0] - 2026-11-11
 

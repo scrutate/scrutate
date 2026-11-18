@@ -165,7 +165,7 @@ directory (`$XDG_STATE_HOME/scrutate/` on every system when that is an absolute 
 `~/.local/state/scrutate/`, on Windows `%LOCALAPPDATA%\scrutate\`) with `frecency.json` and
 `hook-grep.jsonl`, and its cache of dependency sources for
 `symbol --deps`, `read --deps` and `scope: "deps"` (`$SCRUTATE_CACHE_DIR`, else
-on Windows `%LOCALAPPDATA%\scrutate\`, else `$XDG_CACHE_HOME/scrutate/`, on macOS
+on Windows `%LOCALAPPDATA%\scrutate\` (`%USERPROFILE%\AppData\Local\scrutate\` when it is unset), else `$XDG_CACHE_HOME/scrutate/`, on macOS
 `~/Library/Caches/scrutate/`, else `~/.cache/scrutate/`).
 
 ## Package managers
