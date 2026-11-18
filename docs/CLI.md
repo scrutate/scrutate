@@ -1596,10 +1596,11 @@ it, and every index update, with one line naming the file and the line, and exit
 does not parse, a key the table does not have (no key names a file, so a table cannot make
 scrutate read one), a bad name or extension, a kind not in the list, a pattern that does not
 compile or has no group. The repository's file is read as other repository files are: a regular
-file inside the root, at most 1 MB, through a link only when the resolved file is inside the
-root. That holds for all of it, the configuration as well as the languages: a root's
+file inside the repository (the nearest directory up holding `.git` or an index), at most 1 MB,
+through a link only when the resolved file is inside it, so a subdirectory's `.scrutate.toml` may
+link to the top's. That holds for all of it, the configuration as well as the languages: a
 `.scrutate.toml` outside those bounds stops the command with one line naming it, as a file that
-does not parse does.
+does not parse does, and one with a NUL byte in its first 4 KiB stops it as not text.
 
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,

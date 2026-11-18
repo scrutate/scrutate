@@ -126,15 +126,18 @@ pub fn confine(cfg: &mut Config) {
     }
 }
 
-/// `load` for the `.scrutate.toml` of `root`, read as the repository's other files are: a regular
-/// file inside the root, at most 1 MB, through a link only to a file inside the root; any other is
-/// an error that names it.
-pub fn load_own(root: &Path, path: &Path) -> Result<Config> {
-    let text = crate::files::root_config_text(root).with_context(|| {
-        format!(
-            "{}: not read: a repository's configuration file must be a regular file inside the root, at most 1 MB, linked only to a file inside the root",
-            path.display()
-        )
+/// `load` for the `.scrutate.toml` of `dir`, read as the repository's other files are: a regular
+/// file inside `top`, the repository, at most 1 MB, through a link only to a file inside it; any
+/// other is an error that names it.
+pub fn load_own(dir: &Path, top: &Path, path: &Path) -> Result<Config> {
+    let text = crate::files::config_text(dir, top).map_err(|why| {
+        let why = match why {
+            crate::files::ConfigUnread::OutOfBounds => {
+                "a repository's configuration file must be a regular file inside the repository, at most 1 MB, linked only to a file inside it"
+            }
+            crate::files::ConfigUnread::NotText => "not text: a NUL byte in its first 4 KiB",
+        };
+        anyhow::anyhow!("{}: not read: {why}", path.display())
     })?;
     parse(path, &text)
 }

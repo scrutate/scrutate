@@ -1346,6 +1346,11 @@ incompatible index by itself, and that is never breaking.
   beside `frecency.json`: it went under `%LOCALAPPDATA%` alone, so the two state files were in two
   directories. Both now take one rule: `XDG_STATE_HOME` when it is an absolute path, else
   `~/.local/state` (on Windows `%LOCALAPPDATA%`) ([Install](docs/INSTALL.md)).
+- A `.scrutate.toml` in a subdirectory that links to a file elsewhere in the repository is read
+  again: its link was held to the subdirectory, so every command run there stopped with "not
+  read". The bound is the repository, the nearest directory up holding `.git` or an index; a link
+  out of it still stops the command. One with a NUL byte in its first 4 KiB is now refused as
+  not text, where the message said it was out of bounds.
 
 ## [0.1.0] - 2026-11-11
 
